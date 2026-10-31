@@ -70,7 +70,7 @@ All of it runs in the browser with Web Crypto ([shared/e2ee.ts](shared/e2ee.ts))
   key in the browser and wraps it for the newcomer. The server checks that every channel's key is
   included, so nobody joins with a channel they cannot read.
 - **Notifications still show the text.** The push carries the encrypted message, and the service
-  worker decrypts it on the device. A message too long for a push shows "New encrypted message".
+  worker decrypts it on the device. A message too long for a push shows "New message".
 - **Security codes.** The lock button in a chat shows a 60-digit code per person. If it matches on
   both phones, nobody swapped keys in between. Each device also remembers everyone's keys and warns
   if they ever change.
@@ -277,7 +277,12 @@ client/   React app (Vite), the service worker (client/src/sw.ts), and the key s
 shared/   Types and the end-to-end encryption code shared by server, client, and service worker
 test/     Integration tests (node:test)
 scripts/  Icon generator (npm run icons)
+docs/     Decisions and roadmap, the source of truth for anyone changing the code
 ```
+
+Before you change the code, read [AGENTS.md](AGENTS.md). It links to
+[docs/decisions.md](docs/decisions.md), which records why the code is the way it is, and to
+[docs/roadmap.md](docs/roadmap.md), which lists planned work, known issues and open questions.
 
 ## Limits
 
