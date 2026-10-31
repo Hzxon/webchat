@@ -390,8 +390,10 @@ export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDe
     const me = currentUser(res);
     const conversationId = positiveInt(req.params.id, 'Chat id');
     await requireMember(conversationId, me.id);
-    const before =
-      req.query.before === undefined ? MAX_ID : positiveInt(req.query.before, 'before');
+    // Read with the WHATWG URL API: on Vercel, reading req.query logs Node's url.parse()
+    // deprecation warning (DEP0169).
+    const beforeParam = new URL(req.originalUrl, 'http://localhost').searchParams.get('before');
+    const before = beforeParam === null ? MAX_ID : positiveInt(beforeParam, 'before');
     res.json(await db.messagesBefore(conversationId, before, LIMITS.pageSize));
   });
 
