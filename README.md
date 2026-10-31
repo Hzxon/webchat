@@ -20,6 +20,9 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
   notification stays until they act on it.
 - Unread count in the tab title, favicon, and the app badge of an installed app.
 - Invite-code sign-up, so only people you give the code to can join.
+- **GitHub pull requests**: connect your GitHub account to see the pull requests waiting for your
+  review and how your own are doing, with alerts when they change. See
+  [GitHub pull requests](#github-pull-requests).
 
 ## How messages and notifications travel
 
@@ -144,6 +147,84 @@ Share the address and the invite code with your friends, or send a link that fil
   WebChat from the Home Screen, sign in, and turn on notifications there. Safari tabs on iOS cannot
   receive push.
 
+## GitHub pull requests
+
+Each person can connect their own GitHub account. A **Pull requests** entry at the top of the chat
+list then shows the open pull requests waiting for their review (asked of them or one of their
+teams), their own open pull requests with checks, review decision, merge conflicts, size and
+comments, and recent activity.
+
+WebChat alerts you the same way as a message when someone asks for your review, approves or asks
+for changes on your pull request, comments on it, its checks fail or pass again, it gets merge
+conflicts, or it is merged or closed. Clicking the alert opens the pull request on GitHub. The
+pane has a switch to turn these alerts off.
+
+### Set it up
+
+1. On GitHub, open [New OAuth App](https://github.com/settings/applications/new) (Settings >
+   Developer settings > OAuth Apps). Set the homepage URL to your site and the authorization
+   callback URL to `https://your-app.vercel.app/api/github/callback`. Register it, then generate a
+   client secret.
+2. Give the server the client ID and the secret. Each command asks for the value:
+
+   ```bash
+   npx vercel env add GITHUB_CLIENT_ID production
+   ```
+
+   ```bash
+   npx vercel env add GITHUB_CLIENT_SECRET production
+   ```
+
+3. Deploy again. The **Pull requests** entry appears for everyone, and each person presses
+   **Connect GitHub** in it.
+
+An OAuth App has one callback URL, so register a second one for local development with
+`http://localhost:5173/api/github/callback`, and start the dev server with its values:
+`GITHUB_CLIENT_ID=... GITHUB_CLIENT_SECRET=... npm run dev`.
+
+### How it watches
+
+GitHub does not tell WebChat when a pull request changes, so the server asks. It asks at most once a
+minute per account, with one GraphQL query, a small part of the 5,000 points an hour GitHub allows
+each person. It compares the answer with the last one and records what changed.
+
+- **While any WebChat tab is open**, even in the background, the tab makes the server check every 1
+  to 3 minutes.
+- **A self-hosted server** (`npm start`) also checks every connected account on its own every 2
+  minutes (`GITHUB_POLL_SECONDS`), so alerts arrive with every tab closed.
+- **On Vercel**, functions stop between requests, and Hobby cron jobs run only once a day. For alerts
+  with every tab closed, set `CRON_SECRET` and have a scheduler call `GET /api/github/poll` with
+  `Authorization: Bearer <CRON_SECRET>` every few minutes. For example, a GitHub Actions workflow in
+  any of your repositories, with the secret saved as `WEBCHAT_CRON_SECRET`:
+
+  ```yaml
+  on:
+    schedule:
+      - cron: '*/5 * * * *'
+  jobs:
+    poll:
+      runs-on: ubuntu-latest
+      steps:
+        - run: curl -fsS -H "Authorization: Bearer ${{ secrets.WEBCHAT_CRON_SECRET }}" https://your-app.vercel.app/api/github/poll
+  ```
+
+  GitHub runs scheduled workflows at most every 5 minutes and can delay them when busy. On a Vercel
+  plan with frequent cron jobs, add `"crons": [{ "path": "/api/github/poll", "schedule": "*/5 * * * *" }]`
+  to [vercel.json](vercel.json) instead. Vercel sends `CRON_SECRET` by itself.
+
+### What it can access
+
+- OAuth Apps cannot get read-only access to private repositories, so GitHub asks for the `repo`
+  scope: full access to your repositories. WebChat only reads pull requests with it.
+- The token never reaches the browser. The server stores it encrypted (AES-256-GCM) with a key
+  derived from `GITHUB_CLIENT_SECRET`, which lives only in the environment, so a copy of the
+  database alone cannot use it. Changing the client secret makes everyone connect again.
+- Unlike messages, pull request titles and repository names are not end-to-end encrypted: the
+  server fetches them, and keeps the latest list and 50 recent events in the database.
+- **Disconnect** deletes the token and the app's grant on GitHub. Revoking the app on GitHub
+  (Settings > Applications) works too; the pane then asks you to connect again.
+- An organization that restricts OAuth Apps hides its pull requests until an owner approves the app.
+
 ## Self-hosting instead
 
 `npm run build && npm start` runs everything in one Node process on `PORT` (default 3000), with
@@ -161,7 +242,9 @@ over HTTP, with every client doing real encryption. It checks that the database 
 plain text, that a message the server alters is rejected, the one-time upgrade of old accounts,
 chat keys, receipts, access control, and which browsers get a push while the recipient is looking,
 looking away, or has closed the tab. The crypto tests cover wrong passwords, swapped keys,
-tampering, forged senders, and security codes.
+tampering, forged senders, and security codes. The GitHub tests run against a fake GitHub: the
+sign-in's state and PKCE checks, the encrypted token, which changes become alerts, the scheduler
+secret, a revoked token, and disconnecting.
 
 `npm run typecheck` checks the server, client, service worker, and tooling separately, since each
 has its own environment.
@@ -184,3 +267,5 @@ scripts/  Icon generator (npm run icons)
   while you are looking, longer in the background).
 - No key rotation: a chat keeps one key for its lifetime, and members cannot be added to a group
   after it is created.
+- Pull requests show at most 30 per list, and only from github.com, not GitHub Enterprise Server.
+  Changes show up on the next check, up to a few minutes later, not the moment they happen.

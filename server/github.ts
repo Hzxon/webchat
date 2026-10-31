@@ -1,0 +1,479 @@
+// GitHub connector: links a GitHub account through an OAuth App, watches the user's open pull
+// requests, and turns changes into alerts.
+//
+// The server holds the token, never the browser, because polls run on the server: that is how a
+// pull request alert reaches a phone while every tab is closed. The token is stored encrypted with
+// a key derived from the OAuth App's client secret, which lives only in the environment, so a copy
+// of the database alone cannot use it.
+import crypto from 'node:crypto';
+import { describeGithubEvent } from '../shared/github.js';
+import type {
+  GithubDTO,
+  GithubEventDTO,
+  GithubEventKind,
+  PullChecks,
+  PullListsDTO,
+  PullRequestDTO,
+  PullReview,
+  PushPayload,
+} from '../shared/types.js';
+import { safeEqual } from './auth.js';
+import type { Config } from './config.js';
+import { isAttentive, type Db } from './db.js';
+import type { Push } from './push.js';
+
+/** Lets the token read pull requests in private repositories too. OAuth Apps have no read-only scope for that. */
+const SCOPE = 'repo';
+/** However many tabs and schedulers ask, one account is polled at most this often. */
+export const POLL_INTERVAL_MS = 60_000;
+/** The refresh button may poll sooner. */
+const MANUAL_POLL_INTERVAL_MS = 10_000;
+/** Scheduled runs poll accounts slightly early, so a run that starts a moment soon does not skip one. */
+const SCHEDULED_POLL_INTERVAL_MS = POLL_INTERVAL_MS - 5_000;
+const PULLS_PER_LIST = 30;
+/** More changes than this in one poll still show in the activity list, but only the newest are pushed. */
+const MAX_PUSHES_PER_POLL = 3;
+/**
+ * Least important first. One poll's events are stored in this order, so when it finds more changes
+ * than get pushed or fit in the page's toasts, the ones kept are those that need the user most.
+ */
+const IMPORTANCE: GithubEventKind[] = [
+  'closed',
+  'checks_passed',
+  'commented',
+  'merged',
+  'approved',
+  'conflicts',
+  'checks_failed',
+  'changes_requested',
+  'review_requested',
+];
+/** Accounts polled at the same time by a scheduled run. */
+const POLL_CONCURRENCY = 4;
+const REST_API_VERSION = '2022-11-28';
+
+/** A failure to show the user. revoked means GitHub refused the token, so they must connect again. */
+export class GithubError extends Error {
+  revoked: boolean;
+  constructor(message: string, revoked = false) {
+    super(message);
+    this.revoked = revoked;
+  }
+}
+
+/** The fields of one pull request that the poll asks GitHub for. */
+const PULL_FIELDS = `
+fragment Pull on PullRequest {
+  id
+  number
+  title
+  url
+  isDraft
+  updatedAt
+  additions
+  deletions
+  reviewDecision
+  mergeable
+  repository { nameWithOwner }
+  author { login }
+  comments(last: 1) { totalCount nodes { author { login } } }
+  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+}`;
+
+const PULLS_QUERY = `
+query Pulls($reviewQuery: String!, $authoredQuery: String!, $first: Int!) {
+  viewer { login }
+  reviewRequested: search(type: ISSUE, query: $reviewQuery, first: $first) { nodes { ...Pull } }
+  authored: search(type: ISSUE, query: $authoredQuery, first: $first) { nodes { ...Pull } }
+}
+${PULL_FIELDS}`;
+
+/** Finds out what happened to pull requests that left the open list. */
+const STATES_QUERY = `
+query States($ids: [ID!]!) {
+  nodes(ids: $ids) { ... on PullRequest { id state mergedBy { login } } }
+}`;
+
+interface PullNode {
+  id?: string;
+  number: number;
+  title: string;
+  url: string;
+  isDraft: boolean;
+  updatedAt: string;
+  additions: number;
+  deletions: number;
+  reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
+  mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN';
+  repository: { nameWithOwner: string };
+  author: { login: string } | null;
+  comments: { totalCount: number; nodes: Array<{ author: { login: string } | null } | null> | null };
+  commits: { nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } } | null> | null };
+}
+
+interface PullsResult {
+  viewer: { login: string };
+  reviewRequested: { nodes: Array<PullNode | null> | null } | null;
+  authored: { nodes: Array<PullNode | null> | null } | null;
+}
+
+interface StatesResult {
+  nodes: Array<{ id?: string; state?: 'OPEN' | 'CLOSED' | 'MERGED'; mergedBy?: { login: string } | null } | null>;
+}
+
+const REVIEW: Record<NonNullable<PullNode['reviewDecision']>, PullReview> = {
+  APPROVED: 'approved',
+  CHANGES_REQUESTED: 'changes_requested',
+  REVIEW_REQUIRED: 'review_required',
+};
+
+function checksOf(state: string | undefined): PullChecks {
+  if (state === 'SUCCESS') return 'success';
+  if (state === 'FAILURE' || state === 'ERROR') return 'failure';
+  if (state === 'PENDING' || state === 'EXPECTED') return 'pending';
+  return null;
+}
+
+/** Turns GitHub's answer into the app's shape. Search results that are not pull requests come back empty and are dropped. */
+function toPulls(list: { nodes: Array<PullNode | null> | null } | null): PullRequestDTO[] {
+  return (list?.nodes ?? []).flatMap((node) => {
+    if (!node?.id) return [];
+    return [
+      {
+        id: node.id,
+        repo: node.repository.nameWithOwner,
+        number: node.number,
+        title: node.title,
+        url: node.url,
+        author: node.author?.login ?? null,
+        draft: node.isDraft,
+        review: node.reviewDecision ? REVIEW[node.reviewDecision] : null,
+        checks: checksOf(node.commits.nodes?.[0]?.commit.statusCheckRollup?.state),
+        conflicts: node.mergeable === 'CONFLICTING',
+        comments: node.comments.totalCount,
+        lastCommenter: node.comments.nodes?.[0]?.author?.login ?? null,
+        additions: node.additions,
+        deletions: node.deletions,
+        updatedAt: Date.parse(node.updatedAt),
+      },
+    ];
+  });
+}
+
+export type NewGithubEvent = Omit<GithubEventDTO, 'id' | 'createdAt'>;
+
+const eventFor = (pull: PullRequestDTO, kind: NewGithubEvent['kind'], actor: string | null = null): NewGithubEvent => ({
+  kind,
+  repo: pull.repo,
+  number: pull.number,
+  title: pull.title,
+  url: pull.url,
+  actor,
+});
+
+/**
+ * Compares two polls. Returns the changes worth an alert, and the user's own pull requests that
+ * left the open list (merged, closed, or no longer found), whose fate needs one more question.
+ */
+export function comparePulls(before: PullListsDTO, after: PullListsDTO, login: string) {
+  const events: NewGithubEvent[] = [];
+  const waitingBefore = new Set(before.reviewRequested.map((p) => p.id));
+  for (const pull of after.reviewRequested) {
+    if (!waitingBefore.has(pull.id)) events.push(eventFor(pull, 'review_requested', pull.author));
+  }
+
+  const mineBefore = new Map(before.authored.map((p) => [p.id, p]));
+  for (const pull of after.authored) {
+    const old = mineBefore.get(pull.id);
+    if (!old) continue;
+    if (pull.review !== old.review && (pull.review === 'approved' || pull.review === 'changes_requested')) {
+      events.push(eventFor(pull, pull.review));
+    }
+    if (pull.checks === 'failure' && old.checks !== 'failure') events.push(eventFor(pull, 'checks_failed'));
+    if (pull.checks === 'success' && (old.checks === 'pending' || old.checks === 'failure')) {
+      events.push(eventFor(pull, 'checks_passed'));
+    }
+    if (pull.conflicts && !old.conflicts) events.push(eventFor(pull, 'conflicts'));
+    if (pull.comments > old.comments && pull.lastCommenter && pull.lastCommenter.toLowerCase() !== login.toLowerCase()) {
+      events.push(eventFor(pull, 'commented', pull.lastCommenter));
+    }
+  }
+
+  const stillOpen = new Set(after.authored.map((p) => p.id));
+  const left = before.authored.filter((p) => !stillOpen.has(p.id));
+  return { events, left };
+}
+
+/** AES-256-GCM, bound to the account it belongs to so a token cannot be moved to another row. */
+function tokenCipher(clientSecret: string) {
+  const key = Buffer.from(crypto.hkdfSync('sha256', clientSecret, 'webchat', 'github token v1', 32));
+  return {
+    seal(token: string, userId: number): string {
+      const iv = crypto.randomBytes(12);
+      const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+      cipher.setAAD(Buffer.from(String(userId)));
+      const data = Buffer.concat([cipher.update(token, 'utf8'), cipher.final(), cipher.getAuthTag()]);
+      return ['v1', iv.toString('base64url'), data.toString('base64url')].join('.');
+    },
+    /** Null when the token was sealed with another client secret, or altered. */
+    open(sealed: string, userId: number): string | null {
+      const [version, iv, data] = sealed.split('.');
+      if (version !== 'v1' || !iv || !data) return null;
+      try {
+        const bytes = Buffer.from(data, 'base64url');
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'));
+        decipher.setAAD(Buffer.from(String(userId)));
+        decipher.setAuthTag(bytes.subarray(bytes.length - 16));
+        return Buffer.concat([decipher.update(bytes.subarray(0, bytes.length - 16)), decipher.final()]).toString('utf8');
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+export type Github = ReturnType<typeof createGithub>;
+
+export function createGithub(db: Db, push: Push, config: Config) {
+  const { githubClientId: clientId, githubClientSecret: clientSecret } = config;
+  const configured = Boolean(clientId && clientSecret);
+  const tokens = clientSecret ? tokenCipher(clientSecret) : null;
+
+  async function rest<T>(token: string, path: string): Promise<T> {
+    const res = await fetch(`${config.githubApiUrl}${path}`, {
+      headers: {
+        accept: 'application/vnd.github+json',
+        authorization: `Bearer ${token}`,
+        'user-agent': 'WebChat',
+        'x-github-api-version': REST_API_VERSION,
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.status === 401) throw new GithubError('GitHub no longer accepts this connection. Connect GitHub again.', true);
+    if (!res.ok) throw new GithubError(`GitHub answered ${res.status}. Try again in a few minutes.`);
+    return (await res.json()) as T;
+  }
+
+  async function graphql<T>(token: string, query: string, variables: Record<string, unknown>): Promise<T> {
+    const res = await fetch(`${config.githubApiUrl}/graphql`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': 'WebChat' },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.status === 401) throw new GithubError('GitHub no longer accepts this connection. Connect GitHub again.', true);
+    if (!res.ok) throw new GithubError(`GitHub answered ${res.status}. Trying again in a few minutes.`);
+    // An organization that blocks the app makes GitHub leave out its pull requests and add an
+    // error; the rest of the answer is still good.
+    const body = (await res.json()) as { data?: T | null; errors?: Array<{ message: string }> };
+    if (!body.data) throw new GithubError(body.errors?.[0]?.message ?? 'GitHub sent an empty answer.');
+    return body.data;
+  }
+
+  async function fetchPulls(token: string, login: string) {
+    const scope = 'is:pr is:open archived:false sort:updated-desc';
+    const data = await graphql<PullsResult>(token, PULLS_QUERY, {
+      reviewQuery: `${scope} review-requested:${login}`,
+      authoredQuery: `${scope} author:${login}`,
+      first: PULLS_PER_LIST,
+    });
+    const pulls: PullListsDTO = { reviewRequested: toPulls(data.reviewRequested), authored: toPulls(data.authored) };
+    return { login: data.viewer.login, pulls };
+  }
+
+  /** Merged or closed events for the user's pull requests that left the open list. */
+  async function endings(token: string, left: PullRequestDTO[]): Promise<NewGithubEvent[]> {
+    if (left.length === 0) return [];
+    const data = await graphql<StatesResult>(token, STATES_QUERY, { ids: left.map((p) => p.id) });
+    const byId = new Map(left.map((p) => [p.id, p]));
+    return data.nodes.flatMap((node) => {
+      const pull = node?.id ? byId.get(node.id) : undefined;
+      if (!pull) return [];
+      if (node!.state === 'MERGED') return [eventFor(pull, 'merged', node!.mergedBy?.login ?? null)];
+      if (node!.state === 'CLOSED') return [eventFor(pull, 'closed')];
+      return [];
+    });
+  }
+
+  /**
+   * Pushes new events with the same rule as chat messages: only to the browser in use while the
+   * user looks at the app, to every device otherwise. A tab without push finds them on its next
+   * refresh and shows them itself.
+   */
+  async function alert(userId: number, events: GithubEventDTO[]) {
+    const user = await db.getUser(userId);
+    if (!user) return;
+    const looking = isAttentive(user);
+    if (looking && !user.attentive_endpoint) return;
+    for (const event of events.slice(-MAX_PUSHES_PER_POLL)) {
+      const { title, body } = describeGithubEvent(event);
+      const payload: PushPayload = {
+        kind: 'github',
+        title,
+        body,
+        bodyPrefix: '',
+        urgent: false,
+        // Later news about the same pull request replaces the earlier notification.
+        tag: `github-${event.repo}#${event.number}`,
+        conversationId: null,
+        messageId: null,
+        senderId: null,
+        clientId: null,
+        envelope: null,
+        unreadTotal: null,
+        sentAt: event.createdAt,
+        url: event.url,
+      };
+      await push.sendToUser(userId, payload, looking ? user.attentive_endpoint! : undefined);
+    }
+  }
+
+  /**
+   * Fetches the account's pull requests and records what changed since the last poll, unless it
+   * was polled within minIntervalMs. The first poll after connecting only records them.
+   */
+  async function poll(userId: number, minIntervalMs = POLL_INTERVAL_MS): Promise<void> {
+    if (!tokens) return;
+    const account = await db.claimGithubPoll(userId, minIntervalMs);
+    if (!account) return;
+    const token = tokens.open(account.token, userId);
+    if (!token) {
+      await db.setGithubError(userId, 'The server’s GitHub settings changed. Connect GitHub again.', true);
+      return;
+    }
+    try {
+      const { login, pulls } = await fetchPulls(token, account.login);
+      const before = account.pulls ? (JSON.parse(account.pulls) as PullListsDTO) : null;
+      const events: NewGithubEvent[] = [];
+      if (before) {
+        const changes = comparePulls(before, pulls, login);
+        events.push(...changes.events, ...(await endings(token, changes.left)));
+      }
+      await db.saveGithubPulls(userId, login, JSON.stringify(pulls));
+      if (events.length === 0) return;
+      events.sort((a, b) => IMPORTANCE.indexOf(a.kind) - IMPORTANCE.indexOf(b.kind));
+      const added = await db.addGithubEvents(userId, events);
+      if (account.notify) await alert(userId, added);
+    } catch (error) {
+      if (!(error instanceof GithubError)) config.logger.error(`GitHub poll for user ${userId} failed`, error);
+      const message = error instanceof GithubError ? error.message : 'Could not reach GitHub. Trying again in a few minutes.';
+      await db.setGithubError(userId, message, error instanceof GithubError && error.revoked);
+    }
+  }
+
+  return {
+    configured,
+
+    /** Polls if the last poll is older than a minute, or 10 seconds for the refresh button. */
+    refresh: (userId: number, manual: boolean) => poll(userId, manual ? MANUAL_POLL_INTERVAL_MS : POLL_INTERVAL_MS),
+
+    /** Polls every account that is due. Runs on the server's timer or when a scheduler calls in. */
+    async pollAll(): Promise<number> {
+      if (!configured) return 0;
+      const due = await db.githubAccountsDue(SCHEDULED_POLL_INTERVAL_MS);
+      const queue = [...due];
+      const worker = async () => {
+        for (let id = queue.shift(); id !== undefined; id = queue.shift()) await poll(id, SCHEDULED_POLL_INTERVAL_MS);
+      };
+      await Promise.all(Array.from({ length: POLL_CONCURRENCY }, worker));
+      return due.length;
+    },
+
+    async view(userId: number): Promise<GithubDTO> {
+      const account = configured ? await db.githubAccount(userId) : undefined;
+      if (!account) {
+        return { configured, account: null, pulls: null, events: [], fetchedAt: null, error: null, reconnect: false };
+      }
+      return {
+        configured,
+        account: { login: account.login, name: account.name, notify: account.notify },
+        pulls: account.pulls ? (JSON.parse(account.pulls) as PullListsDTO) : null,
+        events: await db.githubEvents(userId),
+        fetchedAt: account.fetched_at,
+        error: account.error,
+        reconnect: account.revoked,
+      };
+    },
+
+    /**
+     * Starts linking: returns GitHub's sign-in URL, and the value to keep in a short-lived cookie
+     * until GitHub sends the user back. The state stops another site from linking its own account
+     * to this user; PKCE makes a stolen code useless.
+     */
+    beginConnect(userId: number, redirectUri: string): { url: string; cookie: string } {
+      const state = crypto.randomBytes(24).toString('base64url');
+      const verifier = crypto.randomBytes(32).toString('base64url');
+      const url = new URL('/login/oauth/authorize', config.githubOauthUrl);
+      url.search = new URLSearchParams({
+        client_id: clientId!,
+        redirect_uri: redirectUri,
+        scope: SCOPE,
+        state,
+        allow_signup: 'false',
+        code_challenge: crypto.createHash('sha256').update(verifier).digest('base64url'),
+        code_challenge_method: 'S256',
+      }).toString();
+      return { url: url.toString(), cookie: [userId, state, verifier].join('.') };
+    },
+
+    /** Finishes linking once GitHub sends the user back with a code. */
+    async completeConnect(userId: number, cookie: string | undefined, state: string, code: string, redirectUri: string) {
+      const [cookieUser, cookieState, verifier] = (cookie ?? '').split('.');
+      if (Number(cookieUser) !== userId || !cookieState || !verifier || !state || !safeEqual(cookieState, state)) {
+        throw new GithubError('The GitHub sign-in expired or was started in another browser. Try again.');
+      }
+      const res = await fetch(new URL('/login/oauth/access_token', config.githubOauthUrl), {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json', 'user-agent': 'WebChat' },
+        body: JSON.stringify({
+          client_id: clientId,
+          client_secret: clientSecret,
+          code,
+          redirect_uri: redirectUri,
+          code_verifier: verifier,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      // GitHub reports a bad code in the body, not always with an error status.
+      const data = (await res.json().catch(() => ({}))) as { access_token?: string; error?: string };
+      if (!res.ok || !data.access_token) throw new GithubError(`GitHub refused the sign-in (${data.error ?? res.status}).`);
+      const user = await rest<{ id: number; login: string; name: string | null }>(data.access_token, '/user');
+      await db.saveGithubAccount(userId, {
+        githubId: user.id,
+        login: user.login,
+        name: user.name,
+        token: tokens!.seal(data.access_token, userId),
+      });
+    },
+
+    setNotify: (userId: number, notify: boolean) => db.setGithubNotify(userId, notify),
+
+    /** Unlinks the account here, and deletes the app's grant on GitHub so the token stops working. */
+    async disconnect(userId: number) {
+      const account = await db.githubAccount(userId);
+      if (!account) return;
+      await db.deleteGithubAccount(userId);
+      const token = tokens?.open(account.token, userId);
+      if (!token) return;
+      const res = await fetch(`${config.githubApiUrl}/applications/${encodeURIComponent(clientId!)}/grant`, {
+        method: 'DELETE',
+        headers: {
+          accept: 'application/vnd.github+json',
+          authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
+          'content-type': 'application/json',
+          'user-agent': 'WebChat',
+          'x-github-api-version': REST_API_VERSION,
+        },
+        body: JSON.stringify({ access_token: token }),
+        signal: AbortSignal.timeout(10_000),
+      }).catch((error: unknown) => {
+        config.logger.warn(`Could not revoke the GitHub grant of user ${userId}: ${String(error)}`);
+        return null;
+      });
+      // 404 or 422: the user already revoked it on GitHub.
+      if (res && !res.ok && res.status !== 404 && res.status !== 422) {
+        config.logger.warn(`Could not revoke the GitHub grant of user ${userId} (${res.status}).`);
+      }
+    },
+  };
+}

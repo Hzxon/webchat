@@ -31,6 +31,7 @@ async function payloadFor(db: Db, recipientId: number, message: MessageDTO, conv
     envelope: message.envelope,
     unreadTotal: await db.unreadTotal(recipientId),
     sentAt: message.createdAt,
+    url: null,
   };
   // A long message does not fit in a push; the notification then says "New message" without text.
   if (new TextEncoder().encode(JSON.stringify(payload)).length > MAX_PAYLOAD_BYTES) payload.envelope = null;

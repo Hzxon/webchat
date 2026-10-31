@@ -57,7 +57,8 @@ export function Toasts() {
             className="toast-main"
             onClick={() => {
               actions.dismissToast(toast.id);
-              void openConversation(toast.conversationId);
+              if (toast.url) window.open(toast.url, '_blank', 'noopener,noreferrer');
+              else if (toast.conversationId !== null) void openConversation(toast.conversationId);
             }}
           >
             <strong>{toast.title}</strong>

@@ -1,11 +1,14 @@
 import { useSyncExternalStore } from 'react';
-import type { UserDTO } from '../../shared/types';
+import type { GithubDTO, UserDTO } from '../../shared/types';
 import type { ChatConversation, ChatMessage } from './e2ee/keyring';
 import type { PushState } from './push';
 
 export interface Toast {
   id: number;
-  conversationId: number;
+  /** The chat a click opens. Null for toasts that open a page instead. */
+  conversationId: number | null;
+  /** Page a click opens in a new tab, such as a pull request on GitHub. */
+  url?: string;
   title: string;
   body: string;
 }
@@ -30,6 +33,10 @@ export interface State {
   push: PushState | null;
   /** People whose encryption keys differ from the ones this device saw first. */
   keyWarnings: Record<number, true>;
+  /** The GitHub connector's state; null until loaded. */
+  github: GithubDTO | null;
+  /** The pull requests pane is showing instead of a chat. */
+  githubOpen: boolean;
 }
 
 const initialState: State = {
@@ -45,6 +52,8 @@ const initialState: State = {
   toasts: [],
   push: null,
   keyWarnings: {},
+  github: null,
+  githubOpen: false,
 };
 
 let state = initialState;
@@ -195,7 +204,14 @@ export const actions = {
       return same ? s : { ...s, keyWarnings: Object.fromEntries([...ids].map((id) => [id, true as const])) };
     }),
 
-  setActive: (activeId: number | null) => store.set((s) => ({ ...s, activeId })),
+  setActive: (activeId: number | null) =>
+    store.set((s) => ({ ...s, activeId, githubOpen: activeId === null ? s.githubOpen : false })),
+
+  setGithub: (github: GithubDTO) => store.set((s) => ({ ...s, github })),
+
+  /** Shows the pull requests pane in place of the open chat, or closes it. */
+  setGithubOpen: (githubOpen: boolean) =>
+    store.set((s) => ({ ...s, githubOpen, activeId: githubOpen ? null : s.activeId })),
 
   addUrgent: (message: ChatMessage) =>
     store.set((s) => (s.urgent.some((m) => m.id === message.id) ? s : { ...s, urgent: [...s.urgent, message] })),
@@ -211,7 +227,8 @@ export const actions = {
 
   addToast: (toast: Omit<Toast, 'id'>) => {
     const id = ++toastId;
-    store.set((s) => ({ ...s, toasts: [...s.toasts.filter((t) => t.conversationId !== toast.conversationId), { ...toast, id }].slice(-3) }));
+    const replaces = (t: Toast) => toast.conversationId !== null && t.conversationId === toast.conversationId;
+    store.set((s) => ({ ...s, toasts: [...s.toasts.filter((t) => !replaces(t)), { ...toast, id }].slice(-3) }));
     setTimeout(() => actions.dismissToast(id), 5000);
   },
 
