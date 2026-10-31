@@ -141,7 +141,8 @@ Accepted 2026-11-01 in 10ba6d8. The rule about numbers comes from #2.
 `SCHEMA` in `server/db.ts` creates the original tables. Every later change is an entry at the end of
 `MIGRATIONS`. Each entry runs once, in order, in a transaction that holds an advisory lock, because
 several serverless instances can start at once. `webchat.meta` records how many have run. So far:
-1 is end-to-end encryption, 2 is the GitHub connector, and 3 is projects with replies and reactions.
+1 is end-to-end encryption, 2 is the GitHub connector, 3 is projects with replies and reactions, and
+4 is group owners (#4).
 
 Two branches once both added a migration 2. The projects migration became 3 when its branch merged,
 because a database that had already run the connector's migration 2 would have skipped it. When two
@@ -151,13 +152,15 @@ Cost: a mistake in a migration on main is fixed with a new migration, never by e
 
 ### D-011: Limits live in one place
 
-Accepted 2026-11-01 in 74d53ff, extended in 10ba6d8 and #2.
+Accepted 2026-11-01 in 74d53ff, extended in 10ba6d8, #2 and #4.
 
 `LIMITS` in `shared/types.ts` holds the sizes that the server enforces and the page respects: 4,000
 characters per message, 160 per quote, 24,000 per ciphertext, the lengths of names, 50 messages per
 history page, and 20 people added to a project at once. Express accepts JSON bodies of up to 64 KB
 (`server/app.ts`), raised from 16 KB for encryption in 10ba6d8. That caps batch requests: adding 20
-people to a project sends every channel's key wrapped for each of them.
+people to a project sends every channel's key wrapped for each of them. Removing someone sends every
+channel's key wrapped again for each person who stays (D-039). A copy takes about 110 bytes, so a
+project nears the cap at about 20 people with 30 channels.
 
 Cost: raising a limit can need a larger body limit too. Check both.
 
@@ -199,15 +202,16 @@ server can still see.
 
 ### D-015: One key per chat, wrapped for each member
 
-Accepted 2026-11-01 in 10ba6d8.
+Accepted 2026-11-01 in 10ba6d8, extended in #4.
 
 Each chat has a random AES-256-GCM key. The member who creates it wraps a copy for every member with
 a key from ECDH between the two of them, so a wrapped copy proves who made it. The page accepts a
 copy only when the person who wrapped it is a member of the chat. The server checks that a new key
-comes wrapped exactly once for every member.
+comes wrapped exactly once for every member. When someone is removed, the person removing them wraps
+every copy again, so each copy left was made by a current member (D-039).
 
-Cost: a chat keeps one key for its lifetime. Without rotation, nobody can be cut off from a chat
-(D-028, roadmap R-002).
+Cost: a chat keeps one key for its lifetime, so people removed from it keep that key (D-039, roadmap
+R-002).
 
 ### D-016: Encrypt, then sign everything the server could change
 
@@ -259,17 +263,18 @@ message, and the first key set wins.
 
 ### D-020: Known limits of the encryption
 
-Accepted 2026-11-01 in 10ba6d8, extended in #1 and #2.
+Accepted 2026-11-01 in 10ba6d8, extended in #1, #2 and #4.
 
 WebChat accepts these limits and lists them in the README:
 
 - The page runs the code the server sends, so an operator who changes the app could read messages.
 - Metadata stays visible to the server: who talks to whom and when, group, project and channel
-  names, who is in which project and who added them, display names, whether a message is urgent,
-  and that someone reacted.
+  names, who is in which project and who added them, who made each project and group, display
+  names, whether a message is urgent, and that someone reacted.
 - Pull request titles and repository names are not end-to-end encrypted (D-033).
 - The member list that a new channel's key is wrapped for comes from the server. The New channel
   dialog shows it so people can check it.
+- People removed from a project or group keep the keys they had (D-039).
 
 Cost: a feature that shows the server something new must add it to this list and to the README.
 
@@ -277,16 +282,18 @@ Cost: a feature that shows the server something new must add it to this list and
 
 ### D-021: The sync fingerprint is the change detector
 
-Accepted 2026-11-01 in 74d53ff, extended in #2.
+Accepted 2026-11-01 in 74d53ff, extended in #2 and #4.
 
 `db.stamp` builds one string per user from a single query. It covers the sum of the newest event
-ids in their chats, the read and delivered pointers, how many chats they are in and how many members
-those chats have, how many chats have keys, how many people there are and how many have keys, and
-who is online. A check-in whose stamp matches answers "unchanged" without loading anything else.
+ids in their chats, the read and delivered pointers, how many chats they are in, the sum of the
+times their members joined those chats, how many chats have keys, how many people there are and how
+many have keys, and who is online. A check-in whose stamp matches answers "unchanged" without
+loading anything else.
 
 Cost: any state that pages must see has to change this string, or pages miss it until something
 else changes. #2 added the newest event ids, so reactions show up, and the member count, so new
-members show up.
+members show up. #4 replaced the member count with the sum of join times, so one person leaving and
+another joining between two check-ins still show up.
 
 ### D-022: Receipts are per-member pointers
 
@@ -353,7 +360,7 @@ so "Slides & Design" becomes `slides-design`. Every project starts with `#genera
 
 ### D-028: No leaving or removal before key rotation
 
-Accepted 2026-11-01 in #2.
+Superseded by D-039. Accepted 2026-11-01 in #2.
 
 Nobody can leave a project or be removed from one yet. A removed member would still hold every
 channel key, so removal without key rotation would only stop the server from sending them new
@@ -361,6 +368,32 @@ messages. Groups also cannot take new members after they are created; projects c
 
 Cost: a mistaken add cannot be undone in the app (roadmap R-002), and a teammate who joins late
 needs a new group (roadmap R-003).
+
+### D-039: Owners remove people and delete, before key rotation
+
+Accepted 2026-11-01 in #4. Replaces D-028.
+
+The person who made a project or group is its owner. Only the owner can remove people from it, or
+delete it for everyone with every channel and message. Projects already recorded who made them.
+Migration 4 adds `conversations.created_by` for groups. Every copy of a group's key was wrapped by
+the person who made it, so existing groups get that person. A group from before encryption gets the
+member who set its key, and one with no key yet has no owner, so any member can manage it.
+
+WebChat's owner asked for removal before key rotation (R-002), so keys stay the same. A page accepts
+a copy of a key only from a current member (D-015). Removing someone who made a channel or added
+people would then lock others out on any new device. So the owner's browser wraps every key in the
+project or group again, for exactly the people who stay. The server checks this under the project's
+or the group's lock, and answers `409 stale_project` or `409 stale_group` when the page's view is
+out of date. The page then reloads and tries once more (D-025).
+
+Nobody can remove themselves, so nobody can leave. A person who leaves could not wrap the copies the
+others need. Being removed sends no notification. A page that has the chat open closes it and says
+why. Groups still cannot take new members, so someone removed from a group cannot come back (R-003).
+
+Cost: people removed keep the keys they had. They could read later messages if they got them some
+other way, for example from a copy of the database. The server stops sending them anything. Only a
+browser that can open every key in the project or group can remove someone, and the request carries
+every key wrapped for everyone who stays (D-011).
 
 ## Replies and reactions
 

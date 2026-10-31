@@ -37,7 +37,7 @@ Constraints:
 - Status, assignee, due date and priority may be visible to the server. If they are, list them in
   the README and in D-020.
 - Every task change must change the sync fingerprint, or pages will not see it (D-021).
-- Schema changes go in migration 4 (D-010).
+- Schema changes go in migration 5 (D-010).
 
 Done when: typecheck, tests and build pass. Tests prove that the database holds no task text in
 plain and that only project members can read or change tasks. The board has been tried in a browser
@@ -52,17 +52,25 @@ Open questions:
 
 ## Planned
 
-### R-002: Leave a project, remove members, and rotate keys
+### R-002: Rotate keys on removal, and let people leave
 
-Status: Planned.
+Status: Planned. Owners can remove people since #4, without rotation (D-039).
 
-Why: a mistaken add cannot be undone, and a removed member would keep every channel key (D-028).
+Why: people removed from a project or group keep its keys (D-039). Nobody can leave on their own,
+and an owner cannot hand a project or group to someone else.
 
-Scope: leaving and removing. On removal, every channel of the project gets a new key, wrapped for
-the remaining members. Pages keep the old keys to read old messages, so a chat can have more than
-one key id. The signed header already names the key id (D-016).
+Scope:
+
+- On removal, every chat in the project or group gets a new key, wrapped for the people who stay.
+  Pages keep the old keys to read old messages, so a chat can have more than one key id. The signed
+  header already names the key id (D-016).
+- Leaving. A page accepts a copy of a key only from a current member (D-015), and a person who
+  leaves cannot wrap copies for the others. Someone who stays has to make new copies, so leaving may
+  wait for another member's browser.
+- Handing a project or group to another member, so that its owner can leave too.
 
 Done when: a removed member cannot decrypt anything sent after the removal, and a test proves it.
+Members can leave, and an owner can hand over.
 
 Open question: when someone joins after a rotation, do they get the old keys too, so they can read
 the history (D-026)?
@@ -71,8 +79,8 @@ the history (D-026)?
 
 Status: Planned.
 
-Why: a group cannot take new members after it is created (D-028), so a late teammate needs a new
-group.
+Why: a group cannot take new members after it is created (D-039), so a late teammate needs a new
+group, and a person removed by mistake cannot come back.
 
 Scope: reuse the project mechanism. A member's browser wraps the group's key for the newcomer
 (D-026).
@@ -177,6 +185,14 @@ The README asks for Node 22.13 or later to run WebChat locally. The `engines` fi
 `package.json` pins Node 26.x (D-013). Decide which versions local development supports, and make
 both say the same.
 
+### K-4: A group's member names change order
+
+A group's header lists its members in the order the server returns them, and that order changed
+during testing on 2026-11-01: "You, Bob, Carol" became "Bob, You" after a removal and new messages.
+The likely cause, not yet confirmed: the members query in `conversations()` in `server/db.ts` has no
+`ORDER BY`, so Postgres returns the rows in storage order, which an update changes. Ordering the
+members, for example by when they joined, would keep the names still.
+
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
@@ -200,3 +216,4 @@ several communities?
 | Tabs keep to the account they show | b75d690 |
 | GitHub pull requests | #1 |
 | Projects with channels, replies and reactions | #2 |
+| Owners remove members and delete projects and groups | #4 |

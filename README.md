@@ -89,8 +89,9 @@ What it does not protect against:
   sends, so encryption protects you from anyone who reads the database or the hosts, not from a
   malicious operator who changes the app itself.
 - **Metadata stays visible to the server:** who talks to whom and when, group, project and
-  channel names, who is in which project and who added them, display names, whether a message is
-  urgent, and that someone reacted (not with which emoji, or to which message).
+  channel names, who is in which project and who added them, who made each project and group,
+  display names, whether a message is urgent, and that someone reacted (not with which emoji, or to
+  which message).
 - **Who gets a new channel's key comes from the server.** A new channel's key is wrapped for
   everyone the server lists as a project member. The New channel dialog names them, so check that
   list.
