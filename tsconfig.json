@@ -1,4 +1,7 @@
 {
-  "//": "Used by Vercel to compile api/index.ts and the server code it imports.",
-  "extends": "./tsconfig.server.json"
+  "//": "Used by Vercel to compile api/index.ts and the server code it imports. Vercel compiles from a temporary tsconfig in another folder that extends this one, so typeRoots is spelled out: paths here resolve relative to this file.",
+  "extends": "./tsconfig.server.json",
+  "compilerOptions": {
+    "typeRoots": ["./node_modules/@types"]
+  }
 }
