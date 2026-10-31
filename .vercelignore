@@ -1,0 +1,8 @@
+# Keep local data and build output out of the upload; Vercel builds from source.
+data
+dist
+node_modules
+.env
+.env.*
+.claude
+test

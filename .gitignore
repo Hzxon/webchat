@@ -1,0 +1,15 @@
+node_modules/
+dist/
+data/
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+
+# Secrets: local env files and Vercel's pulled credentials
+.env*
+!.env.example
+.vercel
+
+# Local Claude Code tooling
+.claude/

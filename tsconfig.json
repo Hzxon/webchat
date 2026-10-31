@@ -1,0 +1,4 @@
+{
+  "//": "Used by Vercel to compile api/index.ts and the server code it imports.",
+  "extends": "./tsconfig.server.json"
+}
