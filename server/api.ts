@@ -12,6 +12,7 @@ import {
 } from './auth.js';
 import type { Config } from './config.js';
 import { keyBackupOf, toUserDTO, type Db, type ProjectChangeRefusal, type SharedChannelKey, type UserRow } from './db.js';
+import { GithubError, type Github } from './github.js';
 import { notifyAddedToProject, notifyNewMessage } from './notify.js';
 import type { Push, PushSubscriptionInput } from './push.js';
 import {
@@ -52,6 +53,9 @@ class HttpError extends Error {
 }
 
 const USERNAME = /^[a-z0-9_.]{3,24}$/i;
+
+/** Holds the OAuth state while the user signs in on GitHub. Only the GitHub routes ever see it. */
+const GITHUB_STATE_COOKIE = 'webchat_github';
 
 function text(value: unknown, field: string, min: number, max: number): string {
   const result = typeof value === 'string' ? value.trim() : '';
@@ -161,6 +165,12 @@ function currentUser(res: Response): UserRow {
   return user;
 }
 
+/**
+ * The query string, read with the WHATWG URL API. Reading req.query makes Express call Node's
+ * url.parse(), which logs a deprecation warning (DEP0169) on Vercel.
+ */
+const queryOf = (req: Request) => new URL(req.originalUrl, 'http://localhost').searchParams;
+
 /** Keeps a serverless function alive until background work (like sending pushes) finishes. */
 function inBackground(work: Promise<unknown>) {
   waitUntil(work);
@@ -169,12 +179,13 @@ function inBackground(work: Promise<unknown>) {
 interface ApiDeps {
   db: Db;
   push: Push;
+  github: Github;
   config: Config;
   inviteCode: string;
   kdfSalt: string;
 }
 
-export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDeps) {
+export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt }: ApiDeps) {
   const router = express.Router();
 
   function startSession(req: Request, res: Response, user: UserRow) {
@@ -191,10 +202,15 @@ export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDe
     next();
   }
 
-  async function requireAuth(req: Request, res: Response, next: NextFunction) {
+  async function sessionOf(req: Request) {
     const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
     const sessionHash = token ? hashToken(token) : undefined;
     const user = sessionHash ? await db.sessionUser(sessionHash) : undefined;
+    return { user, sessionHash };
+  }
+
+  async function requireAuth(req: Request, res: Response, next: NextFunction) {
+    const { user, sessionHash } = await sessionOf(req);
     if (!user) throw new HttpError(401, 'Sign in first.');
     // All tabs of a browser share one session cookie. A tab still showing an account that another
     // tab signed out of names its account here, so it is stopped instead of acting as the new one.
@@ -550,6 +566,85 @@ export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDe
     res.status(204).end();
   });
 
+  /** Where GitHub sends the user back. It must match the callback URL registered on the OAuth App. */
+  const githubCallbackUrl = (req: Request) =>
+    config.githubCallbackUrl ?? `${req.protocol}://${req.get('host')}/api/github/callback`;
+
+  /** The linked GitHub account and its pull requests, fetched again first when the last poll is old. */
+  router.get('/github', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    await github.refresh(me.id, queryOf(req).get('refresh') === '1');
+    res.json(await github.view(me.id));
+  });
+
+  /**
+   * The page navigates here to link GitHub, and GitHub sends the browser back to /github/callback.
+   * Both are page loads, not API calls, so they answer with redirects to the app instead of JSON.
+   */
+  router.get('/github/connect', async (req, res) => {
+    const { user } = await sessionOf(req);
+    if (!user || !github.configured) return res.redirect(303, '/?github=error');
+    if (!(await db.takeRateLimit(`github:${user.id}`, 10, 15 * 60_000))) return res.redirect(303, '/?github=error');
+    const { url, cookie } = github.beginConnect(user.id, githubCallbackUrl(req));
+    res.cookie(GITHUB_STATE_COOKIE, cookie, {
+      httpOnly: true,
+      // Lax still sends it when GitHub redirects back, since that is a top-level page load.
+      sameSite: 'lax',
+      secure: req.secure,
+      maxAge: 10 * 60_000,
+      path: '/api/github',
+    });
+    res.redirect(303, url);
+  });
+
+  router.get('/github/callback', async (req, res) => {
+    const { user } = await sessionOf(req);
+    const cookie = parseCookies(req.headers.cookie)[GITHUB_STATE_COOKIE];
+    const query = queryOf(req);
+    res.clearCookie(GITHUB_STATE_COOKIE, { path: '/api/github' });
+    if (!user || !github.configured) return res.redirect(303, '/?github=error');
+    const oauthError = query.get('error');
+    if (oauthError) return res.redirect(303, `/?github=${oauthError === 'access_denied' ? 'denied' : 'error'}`);
+    try {
+      await github.completeConnect(
+        user.id,
+        cookie,
+        query.get('state') ?? '',
+        query.get('code') ?? '',
+        githubCallbackUrl(req),
+      );
+    } catch (error) {
+      if (error instanceof GithubError) config.logger.warn(`GitHub connect failed for user ${user.id}: ${error.message}`);
+      else config.logger.error('GitHub connect failed', error);
+      return res.redirect(303, '/?github=error');
+    }
+    res.redirect(303, '/?github=connected');
+  });
+
+  router.patch('/github', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    if (typeof req.body?.notify !== 'boolean') throw new HttpError(400, 'notify must be true or false.');
+    await github.setNotify(me.id, req.body.notify);
+    res.json(await github.view(me.id));
+  });
+
+  router.delete('/github', requireAuth, async (_req, res) => {
+    const me = currentUser(res);
+    await github.disconnect(me.id);
+    res.json(await github.view(me.id));
+  });
+
+  /**
+   * Polls every connected account that is due. Vercel Cron, or any scheduler, calls it with
+   * "Authorization: Bearer <CRON_SECRET>", so alerts arrive while every tab is closed.
+   */
+  router.get('/github/poll', async (req, res) => {
+    if (!config.cronSecret || !safeEqual(req.get('authorization') ?? '', `Bearer ${config.cronSecret}`)) {
+      throw new HttpError(401, 'Send the CRON_SECRET as a bearer token.');
+    }
+    res.json({ polled: await github.pollAll() });
+  });
+
   router.post('/push/test', requireAuth, async (_req, res) => {
     const me = currentUser(res);
     const payload: PushPayload = {
@@ -566,6 +661,7 @@ export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDe
       envelope: null,
       unreadTotal: null,
       sentAt: Date.now(),
+      url: null,
     };
     res.json(await push.sendToUser(me.id, payload));
   });

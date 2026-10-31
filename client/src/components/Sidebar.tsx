@@ -14,6 +14,7 @@ import {
   HashIcon,
   LogoutIcon,
   PlusIcon,
+  PullRequestIcon,
   SearchIcon,
   Ticks,
   UserPlusIcon,
@@ -128,6 +129,7 @@ export function Sidebar({ onNewChat, onNewProject, onNewChannel, onAddPeople, on
 
       {tab === 'chats' ? (
         <ul className="chat-list">
+          {!query && <GithubListItem />}
           {sorted.map((c) => (
             <ChatListItem key={c.id} conversation={c} />
           ))}
@@ -245,6 +247,42 @@ function AlertSetupBanner({ onOpen }: { onOpen: () => void }) {
     );
   }
   return null;
+}
+
+/** Opens the pull requests pane. Shown once the server owner has set up the GitHub connector. */
+function GithubListItem() {
+  const github = useAppState((s) => s.github);
+  const open = useAppState((s) => s.githubOpen);
+  if (!github?.configured) return null;
+
+  const waiting = github.pulls?.reviewRequested.length ?? 0;
+  let preview = 'Connect GitHub to follow your pull requests';
+  if (github.reconnect) preview = 'Connect GitHub again';
+  else if (github.account && !github.pulls) preview = github.error ?? 'Loading pull requests…';
+  else if (github.pulls) {
+    const mine = github.pulls.authored.length;
+    preview = `${waiting > 0 ? `${waiting} waiting for your review` : 'No reviews waiting'} · ${mine} of yours open`;
+  }
+
+  return (
+    <li>
+      <button className={`chat-item ${open ? 'is-active' : ''}`} onClick={() => actions.setGithubOpen(true)}>
+        <span className="github-mark">
+          <PullRequestIcon />
+        </span>
+        <span className="chat-item-main">
+          <span className="chat-item-row">
+            <strong className="chat-item-title">Pull requests</strong>
+            {github.account && <time>@{github.account.login}</time>}
+          </span>
+          <span className="chat-item-row">
+            <span className="chat-item-preview">{preview}</span>
+            {waiting > 0 && <span className="unread-badge">{waiting}</span>}
+          </span>
+        </span>
+      </button>
+    </li>
+  );
 }
 
 function ChatListItem({ conversation }: { conversation: ChatConversation }) {

@@ -218,7 +218,7 @@ export interface AddProjectMembersInput {
 /** JSON body of every Web Push message. The service worker turns it into a notification. */
 export interface PushPayload {
   /** "reaction" only wakes a tab the user is looking at; "project" says someone added them to one. */
-  kind: 'message' | 'reaction' | 'project' | 'test';
+  kind: 'message' | 'reaction' | 'project' | 'github' | 'test';
   title: string;
   /** Text for messages the server can read (tests, old plain messages). Empty for encrypted ones. */
   body: string;
@@ -234,6 +234,90 @@ export interface PushPayload {
   envelope: EnvelopeDTO | null;
   unreadTotal: number | null;
   sentAt: number;
+  /** Page a click on the notification opens instead of a chat, such as a pull request on GitHub. */
+  url: string | null;
+}
+
+/** Combined result of a pull request's checks on its newest commit. Null when it has none. */
+export type PullChecks = 'success' | 'failure' | 'pending' | null;
+
+/** GitHub's review decision. Null when the repository does not require reviews. */
+export type PullReview = 'approved' | 'changes_requested' | 'review_required' | null;
+
+export interface PullRequestDTO {
+  /** GitHub's node id. */
+  id: string;
+  /** "owner/name". */
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  author: string | null;
+  draft: boolean;
+  review: PullReview;
+  checks: PullChecks;
+  /** The branch cannot merge without resolving conflicts. */
+  conflicts: boolean;
+  comments: number;
+  /** Who wrote the newest comment, to skip alerts about one's own comments. */
+  lastCommenter: string | null;
+  additions: number;
+  deletions: number;
+  updatedAt: number;
+}
+
+export interface PullListsDTO {
+  /** Open pull requests that ask this user, or one of their teams, for a review. */
+  reviewRequested: PullRequestDTO[];
+  /** Open pull requests this user opened. */
+  authored: PullRequestDTO[];
+}
+
+export type GithubEventKind =
+  | 'review_requested'
+  | 'approved'
+  | 'changes_requested'
+  | 'commented'
+  | 'checks_failed'
+  | 'checks_passed'
+  | 'conflicts'
+  | 'merged'
+  | 'closed';
+
+/** A change to a watched pull request, found by comparing two polls. */
+export interface GithubEventDTO {
+  id: number;
+  kind: GithubEventKind;
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  /** The person behind the change, when GitHub says who it was. */
+  actor: string | null;
+  createdAt: number;
+}
+
+export interface GithubAccountDTO {
+  login: string;
+  name: string | null;
+  /** Push alerts for pull request changes. */
+  notify: boolean;
+}
+
+export interface GithubDTO {
+  /** False until the server owner sets GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET. */
+  configured: boolean;
+  /** Null while no GitHub account is connected. */
+  account: GithubAccountDTO | null;
+  pulls: PullListsDTO | null;
+  /** Newest first. */
+  events: GithubEventDTO[];
+  /** When the pull requests were last fetched from GitHub. */
+  fetchedAt: number | null;
+  /** Why the last fetch failed, if it did. */
+  error: string | null;
+  /** True when GitHub refused the token: the user must connect again. */
+  reconnect: boolean;
 }
 
 /** Messages the service worker posts to open pages. */

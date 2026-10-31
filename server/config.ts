@@ -28,6 +28,18 @@ export interface Config {
   extraPushHosts: string[];
   /** Built client to serve, or null to serve the API only (Vercel and the Vite dev server serve the client). */
   clientDir: string | null;
+  /** GitHub OAuth App credentials. The GitHub connector stays off until both are set. */
+  githubClientId: string | undefined;
+  githubClientSecret: string | undefined;
+  /** Callback URL registered on the OAuth App. When unset, it follows the address the request came to. */
+  githubCallbackUrl: string | undefined;
+  /** Base URLs of GitHub's sign-in pages and API. Meant for tests only. */
+  githubOauthUrl: string;
+  githubApiUrl: string;
+  /** How often the server checks every connected account on its own. 0 turns it off; Vercel never does. */
+  githubPollSeconds: number;
+  /** Bearer token that GET /api/github/poll requires, so a scheduler can trigger checks. */
+  cronSecret: string | undefined;
   logger: Logger;
 }
 
@@ -66,6 +78,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     extraPushHosts: (env.EXTRA_PUSH_HOSTS ?? '').split(',').map((h) => h.trim()).filter(Boolean),
     clientDir:
       onVercel || env.SERVE_CLIENT === 'false' ? null : path.resolve(env.CLIENT_DIR ?? path.join('dist', 'client')),
+    githubClientId: env.GITHUB_CLIENT_ID || undefined,
+    githubClientSecret: env.GITHUB_CLIENT_SECRET || undefined,
+    githubCallbackUrl: env.GITHUB_CALLBACK_URL || undefined,
+    githubOauthUrl: env.GITHUB_OAUTH_URL || 'https://github.com',
+    githubApiUrl: env.GITHUB_API_URL || 'https://api.github.com',
+    // Serverless instances stop between requests, so on Vercel a scheduler calls /api/github/poll instead.
+    githubPollSeconds: onVercel ? 0 : Number(env.GITHUB_POLL_SECONDS ?? 120),
+    cronSecret: env.CRON_SECRET || undefined,
     logger: consoleLogger,
   };
 }

@@ -12,6 +12,7 @@ import { showUnreadInTab, sound } from './alerts';
 import { announceAccountChange, api, ApiError, sendAwayBeacon, setTabUser } from './api';
 import { attention } from './attention';
 import { EncryptionUnavailableError, keyring, type ChatConversation, type ChatMessage, type KeyLookup } from './e2ee/keyring';
+import { refreshGithub, startGithub } from './github';
 import { forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
 import { actions, chatTitle, store } from './store';
 
@@ -168,7 +169,7 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
     const onWorkerMessage = (event: MessageEvent<WorkerToPageMessage>) => {
       if (event.data?.type === 'open-conversation') void openConversation(event.data.conversationId);
       // A push means something new: fetch it now instead of waiting for the timer.
-      if (event.data?.type === 'push') void syncNow();
+      if (event.data?.type === 'push') void (event.data.payload.kind === 'github' ? refreshGithub() : syncNow());
     };
     navigator.serviceWorker.addEventListener('message', onWorkerMessage);
     cleanups.push(() => navigator.serviceWorker.removeEventListener('message', onWorkerMessage));
@@ -177,6 +178,7 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
   void syncPushSubscription()
     .then(refreshPushState)
     .then(() => syncNow());
+  cleanups.push(startGithub(() => pushActiveHere));
 
   // A notification click on a closed app opens /?chat=<id>.
   const requested = Number(new URLSearchParams(location.search).get('chat'));
@@ -225,7 +227,7 @@ function onIncoming(message: ChatMessage) {
       body,
       message.urgent ? `urgent-${message.id}` : `chat-${message.conversationId}`,
       message.urgent,
-      message.conversationId,
+      { conversationId: message.conversationId },
     );
   }
 }

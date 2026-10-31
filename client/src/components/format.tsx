@@ -20,6 +20,18 @@ export function formatListTime(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
+/** How long ago something happened: "just now", "5 min ago", "3 h ago", "yesterday", or a date. */
+export function formatAgo(ts: number): string {
+  const minutes = Math.floor((Date.now() - ts) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)} h ago`;
+  const days = Math.round((startOfDay(Date.now()) - startOfDay(ts)) / DAY);
+  if (days <= 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
 export function dayLabel(ts: number): string {
   const days = Math.round((startOfDay(Date.now()) - startOfDay(ts)) / DAY);
   if (days === 0) return 'Today';

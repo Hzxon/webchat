@@ -6,6 +6,7 @@ import { useAppState } from './store';
 import { Toasts, UrgentAlert } from './components/Alerts';
 import { AuthScreen } from './components/AuthScreen';
 import { ChatView } from './components/ChatView';
+import { GithubView } from './components/GithubView';
 import { NewChatDialog, type NewChatMode } from './components/NewChatDialog';
 import { NotificationDialog } from './components/NotificationDialog';
 import { AddPeopleDialog, NewChannelDialog } from './components/ProjectDialogs';
@@ -71,11 +72,12 @@ function ChatLayout() {
   const activeId = useAppState((s) => s.activeId);
   const active = useAppState((s) => (s.activeId === null ? undefined : s.conversations[s.activeId]));
   const push = useAppState((s) => s.push);
+  const githubOpen = useAppState((s) => s.githubOpen);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const addPeople = (projectId: number) => setDialog({ kind: 'add-people', projectId });
 
   return (
-    <div className={`layout ${activeId !== null ? 'has-active' : ''}`}>
+    <div className={`layout ${activeId !== null || githubOpen ? 'has-active' : ''}`}>
       <Sidebar
         onNewChat={() => setDialog({ kind: 'new-chat', mode: 'person' })}
         onNewProject={() => setDialog({ kind: 'new-chat', mode: 'project' })}
@@ -83,7 +85,9 @@ function ChatLayout() {
         onAddPeople={addPeople}
         onNotifications={() => setDialog({ kind: 'notifications' })}
       />
-      {active ? (
+      {githubOpen ? (
+        <GithubView />
+      ) : active ? (
         <ChatView key={active.id} conversation={active} onAddPeople={addPeople} />
       ) : (
         <section className="chat chat-empty">

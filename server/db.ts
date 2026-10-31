@@ -3,6 +3,8 @@ import type {
   ConversationDTO,
   ConversationType,
   EnvelopeDTO,
+  GithubEventDTO,
+  GithubEventKind,
   MemberState,
   MessageDTO,
   MessageKind,
@@ -116,7 +118,40 @@ CREATE TABLE IF NOT EXISTS webchat.conversation_keys (
   PRIMARY KEY (conversation_id, user_id)
 );
 `,
-  // 2: projects with channels, replies and reactions.
+  // 2: GitHub connector.
+  `
+CREATE TABLE IF NOT EXISTS webchat.github_accounts (
+  user_id    INTEGER PRIMARY KEY REFERENCES webchat.users(id) ON DELETE CASCADE,
+  github_id  BIGINT NOT NULL,
+  login      TEXT NOT NULL,
+  name       TEXT,
+  -- The OAuth token, encrypted with a key derived from GITHUB_CLIENT_SECRET, which the database never holds.
+  token      TEXT NOT NULL,
+  notify     BOOLEAN NOT NULL DEFAULT true,
+  -- The pull requests from the last poll, as JSON. The next poll compares against them.
+  pulls      TEXT,
+  fetched_at BIGINT,
+  -- Set when a poll starts, so server instances never poll one account at the same time.
+  polled_at  BIGINT NOT NULL DEFAULT 0,
+  error      TEXT,
+  -- GitHub refused the token. Polling stops until the user connects again.
+  revoked    BOOLEAN NOT NULL DEFAULT false,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS webchat.github_events (
+  id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES webchat.users(id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL,
+  repo       TEXT NOT NULL,
+  number     INTEGER NOT NULL,
+  title      TEXT NOT NULL,
+  url        TEXT NOT NULL,
+  actor      TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS github_events_by_user ON webchat.github_events (user_id, id);
+`,
+  // 3: projects with channels, replies and reactions.
   `
 CREATE TABLE IF NOT EXISTS webchat.projects (
   id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -206,6 +241,35 @@ interface MessageRow {
   created_at: number;
 }
 
+export interface GithubAccountRow {
+  user_id: number;
+  github_id: number;
+  login: string;
+  name: string | null;
+  token: string;
+  notify: boolean;
+  pulls: string | null;
+  fetched_at: number | null;
+  polled_at: number;
+  error: string | null;
+  revoked: boolean;
+  created_at: number;
+}
+
+interface GithubEventRow {
+  id: number;
+  kind: GithubEventKind;
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  actor: string | null;
+  created_at: number;
+}
+
+/** Each account keeps this many of its newest pull request events. */
+const GITHUB_EVENTS_KEPT = 50;
+
 export interface ProjectRow {
   id: number;
   name: string;
@@ -256,6 +320,19 @@ export function toUserDTO(row: UserRow, now = Date.now()): UserDTO {
     online: row.last_active_at !== null && now - row.last_active_at < ONLINE_WINDOW_MS,
     lastSeen: row.last_active_at,
     keys: row.dh_public && row.sign_public ? { dh: row.dh_public, sign: row.sign_public } : null,
+  };
+}
+
+function toGithubEventDTO(row: GithubEventRow): GithubEventDTO {
+  return {
+    id: row.id,
+    kind: row.kind,
+    repo: row.repo,
+    number: row.number,
+    title: row.title,
+    url: row.url,
+    actor: row.actor,
+    createdAt: row.created_at,
   };
 }
 
@@ -879,5 +956,102 @@ export async function openDb(sql: Sql) {
         'SELECT endpoint, user_id, p256dh, auth FROM webchat.push_subscriptions WHERE user_id = $1',
         [userId],
       ),
+
+    /**
+     * Links a GitHub account, replacing any linked before. The first poll after this only records
+     * the pull requests, so connecting never sends a burst of alerts.
+     */
+    saveGithubAccount(userId: number, account: { githubId: number; login: string; name: string | null; token: string }) {
+      return sql.transaction(async (tx) => {
+        const previous = await one(
+          tx.query<{ github_id: number }>('SELECT github_id FROM webchat.github_accounts WHERE user_id = $1', [userId]),
+        );
+        if (previous && previous.github_id !== account.githubId) {
+          await tx.query('DELETE FROM webchat.github_events WHERE user_id = $1', [userId]);
+        }
+        await tx.query(
+          `INSERT INTO webchat.github_accounts (user_id, github_id, login, name, token, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (user_id) DO UPDATE SET
+             github_id = EXCLUDED.github_id, login = EXCLUDED.login, name = EXCLUDED.name, token = EXCLUDED.token,
+             pulls = NULL, fetched_at = NULL, polled_at = 0, error = NULL, revoked = false`,
+          [userId, account.githubId, account.login, account.name, account.token, Date.now()],
+        );
+      });
+    },
+    githubAccount: (userId: number) =>
+      one(sql.query<GithubAccountRow>('SELECT * FROM webchat.github_accounts WHERE user_id = $1', [userId])),
+    deleteGithubAccount: (userId: number) =>
+      sql.transaction(async (tx) => {
+        await tx.query('DELETE FROM webchat.github_events WHERE user_id = $1', [userId]);
+        await tx.query('DELETE FROM webchat.github_accounts WHERE user_id = $1', [userId]);
+      }),
+    setGithubNotify: async (userId: number, notify: boolean) => {
+      await sql.query('UPDATE webchat.github_accounts SET notify = $2 WHERE user_id = $1', [userId, notify]);
+    },
+    /**
+     * Claims an account for one poll, unless it was polled less than minIntervalMs ago or GitHub
+     * revoked its token. Returns undefined when there is nothing to do.
+     */
+    claimGithubPoll: (userId: number, minIntervalMs: number) => {
+      const now = Date.now();
+      return one(
+        sql.query<GithubAccountRow>(
+          `UPDATE webchat.github_accounts SET polled_at = $2
+           WHERE user_id = $1 AND NOT revoked AND polled_at <= $3 RETURNING *`,
+          [userId, now, now - minIntervalMs],
+        ),
+      );
+    },
+    githubAccountsDue: async (minIntervalMs: number) =>
+      (
+        await sql.query<{ user_id: number }>(
+          'SELECT user_id FROM webchat.github_accounts WHERE NOT revoked AND polled_at <= $1 ORDER BY polled_at',
+          [Date.now() - minIntervalMs],
+        )
+      ).map((row) => row.user_id),
+    saveGithubPulls: async (userId: number, login: string, pulls: string) => {
+      await sql.query(
+        'UPDATE webchat.github_accounts SET login = $2, pulls = $3, fetched_at = $4, error = NULL WHERE user_id = $1',
+        [userId, login, pulls, Date.now()],
+      );
+    },
+    setGithubError: async (userId: number, error: string, revoked: boolean) => {
+      await sql.query('UPDATE webchat.github_accounts SET error = $2, revoked = $3 WHERE user_id = $1', [
+        userId,
+        error,
+        revoked,
+      ]);
+    },
+    /** Stores new events, drops the oldest beyond the ones kept, and returns the stored events. */
+    addGithubEvents(userId: number, events: Array<Omit<GithubEventDTO, 'id' | 'createdAt'>>) {
+      return sql.transaction(async (tx) => {
+        const now = Date.now();
+        const added: GithubEventDTO[] = [];
+        for (const e of events) {
+          const row = await one(
+            tx.query<GithubEventRow>(
+              `INSERT INTO webchat.github_events (user_id, kind, repo, number, title, url, actor, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+              [userId, e.kind, e.repo, e.number, e.title, e.url, e.actor, now],
+            ),
+          );
+          added.push(toGithubEventDTO(row!));
+        }
+        await tx.query(
+          `DELETE FROM webchat.github_events WHERE user_id = $1 AND id NOT IN (
+             SELECT id FROM webchat.github_events WHERE user_id = $1 ORDER BY id DESC LIMIT $2)`,
+          [userId, GITHUB_EVENTS_KEPT],
+        );
+        return added;
+      });
+    },
+    githubEvents: async (userId: number) =>
+      (
+        await sql.query<GithubEventRow>('SELECT * FROM webchat.github_events WHERE user_id = $1 ORDER BY id DESC LIMIT $2', [
+          userId,
+          GITHUB_EVENTS_KEPT,
+        ])
+      ).map(toGithubEventDTO),
   };
 }

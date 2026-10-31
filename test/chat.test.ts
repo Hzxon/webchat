@@ -255,6 +255,13 @@ describe('chat server', () => {
       sessionDays: 1,
       extraPushHosts: [pushService.host],
       clientDir: null,
+      githubClientId: undefined,
+      githubClientSecret: undefined,
+      githubCallbackUrl: undefined,
+      githubOauthUrl: 'https://github.com',
+      githubApiUrl: 'https://api.github.com',
+      githubPollSeconds: 0,
+      cronSecret: undefined,
       logger: silent,
     };
     instance = await createApp(config);

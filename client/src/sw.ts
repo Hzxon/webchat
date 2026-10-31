@@ -79,6 +79,7 @@ self.addEventListener('push', (event) => {
       envelope: null,
       unreadTotal: null,
       sentAt: Date.now(),
+      url: null,
     };
   }
 
@@ -99,7 +100,8 @@ self.addEventListener('push', (event) => {
       // While the user is looking at the app, the server pushes only to that browser so the page can
       // show the message at once. A focused tab shows it already, so only urgent ones also go to the system.
       const someoneLooking = clients.some((c) => c.focused && c.visibilityState === 'visible');
-      if (someoneLooking && !payload.urgent && (payload.kind === 'message' || payload.kind === 'reaction')) return;
+      // Being added to a project is rare, and the page has no alert of its own for it.
+      if (someoneLooking && !payload.urgent && payload.kind !== 'test' && payload.kind !== 'project') return;
 
       if (payload.unreadTotal !== null && 'setAppBadge' in self.navigator) {
         await self.navigator.setAppBadge(payload.unreadTotal).catch(() => undefined);
@@ -114,7 +116,7 @@ self.addEventListener('push', (event) => {
         badge: '/icons/badge-72.png',
         timestamp: payload.sentAt,
         vibrate: payload.urgent ? [400, 150, 400, 150, 400, 150, 800] : [200, 100, 200],
-        data: { conversationId: payload.conversationId },
+        data: payload.url ? { url: payload.url } : { conversationId: payload.conversationId },
       };
       await self.registration.showNotification(payload.title, options);
     })(),
@@ -123,10 +125,16 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const conversationId = (event.notification.data as { conversationId?: number | null } | null)?.conversationId ?? null;
+  const data = event.notification.data as { conversationId?: number | null; url?: string } | null;
+  const conversationId = data?.conversationId ?? null;
 
   event.waitUntil(
     (async () => {
+      // A pull request alert opens the pull request on GitHub.
+      if (data?.url) {
+        await self.clients.openWindow(data.url);
+        return;
+      }
       const clients = await windowClients();
       const existing = clients.find((c) => new URL(c.url).origin === self.location.origin);
       if (existing) {

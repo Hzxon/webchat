@@ -38,6 +38,7 @@ async function payloadFor(db: Db, recipientId: number, message: MessageDTO, conv
       envelope: null,
       unreadTotal: null,
       sentAt: message.createdAt,
+      url: null,
     };
     return payload;
   }
@@ -58,6 +59,7 @@ async function payloadFor(db: Db, recipientId: number, message: MessageDTO, conv
     envelope: message.envelope,
     unreadTotal: await db.unreadTotal(recipientId),
     sentAt: message.createdAt,
+    url: null,
   };
   // A long message does not fit in a push; the notification then says "New message" without text.
   if (new TextEncoder().encode(JSON.stringify(payload)).length > MAX_PAYLOAD_BYTES) payload.envelope = null;
@@ -121,6 +123,7 @@ export async function notifyAddedToProject(
     envelope: null,
     unreadTotal: null,
     sentAt: Date.now(),
+    url: null,
   };
   await Promise.all(userIds.map((id) => push.sendToUser(id, payload))).catch((error: unknown) =>
     config.logger.error('Push delivery failed', error),
