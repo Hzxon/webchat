@@ -28,10 +28,17 @@ export interface EnvelopeDTO {
   sig: string;
 }
 
+/**
+ * "message" is a chat message. "reaction" puts an emoji on an earlier message, or takes it back;
+ * which message and which emoji are inside the envelope, so only members can see them.
+ */
+export type MessageKind = 'message' | 'reaction';
+
 export interface MessageDTO {
   id: number;
   conversationId: number;
   senderId: number;
+  kind: MessageKind;
   /** Plain text only for messages sent before encryption existed; empty when envelope is set. */
   body: string;
   envelope: EnvelopeDTO | null;
@@ -48,7 +55,8 @@ export interface MemberState {
   lastReadId: number;
 }
 
-export type ConversationType = 'direct' | 'group';
+/** A channel is a chat inside a project. */
+export type ConversationType = 'direct' | 'group' | 'channel';
 
 /** A chat key encrypted for one member, by the member who created it. */
 export interface WrappedKeyDTO {
@@ -60,9 +68,12 @@ export interface WrappedKeyDTO {
 export interface ConversationDTO {
   id: number;
   type: ConversationType;
-  /** Group name; null for direct chats (the client shows the other person's name). */
+  /** Group name, or channel name without the "#"; null for direct chats (the client shows the other person's name). */
   title: string | null;
+  /** The project a channel belongs to; null for other chats. */
+  projectId: number | null;
   members: MemberState[];
+  /** Newest message of kind "message". Reactions never replace it. */
   lastMessage: MessageDTO | null;
   /** Unread count for the user this DTO was built for. */
   unread: number;
@@ -73,9 +84,20 @@ export interface ConversationDTO {
   myKey: WrappedKeyDTO | null;
 }
 
+/** A project: a team with its own channels. Every project member is a member of every channel in it. */
+export interface ProjectDTO {
+  id: number;
+  name: string;
+  createdBy: number;
+  createdAt: number;
+  /** In the order they joined. */
+  memberIds: number[];
+}
+
 export interface BootstrapDTO {
   me: UserDTO;
   users: UserDTO[];
+  projects: ProjectDTO[];
   conversations: ConversationDTO[];
   /** Newest message id the client has now seen. Sync returns messages after it. */
   cursor: number;
@@ -146,6 +168,7 @@ export type SyncResponse =
       stamp: string;
       cursor: number;
       users: UserDTO[];
+      projects: ProjectDTO[];
       conversations: ConversationDTO[];
       /** Messages after the request cursor, plus a short overlap the client de-duplicates. */
       messages: MessageDTO[];
@@ -155,11 +178,47 @@ export interface SendMessageInput {
   envelope: EnvelopeDTO;
   urgent: boolean;
   clientId: string;
+  /** Defaults to "message". */
+  kind?: MessageKind;
+}
+
+/** A new project, with the key of its first channel, #general, wrapped for every member. */
+export interface CreateProjectInput {
+  name: string;
+  /** The other people in the project; the creator is always in it. */
+  memberIds: number[];
+  key: ChatKeyInput;
+}
+
+export interface CreateProjectResponse {
+  project: ProjectDTO;
+  /** The project's #general channel. */
+  channel: ConversationDTO;
+}
+
+/** A new channel, with its key wrapped for exactly the project's current members. */
+export interface CreateChannelInput {
+  name: string;
+  key: ChatKeyInput;
+}
+
+/** One channel's existing key, wrapped for the people being added. */
+export interface SharedChannelKeyInput {
+  conversationId: number;
+  keyId: string;
+  wrappedKeys: WrappedKeyInput[];
+}
+
+/** People to add to a project, with every one of its channel keys wrapped for each of them. */
+export interface AddProjectMembersInput {
+  userIds: number[];
+  channelKeys: SharedChannelKeyInput[];
 }
 
 /** JSON body of every Web Push message. The service worker turns it into a notification. */
 export interface PushPayload {
-  kind: 'message' | 'test' | 'github';
+  /** "reaction" only wakes a tab the user is looking at; "project" says someone added them to one. */
+  kind: 'message' | 'reaction' | 'project' | 'github' | 'test';
   title: string;
   /** Text for messages the server can read (tests, old plain messages). Empty for encrypted ones. */
   body: string;
@@ -268,9 +327,15 @@ export type WorkerToPageMessage =
 
 export const LIMITS = {
   messageLength: 4000,
-  /** Base64url ciphertext of the longest message: 4000 characters of up to 4 UTF-8 bytes each. */
-  ciphertextLength: 22_000,
+  /** Characters of the quoted message a reply carries. */
+  quoteLength: 160,
+  /** Base64url ciphertext of the longest message with its quote, each character up to 4 UTF-8 bytes. */
+  ciphertextLength: 24_000,
   groupTitleLength: 60,
+  projectNameLength: 60,
+  channelNameLength: 40,
+  /** People added to a project at once. Each needs every channel key, and requests stop at 64 KB. */
+  addMembersAtOnce: 20,
   displayNameLength: 40,
   pageSize: 50,
 } as const;

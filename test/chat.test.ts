@@ -9,6 +9,7 @@ import { hashPassword } from '../server/auth.ts';
 import type { Config } from '../server/config.ts';
 import {
   createIdentity,
+  decryptContent,
   decryptMessage,
   deriveAccountSecrets,
   encryptMessage,
@@ -16,19 +17,24 @@ import {
   importIdentity,
   newChatKeyBytes,
   newKeyId,
+  openChatKeyBytes,
   openIdentity,
   sealIdentity,
   unwrapChatKey,
   wrapChatKey,
   type Identity,
+  type MessageContent,
 } from '../shared/e2ee.ts';
 import type {
   BootstrapDTO,
   ChatKeyInput,
   ConfigDTO,
   ConversationDTO,
+  CreateProjectResponse,
   LoginResponse,
   MessageDTO,
+  MessageKind,
+  ProjectDTO,
   PushPayload,
   PublicKeysDTO,
   SyncRequest,
@@ -177,25 +183,38 @@ class Client {
     return key;
   }
 
-  async send(conversationId: number, text: string, urgent = false) {
+  async send(conversationId: number, content: string | MessageContent, urgent = false, kind: MessageKind = 'message') {
     const { keyId, key } = this.chatKeys.get(conversationId)!;
     const clientId = crypto.randomUUID();
-    const envelope = await encryptMessage(key, keyId, this.identity!.signPrivate, { conversationId, senderId: this.id, urgent, clientId }, text);
+    const meta = { conversationId, senderId: this.id, urgent, clientId, kind };
+    const envelope = await encryptMessage(key, keyId, this.identity!.signPrivate, meta, content);
     return this.request<MessageDTO & { error?: string; code?: string }>('POST', `/conversations/${conversationId}/messages`, {
       envelope,
       urgent,
       clientId,
+      kind,
     });
   }
 
   async read(message: MessageDTO, senderKeys: PublicKeysDTO) {
+    return (await this.readContent(message, senderKeys)).text;
+  }
+
+  async readContent(message: MessageDTO, senderKeys: PublicKeysDTO) {
     const { key } = this.chatKeys.get(message.conversationId)!;
-    return decryptMessage(
-      key,
-      senderKeys.sign,
-      { conversationId: message.conversationId, senderId: message.senderId, urgent: message.urgent, clientId: message.clientId! },
-      message.envelope!,
+    const { conversationId, senderId, urgent, clientId, kind } = message;
+    return decryptContent(key, senderKeys.sign, { conversationId, senderId, urgent, clientId: clientId!, kind }, message.envelope!);
+  }
+
+  /** Wraps this user's copy of a channel's key for people joining its project. */
+  async shareChatKey(conversation: ConversationDTO, wrapperKeys: PublicKeysDTO, recipients: Client[]) {
+    const me = { id: this.id, identity: this.identity! };
+    const keyId = conversation.keyId!;
+    const raw = await openChatKeyBytes(conversation.myKey!, me, { id: conversation.myKey!.wrappedBy, dh: wrapperKeys.dh }, keyId);
+    const wrappedKeys = await Promise.all(
+      recipients.map(async (r) => ({ userId: r.id, ...(await wrapChatKey(raw, me, { id: r.id, dh: r.identity!.publicKeys.dh }, keyId)) })),
     );
+    return { conversationId: conversation.id, keyId, wrappedKeys };
   }
 }
 
@@ -487,6 +506,143 @@ describe('chat server', () => {
       (await carol.request('POST', '/delivered', { conversationId: directChat.id, messageId: 1 })).status,
       404,
     );
+  });
+
+  describe('projects', () => {
+    let project: ProjectDTO;
+    let general: ConversationDTO;
+    let design: ConversationDTO;
+    const kickoff = 'Kickoff notes: the report is due 12 May';
+
+    test('a project starts with #general, keyed for every member', async () => {
+      const key = await alice.newChatKey([alice, bob].map((c) => ({ id: c.id, keys: keysOf(c) })));
+      const created = await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'Capstone', memberIds: [bob.id], key });
+      assert.equal(created.status, 201, JSON.stringify(created.data));
+      ({ project, channel: general } = created.data);
+      assert.deepEqual(project.memberIds, [alice.id, bob.id]);
+      assert.equal(general.type, 'channel');
+      assert.equal(general.title, 'general');
+      assert.equal(general.projectId, project.id);
+      alice.chatKeys.set(general.id, { keyId: key.keyId, key: await importChatKey(key.raw) });
+      const sent = await alice.send(general.id, kickoff);
+      assert.equal(sent.status, 201);
+
+      const res = await bob.sync(true);
+      assert.ok(res.changed);
+      assert.deepEqual(
+        res.projects.map((p) => p.name),
+        ['Capstone'],
+      );
+      await bob.openChatKey(res.conversations.find((c) => c.id === general.id)!, keysOf(alice));
+      assert.equal(await bob.read(res.messages.find((m) => m.id === sent.data.id)!, keysOf(alice)), kickoff);
+      assert.equal((await carol.request('GET', `/conversations/${general.id}/messages`)).status, 404);
+    });
+
+    test('a new channel is keyed for exactly the current members, under a unique name', async () => {
+      const members = [alice, bob].map((c) => ({ id: c.id, keys: keysOf(c) }));
+      const partial = await alice.newChatKey([members[0]!]);
+      const stale = await alice.request<{ code?: string }>('POST', `/projects/${project.id}/channels`, { name: 'design', key: partial });
+      assert.equal(stale.status, 409);
+      assert.equal(stale.data.code, 'stale_project');
+
+      const key = await alice.newChatKey(members);
+      assert.equal((await alice.request('POST', `/projects/${project.id}/channels`, { name: 'Design Team', key })).status, 400);
+      const created = await alice.request<ConversationDTO>('POST', `/projects/${project.id}/channels`, { name: 'design', key });
+      assert.equal(created.status, 201);
+      design = created.data;
+      alice.chatKeys.set(design.id, { keyId: key.keyId, key: await importChatKey(key.raw) });
+      assert.equal((await alice.send(design.id, 'Wireframes v2 are in Figma')).status, 201);
+
+      const taken = await bob.request<{ code?: string }>('POST', `/projects/${project.id}/channels`, {
+        name: 'design',
+        key: await bob.newChatKey(members),
+      });
+      assert.equal(taken.data.code, 'name_taken');
+      const outsider = await carol.request('POST', `/projects/${project.id}/channels`, { name: 'secret', key });
+      assert.equal(outsider.status, 404);
+    });
+
+    test('any member can add a classmate, who then reads every channel from the start', async () => {
+      const view = await bob.sync(true);
+      assert.ok(view.changed, 'Bob sees the new channel');
+      const chats = view.conversations;
+      const generalKey = await bob.shareChatKey(chats.find((c) => c.id === general.id)!, keysOf(alice), [carol]);
+      const designKey = await bob.shareChatKey(chats.find((c) => c.id === design.id)!, keysOf(alice), [carol]);
+
+      const missing = await bob.request<{ code?: string }>('POST', `/projects/${project.id}/members`, {
+        userIds: [carol.id],
+        channelKeys: [generalKey],
+      });
+      assert.equal(missing.status, 409, 'every channel key must be shared');
+      assert.equal(missing.data.code, 'stale_project');
+
+      const added = await bob.request<ProjectDTO>('POST', `/projects/${project.id}/members`, {
+        userIds: [carol.id],
+        channelKeys: [generalKey, designKey],
+      });
+      assert.equal(added.status, 200, JSON.stringify(added.data));
+      assert.deepEqual(added.data.memberIds, [alice.id, bob.id, carol.id]);
+      const again = await bob.request<{ code?: string }>('POST', `/projects/${project.id}/members`, {
+        userIds: [carol.id],
+        channelKeys: [generalKey, designKey],
+      });
+      assert.equal(again.data.code, 'already_member');
+
+      const aliceView = await alice.sync(true);
+      assert.ok(aliceView.changed, 'other members see the newcomer');
+      assert.deepEqual(aliceView.projects.find((p) => p.id === project.id)!.memberIds, [alice.id, bob.id, carol.id]);
+
+      const res = await carol.sync(true);
+      assert.ok(res.changed);
+      for (const channel of [general, design]) {
+        const chat: ConversationDTO = res.conversations.find((c) => c.id === channel.id)!;
+        assert.equal(chat.unread, 0, 'history from before joining is not unread');
+        assert.equal(chat.myKey!.wrappedBy, bob.id);
+        await carol.openChatKey(chat, keysOf(bob));
+      }
+      const history = await carol.request<MessageDTO[]>('GET', `/conversations/${general.id}/messages`);
+      assert.equal(await carol.read(history.data[0]!, keysOf(alice)), kickoff);
+    });
+
+    test('replies and reactions are end-to-end encrypted, and a reaction is never unread', async () => {
+      const original = (await carol.request<MessageDTO[]>('GET', `/conversations/${general.id}/messages`)).data[0]!;
+      const replyTo = { id: original.id, senderId: alice.id, text: kickoff };
+      const reply = await carol.send(general.id, { text: 'I can take the slides', replyTo });
+      assert.equal(reply.status, 201);
+      const party = { text: '', reaction: { messageId: reply.data.id, emoji: '🎉' } };
+      assert.equal((await alice.send(general.id, party, true, 'reaction')).status, 400, 'a reaction is never urgent');
+      const reaction = await alice.send(general.id, party, false, 'reaction');
+      assert.equal(reaction.status, 201);
+      assert.equal(reaction.data.kind, 'reaction');
+
+      const rows = JSON.stringify(await instance.sql.query('SELECT * FROM webchat.messages'));
+      for (const plain of ['slides', '12 May', '🎉']) assert.ok(!rows.includes(plain), `the database holds no "${plain}"`);
+
+      const res = await carol.sync(true);
+      assert.ok(res.changed);
+      const chat = res.conversations.find((c) => c.id === general.id)!;
+      assert.equal(chat.unread, 0, 'a reaction does not count as unread');
+      assert.equal(chat.lastMessage!.id, reply.data.id, 'a reaction does not replace the chat preview');
+      const event = res.messages.find((m) => m.id === reaction.data.id)!;
+      assert.deepEqual(await carol.readContent(event, keysOf(alice)), { text: '', reaction: { messageId: reply.data.id, emoji: '🎉' } });
+
+      const bobView = await bob.sync(true);
+      assert.ok(bobView.changed);
+      const received = bobView.messages.find((m) => m.id === reply.data.id)!;
+      assert.deepEqual(await bob.readContent(received, keysOf(carol)), { text: 'I can take the slides', replyTo });
+
+      // Turning a reaction into a message would show its sender saying something they never said.
+      await instance.sql.query("UPDATE webchat.messages SET kind = 'message' WHERE id = $1", [reaction.data.id]);
+      const page = await carol.request<MessageDTO[]>('GET', `/conversations/${general.id}/messages`);
+      await assert.rejects(carol.readContent(page.data.find((m) => m.id === reaction.data.id)!, keysOf(alice)), /bad signature/);
+
+      const unknown = await alice.request('POST', `/conversations/${general.id}/messages`, {
+        envelope: reply.data.envelope,
+        clientId: 'x',
+        kind: 'poll',
+      });
+      assert.equal(unknown.status, 400);
+    });
   });
 
   test('message history pages backwards', async () => {

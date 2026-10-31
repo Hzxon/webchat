@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { GithubDTO, UserDTO } from '../../shared/types';
+import type { GithubDTO, ProjectDTO, UserDTO } from '../../shared/types';
 import type { ChatConversation, ChatMessage } from './e2ee/keyring';
 import type { PushState } from './push';
 
@@ -15,15 +15,32 @@ export interface Toast {
 
 export type PendingStatus = 'sending' | 'failed';
 
+/** One person's reaction to a message: the newest reaction event they sent for it wins. */
+export interface ReactionMark {
+  /** Id of that event. A reaction still sending uses Number.MAX_SAFE_INTEGER, so no older event replaces it. */
+  eventId: number;
+  /** Empty once they took the reaction back. */
+  emoji: string;
+}
+
+/** By person id. */
+export type MessageReactions = Record<number, ReactionMark>;
+
+export type SidebarTab = 'chats' | 'projects';
+
 export interface State {
   me: UserDTO | null;
   users: Record<number, UserDTO>;
+  projects: Record<number, ProjectDTO>;
   conversations: Record<number, ChatConversation>;
-  /** Per chat, oldest first, decrypted. Messages still sending have negative ids and sit at the end. */
+  /** Per chat, oldest first, decrypted. Messages still sending have negative ids and sit at the end. Never reactions. */
   messages: Record<number, ChatMessage[]>;
+  /** Per chat, per message id. */
+  reactions: Record<number, Record<number, MessageReactions>>;
   historyComplete: Record<number, boolean>;
   pending: Record<string, PendingStatus>;
   activeId: number | null;
+  tab: SidebarTab;
   /** False while the last check-in with the server failed. */
   connected: boolean;
   /** Urgent messages the user has not acknowledged yet. They keep ringing. */
@@ -42,11 +59,14 @@ export interface State {
 const initialState: State = {
   me: null,
   users: {},
+  projects: {},
   conversations: {},
   messages: {},
+  reactions: {},
   historyComplete: {},
   pending: {},
   activeId: null,
+  tab: 'chats',
   connected: true,
   urgent: [],
   toasts: [],
@@ -86,6 +106,41 @@ function insertMessage(list: ChatMessage[], message: ChatMessage): ChatMessage[]
   return [...settled, ...sending];
 }
 
+/** Sets one person's reaction to a message, unless a newer one is already there or force is set. */
+function withReaction(
+  reactions: State['reactions'],
+  conversationId: number,
+  messageId: number,
+  userId: number,
+  mark: ReactionMark,
+  force = false,
+): State['reactions'] {
+  const chat = reactions[conversationId] ?? {};
+  const people = chat[messageId] ?? {};
+  const current = people[userId];
+  if (current && !force && current.eventId >= mark.eventId) return reactions;
+  if (current && current.eventId === mark.eventId && current.emoji === mark.emoji) return reactions;
+  return { ...reactions, [conversationId]: { ...chat, [messageId]: { ...people, [userId]: mark } } };
+}
+
+/** Sorts events into message lists and reactions. Message lists exist only for chats already loaded. */
+function withEvents(current: State, events: ChatMessage[]): Pick<State, 'messages' | 'reactions'> {
+  const messages = { ...current.messages };
+  let reactions = current.reactions;
+  for (const event of events) {
+    if (event.kind === 'reaction') {
+      if (event.reaction && event.security !== 'failed') {
+        const { messageId, emoji } = event.reaction;
+        reactions = withReaction(reactions, event.conversationId, messageId, event.senderId, { eventId: event.id, emoji });
+      }
+      continue;
+    }
+    const list = messages[event.conversationId];
+    if (list) messages[event.conversationId] = insertMessage(list, event);
+  }
+  return { messages, reactions };
+}
+
 function withConversation(current: State, id: number, change: (c: ChatConversation) => ChatConversation): State {
   const conversation = current.conversations[id];
   if (!conversation) return current;
@@ -97,31 +152,40 @@ let toastId = 0;
 export const actions = {
   reset: () => store.set(() => initialState),
 
-  bootstrap: (data: { me: UserDTO; users: UserDTO[]; conversations: ChatConversation[] }) =>
+  bootstrap: (data: { me: UserDTO; users: UserDTO[]; projects: ProjectDTO[]; conversations: ChatConversation[] }) =>
     store.set((s) => ({
       ...s,
       me: data.me,
       users: Object.fromEntries(data.users.map((u) => [u.id, u])),
+      projects: Object.fromEntries(data.projects.map((p) => [p.id, p])),
       conversations: Object.fromEntries(data.conversations.map((c) => [c.id, c])),
     })),
 
-  /** Takes the server's latest people and chats, and adds new messages to chats already loaded. */
-  applySync: (users: UserDTO[], conversations: ChatConversation[], messages: ChatMessage[]) =>
+  /**
+   * Takes the server's latest people, projects and chats, adds new messages to chats already
+   * loaded, and applies new reactions.
+   */
+  applySync: (users: UserDTO[], projects: ProjectDTO[], conversations: ChatConversation[], messages: ChatMessage[]) =>
     store.set((s) => {
-      const lists = { ...s.messages };
-      for (const message of messages) {
-        const list = lists[message.conversationId];
-        if (list) lists[message.conversationId] = insertMessage(list, message);
-      }
       const pending = { ...s.pending };
       for (const message of messages) if (message.clientId) delete pending[message.clientId];
       return {
         ...s,
+        ...withEvents(s, messages),
         users: Object.fromEntries(users.map((u) => [u.id, u])),
+        projects: Object.fromEntries(projects.map((p) => [p.id, p])),
         conversations: Object.fromEntries(conversations.map((c) => [c.id, c])),
-        messages: lists,
         pending,
       };
+    }),
+
+  upsertProject: (project: ProjectDTO) => store.set((s) => ({ ...s, projects: { ...s.projects, [project.id]: project } })),
+
+  /** Sets this user's own reaction at once, ahead of the server. Force lets a failed send put back the old one. */
+  setMyReaction: (conversationId: number, messageId: number, userId: number, mark: ReactionMark) =>
+    store.set((s) => {
+      const reactions = withReaction(s.reactions, conversationId, messageId, userId, mark, true);
+      return reactions === s.reactions ? s : { ...s, reactions };
     }),
 
   setConnected: (connected: boolean) => store.set((s) => (s.connected === connected ? s : { ...s, connected })),
@@ -132,6 +196,7 @@ export const actions = {
   /** Adds a message and updates the chat preview. The caller decides whether it counts as unread. */
   addMessage: (message: ChatMessage, countsAsUnread: boolean) =>
     store.set((s) => {
+      if (message.kind === 'reaction') return { ...s, ...withEvents(s, [message]) };
       const list = s.messages[message.conversationId];
       const next = list ? { ...s, messages: { ...s.messages, [message.conversationId]: insertMessage(list, message) } } : s;
       return withConversation(next, message.conversationId, (c) => ({
@@ -168,16 +233,15 @@ export const actions = {
 
   setHistory: (conversationId: number, older: ChatMessage[], complete: boolean) =>
     store.set((s) => {
-      let list = s.messages[conversationId] ?? [];
-      for (const message of older) list = insertMessage(list, message);
+      const withList = { ...s, messages: { ...s.messages, [conversationId]: s.messages[conversationId] ?? [] } };
       return {
         ...s,
-        messages: { ...s.messages, [conversationId]: list },
+        ...withEvents(withList, older),
         historyComplete: { ...s.historyComplete, [conversationId]: complete },
       };
     }),
 
-  clearHistory: () => store.set((s) => ({ ...s, messages: {}, historyComplete: {} })),
+  clearHistory: () => store.set((s) => ({ ...s, messages: {}, reactions: {}, historyComplete: {} })),
 
   /** Moves one member's delivered and read pointers in a chat. */
   applyReceipt: (receipt: { conversationId: number; userId: number; lastDeliveredId: number; lastReadId: number }) =>
@@ -213,6 +277,8 @@ export const actions = {
   setGithubOpen: (githubOpen: boolean) =>
     store.set((s) => ({ ...s, githubOpen, activeId: githubOpen ? null : s.activeId })),
 
+  setTab: (tab: SidebarTab) => store.set((s) => (s.tab === tab ? s : { ...s, tab })),
+
   addUrgent: (message: ChatMessage) =>
     store.set((s) => (s.urgent.some((m) => m.id === message.id) ? s : { ...s, urgent: [...s.urgent, message] })),
 
@@ -236,9 +302,19 @@ export const actions = {
     store.set((s) => (s.toasts.some((t) => t.id === id) ? { ...s, toasts: s.toasts.filter((t) => t.id !== id) } : s)),
 };
 
-/** Name shown for a chat: the group name, or the other person's name in a direct chat. */
-export function chatTitle(conversation: Pick<ChatConversation, 'type' | 'title' | 'members'>, current: State = state): string {
+/**
+ * Name shown for a chat: the group name, "#channel · Project" for a channel, or the other person's
+ * name in a direct chat.
+ */
+export function chatTitle(
+  conversation: Pick<ChatConversation, 'type' | 'title' | 'members' | 'projectId'>,
+  current: State = state,
+): string {
   if (conversation.type === 'group') return conversation.title ?? 'Group';
+  if (conversation.type === 'channel') {
+    const project = conversation.projectId === null ? undefined : current.projects[conversation.projectId];
+    return `#${conversation.title ?? 'channel'}${project ? ` · ${project.name}` : ''}`;
+  }
   const other = conversation.members.find((m) => m.userId !== current.me?.id);
   return (other && current.users[other.userId]?.displayName) ?? 'Unknown';
 }

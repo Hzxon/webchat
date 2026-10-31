@@ -2,34 +2,46 @@
 // and turns server messages into readable text.
 import {
   createIdentity,
-  decryptMessage,
+  decryptContent,
   encryptMessage,
   importChatKey,
   importIdentity,
   keyFingerprint,
   newChatKeyBytes,
   newKeyId,
+  openChatKeyBytes,
   unwrapChatKey,
   wrapChatKey,
   type Identity,
   type IdentitySecrets,
+  type MessageContent,
+  type QuotedMessage,
 } from '../../../shared/e2ee';
 import type {
   ChatKeyInput,
   ConversationDTO,
   EnvelopeDTO,
   MessageDTO,
+  MessageKind,
   PublicKeysDTO,
   UserDTO,
+  WrappedKeyInput,
 } from '../../../shared/types';
 import { keystore } from './keystore';
 
-/** A message as the page shows it: the server's copy plus its readable text. */
-export interface ChatMessage extends MessageDTO {
+/** What decrypting a message gives the page. */
+interface Opened {
   text: string;
+  /** The message this one replies to, as the sender quoted it. */
+  replyTo: QuotedMessage | null;
+  /** Set on every readable message of kind "reaction". */
+  reaction: { messageId: number; emoji: string } | null;
   /** "plain" for messages from before encryption; "failed" if decryption or the signature check failed. */
   security: 'encrypted' | 'plain' | 'failed';
 }
+
+/** A message as the page shows it: the server's copy plus its readable content. */
+export interface ChatMessage extends MessageDTO, Opened {}
 
 export interface ChatConversation extends Omit<ConversationDTO, 'lastMessage'> {
   lastMessage: ChatMessage | null;
@@ -42,7 +54,26 @@ export class EncryptionUnavailableError extends Error {}
 
 let me: { id: number; identity: Identity } | null = null;
 const chatKeys = new Map<string, Promise<CryptoKey>>();
-const opened = new Map<number, { text: string; security: 'encrypted' }>();
+const opened = new Map<number, Opened>();
+
+const openedFrom = (content: MessageContent): Opened => ({
+  text: content.text,
+  replyTo: content.replyTo ?? null,
+  reaction: content.reaction ?? null,
+  security: 'encrypted',
+});
+
+/** People a chat key gets wrapped for must have keys, and keys this device has not seen change. */
+function checkRecipients(members: Array<{ id: number; name: string; keys: PublicKeysDTO | null }>, changed: Set<number>) {
+  const missing = members.filter((m) => !m.keys).map((m) => m.name);
+  if (missing.length) {
+    throw new EncryptionUnavailableError(`${missing.join(', ')} must sign in again to turn on encryption.`);
+  }
+  const suspicious = members.filter((m) => changed.has(m.id)).map((m) => m.name);
+  if (suspicious.length) {
+    throw new EncryptionUnavailableError(`Check ${suspicious.join(', ')}'s security code first.`);
+  }
+}
 let pins: Record<number, string> | null = null;
 
 const chatKeyName = (conversationId: number, keyId: string) => `${conversationId}:${keyId}`;
@@ -137,14 +168,7 @@ export const keyring = {
 
   /** Makes a new chat key and wraps it for every member. Refuses members without keys or with changed keys. */
   async createChatKey(members: Array<{ id: number; name: string; keys: PublicKeysDTO | null }>, changed: Set<number>) {
-    const missing = members.filter((m) => !m.keys).map((m) => m.name);
-    if (missing.length) {
-      throw new EncryptionUnavailableError(`${missing.join(', ')} must sign in again to turn on encryption.`);
-    }
-    const suspicious = members.filter((m) => changed.has(m.id)).map((m) => m.name);
-    if (suspicious.length) {
-      throw new EncryptionUnavailableError(`Check ${suspicious.join(', ')}'s security code first.`);
-    }
+    checkRecipients(members, changed);
     const raw = newChatKeyBytes();
     const keyId = newKeyId();
     const wrappedKeys = await Promise.all(
@@ -154,33 +178,58 @@ export const keyring = {
     return { input, key: await importChatKey(raw) };
   },
 
+  /**
+   * Wraps a chat's existing key for people joining it, from this user's own copy, so they can read
+   * its history too. Checks first that a member of the chat made that copy.
+   */
+  async shareChatKey(
+    conversation: Pick<ConversationDTO, 'keyId' | 'myKey' | 'members'>,
+    keysOf: KeyLookup,
+    recipients: Array<{ id: number; name: string; keys: PublicKeysDTO | null }>,
+    changed: Set<number>,
+  ): Promise<WrappedKeyInput[]> {
+    checkRecipients(recipients, changed);
+    const { keyId, myKey } = conversation;
+    const wrapperKeys = myKey ? keysOf(myKey.wrappedBy) : null;
+    if (!keyId || !myKey || !wrapperKeys || !conversation.members.some((m) => m.userId === myKey.wrappedBy)) {
+      throw new EncryptionUnavailableError('This device cannot open one of the channel keys. Reload the page.');
+    }
+    const raw = await openChatKeyBytes(myKey, me!, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
+    return Promise.all(recipients.map(async (r) => ({ userId: r.id, ...(await wrapChatKey(raw, me!, { id: r.id, dh: r.keys!.dh }, keyId)) })));
+  },
+
   /** Keeps a chat key this device created, once the server has assigned the chat its id. */
   async remember(conversationId: number, keyId: string, key: CryptoKey) {
     chatKeys.set(chatKeyName(conversationId, keyId), Promise.resolve(key));
     await keystore.setChatKey(conversationId, keyId, key).catch(() => undefined);
   },
 
-  async seal(chatKey: CryptoKey, keyId: string, meta: { conversationId: number; urgent: boolean; clientId: string }, text: string) {
-    return encryptMessage(chatKey, keyId, me!.identity.signPrivate, { ...meta, senderId: me!.id }, text);
+  async seal(
+    chatKey: CryptoKey,
+    keyId: string,
+    meta: { conversationId: number; urgent: boolean; clientId: string; kind: MessageKind },
+    content: MessageContent,
+  ) {
+    return encryptMessage(chatKey, keyId, me!.identity.signPrivate, { ...meta, senderId: me!.id }, content);
   },
 
-  /** Remembers the text of a message this device just sent, so it never needs decrypting. */
-  rememberText(messageId: number, text: string) {
-    opened.set(messageId, { text, security: 'encrypted' });
+  /** Remembers what a message this device just sent says, so it never needs decrypting. */
+  rememberContent(messageId: number, content: MessageContent) {
+    opened.set(messageId, openedFrom(content));
   },
 
   /** Decrypts a message and checks its signature. Never throws: failures come back as "failed". */
   async open(message: MessageDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup): Promise<ChatMessage> {
-    if (!message.envelope) return { ...message, text: message.body, security: 'plain' };
+    if (!message.envelope) return { ...message, text: message.body, replyTo: null, reaction: null, security: 'plain' };
     const known = opened.get(message.id);
     if (known) return { ...message, ...known };
     try {
-      const text = await decrypt(message, message.envelope, conversation, keysOf);
-      const result = { text, security: 'encrypted' as const };
+      const result = openedFrom(await decrypt(message, message.envelope, conversation, keysOf));
+      if ((message.kind === 'reaction') !== (result.reaction !== null)) throw new Error('Reaction without its emoji.');
       if (message.id > 0) opened.set(message.id, result);
       return { ...message, ...result };
     } catch {
-      return { ...message, text: '', security: 'failed' };
+      return { ...message, text: '', replyTo: null, reaction: null, security: 'failed' };
     }
   },
 };
@@ -190,10 +239,6 @@ async function decrypt(message: MessageDTO, envelope: EnvelopeDTO, conversation:
   const key = await keyring.chatKey(conversation, keysOf);
   const senderKeys = keysOf(message.senderId);
   if (!key || !senderKeys) throw new Error('Missing keys.');
-  return decryptMessage(
-    key,
-    senderKeys.sign,
-    { conversationId: message.conversationId, senderId: message.senderId, urgent: message.urgent, clientId: message.clientId ?? '' },
-    envelope,
-  );
+  const { conversationId, senderId, urgent, clientId, kind } = message;
+  return decryptContent(key, senderKeys.sign, { conversationId, senderId, urgent, clientId: clientId ?? '', kind }, envelope);
 }

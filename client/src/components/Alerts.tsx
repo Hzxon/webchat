@@ -13,7 +13,7 @@ export function UrgentAlert() {
 
   const sender = users[first.senderId]?.displayName ?? 'Someone';
   const conversation = conversations[first.conversationId];
-  const inGroup = conversation?.type === 'group' ? ` in ${chatTitle(conversation)}` : '';
+  const inGroup = conversation && conversation.type !== 'direct' ? ` in ${chatTitle(conversation)}` : '';
 
   return (
     <div className="urgent-overlay" role="alertdialog" aria-labelledby="urgent-title" aria-describedby="urgent-body">

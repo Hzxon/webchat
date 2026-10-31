@@ -1,12 +1,17 @@
 import type {
   AccountKeysInput,
+  AddProjectMembersInput,
   BootstrapDTO,
   ChatKeyInput,
   ConfigDTO,
   ConversationDTO,
+  CreateChannelInput,
+  CreateProjectInput,
+  CreateProjectResponse,
   GithubDTO,
   LoginResponse,
   MessageDTO,
+  ProjectDTO,
   RegisterInput,
   SendMessageInput,
   SyncRequest,
@@ -75,6 +80,11 @@ export const api = {
     request<ConversationDTO>('POST', '/conversations/direct', { userId, key }),
   createGroup: (title: string, memberIds: number[], key: ChatKeyInput) =>
     request<ConversationDTO>('POST', '/conversations/group', { title, memberIds, key }),
+  createProject: (input: CreateProjectInput) => request<CreateProjectResponse>('POST', '/projects', input),
+  createChannel: (projectId: number, input: CreateChannelInput) =>
+    request<ConversationDTO>('POST', `/projects/${projectId}/channels`, input),
+  addProjectMembers: (projectId: number, input: AddProjectMembersInput) =>
+    request<ProjectDTO>('POST', `/projects/${projectId}/members`, input),
   setChatKey: (conversationId: number, key: ChatKeyInput) =>
     request<ConversationDTO>('POST', `/conversations/${conversationId}/key`, key),
   sync: (input: SyncRequest) => request<SyncResponse>('POST', '/sync', input),

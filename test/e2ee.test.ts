@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { before, describe, test } from 'node:test';
 import {
   createIdentity,
+  decryptContent,
   decryptMessage,
   deriveAccountSecrets,
   encryptMessage,
@@ -11,6 +12,7 @@ import {
   keyFingerprint,
   newChatKeyBytes,
   newKeyId,
+  openChatKeyBytes,
   openIdentity,
   safetyCode,
   sealIdentity,
@@ -97,6 +99,39 @@ describe('end-to-end encryption', () => {
       'a different claimed creator fails',
     );
     await assert.rejects(unwrapChatKey(forBob, bob, aliceAsWrapper, newKeyId()), 'a different key id fails');
+  });
+
+  test('a member can share a chat key with a newcomer, who opens it only from that member', async () => {
+    const raw = newChatKeyBytes();
+    const keyId = newKeyId();
+    const forBob = await wrapChatKey(raw, alice, { id: bob.id, dh: bob.identity.publicKeys.dh }, keyId);
+    const bobsCopy = await openChatKeyBytes(forBob, bob, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId);
+    assert.deepEqual(bobsCopy, raw);
+
+    const forCarol = await wrapChatKey(bobsCopy, bob, { id: carol.id, dh: carol.identity.publicKeys.dh }, keyId);
+    const meta: MessageMeta = { conversationId: 9, senderId: alice.id, urgent: false, clientId: 'old' };
+    const history = await encryptMessage(await importChatKey(raw), keyId, alice.identity.signPrivate, meta, 'from before Carol joined');
+    const carolKey = await unwrapChatKey(forCarol, carol, { id: bob.id, dh: bob.identity.publicKeys.dh }, keyId);
+    assert.equal(await decryptMessage(carolKey, alice.identity.publicKeys.sign, meta, history), 'from before Carol joined');
+    await assert.rejects(
+      unwrapChatKey(forCarol, carol, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId),
+      'the copy names Bob as its wrapper, not Alice',
+    );
+  });
+
+  test('replies and reactions travel inside the envelope, and the kind is signed', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const keyId = newKeyId();
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'r1', kind: 'reaction' };
+    const content = { text: '', reaction: { messageId: 12, emoji: '👍' } };
+    const envelope = await encryptMessage(key, keyId, alice.identity.signPrivate, meta, content);
+    assert.deepEqual(await decryptContent(key, alice.identity.publicKeys.sign, meta, envelope), content);
+    await assert.rejects(decryptContent(key, alice.identity.publicKeys.sign, { ...meta, kind: 'message' }, envelope), /bad signature/);
+
+    const reply = { text: 'Yes', replyTo: { id: 12, senderId: bob.id, text: 'x'.repeat(500) } };
+    const plain = { ...meta, kind: undefined };
+    const opened = await decryptContent(key, alice.identity.publicKeys.sign, plain, await encryptMessage(key, keyId, alice.identity.signPrivate, plain, reply));
+    assert.equal(opened.replyTo!.text.length, 160, 'a quote is cut to its limit');
   });
 
   test('the creator can wrap the chat key for their own other devices', async () => {

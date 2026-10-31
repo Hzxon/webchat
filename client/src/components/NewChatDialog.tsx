@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { LIMITS } from '../../../shared/types';
-import { openConversation, startDirectChat, startGroupChat } from '../chat';
+import { createProject, openConversation, startDirectChat, startGroupChat } from '../chat';
 import { useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
@@ -8,9 +8,11 @@ import { presenceText } from './format';
 
 const NO_KEYS = 'Must sign in again to turn on encryption';
 
-export function NewChatDialog({ onClose }: { onClose: () => void }) {
+export type NewChatMode = 'person' | 'group' | 'project';
+
+export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode?: NewChatMode; onClose: () => void }) {
   const users = useAppState((s) => s.users);
-  const [mode, setMode] = useState<'person' | 'group'>('person');
+  const [mode, setMode] = useState<NewChatMode>(initialMode);
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [groupName, setGroupName] = useState('');
@@ -40,6 +42,7 @@ export function NewChatDialog({ onClose }: { onClose: () => void }) {
 
   const openDirect = (userId: number) => run(() => startDirectChat(userId));
   const createGroup = () => run(() => startGroupChat(groupName.trim(), [...picked]));
+  const startProject = () => run(() => createProject(groupName.trim(), [...picked]));
 
   function toggle(id: number) {
     setPicked((current) => {
@@ -51,21 +54,35 @@ export function NewChatDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Dialog title="New chat" onClose={onClose}>
+    <Dialog title={mode === 'project' ? 'New project' : 'New chat'} onClose={onClose}>
       <div className="segmented">
         <button aria-selected={mode === 'person'} onClick={() => setMode('person')}>
-          Message a person
+          Person
         </button>
         <button aria-selected={mode === 'group'} onClick={() => setMode('group')}>
-          New group
+          Group
+        </button>
+        <button aria-selected={mode === 'project'} onClick={() => setMode('project')}>
+          Project
         </button>
       </div>
 
-      {mode === 'group' && (
+      {mode !== 'person' && (
         <label className="field">
-          Group name
-          <input value={groupName} onChange={(e) => setGroupName(e.target.value)} maxLength={LIMITS.groupTitleLength} />
+          {mode === 'project' ? 'Project name' : 'Group name'}
+          <input
+            value={groupName}
+            onChange={(e) => setGroupName(e.target.value)}
+            maxLength={mode === 'project' ? LIMITS.projectNameLength : LIMITS.groupTitleLength}
+            placeholder={mode === 'project' ? 'Capstone, Thesis, Robotics club' : undefined}
+          />
         </label>
+      )}
+      {mode === 'project' && (
+        <p className="dialog-intro">
+          The project starts with a #general channel. Everyone in it can read every channel, including earlier messages,
+          and can add more people later.
+        </p>
       )}
 
       <input
@@ -112,6 +129,11 @@ export function NewChatDialog({ onClose }: { onClose: () => void }) {
       </ul>
 
       {error && <p className="form-error">{error}</p>}
+      {mode === 'project' && (
+        <button className="button-primary" onClick={() => void startProject()} disabled={busy || !groupName.trim()}>
+          {picked.size > 0 ? `Create project with ${picked.size}` : 'Create project'}
+        </button>
+      )}
       {mode === 'group' && (
         <button
           className="button-primary"
