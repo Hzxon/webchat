@@ -132,6 +132,12 @@ function currentUser(res: Response): UserRow {
   return user;
 }
 
+/**
+ * The query string, read with the WHATWG URL API. Reading req.query makes Express call Node's
+ * url.parse(), which logs a deprecation warning (DEP0169) on Vercel.
+ */
+const queryOf = (req: Request) => new URL(req.originalUrl, 'http://localhost').searchParams;
+
 /** Keeps a serverless function alive until background work (like sending pushes) finishes. */
 function inBackground(work: Promise<unknown>) {
   waitUntil(work);
@@ -470,7 +476,7 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
   /** The linked GitHub account and its pull requests, fetched again first when the last poll is old. */
   router.get('/github', requireAuth, async (req, res) => {
     const me = currentUser(res);
-    await github.refresh(me.id, req.query.refresh === '1');
+    await github.refresh(me.id, queryOf(req).get('refresh') === '1');
     res.json(await github.view(me.id));
   });
 
@@ -497,15 +503,17 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
   router.get('/github/callback', async (req, res) => {
     const { user } = await sessionOf(req);
     const cookie = parseCookies(req.headers.cookie)[GITHUB_STATE_COOKIE];
+    const query = queryOf(req);
     res.clearCookie(GITHUB_STATE_COOKIE, { path: '/api/github' });
     if (!user || !github.configured) return res.redirect(303, '/?github=error');
-    if (req.query.error) return res.redirect(303, `/?github=${req.query.error === 'access_denied' ? 'denied' : 'error'}`);
+    const oauthError = query.get('error');
+    if (oauthError) return res.redirect(303, `/?github=${oauthError === 'access_denied' ? 'denied' : 'error'}`);
     try {
       await github.completeConnect(
         user.id,
         cookie,
-        String(req.query.state ?? ''),
-        String(req.query.code ?? ''),
+        query.get('state') ?? '',
+        query.get('code') ?? '',
         githubCallbackUrl(req),
       );
     } catch (error) {
