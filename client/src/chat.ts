@@ -110,14 +110,11 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
   actions.applySync(result.users, result.projects, conversations, messages);
   for (const message of fresh) if (message.senderId !== meId && message.kind === 'message') onIncoming(message);
 
-  // Its owner deleted the open chat or removed this user from it. The chat closes, so say why.
+  // Its owner deleted the open chat or removed this user from it. The chat closes, so say why. A
+  // toast shows one line of text, so the title names the chat and the text stays short for phones.
   const open = before.activeId === null ? undefined : before.conversations[before.activeId];
   if (open && !byId.has(open.id)) {
-    actions.addToast({
-      conversationId: null,
-      title: chatTitle(open, before),
-      body: `This ${open.type === 'channel' ? 'project' : 'group'} was deleted, or you were removed from it.`,
-    });
+    actions.addToast({ conversationId: null, title: chatTitle(open, before), body: 'It was deleted, or you were removed.' });
   }
 }
 
