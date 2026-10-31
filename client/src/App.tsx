@@ -6,8 +6,9 @@ import { useAppState } from './store';
 import { Toasts, UrgentAlert } from './components/Alerts';
 import { AuthScreen } from './components/AuthScreen';
 import { ChatView } from './components/ChatView';
-import { NewChatDialog } from './components/NewChatDialog';
+import { NewChatDialog, type NewChatMode } from './components/NewChatDialog';
 import { NotificationDialog } from './components/NotificationDialog';
+import { AddPeopleDialog, NewChannelDialog } from './components/ProjectDialogs';
 import { Sidebar } from './components/Sidebar';
 import { UnlockScreen } from './components/UnlockScreen';
 import { BellRingIcon } from './components/icons';
@@ -60,17 +61,30 @@ export function App() {
   return <ChatLayout />;
 }
 
+type OpenDialog =
+  | { kind: 'new-chat'; mode: NewChatMode }
+  | { kind: 'notifications' }
+  | { kind: 'new-channel'; projectId: number }
+  | { kind: 'add-people'; projectId: number };
+
 function ChatLayout() {
   const activeId = useAppState((s) => s.activeId);
   const active = useAppState((s) => (s.activeId === null ? undefined : s.conversations[s.activeId]));
   const push = useAppState((s) => s.push);
-  const [dialog, setDialog] = useState<'new-chat' | 'notifications' | null>(null);
+  const [dialog, setDialog] = useState<OpenDialog | null>(null);
+  const addPeople = (projectId: number) => setDialog({ kind: 'add-people', projectId });
 
   return (
     <div className={`layout ${activeId !== null ? 'has-active' : ''}`}>
-      <Sidebar onNewChat={() => setDialog('new-chat')} onNotifications={() => setDialog('notifications')} />
+      <Sidebar
+        onNewChat={() => setDialog({ kind: 'new-chat', mode: 'person' })}
+        onNewProject={() => setDialog({ kind: 'new-chat', mode: 'project' })}
+        onNewChannel={(projectId) => setDialog({ kind: 'new-channel', projectId })}
+        onAddPeople={addPeople}
+        onNotifications={() => setDialog({ kind: 'notifications' })}
+      />
       {active ? (
-        <ChatView key={active.id} conversation={active} />
+        <ChatView key={active.id} conversation={active} onAddPeople={addPeople} />
       ) : (
         <section className="chat chat-empty">
           <div className="chat-empty-card">
@@ -81,15 +95,17 @@ function ChatLayout() {
               button, and the other person’s browser keeps ringing until they see it.
             </p>
             {push?.permission !== 'granted' && (
-              <button className="button-primary" onClick={() => setDialog('notifications')}>
+              <button className="button-primary" onClick={() => setDialog({ kind: 'notifications' })}>
                 Set up notifications
               </button>
             )}
           </div>
         </section>
       )}
-      {dialog === 'new-chat' && <NewChatDialog onClose={() => setDialog(null)} />}
-      {dialog === 'notifications' && <NotificationDialog onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'new-chat' && <NewChatDialog initialMode={dialog.mode} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'notifications' && <NotificationDialog onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'new-channel' && <NewChannelDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'add-people' && <AddPeopleDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
       <UrgentAlert />
       <Toasts />
     </div>

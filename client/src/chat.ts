@@ -6,6 +6,7 @@
 //
 // Everything the server sends is decrypted on the way in, and every message is encrypted on the
 // way out (see e2ee/keyring.ts). The store only ever holds readable text.
+import type { QuotedMessage } from '../../shared/e2ee';
 import { LIMITS, type ConversationDTO, type SyncResponse, type UserDTO, type WorkerToPageMessage } from '../../shared/types';
 import { showUnreadInTab, sound } from './alerts';
 import { announceAccountChange, api, ApiError, sendAwayBeacon, setTabUser } from './api';
@@ -104,14 +105,22 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
 
   const fresh = messages.filter((m) => !seen.has(m.id));
   for (const m of fresh) seen.add(m.id);
-  actions.applySync(result.users, conversations, messages);
-  for (const message of fresh) if (message.senderId !== meId) onIncoming(message);
+  actions.applySync(result.users, result.projects, conversations, messages);
+  for (const message of fresh) if (message.senderId !== meId && message.kind === 'message') onIncoming(message);
 }
 
 /** Fetches everything again, for when this device missed a change such as a new chat key. */
 async function reloadAll() {
   const data = await api.bootstrap();
-  await applyChanges({ changed: true, stamp: data.stamp, cursor: data.cursor, users: data.users, conversations: data.conversations, messages: [] });
+  await applyChanges({
+    changed: true,
+    stamp: data.stamp,
+    cursor: data.cursor,
+    users: data.users,
+    projects: data.projects,
+    conversations: data.conversations,
+    messages: [],
+  });
 }
 
 export type StartResult = { status: 'ready' } | { status: 'locked'; me: UserDTO } | { status: 'stale' };
@@ -135,7 +144,7 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
   const conversations = await openConversations(data.conversations, keysOf);
   if (run !== generation) return { status: 'stale' };
 
-  actions.bootstrap({ me: data.me, users: data.users, conversations });
+  actions.bootstrap({ me: data.me, users: data.users, projects: data.projects, conversations });
   cursor = data.cursor;
   stamp = data.stamp;
   running = true;
@@ -200,7 +209,7 @@ function onIncoming(message: ChatMessage) {
   const conversation = state.conversations[message.conversationId];
   if (!conversation) return;
   const sender = state.users[message.senderId]?.displayName ?? 'Someone';
-  const isGroup = conversation.type === 'group';
+  const isGroup = conversation.type !== 'direct';
   const title = isGroup ? chatTitle(conversation) : sender;
   const body = isGroup ? `${sender}: ${previewText(message)}` : previewText(message);
 
@@ -257,6 +266,8 @@ export function markRead(conversationId: number) {
 }
 
 export async function openConversation(conversationId: number) {
+  const conversation = store.get().conversations[conversationId];
+  if (conversation) actions.setTab(conversation.type === 'channel' ? 'projects' : 'chats');
   actions.setActive(conversationId);
   if (!store.get().messages[conversationId]) await loadOlder(conversationId);
   if (attention.isAttentive()) markRead(conversationId);
@@ -343,7 +354,14 @@ async function ensureChatKey(conversationId: number, retried = false): Promise<{
   }
 }
 
-export async function sendMessage(conversationId: number, body: string, urgent: boolean) {
+/** What a reply carries of the message it answers. */
+export const quoteOf = (message: ChatMessage): QuotedMessage => ({
+  id: message.id,
+  senderId: message.senderId,
+  text: message.text.slice(0, LIMITS.quoteLength),
+});
+
+export async function sendMessage(conversationId: number, body: string, urgent: boolean, replyTo: QuotedMessage | null = null) {
   const me = store.get().me;
   const text = body.trim();
   if (!me || !text) return;
@@ -352,21 +370,25 @@ export async function sendMessage(conversationId: number, body: string, urgent: 
     id: -Date.now(),
     conversationId,
     senderId: me.id,
+    kind: 'message',
     body: '',
     envelope: null,
     urgent,
     createdAt: Date.now(),
     clientId,
     text,
+    replyTo,
+    reaction: null,
     security: 'encrypted',
   });
   try {
     const { key, keyId } = await ensureChatKey(conversationId);
-    const envelope = await keyring.seal(key, keyId, { conversationId, urgent, clientId }, text);
-    const message = await api.sendMessage(conversationId, { envelope, urgent, clientId });
+    const content = replyTo ? { text, replyTo } : { text };
+    const envelope = await keyring.seal(key, keyId, { conversationId, urgent, clientId, kind: 'message' }, content);
+    const message = await api.sendMessage(conversationId, { envelope, urgent, clientId, kind: 'message' });
     seen.add(message.id);
-    keyring.rememberText(message.id, text);
-    actions.addMessage({ ...message, text, security: 'encrypted' }, false);
+    keyring.rememberContent(message.id, content);
+    actions.addMessage({ ...message, text, replyTo, reaction: null, security: 'encrypted' }, false);
     actions.setPending(clientId, null);
     // Check back soon, so "delivered" shows up without waiting for the regular timer.
     schedule(2500);
@@ -382,7 +404,97 @@ export async function sendMessage(conversationId: number, body: string, urgent: 
 export function retryMessage(message: ChatMessage) {
   actions.dropSending(message.conversationId, message.clientId!);
   actions.setPending(message.clientId!, null);
-  void sendMessage(message.conversationId, message.text, message.urgent);
+  void sendMessage(message.conversationId, message.text, message.urgent, message.replyTo);
+}
+
+/** Puts an emoji on a message, or takes it back when it is already this user's reaction there. */
+export async function react(message: ChatMessage, emoji: string) {
+  const state = store.get();
+  const me = state.me;
+  if (!me || message.id <= 0) return;
+  const { conversationId } = message;
+  const previous = state.reactions[conversationId]?.[message.id]?.[me.id] ?? { eventId: 0, emoji: '' };
+  const next = previous.emoji === emoji ? '' : emoji;
+  actions.setMyReaction(conversationId, message.id, me.id, { eventId: Number.MAX_SAFE_INTEGER, emoji: next });
+  try {
+    const { key, keyId } = await ensureChatKey(conversationId);
+    const clientId = newClientId();
+    const content = { text: '', reaction: { messageId: message.id, emoji: next } };
+    const envelope = await keyring.seal(key, keyId, { conversationId, urgent: false, clientId, kind: 'reaction' }, content);
+    const event = await api.sendMessage(conversationId, { envelope, urgent: false, clientId, kind: 'reaction' });
+    seen.add(event.id);
+    keyring.rememberContent(event.id, content);
+    actions.setMyReaction(conversationId, message.id, me.id, { eventId: event.id, emoji: next });
+  } catch (error) {
+    actions.setMyReaction(conversationId, message.id, me.id, previous);
+    actions.addToast({ conversationId, title: 'Reaction not sent', body: (error as Error).message });
+  }
+}
+
+/** A project starts with its #general channel. Returns that channel's id. */
+export async function createProject(name: string, memberIds: number[]): Promise<number> {
+  const state = store.get();
+  const members = [
+    { id: meId, name: 'You', keys: keyring.myKeys() },
+    ...memberIds.map((id) => ({ id, name: state.users[id]?.displayName ?? 'Someone', keys: state.users[id]?.keys ?? null })),
+  ];
+  const { input, key } = await keyring.createChatKey(members, warnedIds());
+  const { project, channel } = await api.createProject({ name, memberIds, key: input });
+  actions.upsertProject(project);
+  return adoptConversation(channel, { keyId: input.keyId, key });
+}
+
+/**
+ * Runs a change to a project. When the server says the project changed meanwhile (a member or a
+ * channel was added), it reloads and tries once more, so nobody is left out of a channel key.
+ */
+async function withFreshProject<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (!(error instanceof ApiError && error.code === 'stale_project')) throw error;
+    await reloadAll();
+    return work();
+  }
+}
+
+/** Adds a channel, with a new key for every member of the project. Returns the channel's id. */
+export function createChannel(projectId: number, name: string): Promise<number> {
+  return withFreshProject(async () => {
+    const state = store.get();
+    const project = state.projects[projectId];
+    if (!project) throw new Error('Project not found.');
+    const members = project.memberIds.map((id) => ({
+      id,
+      name: id === meId ? 'You' : (state.users[id]?.displayName ?? 'Someone'),
+      keys: id === meId ? keyring.myKeys() : (state.users[id]?.keys ?? null),
+    }));
+    const { input, key } = await keyring.createChatKey(members, warnedIds());
+    return adoptConversation(await api.createChannel(projectId, { name, key: input }), { keyId: input.keyId, key });
+  });
+}
+
+/** Adds people to a project, sharing every channel key with them so they can read the history. */
+export function addProjectMembers(projectId: number, userIds: number[]): Promise<void> {
+  return withFreshProject(async () => {
+    const state = store.get();
+    const keysOf = currentLookup();
+    const recipients = userIds.map((id) => ({
+      id,
+      name: state.users[id]?.displayName ?? 'Someone',
+      keys: state.users[id]?.keys ?? null,
+    }));
+    const channels = Object.values(state.conversations).filter((c) => c.projectId === projectId);
+    const channelKeys = await Promise.all(
+      channels.map(async (c) => ({
+        conversationId: c.id,
+        keyId: c.keyId ?? '',
+        wrappedKeys: await keyring.shareChatKey(c, keysOf, recipients, warnedIds()),
+      })),
+    );
+    actions.upsertProject(await api.addProjectMembers(projectId, { userIds, channelKeys }));
+    void syncNow();
+  });
 }
 
 /** Accepts a person's changed keys after the user compared security codes with them. */

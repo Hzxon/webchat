@@ -11,8 +11,8 @@ import {
   verifyPassword,
 } from './auth.js';
 import type { Config } from './config.js';
-import { keyBackupOf, toUserDTO, type Db, type UserRow } from './db.js';
-import { notifyNewMessage } from './notify.js';
+import { keyBackupOf, toUserDTO, type Db, type ProjectChangeRefusal, type SharedChannelKey, type UserRow } from './db.js';
+import { notifyAddedToProject, notifyNewMessage } from './notify.js';
 import type { Push, PushSubscriptionInput } from './push.js';
 import {
   LIMITS,
@@ -20,9 +20,11 @@ import {
   type BootstrapDTO,
   type ChatKeyInput,
   type ConfigDTO,
+  type CreateProjectResponse,
   type EnvelopeDTO,
   type LoginResponse,
   type MessageDTO,
+  type MessageKind,
   type PushPayload,
   type SyncRequest,
   type SyncResponse,
@@ -93,8 +95,8 @@ function accountKeys(value: unknown): AccountKeysInput {
   };
 }
 
-/** A chat key must come wrapped exactly once for each member. */
-function chatKey(value: unknown, memberIds: number[]): ChatKeyInput {
+/** A chat key with its copies, each for a different person. Says nothing yet about who they must be. */
+function wrappedChatKey(value: unknown): ChatKeyInput {
   const key = value as Partial<ChatKeyInput> | undefined;
   const list: unknown[] = Array.isArray(key?.wrappedKeys) ? key.wrappedKeys : [];
   const wrappedKeys = list.map((item) => {
@@ -102,11 +104,42 @@ function chatKey(value: unknown, memberIds: number[]): ChatKeyInput {
     // A wrapped 32-byte key plus its 16-byte tag.
     return { userId: positiveInt(k?.userId, 'userId'), iv: base64url(k?.iv, 'Wrapped key', 16), data: base64url(k?.data, 'Wrapped key', 64) };
   });
-  const ids = new Set(wrappedKeys.map((k) => k.userId));
-  if (ids.size !== wrappedKeys.length || ids.size !== memberIds.length || memberIds.some((id) => !ids.has(id))) {
+  if (new Set(wrappedKeys.map((k) => k.userId)).size !== wrappedKeys.length) {
     throw new HttpError(400, 'The chat key must be wrapped once for every member.');
   }
   return { keyId: base64url(key?.keyId, 'Chat key id', 22), wrappedKeys };
+}
+
+/** A chat key must come wrapped exactly once for each member. */
+function chatKey(value: unknown, memberIds: number[]): ChatKeyInput {
+  const key = wrappedChatKey(value);
+  const ids = new Set(key.wrappedKeys.map((k) => k.userId));
+  if (ids.size !== memberIds.length || memberIds.some((id) => !ids.has(id))) {
+    throw new HttpError(400, 'The chat key must be wrapped once for every member.');
+  }
+  return key;
+}
+
+/** A list of distinct user ids, without the given one. */
+function userIds(value: unknown, field: string, without: number): number[] {
+  const raw: unknown[] = Array.isArray(value) ? value : [];
+  return [...new Set(raw.map((v) => positiveInt(v, field)))].filter((id) => id !== without);
+}
+
+/** Channel names follow Slack: lowercase letters and digits in any script, joined by single hyphens. */
+const CHANNEL_NAME = /^[\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+(-[\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+)*$/u;
+
+function channelName(value: unknown): string {
+  const name = text(value, 'Channel name', 1, LIMITS.channelNameLength);
+  if (!CHANNEL_NAME.test(name)) throw new HttpError(400, 'Channel names use lowercase letters, numbers and single hyphens.');
+  return name;
+}
+
+/** Turns a refused project change into the error the client acts on. */
+function projectRefusal(refusal: ProjectChangeRefusal): HttpError {
+  if (refusal === 'name_taken') return new HttpError(409, 'This project already has a channel with that name.', 'name_taken');
+  if (refusal === 'already_member') return new HttpError(409, 'Someone you picked is already in this project.', 'already_member');
+  return new HttpError(409, 'The project changed while you were editing. Try again.', 'stale_project');
 }
 
 function envelope(value: unknown): EnvelopeDTO {
@@ -176,6 +209,10 @@ export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDe
 
   async function requireMember(conversationId: number, userId: number) {
     if (!(await db.isMember(conversationId, userId))) throw new HttpError(404, 'Chat not found.');
+  }
+
+  async function requireProjectMember(projectId: number, userId: number) {
+    if (!(await db.isProjectMember(projectId, userId))) throw new HttpError(404, 'Project not found.');
   }
 
   /** A chat key can only be wrapped for people who have set up encryption. */
@@ -283,8 +320,9 @@ export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDe
 
   router.get('/bootstrap', requireAuth, async (_req, res) => {
     const me = currentUser(res);
-    const [users, conversations, cursor, stamp] = await Promise.all([
+    const [users, projects, conversations, cursor, stamp] = await Promise.all([
       db.listUsers(),
+      db.projectsFor(me.id),
       db.conversationsFor(me.id),
       db.latestMessageId(me.id),
       db.stamp(me.id),
@@ -293,6 +331,7 @@ export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDe
     const body: BootstrapDTO = {
       me: toUserDTO(me, now),
       users: users.filter((u) => u.id !== me.id).map((u) => toUserDTO(u, now)),
+      projects,
       conversations,
       cursor,
       stamp,
@@ -320,8 +359,9 @@ export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDe
 
     const messages = await db.messagesSince(me.id, cursor);
     await markDeliveredFrom(me.id, messages);
-    const [users, conversations, newStamp] = await Promise.all([
+    const [users, projects, conversations, newStamp] = await Promise.all([
       db.listUsers(),
+      db.projectsFor(me.id),
       db.conversationsFor(me.id),
       // Marking messages delivered changes the fingerprint, so read it again.
       db.stamp(me.id),
@@ -332,6 +372,7 @@ export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDe
       stamp: newStamp,
       cursor: messages.reduce((max, m) => Math.max(max, m.id), cursor),
       users: users.filter((u) => u.id !== me.id).map((u) => toUserDTO(u, now)),
+      projects,
       conversations,
       messages,
     };
@@ -362,14 +403,63 @@ export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDe
   router.post('/conversations/group', requireAuth, async (req, res) => {
     const me = currentUser(res);
     const title = text(req.body?.title, 'Group name', 1, LIMITS.groupTitleLength);
-    const rawIds: unknown[] = Array.isArray(req.body?.memberIds) ? req.body.memberIds : [];
-    const memberIds = [...new Set(rawIds.map((v) => positiveInt(v, 'memberIds')))].filter((id) => id !== me.id);
+    const memberIds = userIds(req.body?.memberIds, 'memberIds', me.id);
     if (memberIds.length === 0) throw new HttpError(400, 'Pick at least one person.');
     const allIds = [me.id, ...memberIds];
     await requireKeys(allIds);
     const key = chatKey(req.body?.key, allIds);
     const id = await db.createConversation('group', title, allIds, { ...key, wrappedBy: me.id });
     res.status(201).json(await db.conversationFor(me.id, id));
+  });
+
+  /** Creates a project with its #general channel. Starting alone is fine; members can add people later. */
+  router.post('/projects', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const name = text(req.body?.name, 'Project name', 1, LIMITS.projectNameLength);
+    const memberIds = userIds(req.body?.memberIds, 'memberIds', me.id);
+    if (memberIds.length > LIMITS.addMembersAtOnce) throw new HttpError(400, 'Too many people at once.');
+    const allIds = [me.id, ...memberIds];
+    await requireKeys(allIds);
+    const key = chatKey(req.body?.key, allIds);
+    const { projectId, channelId } = await db.createProject(name, me.id, allIds, key);
+    const project = (await db.projectFor(me.id, projectId))!;
+    if (memberIds.length > 0) inBackground(notifyAddedToProject(push, config, project, channelId, me, memberIds));
+    const body: CreateProjectResponse = { project, channel: (await db.conversationFor(me.id, channelId))! };
+    res.status(201).json(body);
+  });
+
+  router.post('/projects/:id/channels', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const projectId = positiveInt(req.params.id, 'Project id');
+    await requireProjectMember(projectId, me.id);
+    const name = channelName(req.body?.name);
+    // Whether the key covers exactly the project's members is checked while the project is locked.
+    const created = await db.createChannel(projectId, name, me.id, wrappedChatKey(req.body?.key));
+    if (typeof created !== 'number') throw projectRefusal(created);
+    res.status(201).json(await db.conversationFor(me.id, created));
+  });
+
+  /** Adds people to a project. The member adding them shares every channel key, so they can read the history. */
+  router.post('/projects/:id/members', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const projectId = positiveInt(req.params.id, 'Project id');
+    await requireProjectMember(projectId, me.id);
+    const added = userIds(req.body?.userIds, 'userIds', me.id);
+    if (added.length === 0) throw new HttpError(400, 'Pick at least one person.');
+    if (added.length > LIMITS.addMembersAtOnce) throw new HttpError(400, 'Too many people at once.');
+    await requireKeys(added);
+    const list: unknown[] = Array.isArray(req.body?.channelKeys) ? req.body.channelKeys : [];
+    const channelKeys: SharedChannelKey[] = list.map((item) => {
+      const k = item as { conversationId?: unknown } | undefined;
+      return { conversationId: positiveInt(k?.conversationId, 'conversationId'), ...chatKey(item, added) };
+    });
+    const result = await db.addProjectMembers(projectId, me.id, added, channelKeys);
+    if (result !== true) throw projectRefusal(result);
+    const project = (await db.projectFor(me.id, projectId))!;
+    // #general is the project's first channel.
+    const general = channelKeys.length > 0 ? Math.min(...channelKeys.map((k) => k.conversationId)) : null;
+    inBackground(notifyAddedToProject(push, config, project, general, me, added));
+    res.json(project);
   });
 
   /** Sets the key of a chat from before encryption. The first member to send a message does this. */
@@ -404,13 +494,18 @@ export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDe
     const sealed = envelope(req.body?.envelope);
     // Signed into the envelope, so it must stay exactly as the client sent it.
     const clientId = base64url(req.body?.clientId, 'clientId', 1, 64);
+    const kind: MessageKind = req.body?.kind === 'reaction' ? 'reaction' : 'message';
+    if (req.body?.kind !== undefined && req.body.kind !== kind) throw new HttpError(400, 'Unknown message kind.');
     await requireMember(conversationId, me.id);
     const keyId = await db.conversationKeyId(conversationId);
     if (!keyId) throw new HttpError(409, 'Set up encryption for this chat first.', 'no_chat_key');
     if (sealed.kid !== keyId) throw new HttpError(409, 'This chat uses a different key. Reload and try again.', 'stale_key');
     if (!(await db.takeRateLimit(`send:${me.id}`, 30, 10_000))) throw new HttpError(429, 'Slow down a little.');
 
-    const message = await db.insertMessage(conversationId, me.id, sealed, req.body?.urgent === true, clientId);
+    const urgent = req.body?.urgent === true;
+    // The urgent flag is signed into the envelope, so it is refused rather than quietly dropped.
+    if (urgent && kind === 'reaction') throw new HttpError(400, 'A reaction cannot be urgent.');
+    const message = await db.insertMessage(conversationId, me.id, kind, sealed, urgent, clientId);
     // Answer the sender first; pushes go out after, while the function stays alive.
     inBackground(notifyNewMessage(db, push, config, message, me));
     res.status(201).json(message);

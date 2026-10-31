@@ -5,6 +5,8 @@ import type {
   EnvelopeDTO,
   MemberState,
   MessageDTO,
+  MessageKind,
+  ProjectDTO,
   SealedBackupDTO,
   UserDTO,
   WrappedKeyInput,
@@ -114,6 +116,33 @@ CREATE TABLE IF NOT EXISTS webchat.conversation_keys (
   PRIMARY KEY (conversation_id, user_id)
 );
 `,
+  // 2: projects with channels, replies and reactions.
+  `
+CREATE TABLE IF NOT EXISTS webchat.projects (
+  id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name       TEXT NOT NULL,
+  created_by INTEGER NOT NULL REFERENCES webchat.users(id),
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS webchat.project_members (
+  project_id INTEGER NOT NULL REFERENCES webchat.projects(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES webchat.users(id) ON DELETE CASCADE,
+  added_by   INTEGER REFERENCES webchat.users(id),
+  joined_at  BIGINT NOT NULL,
+  PRIMARY KEY (project_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS project_members_by_user ON webchat.project_members (user_id);
+-- A channel is a chat inside a project. Every project member is a member of every channel in it.
+ALTER TABLE webchat.conversations ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES webchat.projects(id) ON DELETE CASCADE;
+ALTER TABLE webchat.conversations DROP CONSTRAINT IF EXISTS conversations_type_check;
+ALTER TABLE webchat.conversations ADD CONSTRAINT conversations_type_check CHECK (type IN ('direct', 'group', 'channel'));
+CREATE UNIQUE INDEX IF NOT EXISTS channels_name_key ON webchat.conversations (project_id, lower(title)) WHERE type = 'channel';
+-- Newest row of any kind, so sync notices reactions. last_message_id stays the newest real message.
+ALTER TABLE webchat.conversations ADD COLUMN IF NOT EXISTS last_event_id INTEGER NOT NULL DEFAULT 0;
+UPDATE webchat.conversations SET last_event_id = last_message_id;
+-- A reaction's target message and emoji are inside its envelope; the server sees only that one happened.
+ALTER TABLE webchat.messages ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'message' CHECK (kind IN ('message', 'reaction'));
+`,
 ];
 
 const statements = (sql: string) =>
@@ -149,6 +178,7 @@ interface ConversationRow {
   id: number;
   type: ConversationType;
   title: string | null;
+  project_id: number | null;
   updated_at: number;
   unread: number;
   key_id: string | null;
@@ -168,12 +198,30 @@ interface MessageRow {
   id: number;
   conversation_id: number;
   sender_id: number;
+  kind: MessageKind;
   body: string;
   envelope: string | null;
   urgent: boolean;
   client_id: string | null;
   created_at: number;
 }
+
+export interface ProjectRow {
+  id: number;
+  name: string;
+  created_by: number;
+  created_at: number;
+}
+
+/** A channel key for the people being added to a project, wrapped by the member adding them. */
+export interface SharedChannelKey {
+  conversationId: number;
+  keyId: string;
+  wrappedKeys: WrappedKeyInput[];
+}
+
+/** Why a project change was refused: its members or channels changed since the client looked. */
+export type ProjectChangeRefusal = 'stale' | 'name_taken' | 'already_member';
 
 export interface PushSubscriptionRow {
   endpoint: string;
@@ -187,6 +235,7 @@ function toMessageDTO(row: MessageRow): MessageDTO {
     id: row.id,
     conversationId: row.conversation_id,
     senderId: row.sender_id,
+    kind: row.kind,
     body: row.body,
     envelope: row.envelope ? (JSON.parse(row.envelope) as EnvelopeDTO) : null,
     urgent: row.urgent,
@@ -217,6 +266,11 @@ export const isAttentive = (user: UserRow, now = Date.now()) => user.attentive_u
 
 const one = async <T>(rows: Promise<T[]>) => (await rows)[0];
 
+const sameIds = (a: number[], b: number[]) => {
+  const set = new Set(a);
+  return set.size === a.length && a.length === b.length && b.every((id) => set.has(id));
+};
+
 export type Db = Awaited<ReturnType<typeof openDb>>;
 
 /** Wraps a connection in the app's queries. Creates the tables on first use. */
@@ -244,10 +298,11 @@ export async function openDb(sql: Sql) {
   async function conversations(userId: number, onlyId: number | null): Promise<ConversationDTO[]> {
     const [rows, members, lastMessages] = await Promise.all([
       sql.query<ConversationRow>(
-        `SELECT c.id, c.type, c.title, c.updated_at, c.key_id,
+        `SELECT c.id, c.type, c.title, c.project_id, c.updated_at, c.key_id,
            k.wrapped_by AS my_wrapped_by, k.iv AS my_iv, k.wrapped AS my_wrapped,
            (SELECT COUNT(*)::int FROM webchat.messages x
-             WHERE x.conversation_id = c.id AND x.id > m.last_read_id AND x.sender_id <> m.user_id) AS unread
+             WHERE x.conversation_id = c.id AND x.id > m.last_read_id AND x.sender_id <> m.user_id
+               AND x.kind = 'message') AS unread
          FROM webchat.conversations c JOIN webchat.members m ON m.conversation_id = c.id
          LEFT JOIN webchat.conversation_keys k ON k.conversation_id = c.id AND k.user_id = m.user_id
          WHERE m.user_id = $1 AND ($2::int IS NULL OR c.id = $2)
@@ -280,6 +335,7 @@ export async function openDb(sql: Sql) {
       id: row.id,
       type: row.type,
       title: row.title,
+      projectId: row.project_id,
       members: membersByChat.get(row.id) ?? [],
       lastMessage: lastByChat.get(row.id) ?? null,
       unread: row.unread,
@@ -313,6 +369,69 @@ export async function openDb(sql: Sql) {
         [conversationId, k.userId, wrappedBy, k.iv, k.data],
       );
     }
+  }
+
+  async function projects(userId: number, onlyId: number | null): Promise<ProjectDTO[]> {
+    const [rows, members] = await Promise.all([
+      sql.query<ProjectRow>(
+        `SELECT p.* FROM webchat.projects p JOIN webchat.project_members pm ON pm.project_id = p.id
+         WHERE pm.user_id = $1 AND ($2::int IS NULL OR p.id = $2)
+         ORDER BY lower(p.name), p.id`,
+        [userId, onlyId],
+      ),
+      sql.query<{ project_id: number; user_id: number }>(
+        `SELECT pm.project_id, pm.user_id FROM webchat.project_members pm
+         WHERE pm.project_id IN (
+           SELECT project_id FROM webchat.project_members WHERE user_id = $1 AND ($2::int IS NULL OR project_id = $2))
+         ORDER BY pm.joined_at, pm.user_id`,
+        [userId, onlyId],
+      ),
+    ]);
+    const membersOf = new Map<number, number[]>();
+    for (const row of members) membersOf.set(row.project_id, [...(membersOf.get(row.project_id) ?? []), row.user_id]);
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      memberIds: membersOf.get(row.id) ?? [],
+    }));
+  }
+
+  /** Inserts a channel with its members and key. Returns undefined if the project has a channel of that name. */
+  async function insertChannel(
+    q: Querier,
+    projectId: number,
+    title: string,
+    memberIds: number[],
+    key: { keyId: string; wrappedBy: number; wrappedKeys: WrappedKeyInput[] },
+  ) {
+    const now = Date.now();
+    const created = await one(
+      q.query<{ id: number }>(
+        `INSERT INTO webchat.conversations (type, title, project_id, created_at, updated_at, key_id)
+         VALUES ('channel', $1, $2, $3, $3, $4) ON CONFLICT DO NOTHING RETURNING id`,
+        [title, projectId, now, key.keyId],
+      ),
+    );
+    if (!created) return undefined;
+    for (const userId of memberIds) {
+      await q.query('INSERT INTO webchat.members (conversation_id, user_id, joined_at) VALUES ($1, $2, $3)', [
+        created.id,
+        userId,
+        now,
+      ]);
+    }
+    await insertWrappedKeys(q, created.id, key.wrappedBy, key.wrappedKeys);
+    return created.id;
+  }
+
+  /** Locks a project for a change to its members or channels, and returns its members. */
+  async function lockProject(q: Querier, projectId: number) {
+    await q.query('SELECT id FROM webchat.projects WHERE id = $1 FOR UPDATE', [projectId]);
+    return (
+      await q.query<{ user_id: number }>('SELECT user_id FROM webchat.project_members WHERE project_id = $1', [projectId])
+    ).map((row) => row.user_id);
   }
 
   return {
@@ -490,6 +609,101 @@ export async function openDb(sql: Sql) {
           sql.query<{ key_id: string | null }>('SELECT key_id FROM webchat.conversations WHERE id = $1', [conversationId]),
         )
       )?.key_id ?? null,
+    /** Creates a project with its members and its #general channel, keyed for every member. */
+    createProject(
+      name: string,
+      createdBy: number,
+      memberIds: number[],
+      key: { keyId: string; wrappedKeys: WrappedKeyInput[] },
+    ): Promise<{ projectId: number; channelId: number }> {
+      const now = Date.now();
+      return sql.transaction(async (tx) => {
+        const project = (await one(
+          tx.query<{ id: number }>(
+            'INSERT INTO webchat.projects (name, created_by, created_at) VALUES ($1, $2, $3) RETURNING id',
+            [name, createdBy, now],
+          ),
+        ))!;
+        for (const userId of memberIds) {
+          await tx.query(
+            'INSERT INTO webchat.project_members (project_id, user_id, added_by, joined_at) VALUES ($1, $2, $3, $4)',
+            [project.id, userId, createdBy, now],
+          );
+        }
+        const channelId = (await insertChannel(tx, project.id, 'general', memberIds, { ...key, wrappedBy: createdBy }))!;
+        return { projectId: project.id, channelId };
+      });
+    },
+
+    /**
+     * Adds a channel to a project. Its key must be wrapped for exactly the project's members at
+     * this moment, so a member added meanwhile cannot be left out.
+     */
+    createChannel(
+      projectId: number,
+      title: string,
+      createdBy: number,
+      key: { keyId: string; wrappedKeys: WrappedKeyInput[] },
+    ): Promise<number | ProjectChangeRefusal> {
+      return sql.transaction(async (tx) => {
+        const memberIds = await lockProject(tx, projectId);
+        if (!sameIds(memberIds, key.wrappedKeys.map((k) => k.userId))) return 'stale';
+        return (await insertChannel(tx, projectId, title, memberIds, { ...key, wrappedBy: createdBy })) ?? 'name_taken';
+      });
+    },
+
+    /**
+     * Adds people to a project and to every channel in it. Each channel's key must come wrapped for
+     * them, so they can read its history. Their read pointers start at the newest message, so that
+     * history does not count as unread.
+     */
+    addProjectMembers(
+      projectId: number,
+      addedBy: number,
+      userIds: number[],
+      channelKeys: SharedChannelKey[],
+    ): Promise<true | ProjectChangeRefusal> {
+      const now = Date.now();
+      return sql.transaction(async (tx) => {
+        const memberIds = await lockProject(tx, projectId);
+        if (userIds.some((id) => memberIds.includes(id))) return 'already_member';
+        const channels = await tx.query<{ id: number; key_id: string | null; last_message_id: number }>(
+          'SELECT id, key_id, last_message_id FROM webchat.conversations WHERE project_id = $1',
+          [projectId],
+        );
+        const keyFor = new Map(channelKeys.map((k) => [k.conversationId, k]));
+        if (channels.length !== keyFor.size || channels.some((c) => keyFor.get(c.id)?.keyId !== c.key_id)) return 'stale';
+
+        for (const userId of userIds) {
+          await tx.query(
+            'INSERT INTO webchat.project_members (project_id, user_id, added_by, joined_at) VALUES ($1, $2, $3, $4)',
+            [projectId, userId, addedBy, now],
+          );
+          for (const channel of channels) {
+            await tx.query(
+              `INSERT INTO webchat.members (conversation_id, user_id, joined_at, last_delivered_id, last_read_id)
+               VALUES ($1, $2, $3, $4, $4)`,
+              [channel.id, userId, now, channel.last_message_id],
+            );
+          }
+        }
+        for (const channel of channels) await insertWrappedKeys(tx, channel.id, addedBy, keyFor.get(channel.id)!.wrappedKeys);
+        return true;
+      });
+    },
+
+    projectsFor: (userId: number) => projects(userId, null),
+    projectFor: async (userId: number, projectId: number) => (await projects(userId, projectId))[0],
+    getProject: (projectId: number) =>
+      one(sql.query<ProjectRow>('SELECT * FROM webchat.projects WHERE id = $1', [projectId])),
+    isProjectMember: async (projectId: number, userId: number) =>
+      (
+        await sql.query('SELECT 1 FROM webchat.project_members WHERE project_id = $1 AND user_id = $2', [
+          projectId,
+          userId,
+        ])
+      ).length > 0,
+
     conversationsFor: (userId: number) => conversations(userId, null),
     conversationFor: async (userId: number, conversationId: number) => (await conversations(userId, conversationId))[0],
     memberIds: async (conversationId: number) =>
@@ -506,23 +720,41 @@ export async function openDb(sql: Sql) {
         ])
       ).length > 0,
 
-    /** Stores an encrypted message, moves the chat to the top, and marks it read for its sender. */
-    insertMessage(conversationId: number, senderId: number, envelope: EnvelopeDTO, urgent: boolean, clientId: string) {
+    /**
+     * Stores an encrypted message, moves the chat to the top, and marks it read for its sender. A
+     * reaction only bumps the chat's newest event, so it neither reorders chats nor counts as unread.
+     */
+    insertMessage(
+      conversationId: number,
+      senderId: number,
+      kind: MessageKind,
+      envelope: EnvelopeDTO,
+      urgent: boolean,
+      clientId: string,
+    ) {
       return sql.transaction(async (tx) => {
         const now = Date.now();
         const row = (await one(
           tx.query<MessageRow>(
-            `INSERT INTO webchat.messages (conversation_id, sender_id, body, envelope, urgent, client_id, created_at)
-             VALUES ($1, $2, '', $3, $4, $5, $6) RETURNING *`,
-            [conversationId, senderId, JSON.stringify(envelope), urgent, clientId, now],
+            `INSERT INTO webchat.messages (conversation_id, sender_id, kind, body, envelope, urgent, client_id, created_at)
+             VALUES ($1, $2, $3, '', $4, $5, $6, $7) RETURNING *`,
+            [conversationId, senderId, kind, JSON.stringify(envelope), urgent, clientId, now],
           ),
         ))!;
-        await tx.query(
-          `UPDATE webchat.conversations SET last_message_id = GREATEST(last_message_id, $1), updated_at = $2
-           WHERE id = $3`,
-          [row.id, now, conversationId],
-        );
-        await markRead(tx, conversationId, senderId, row.id);
+        if (kind === 'message') {
+          await tx.query(
+            `UPDATE webchat.conversations
+             SET last_message_id = GREATEST(last_message_id, $1), last_event_id = GREATEST(last_event_id, $1), updated_at = $2
+             WHERE id = $3`,
+            [row.id, now, conversationId],
+          );
+          await markRead(tx, conversationId, senderId, row.id);
+        } else {
+          await tx.query('UPDATE webchat.conversations SET last_event_id = GREATEST(last_event_id, $1) WHERE id = $2', [
+            row.id,
+            conversationId,
+          ]);
+        }
         return toMessageDTO(row);
       });
     },
@@ -563,15 +795,16 @@ export async function openDb(sql: Sql) {
           sql.query<{ total: number }>(
             `SELECT COUNT(*)::int AS total FROM webchat.messages x
              JOIN webchat.members m ON m.conversation_id = x.conversation_id
-             WHERE m.user_id = $1 AND x.id > m.last_read_id AND x.sender_id <> $1`,
+             WHERE m.user_id = $1 AND x.id > m.last_read_id AND x.sender_id <> $1 AND x.kind = 'message'`,
             [userId],
           ),
         )
       )?.total ?? 0,
 
     /**
-     * One cheap query that changes whenever anything this user sees changes: a new message, a read
-     * or delivered pointer, a new chat or person, or someone coming online or going offline.
+     * One cheap query that changes whenever anything this user sees changes: a new message or
+     * reaction, a read or delivered pointer, a new chat, channel or project, someone joining one of
+     * them, a new person, or someone coming online or going offline.
      */
     async stamp(userId: number): Promise<string> {
       const row = await one(
@@ -579,6 +812,7 @@ export async function openDb(sql: Sql) {
           messages: number;
           pointers: number;
           chats: number;
+          seats: number;
           keyed: number;
           people: number;
           withKeys: number;
@@ -586,20 +820,21 @@ export async function openDb(sql: Sql) {
         }>(
           `WITH mine AS (SELECT conversation_id FROM webchat.members WHERE user_id = $1)
            SELECT
-             (SELECT COALESCE(SUM(last_message_id), 0) FROM webchat.conversations WHERE id IN (SELECT * FROM mine)) AS messages,
+             (SELECT COALESCE(SUM(last_event_id), 0) FROM webchat.conversations WHERE id IN (SELECT * FROM mine)) AS messages,
              (SELECT COUNT(*)::int FROM webchat.conversations
                WHERE id IN (SELECT * FROM mine) AND key_id IS NOT NULL) AS keyed,
              (SELECT COUNT(*)::int FROM webchat.users WHERE dh_public IS NOT NULL) AS "withKeys",
              (SELECT COALESCE(SUM(last_read_id + last_delivered_id), 0) FROM webchat.members
                WHERE conversation_id IN (SELECT * FROM mine)) AS pointers,
              (SELECT COUNT(*)::int FROM mine) AS chats,
+             (SELECT COUNT(*)::int FROM webchat.members WHERE conversation_id IN (SELECT * FROM mine)) AS seats,
              (SELECT COUNT(*)::int FROM webchat.users) AS people,
              (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE last_active_at > $2) AS online`,
           [userId, Date.now() - ONLINE_WINDOW_MS],
         ),
       );
       return row
-        ? `${row.messages}.${row.pointers}.${row.chats}.${row.keyed}.${row.people}.${row.withKeys}.${row.online ?? ''}`
+        ? `${row.messages}.${row.pointers}.${row.chats}.${row.seats}.${row.keyed}.${row.people}.${row.withKeys}.${row.online ?? ''}`
         : '';
     },
 
@@ -619,7 +854,7 @@ export async function openDb(sql: Sql) {
       (
         await one(
           sql.query<{ id: number }>(
-            `SELECT COALESCE(MAX(c.last_message_id), 0) AS id FROM webchat.conversations c
+            `SELECT COALESCE(MAX(c.last_event_id), 0) AS id FROM webchat.conversations c
              JOIN webchat.members m ON m.conversation_id = c.id WHERE m.user_id = $1`,
             [userId],
           ),

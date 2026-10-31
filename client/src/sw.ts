@@ -99,7 +99,7 @@ self.addEventListener('push', (event) => {
       // While the user is looking at the app, the server pushes only to that browser so the page can
       // show the message at once. A focused tab shows it already, so only urgent ones also go to the system.
       const someoneLooking = clients.some((c) => c.focused && c.visibilityState === 'visible');
-      if (someoneLooking && !payload.urgent && payload.kind === 'message') return;
+      if (someoneLooking && !payload.urgent && (payload.kind === 'message' || payload.kind === 'reaction')) return;
 
       if (payload.unreadTotal !== null && 'setAppBadge' in self.navigator) {
         await self.navigator.setAppBadge(payload.unreadTotal).catch(() => undefined);

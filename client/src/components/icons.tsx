@@ -119,6 +119,46 @@ export const LockOpenIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const HashIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18" />
+  </Icon>
+);
+
+export const UserPlusIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M19 8v6M22 11h-6" />
+  </Icon>
+);
+
+export const ReplyIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M9 17 4 12l5-5" />
+    <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+  </Icon>
+);
+
+export const SmilePlusIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M22 11v1a10 10 0 1 1-9-10" />
+    <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01M16 5h6M19 2v6" />
+  </Icon>
+);
+
+export const ChatIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+  </Icon>
+);
+
+export const FolderIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+  </Icon>
+);
+
 /** One tick: sent. Two ticks: delivered. Two blue ticks: read. */
 export function Ticks({ state }: { state: 'sent' | 'delivered' | 'read' }) {
   return (

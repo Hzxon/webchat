@@ -8,7 +8,9 @@
 //   from static ECDH between the two of them, so a wrapped key proves who made it.
 // - Message: AES-GCM with the chat key, then an ECDSA signature over the ciphertext and its
 //   metadata, so no one, including other members, can alter it or send as someone else.
-import type { EnvelopeDTO, PublicKeysDTO, SealedBackupDTO } from './types.js';
+// - New member of a project: an existing member opens their own copy of each channel key and
+//   wraps it for the newcomer, who can then read the channel's history.
+import { LIMITS, type EnvelopeDTO, type MessageKind, type PublicKeysDTO, type SealedBackupDTO } from './types.js';
 
 /** PBKDF2 rounds: OWASP's 2023 figure for PBKDF2-HMAC-SHA256. Changing it changes every derived key. */
 export const KDF_ITERATIONS = 600_000;
@@ -215,6 +217,25 @@ export async function wrapChatKey(
   return { iv: toBase64Url(iv), data: toBase64Url(data) };
 }
 
+/**
+ * The raw bytes of a chat key, to wrap it again for a new member. Throws unless the named
+ * wrapper's key really made it for this user.
+ */
+export async function openChatKeyBytes(
+  wrapped: WrappedKey,
+  me: { id: number; identity: Identity },
+  wrapper: { id: number; dh: string },
+  keyId: string,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const key = await pairKey(me.identity.dhPrivate, wrapper.dh, keyId, wrapper.id, me.id);
+  const raw = await subtle().decrypt(
+    { name: 'AES-GCM', iv: fromBase64Url(wrapped.iv), additionalData: utf8(keyId) },
+    key,
+    fromBase64Url(wrapped.data),
+  );
+  return new Uint8Array(raw);
+}
+
 /** Unwraps a chat key. Throws unless the named wrapper's key really made it for this user. */
 export async function unwrapChatKey(
   wrapped: WrappedKey,
@@ -222,13 +243,7 @@ export async function unwrapChatKey(
   wrapper: { id: number; dh: string },
   keyId: string,
 ): Promise<CryptoKey> {
-  const key = await pairKey(me.identity.dhPrivate, wrapper.dh, keyId, wrapper.id, me.id);
-  const raw = await subtle().decrypt(
-    { name: 'AES-GCM', iv: fromBase64Url(wrapped.iv), additionalData: utf8(keyId) },
-    key,
-    fromBase64Url(wrapped.data),
-  );
-  return importChatKey(new Uint8Array(raw));
+  return importChatKey(await openChatKeyBytes(wrapped, me, wrapper, keyId));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -240,17 +255,39 @@ export interface MessageMeta {
   senderId: number;
   urgent: boolean;
   clientId: string;
+  /** Missing means "message". */
+  kind?: MessageKind;
 }
 
+/** The message a reply answers, with a short copy of its text in case the original is not loaded. */
+export interface QuotedMessage {
+  id: number;
+  senderId: number;
+  text: string;
+}
+
+/** What an envelope holds. Messages from before replies and reactions hold only text. */
+export interface MessageContent {
+  text: string;
+  replyTo?: QuotedMessage;
+  /** For kind "reaction": the message and the emoji. An empty emoji takes the reaction back. */
+  reaction?: { messageId: number; emoji: string };
+}
+
+/** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
+const EMOJI_LENGTH = 32;
+
+// Plain messages keep the original header, so their signatures from before kinds existed still check.
 const header = (meta: MessageMeta, keyId: string) =>
-  `webchat/msg/v1|conv:${meta.conversationId}|kid:${keyId}|from:${meta.senderId}|urgent:${meta.urgent ? 1 : 0}|cid:${meta.clientId}`;
+  `webchat/msg/v1|conv:${meta.conversationId}|kid:${keyId}|from:${meta.senderId}|urgent:${meta.urgent ? 1 : 0}|cid:${meta.clientId}` +
+  (meta.kind && meta.kind !== 'message' ? `|kind:${meta.kind}` : '');
 
 export async function encryptMessage(
   chatKey: CryptoKey,
   keyId: string,
   signPrivate: CryptoKey,
   meta: MessageMeta,
-  text: string,
+  content: string | MessageContent,
 ): Promise<EnvelopeDTO> {
   const head = header(meta, keyId);
   const iv = toBase64Url(randomBytes(12));
@@ -258,7 +295,7 @@ export async function encryptMessage(
     await subtle().encrypt(
       { name: 'AES-GCM', iv: fromBase64Url(iv), additionalData: utf8(head) },
       chatKey,
-      utf8(JSON.stringify({ text })),
+      utf8(JSON.stringify(typeof content === 'string' ? { text: content } : content)),
     ),
   );
   const sig = toBase64Url(await subtle().sign(SIGN, signPrivate, utf8(`${head}|iv:${iv}|ct:${ct}`)));
@@ -272,6 +309,24 @@ export class TamperedMessageError extends Error {
   }
 }
 
+const isId = (value: unknown): value is number => Number.isInteger(value) && (value as number) > 0;
+
+/** Keeps the parts of decrypted content that have the right shape. The sender signed it, so it is not tampered. */
+function readContent(value: unknown): MessageContent {
+  const raw = value as { text?: unknown; replyTo?: Partial<QuotedMessage>; reaction?: { messageId?: unknown; emoji?: unknown } } | null;
+  if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
+  const content: MessageContent = { text: raw.text };
+  const quote = raw.replyTo;
+  if (quote && isId(quote.id) && isId(quote.senderId) && typeof quote.text === 'string') {
+    content.replyTo = { id: quote.id, senderId: quote.senderId, text: quote.text.slice(0, LIMITS.quoteLength) };
+  }
+  const reaction = raw.reaction;
+  if (reaction && isId(reaction.messageId) && typeof reaction.emoji === 'string' && reaction.emoji.length <= EMOJI_LENGTH) {
+    content.reaction = { messageId: reaction.messageId, emoji: reaction.emoji };
+  }
+  return content;
+}
+
 /** Checks the sender's signature, then decrypts. Throws TamperedMessageError if anything was changed. */
 export async function decryptMessage(
   chatKey: CryptoKey,
@@ -279,6 +334,16 @@ export async function decryptMessage(
   meta: MessageMeta,
   envelope: EnvelopeDTO,
 ): Promise<string> {
+  return (await decryptContent(chatKey, senderSignPublic, meta, envelope)).text;
+}
+
+/** Like decryptMessage, with the reply and reaction parts too. */
+export async function decryptContent(
+  chatKey: CryptoKey,
+  senderSignPublic: string,
+  meta: MessageMeta,
+  envelope: EnvelopeDTO,
+): Promise<MessageContent> {
   if (envelope.v !== 1) throw new TamperedMessageError('unknown version');
   const head = header(meta, envelope.kid);
   const verifyKey = await subtle().importKey('raw', fromBase64Url(senderSignPublic), ECDSA, false, ['verify']);
@@ -296,9 +361,7 @@ export async function decryptMessage(
   } catch {
     throw new TamperedMessageError('decryption failed');
   }
-  const { text } = JSON.parse(decoder.decode(plain)) as { text?: unknown };
-  if (typeof text !== 'string') throw new TamperedMessageError('malformed content');
-  return text;
+  return readContent(JSON.parse(decoder.decode(plain)));
 }
 
 // ---------------------------------------------------------------------------------------------

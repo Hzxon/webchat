@@ -6,9 +6,21 @@ function initials(name: string): string {
   return letters.toUpperCase();
 }
 
-export function Avatar({ name, seed, size = 44, online }: { name: string; seed: number; size?: number; online?: boolean }) {
+interface AvatarProps {
+  name: string;
+  seed: number;
+  size?: number;
+  online?: boolean;
+  /** Rounded square instead of a circle: projects, so they never look like a person. */
+  square?: boolean;
+}
+
+export function Avatar({ name, seed, size = 44, online, square }: AvatarProps) {
   return (
-    <span className="avatar" style={{ width: size, height: size, fontSize: size * 0.38, background: COLORS[seed % COLORS.length] }}>
+    <span
+      className={`avatar ${square ? 'avatar-square' : ''}`}
+      style={{ width: size, height: size, fontSize: size * 0.38, background: COLORS[seed % COLORS.length] }}
+    >
       {initials(name)}
       {online && <span className="avatar-online" aria-label="online" />}
     </span>
