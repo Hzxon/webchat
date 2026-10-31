@@ -2,7 +2,7 @@
 // key for the server and a backup key that opens this account's private keys.
 import { deriveAccountSecrets, openIdentity, sealIdentity, type AccountSecrets } from '../../../shared/e2ee';
 import type { LoginResponse, UserDTO } from '../../../shared/types';
-import { api, ApiError } from '../api';
+import { announceAccountChange, api, ApiError } from '../api';
 import { keyring } from './keyring';
 
 async function secretsFor(username: string, password: string): Promise<AccountSecrets> {
@@ -49,6 +49,7 @@ export async function register(input: { username: string; displayName: string; p
     keys: { ...created.publicKeys, backup: await sealIdentity(created, secrets.backupKey) },
   });
   await keyring.adopt(user.id, created);
+  announceAccountChange();
 }
 
 export async function signIn(username: string, password: string) {
@@ -56,9 +57,10 @@ export async function signIn(username: string, password: string) {
   try {
     await finishKeys(await api.login(username, secrets.authKey), secrets);
   } catch (error) {
-    if (error instanceof ApiError && error.code === 'upgrade_required') return upgrade(username, password, secrets);
-    throw error;
+    if (!(error instanceof ApiError && error.code === 'upgrade_required')) throw error;
+    await upgrade(username, password, secrets);
   }
+  announceAccountChange();
 }
 
 /** For a signed-in session on a device that does not hold the keys yet. */

@@ -8,7 +8,7 @@
 // way out (see e2ee/keyring.ts). The store only ever holds readable text.
 import { LIMITS, type ConversationDTO, type SyncResponse, type UserDTO, type WorkerToPageMessage } from '../../shared/types';
 import { showUnreadInTab, sound } from './alerts';
-import { api, ApiError, sendAwayBeacon } from './api';
+import { announceAccountChange, api, ApiError, sendAwayBeacon, setTabUser } from './api';
 import { attention } from './attention';
 import { EncryptionUnavailableError, keyring, type ChatConversation, type ChatMessage, type KeyLookup } from './e2ee/keyring';
 import { forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
@@ -126,6 +126,7 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
   onSignedOut = signedOut;
   const data = await api.bootstrap();
   if (run !== generation) return { status: 'stale' };
+  setTabUser(data.me.id);
   if (!(await keyring.load(data.me.id))) return { status: 'locked', me: data.me };
 
   meId = data.me.id;
@@ -392,6 +393,7 @@ export async function trustKeys(user: UserDTO) {
 
 function teardown() {
   running = false;
+  setTabUser(null);
   clearTimeout(timer);
   for (const cleanup of cleanups.splice(0)) cleanup();
   seen.clear();
@@ -415,4 +417,5 @@ export async function signOut() {
   await forgetPushOnServer();
   await api.logout().catch(() => undefined);
   await endSession();
+  announceAccountChange();
 }

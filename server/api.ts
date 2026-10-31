@@ -163,6 +163,12 @@ export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDe
     const sessionHash = token ? hashToken(token) : undefined;
     const user = sessionHash ? await db.sessionUser(sessionHash) : undefined;
     if (!user) throw new HttpError(401, 'Sign in first.');
+    // All tabs of a browser share one session cookie. A tab still showing an account that another
+    // tab signed out of names its account here, so it is stopped instead of acting as the new one.
+    const expected = req.get('x-webchat-user');
+    if (expected !== undefined && Number(expected) !== user.id) {
+      throw new HttpError(409, 'This browser signed in to another account in a different tab.', 'account_changed');
+    }
     res.locals.user = user;
     res.locals.sessionHash = sessionHash;
     next();

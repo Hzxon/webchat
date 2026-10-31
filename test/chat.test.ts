@@ -562,6 +562,16 @@ describe('chat server', () => {
     assert.equal(second.data.code, 'has_key');
   });
 
+  test('a tab still showing another account is refused instead of acting as the signed-in one', async () => {
+    const asBob = (headers: Record<string, string>) =>
+      fetch(`${baseUrl}/api/bootstrap`, { headers: { cookie: bob.cookie, ...headers } });
+    const stale = await asBob({ 'x-webchat-user': String(alice.id) });
+    assert.equal(stale.status, 409);
+    assert.equal(((await stale.json()) as { code: string }).code, 'account_changed');
+    assert.equal((await asBob({ 'x-webchat-user': String(bob.id) })).status, 200);
+    assert.equal((await asBob({})).status, 200, 'requests without the header still work');
+  });
+
   test('logout ends the session', async () => {
     assert.equal((await carol.request('POST', '/auth/logout')).status, 204);
     assert.equal((await carol.request('GET', '/bootstrap')).status, 401);

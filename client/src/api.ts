@@ -24,12 +24,26 @@ export class ApiError extends Error {
   }
 }
 
+/** The account this tab shows. Sent with every request so the server can refuse a stale tab. */
+let tabUserId: number | null = null;
+export const setTabUser = (userId: number | null) => {
+  tabUserId = userId;
+};
+
+/** Reloads every tab of this site, for example after signing in to another account. */
+const accountChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('webchat-account');
+export const announceAccountChange = () => accountChannel?.postMessage('changed');
+accountChannel?.addEventListener('message', () => location.reload());
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response;
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  if (tabUserId !== null) headers['x-webchat-user'] = String(tabUserId);
   try {
     res = await fetch(`/api${path}`, {
       method,
-      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       credentials: 'same-origin',
     });
@@ -38,6 +52,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   if (res.status === 204) return undefined as T;
   const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+  if (data.code === 'account_changed') {
+    // Another tab switched accounts. Start over as the account this browser is now signed in to.
+    location.reload();
+  }
   if (!res.ok) throw new ApiError(res.status, data.error ?? `Request failed (${res.status}).`, data.code);
   return data as T;
 }
