@@ -1,4 +1,4 @@
-import { openConversation } from '../chat';
+import { openConversation, previewText } from '../chat';
 import { actions, chatTitle, useAppState } from '../store';
 import { formatTime } from './format';
 import { BellRingIcon, CloseIcon } from './icons';
@@ -27,7 +27,7 @@ export function UrgentAlert() {
           {inGroup}
         </h2>
         <p id="urgent-body" className="urgent-text">
-          {first.body}
+          {previewText(first)}
         </p>
         <p className="urgent-time">
           {formatTime(first.createdAt)}

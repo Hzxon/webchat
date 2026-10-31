@@ -1,19 +1,40 @@
 // Types shared by the server, the web client, and the service worker.
 // Only type declarations live here, so importing them never adds runtime code.
 
+/** A user's public keys, base64url of the raw P-256 points. Null until the user sets up encryption. */
+export interface PublicKeysDTO {
+  /** ECDH key: other members wrap chat keys for it. */
+  dh: string;
+  /** ECDSA key: verifies the messages this user signs. */
+  sign: string;
+}
+
 export interface UserDTO {
   id: number;
   username: string;
   displayName: string;
   online: boolean;
   lastSeen: number | null;
+  keys: PublicKeysDTO | null;
+}
+
+/** An encrypted, signed message. The server stores and relays it without being able to read it. */
+export interface EnvelopeDTO {
+  v: 1;
+  /** Id of the chat key it was encrypted with. */
+  kid: string;
+  iv: string;
+  ct: string;
+  sig: string;
 }
 
 export interface MessageDTO {
   id: number;
   conversationId: number;
   senderId: number;
+  /** Plain text only for messages sent before encryption existed; empty when envelope is set. */
   body: string;
+  envelope: EnvelopeDTO | null;
   urgent: boolean;
   createdAt: number;
   /** Echoed back to the sender so its tabs can replace the optimistic copy. */
@@ -29,6 +50,13 @@ export interface MemberState {
 
 export type ConversationType = 'direct' | 'group';
 
+/** A chat key encrypted for one member, by the member who created it. */
+export interface WrappedKeyDTO {
+  wrappedBy: number;
+  iv: string;
+  data: string;
+}
+
 export interface ConversationDTO {
   id: number;
   type: ConversationType;
@@ -39,6 +67,10 @@ export interface ConversationDTO {
   /** Unread count for the user this DTO was built for. */
   unread: number;
   updatedAt: number;
+  /** Null for chats created before encryption, until a member sets a key. */
+  keyId: string | null;
+  /** The chat key wrapped for the user this DTO was built for. */
+  myKey: WrappedKeyDTO | null;
 }
 
 export interface BootstrapDTO {
@@ -53,6 +85,47 @@ export interface BootstrapDTO {
 
 export interface ConfigDTO {
   vapidPublicKey: string;
+  /** Random per deployment; mixed into the password key derivation. */
+  kdfSalt: string;
+}
+
+/** Private keys encrypted with a key only the user's password can derive. */
+export interface SealedBackupDTO {
+  iv: string;
+  data: string;
+}
+
+export interface AccountKeysInput {
+  dh: string;
+  sign: string;
+  backup: SealedBackupDTO;
+}
+
+export interface RegisterInput {
+  username: string;
+  displayName: string;
+  /** Derived from the password in the browser. The password itself never leaves the browser. */
+  authKey: string;
+  inviteCode: string;
+  keys: AccountKeysInput;
+}
+
+export interface LoginResponse {
+  user: UserDTO;
+  /** Null when the account has no keys yet; the client then creates them. */
+  backup: SealedBackupDTO | null;
+}
+
+export interface WrappedKeyInput {
+  userId: number;
+  iv: string;
+  data: string;
+}
+
+/** A new chat key, wrapped once for every member, including the creator. */
+export interface ChatKeyInput {
+  keyId: string;
+  wrappedKeys: WrappedKeyInput[];
 }
 
 export interface SyncRequest {
@@ -79,7 +152,7 @@ export type SyncResponse =
     };
 
 export interface SendMessageInput {
-  body: string;
+  envelope: EnvelopeDTO;
   urgent: boolean;
   clientId: string;
 }
@@ -88,11 +161,18 @@ export interface SendMessageInput {
 export interface PushPayload {
   kind: 'message' | 'test';
   title: string;
+  /** Text for messages the server can read (tests, old plain messages). Empty for encrypted ones. */
   body: string;
+  /** Shown before the decrypted text, such as "Bob: " in a group. */
+  bodyPrefix: string;
   urgent: boolean;
   tag: string;
   conversationId: number | null;
   messageId: number | null;
+  senderId: number | null;
+  clientId: string | null;
+  /** The encrypted message, when it fits in a push. The service worker decrypts it on the device. */
+  envelope: EnvelopeDTO | null;
   unreadTotal: number | null;
   sentAt: number;
 }
@@ -104,6 +184,8 @@ export type WorkerToPageMessage =
 
 export const LIMITS = {
   messageLength: 4000,
+  /** Base64url ciphertext of the longest message: 4000 characters of up to 4 UTF-8 bytes each. */
+  ciphertextLength: 22_000,
   groupTitleLength: 60,
   displayNameLength: 40,
   pageSize: 50,

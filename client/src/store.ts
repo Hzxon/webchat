@@ -1,10 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import type {
-  BootstrapDTO,
-  ConversationDTO,
-  MessageDTO,
-  UserDTO,
-} from '../../shared/types';
+import type { UserDTO } from '../../shared/types';
+import type { ChatConversation, ChatMessage } from './e2ee/keyring';
 import type { PushState } from './push';
 
 export interface Toast {
@@ -19,19 +15,21 @@ export type PendingStatus = 'sending' | 'failed';
 export interface State {
   me: UserDTO | null;
   users: Record<number, UserDTO>;
-  conversations: Record<number, ConversationDTO>;
-  /** Per chat, oldest first. Messages still sending have negative ids and sit at the end. */
-  messages: Record<number, MessageDTO[]>;
+  conversations: Record<number, ChatConversation>;
+  /** Per chat, oldest first, decrypted. Messages still sending have negative ids and sit at the end. */
+  messages: Record<number, ChatMessage[]>;
   historyComplete: Record<number, boolean>;
   pending: Record<string, PendingStatus>;
   activeId: number | null;
   /** False while the last check-in with the server failed. */
   connected: boolean;
   /** Urgent messages the user has not acknowledged yet. They keep ringing. */
-  urgent: MessageDTO[];
+  urgent: ChatMessage[];
   toasts: Toast[];
   /** Notification setup of this browser; null until checked. */
   push: PushState | null;
+  /** People whose encryption keys differ from the ones this device saw first. */
+  keyWarnings: Record<number, true>;
 }
 
 const initialState: State = {
@@ -46,6 +44,7 @@ const initialState: State = {
   urgent: [],
   toasts: [],
   push: null,
+  keyWarnings: {},
 };
 
 let state = initialState;
@@ -68,7 +67,7 @@ export function useAppState<T>(selector: (current: State) => T): T {
   return useSyncExternalStore(store.subscribe, () => selector(state));
 }
 
-function insertMessage(list: MessageDTO[], message: MessageDTO): MessageDTO[] {
+function insertMessage(list: ChatMessage[], message: ChatMessage): ChatMessage[] {
   const settled = list.filter((m) => m.id > 0 && m.id !== message.id);
   const sending = list.filter((m) => m.id < 0 && (message.clientId === null || m.clientId !== message.clientId));
   if (message.id < 0) return [...settled, ...sending, message];
@@ -78,7 +77,7 @@ function insertMessage(list: MessageDTO[], message: MessageDTO): MessageDTO[] {
   return [...settled, ...sending];
 }
 
-function withConversation(current: State, id: number, change: (c: ConversationDTO) => ConversationDTO): State {
+function withConversation(current: State, id: number, change: (c: ChatConversation) => ChatConversation): State {
   const conversation = current.conversations[id];
   if (!conversation) return current;
   return { ...current, conversations: { ...current.conversations, [id]: change(conversation) } };
@@ -89,7 +88,7 @@ let toastId = 0;
 export const actions = {
   reset: () => store.set(() => initialState),
 
-  bootstrap: (data: BootstrapDTO) =>
+  bootstrap: (data: { me: UserDTO; users: UserDTO[]; conversations: ChatConversation[] }) =>
     store.set((s) => ({
       ...s,
       me: data.me,
@@ -98,7 +97,7 @@ export const actions = {
     })),
 
   /** Takes the server's latest people and chats, and adds new messages to chats already loaded. */
-  applySync: (users: UserDTO[], conversations: ConversationDTO[], messages: MessageDTO[]) =>
+  applySync: (users: UserDTO[], conversations: ChatConversation[], messages: ChatMessage[]) =>
     store.set((s) => {
       const lists = { ...s.messages };
       for (const message of messages) {
@@ -118,11 +117,11 @@ export const actions = {
 
   setConnected: (connected: boolean) => store.set((s) => (s.connected === connected ? s : { ...s, connected })),
 
-  upsertConversation: (conversation: ConversationDTO) =>
+  upsertConversation: (conversation: ChatConversation) =>
     store.set((s) => ({ ...s, conversations: { ...s.conversations, [conversation.id]: conversation } })),
 
   /** Adds a message and updates the chat preview. The caller decides whether it counts as unread. */
-  addMessage: (message: MessageDTO, countsAsUnread: boolean) =>
+  addMessage: (message: ChatMessage, countsAsUnread: boolean) =>
     store.set((s) => {
       const list = s.messages[message.conversationId];
       const next = list ? { ...s, messages: { ...s.messages, [message.conversationId]: insertMessage(list, message) } } : s;
@@ -134,7 +133,7 @@ export const actions = {
       }));
     }),
 
-  addSending: (message: MessageDTO) =>
+  addSending: (message: ChatMessage) =>
     store.set((s) => ({
       ...s,
       pending: { ...s.pending, [message.clientId!]: 'sending' },
@@ -158,7 +157,7 @@ export const actions = {
       },
     })),
 
-  setHistory: (conversationId: number, older: MessageDTO[], complete: boolean) =>
+  setHistory: (conversationId: number, older: ChatMessage[], complete: boolean) =>
     store.set((s) => {
       let list = s.messages[conversationId] ?? [];
       for (const message of older) list = insertMessage(list, message);
@@ -190,9 +189,15 @@ export const actions = {
 
   setPush: (push: PushState) => store.set((s) => ({ ...s, push })),
 
+  setKeyWarnings: (ids: Set<number>) =>
+    store.set((s) => {
+      const same = ids.size === Object.keys(s.keyWarnings).length && [...ids].every((id) => s.keyWarnings[id]);
+      return same ? s : { ...s, keyWarnings: Object.fromEntries([...ids].map((id) => [id, true as const])) };
+    }),
+
   setActive: (activeId: number | null) => store.set((s) => ({ ...s, activeId })),
 
-  addUrgent: (message: MessageDTO) =>
+  addUrgent: (message: ChatMessage) =>
     store.set((s) => (s.urgent.some((m) => m.id === message.id) ? s : { ...s, urgent: [...s.urgent, message] })),
 
   /** Clears urgent alerts for a chat, up to a message id (all of them when no id is given). */
@@ -215,12 +220,12 @@ export const actions = {
 };
 
 /** Name shown for a chat: the group name, or the other person's name in a direct chat. */
-export function chatTitle(conversation: ConversationDTO, current: State = state): string {
+export function chatTitle(conversation: Pick<ChatConversation, 'type' | 'title' | 'members'>, current: State = state): string {
   if (conversation.type === 'group') return conversation.title ?? 'Group';
   const other = conversation.members.find((m) => m.userId !== current.me?.id);
   return (other && current.users[other.userId]?.displayName) ?? 'Unknown';
 }
 
-export function otherMemberId(conversation: ConversationDTO, meId: number | undefined): number | undefined {
+export function otherMemberId(conversation: Pick<ChatConversation, 'type' | 'members'>, meId: number | undefined): number | undefined {
   return conversation.type === 'direct' ? conversation.members.find((m) => m.userId !== meId)?.userId : undefined;
 }

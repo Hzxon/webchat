@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { api } from '../api';
+import { register, signIn } from '../e2ee/account';
 
 export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -15,8 +15,8 @@ export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
     setError('');
     setBusy(true);
     try {
-      if (mode === 'login') await api.login(username, password);
-      else await api.register({ username, displayName, password, inviteCode });
+      if (mode === 'login') await signIn(username, password);
+      else await register({ username, displayName, password, inviteCode });
       onSignedIn();
     } catch (err) {
       setError((err as Error).message);
@@ -74,6 +74,12 @@ export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
               required
               minLength={mode === 'register' ? 8 : 1}
             />
+            {mode === 'register' && (
+              <small>
+                Your password also locks your encrypted messages. If you forget it, your message history cannot be
+                recovered.
+              </small>
+            )}
           </label>
           {mode === 'register' && (
             <label>
@@ -88,7 +94,7 @@ export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
             </p>
           )}
           <button className="button-primary" disabled={busy}>
-            {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
+            {busy ? 'Securing your keys…' : mode === 'login' ? 'Sign in' : 'Create account'}
           </button>
         </form>
       </div>

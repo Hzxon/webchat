@@ -1,6 +1,9 @@
 // Service worker: turns Web Push messages into system notifications, even when no tab is open.
-// It must not import runtime code, so the build emits it as one plain script at /sw.js.
+// Pushed messages arrive encrypted; it decrypts them here, on the device, with the keys the page
+// left in IndexedDB. vite.sw.config.ts bundles it into one plain script at /sw.js.
+import { decryptMessage } from '../../shared/e2ee';
 import type { ConfigDTO, PushPayload, WorkerToPageMessage } from '../../shared/types';
+import { keystore } from './e2ee/keystore';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -31,6 +34,32 @@ function post(client: Client, message: WorkerToPageMessage) {
   client.postMessage(message);
 }
 
+function preview(text: string, length = 180): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > length ? `${flat.slice(0, length - 1)}…` : flat;
+}
+
+/**
+ * Decrypts a pushed message with this device's chat key and checks the sender's signature. If
+ * the key is not on this device yet, or the check fails, the notification says so without text.
+ */
+async function notificationBody(payload: PushPayload): Promise<string> {
+  if (payload.kind !== 'message' || !payload.envelope) {
+    return payload.body || (payload.urgent ? 'Urgent message. Open the chat to read it.' : 'New message');
+  }
+  const { envelope, conversationId, senderId, clientId } = payload;
+  try {
+    if (conversationId === null || senderId === null || clientId === null) throw new Error('Incomplete push.');
+    const [key, directory] = await Promise.all([keystore.getChatKey(conversationId, envelope.kid), keystore.getDirectory()]);
+    const senderKeys = directory?.[senderId];
+    if (!key || !senderKeys) throw new Error('Keys are not on this device yet.');
+    const text = await decryptMessage(key, senderKeys.sign, { conversationId, senderId, urgent: payload.urgent, clientId }, envelope);
+    return payload.bodyPrefix + preview(text);
+  } catch {
+    return payload.bodyPrefix + (payload.urgent ? 'Urgent message. Open the chat to read it.' : 'New encrypted message');
+  }
+}
+
 self.addEventListener('push', (event) => {
   let payload: PushPayload;
   try {
@@ -40,10 +69,14 @@ self.addEventListener('push', (event) => {
       kind: 'message',
       title: 'New message',
       body: event.data?.text() ?? '',
+      bodyPrefix: '',
       urgent: false,
       tag: 'fallback',
       conversationId: null,
       messageId: null,
+      senderId: null,
+      clientId: null,
+      envelope: null,
       unreadTotal: null,
       sentAt: Date.now(),
     };
@@ -73,7 +106,7 @@ self.addEventListener('push', (event) => {
       }
 
       const options: ExtendedNotificationOptions = {
-        body: payload.body,
+        body: await notificationBody(payload),
         tag: payload.tag,
         renotify: true,
         requireInteraction: payload.urgent,

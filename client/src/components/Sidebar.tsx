@@ -1,7 +1,7 @@
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
-import type { ConversationDTO } from '../../../shared/types';
 import { sound } from '../alerts';
-import { openConversation, signOut } from '../chat';
+import { openConversation, previewText, signOut } from '../chat';
+import type { ChatConversation } from '../e2ee/keyring';
 import { chatTitle, otherMemberId, useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { formatListTime } from './format';
@@ -107,7 +107,7 @@ function AlertSetupBanner({ onOpen }: { onOpen: () => void }) {
   return null;
 }
 
-function ChatListItem({ conversation }: { conversation: ConversationDTO }) {
+function ChatListItem({ conversation }: { conversation: ChatConversation }) {
   const meId = useAppState((s) => s.me?.id);
   const users = useAppState((s) => s.users);
   const activeId = useAppState((s) => s.activeId);
@@ -129,7 +129,7 @@ function ChatListItem({ conversation }: { conversation: ConversationDTO }) {
         {mine && <Ticks state={receiptState(conversation, last.id, meId)} />}
         {last.urgent && <span className="urgent-chip">URGENT</span>}
         {prefix}
-        {last.body}
+        {previewText(last)}
       </>
     );
   }

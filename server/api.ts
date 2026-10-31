@@ -11,13 +11,17 @@ import {
   verifyPassword,
 } from './auth.js';
 import type { Config } from './config.js';
-import { toUserDTO, type Db, type UserRow } from './db.js';
+import { keyBackupOf, toUserDTO, type Db, type UserRow } from './db.js';
 import { notifyNewMessage } from './notify.js';
 import type { Push, PushSubscriptionInput } from './push.js';
 import {
   LIMITS,
+  type AccountKeysInput,
   type BootstrapDTO,
+  type ChatKeyInput,
   type ConfigDTO,
+  type EnvelopeDTO,
+  type LoginResponse,
   type MessageDTO,
   type PushPayload,
   type SyncRequest,
@@ -36,9 +40,12 @@ declare global {
 
 class HttpError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** Machine-readable reason the client acts on, such as "upgrade_required". */
+  code: string | undefined;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -60,6 +67,61 @@ function positiveInt(value: unknown, field: string): number {
   return result;
 }
 
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
+
+/** Checks a base64url field's length. Exact lengths follow from the key and IV sizes in shared/e2ee.ts. */
+function base64url(value: unknown, field: string, min: number, max = min): string {
+  if (typeof value !== 'string' || value.length < min || value.length > max || !BASE64URL.test(value)) {
+    throw new HttpError(400, `${field} is invalid.`);
+  }
+  return value;
+}
+
+/** 32-byte login key the browser derives from the password. */
+const loginKey = (body: unknown) => base64url((body as { authKey?: unknown } | undefined)?.authKey, 'Login key', 43);
+
+function accountKeys(value: unknown): AccountKeysInput {
+  const keys = value as Partial<AccountKeysInput> | undefined;
+  return {
+    // Raw P-256 public keys are 65 bytes.
+    dh: base64url(keys?.dh, 'Encryption key', 87),
+    sign: base64url(keys?.sign, 'Signing key', 87),
+    backup: {
+      iv: base64url(keys?.backup?.iv, 'Key backup', 16),
+      data: base64url(keys?.backup?.data, 'Key backup', 100, 2000),
+    },
+  };
+}
+
+/** A chat key must come wrapped exactly once for each member. */
+function chatKey(value: unknown, memberIds: number[]): ChatKeyInput {
+  const key = value as Partial<ChatKeyInput> | undefined;
+  const list: unknown[] = Array.isArray(key?.wrappedKeys) ? key.wrappedKeys : [];
+  const wrappedKeys = list.map((item) => {
+    const k = item as { userId?: unknown; iv?: unknown; data?: unknown } | undefined;
+    // A wrapped 32-byte key plus its 16-byte tag.
+    return { userId: positiveInt(k?.userId, 'userId'), iv: base64url(k?.iv, 'Wrapped key', 16), data: base64url(k?.data, 'Wrapped key', 64) };
+  });
+  const ids = new Set(wrappedKeys.map((k) => k.userId));
+  if (ids.size !== wrappedKeys.length || ids.size !== memberIds.length || memberIds.some((id) => !ids.has(id))) {
+    throw new HttpError(400, 'The chat key must be wrapped once for every member.');
+  }
+  return { keyId: base64url(key?.keyId, 'Chat key id', 22), wrappedKeys };
+}
+
+function envelope(value: unknown): EnvelopeDTO {
+  const e = value as Partial<EnvelopeDTO> | undefined;
+  if (e?.v !== 1) throw new HttpError(400, 'Messages must be encrypted.');
+  return {
+    v: 1,
+    kid: base64url(e.kid, 'Chat key id', 22),
+    iv: base64url(e.iv, 'Message', 16),
+    ct: base64url(e.ct, 'Message', 22, LIMITS.ciphertextLength),
+    // A P-256 signature is 64 bytes.
+    sig: base64url(e.sig, 'Signature', 86),
+  };
+}
+
 function currentUser(res: Response): UserRow {
   const user = res.locals.user;
   if (!user) throw new HttpError(401, 'Sign in first.');
@@ -76,9 +138,10 @@ interface ApiDeps {
   push: Push;
   config: Config;
   inviteCode: string;
+  kdfSalt: string;
 }
 
-export function createApiRouter({ db, push, config, inviteCode }: ApiDeps) {
+export function createApiRouter({ db, push, config, inviteCode, kdfSalt }: ApiDeps) {
   const router = express.Router();
 
   function startSession(req: Request, res: Response, user: UserRow) {
@@ -109,6 +172,17 @@ export function createApiRouter({ db, push, config, inviteCode }: ApiDeps) {
     if (!(await db.isMember(conversationId, userId))) throw new HttpError(404, 'Chat not found.');
   }
 
+  /** A chat key can only be wrapped for people who have set up encryption. */
+  async function requireKeys(userIds: number[]) {
+    for (const id of userIds) {
+      const user = await db.getUser(id);
+      if (!user) throw new HttpError(404, 'Person not found.');
+      if (!user.dh_public) {
+        throw new HttpError(409, `${user.display_name} has not set up encryption yet. They need to sign in again.`, 'no_keys');
+      }
+    }
+  }
+
   /** Marks the newest message from others in each chat as delivered to this user. */
   function markDeliveredFrom(userId: number, messages: MessageDTO[]) {
     const upTo = new Map<number, number>();
@@ -119,7 +193,7 @@ export function createApiRouter({ db, push, config, inviteCode }: ApiDeps) {
   }
 
   router.get('/config', (_req, res) => {
-    const body: ConfigDTO = { vapidPublicKey: push.publicKey };
+    const body: ConfigDTO = { vapidPublicKey: push.publicKey, kdfSalt };
     res.json(body);
   });
 
@@ -127,11 +201,12 @@ export function createApiRouter({ db, push, config, inviteCode }: ApiDeps) {
     const username = text(req.body?.username, 'Username', 3, 24);
     if (!USERNAME.test(username)) throw new HttpError(400, 'Username can use letters, numbers, dots and underscores.');
     const displayName = text(req.body?.displayName, 'Name', 1, LIMITS.displayNameLength);
-    const password = text(req.body?.password, 'Password', 8, 200);
+    const authKey = loginKey(req.body);
+    const keys = accountKeys(req.body?.keys);
     if (!safeEqual(String(req.body?.inviteCode ?? '').trim(), inviteCode)) {
       throw new HttpError(403, 'Invite code is wrong. Ask the owner for it.');
     }
-    const user = await db.createUser(username, displayName, await hashPassword(password));
+    const user = await db.createUser(username, displayName, await hashPassword(authKey), keys);
     if (!user) throw new HttpError(409, 'That username is taken.');
     await startSession(req, res, user);
     res.status(201).json(toUserDTO(user));
@@ -139,14 +214,59 @@ export function createApiRouter({ db, push, config, inviteCode }: ApiDeps) {
 
   router.post('/auth/login', limitAuth, async (req, res) => {
     const username = String(req.body?.username ?? '').trim();
-    const password = String(req.body?.password ?? '');
+    const authKey = typeof req.body?.authKey === 'string' ? req.body.authKey : '';
     const user = await db.findUserByUsername(username);
+    if (user?.auth_version === 1) {
+      throw new HttpError(409, 'This account needs a one-time upgrade for encryption.', 'upgrade_required');
+    }
     // Check a dummy hash for unknown users too, so response time does not reveal which usernames exist.
-    const valid = await verifyPassword(password, user?.password_hash ?? (await dummyPasswordHash()));
+    const valid = await verifyPassword(authKey, user?.password_hash ?? (await dummyPasswordHash()));
     if (!user || !valid) throw new HttpError(401, 'Wrong username or password.');
     await startSession(req, res, user);
     inBackground(db.purgeExpired());
-    res.json(toUserDTO(user));
+    const body: LoginResponse = { user: toUserDTO(user), backup: keyBackupOf(user) };
+    res.json(body);
+  });
+
+  /**
+   * One-time switch for accounts from before encryption: checks the old password, then stores the
+   * hash of the new login key instead. This is the only request that ever carries a password.
+   */
+  router.post('/auth/upgrade', limitAuth, async (req, res) => {
+    const username = String(req.body?.username ?? '').trim();
+    const password = String(req.body?.password ?? '');
+    const authKey = loginKey(req.body);
+    const user = await db.findUserByUsername(username);
+    const valid = await verifyPassword(password, user?.password_hash ?? (await dummyPasswordHash()));
+    if (!user || user.auth_version !== 1 || !valid) throw new HttpError(401, 'Wrong username or password.');
+    const upgraded = await db.upgradeAuth(user.id, await hashPassword(authKey));
+    if (!upgraded) throw new HttpError(409, 'This account was already upgraded. Sign in again.');
+    await startSession(req, res, upgraded);
+    const body: LoginResponse = { user: toUserDTO(upgraded), backup: null };
+    res.json(body);
+  });
+
+  /** Returns the sealed private keys. Needs the login key, so a stolen session cookie alone is not enough. */
+  router.post('/keys/backup', limitAuth, requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    if (me.auth_version === 1) {
+      throw new HttpError(409, 'This account needs a one-time upgrade for encryption.', 'upgrade_required');
+    }
+    if (!(await verifyPassword(loginKey(req.body), me.password_hash))) throw new HttpError(403, 'Wrong password.');
+    const body: LoginResponse = { user: toUserDTO(me), backup: keyBackupOf(me) };
+    res.json(body);
+  });
+
+  /** Stores an account's keys, once. Later changes would let anyone with the login key replace them. */
+  router.put('/keys', limitAuth, requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    if (me.auth_version === 1) {
+      throw new HttpError(409, 'This account needs a one-time upgrade for encryption.', 'upgrade_required');
+    }
+    if (!(await verifyPassword(loginKey(req.body), me.password_hash))) throw new HttpError(403, 'Wrong password.');
+    const updated = await db.setUserKeys(me.id, accountKeys(req.body?.keys));
+    if (!updated) throw new HttpError(409, 'This account already has keys.');
+    res.json(toUserDTO(updated));
   });
 
   router.post('/auth/logout', requireAuth, async (_req, res) => {
@@ -223,7 +343,13 @@ export function createApiRouter({ db, push, config, inviteCode }: ApiDeps) {
     const me = currentUser(res);
     const otherId = positiveInt(req.body?.userId, 'userId');
     if (otherId === me.id || !(await db.getUser(otherId))) throw new HttpError(404, 'Person not found.');
-    const id = (await db.findDirect(me.id, otherId)) ?? (await db.createConversation('direct', null, [me.id, otherId]));
+    let id = await db.findDirect(me.id, otherId);
+    if (id === undefined) {
+      const memberIds = [me.id, otherId];
+      await requireKeys(memberIds);
+      const key = chatKey(req.body?.key, memberIds);
+      id = await db.createConversation('direct', null, memberIds, { ...key, wrappedBy: me.id });
+    }
     res.json(await db.conversationFor(me.id, id));
   });
 
@@ -233,9 +359,25 @@ export function createApiRouter({ db, push, config, inviteCode }: ApiDeps) {
     const rawIds: unknown[] = Array.isArray(req.body?.memberIds) ? req.body.memberIds : [];
     const memberIds = [...new Set(rawIds.map((v) => positiveInt(v, 'memberIds')))].filter((id) => id !== me.id);
     if (memberIds.length === 0) throw new HttpError(400, 'Pick at least one person.');
-    for (const id of memberIds) if (!(await db.getUser(id))) throw new HttpError(404, 'Person not found.');
-    const id = await db.createConversation('group', title, [me.id, ...memberIds]);
+    const allIds = [me.id, ...memberIds];
+    await requireKeys(allIds);
+    const key = chatKey(req.body?.key, allIds);
+    const id = await db.createConversation('group', title, allIds, { ...key, wrappedBy: me.id });
     res.status(201).json(await db.conversationFor(me.id, id));
+  });
+
+  /** Sets the key of a chat from before encryption. The first member to send a message does this. */
+  router.post('/conversations/:id/key', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const conversationId = positiveInt(req.params.id, 'Chat id');
+    await requireMember(conversationId, me.id);
+    const memberIds = await db.memberIds(conversationId);
+    await requireKeys(memberIds);
+    const key = chatKey(req.body, memberIds);
+    if (!(await db.setConversationKey(conversationId, key.keyId, me.id, key.wrappedKeys))) {
+      throw new HttpError(409, 'This chat already has a key.', 'has_key');
+    }
+    res.json(await db.conversationFor(me.id, conversationId));
   });
 
   router.get('/conversations/:id/messages', requireAuth, async (req, res) => {
@@ -250,14 +392,17 @@ export function createApiRouter({ db, push, config, inviteCode }: ApiDeps) {
   router.post('/conversations/:id/messages', requireAuth, async (req, res) => {
     const me = currentUser(res);
     const conversationId = positiveInt(req.params.id, 'Chat id');
-    const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
-    const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.slice(0, 64) : null;
-    if (!body) throw new HttpError(400, 'Message is empty.');
-    if (body.length > LIMITS.messageLength) throw new HttpError(400, 'Message is too long.');
+    // The server only ever receives ciphertext; it checks the shape, not the content.
+    const sealed = envelope(req.body?.envelope);
+    // Signed into the envelope, so it must stay exactly as the client sent it.
+    const clientId = base64url(req.body?.clientId, 'clientId', 1, 64);
     await requireMember(conversationId, me.id);
+    const keyId = await db.conversationKeyId(conversationId);
+    if (!keyId) throw new HttpError(409, 'Set up encryption for this chat first.', 'no_chat_key');
+    if (sealed.kid !== keyId) throw new HttpError(409, 'This chat uses a different key. Reload and try again.', 'stale_key');
     if (!(await db.takeRateLimit(`send:${me.id}`, 30, 10_000))) throw new HttpError(429, 'Slow down a little.');
 
-    const message = await db.insertMessage(conversationId, me.id, body, req.body?.urgent === true, clientId);
+    const message = await db.insertMessage(conversationId, me.id, sealed, req.body?.urgent === true, clientId);
     // Answer the sender first; pushes go out after, while the function stays alive.
     inBackground(notifyNewMessage(db, push, config, message, me));
     res.status(201).json(message);
@@ -308,10 +453,14 @@ export function createApiRouter({ db, push, config, inviteCode }: ApiDeps) {
       kind: 'test',
       title: 'Notifications work',
       body: 'This is how new messages will reach you.',
+      bodyPrefix: '',
       urgent: false,
       tag: 'test',
       conversationId: null,
       messageId: null,
+      senderId: null,
+      clientId: null,
+      envelope: null,
       unreadTotal: null,
       sentAt: Date.now(),
     };
@@ -326,7 +475,7 @@ export function createApiRouter({ db, push, config, inviteCode }: ApiDeps) {
     const status = (error as { status?: number }).status ?? 500;
     if (status >= 500) config.logger.error('API error', error);
     const message = error instanceof HttpError || status < 500 ? (error as Error).message : 'Something went wrong.';
-    res.status(status).json({ error: message });
+    res.status(status).json({ error: message, code: error instanceof HttpError ? error.code : undefined });
   });
 
   return router;

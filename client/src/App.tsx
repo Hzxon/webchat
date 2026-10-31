@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
+import type { UserDTO } from '../../shared/types';
 import { ApiError } from './api';
-import { startChat } from './chat';
+import { signOut, startChat } from './chat';
 import { useAppState } from './store';
 import { Toasts, UrgentAlert } from './components/Alerts';
 import { AuthScreen } from './components/AuthScreen';
@@ -8,18 +9,27 @@ import { ChatView } from './components/ChatView';
 import { NewChatDialog } from './components/NewChatDialog';
 import { NotificationDialog } from './components/NotificationDialog';
 import { Sidebar } from './components/Sidebar';
+import { UnlockScreen } from './components/UnlockScreen';
 import { BellRingIcon } from './components/icons';
 
-type Phase = 'loading' | 'signed-out' | 'signed-in' | 'error';
+type Phase = 'loading' | 'signed-out' | 'locked' | 'signed-in' | 'error';
 
 export function App() {
   const [phase, setPhase] = useState<Phase>('loading');
   const [error, setError] = useState('');
+  const [lockedUser, setLockedUser] = useState<UserDTO | null>(null);
 
   const start = useCallback(() => {
     setPhase('loading');
     startChat(() => setPhase('signed-out'))
-      .then(() => setPhase('signed-in'))
+      .then((result) => {
+        if (result.status === 'locked') {
+          setLockedUser(result.me);
+          setPhase('locked');
+        } else if (result.status === 'ready') {
+          setPhase('signed-in');
+        }
+      })
       .catch((err: unknown) => {
         if (err instanceof ApiError && err.status === 401) {
           setPhase('signed-out');
@@ -34,6 +44,9 @@ export function App() {
 
   if (phase === 'loading') return <div className="splash">Loading…</div>;
   if (phase === 'signed-out') return <AuthScreen onSignedIn={start} />;
+  if (phase === 'locked' && lockedUser) {
+    return <UnlockScreen me={lockedUser} onUnlocked={start} onSignOut={() => void signOut().then(() => setPhase('signed-out'))} />;
+  }
   if (phase === 'error') {
     return (
       <div className="splash">
@@ -64,8 +77,8 @@ function ChatLayout() {
             <BellRingIcon width={36} height={36} />
             <h2>Never miss an urgent message</h2>
             <p>
-              Messages arrive here the moment they are sent. Mark a message as urgent with the bell button, and the other
-              person’s browser keeps ringing until they see it.
+              Messages arrive here the moment they are sent, end-to-end encrypted. Mark a message as urgent with the bell
+              button, and the other person’s browser keeps ringing until they see it.
             </p>
             {push?.permission !== 'granted' && (
               <button className="button-primary" onClick={() => setDialog('notifications')}>

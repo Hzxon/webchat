@@ -8,22 +8,32 @@ function preview(text: string, length = 180): string {
   return flat.length > length ? `${flat.slice(0, length - 1)}…` : flat;
 }
 
+/** Push services cap payloads near 4 KB; leave room for encryption overhead. */
+const MAX_PAYLOAD_BYTES = 3000;
+
 async function payloadFor(db: Db, recipientId: number, message: MessageDTO, conversation: ConversationDTO, sender: UserRow) {
   const isGroup = conversation.type === 'group';
   const name = isGroup ? (conversation.title ?? 'Group') : sender.display_name;
-  const text = preview(message.body);
   const payload: PushPayload = {
     kind: 'message',
     title: message.urgent ? `URGENT from ${name}` : name,
-    body: isGroup ? `${sender.display_name}: ${text}` : text,
+    // The server cannot read encrypted messages. The service worker decrypts the envelope on the
+    // device and puts the text after the prefix.
+    body: message.envelope ? '' : preview(message.body),
+    bodyPrefix: isGroup ? `${sender.display_name}: ` : '',
     urgent: message.urgent,
     // One notification per chat, replaced by newer messages. Urgent ones never get replaced.
     tag: message.urgent ? `urgent-${message.id}` : `chat-${conversation.id}`,
     conversationId: conversation.id,
     messageId: message.id,
+    senderId: sender.id,
+    clientId: message.clientId,
+    envelope: message.envelope,
     unreadTotal: await db.unreadTotal(recipientId),
     sentAt: message.createdAt,
   };
+  // A long message does not fit in a push; the notification then says "New message" without text.
+  if (new TextEncoder().encode(JSON.stringify(payload)).length > MAX_PAYLOAD_BYTES) payload.envelope = null;
   return payload;
 }
 

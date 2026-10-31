@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
 import { LIMITS } from '../../../shared/types';
-import { api } from '../api';
-import { openConversation } from '../chat';
-import { actions, useAppState } from '../store';
+import { openConversation, startDirectChat, startGroupChat } from '../chat';
+import { useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
 import { presenceText } from './format';
+
+const NO_KEYS = 'Must sign in again to turn on encryption';
 
 export function NewChatDialog({ onClose }: { onClose: () => void }) {
   const users = useAppState((s) => s.users);
@@ -37,19 +38,8 @@ export function NewChatDialog({ onClose }: { onClose: () => void }) {
     }
   }
 
-  const openDirect = (userId: number) =>
-    run(async () => {
-      const conversation = await api.openDirect(userId);
-      actions.upsertConversation(conversation);
-      return conversation.id;
-    });
-
-  const createGroup = () =>
-    run(async () => {
-      const conversation = await api.createGroup(groupName, [...picked]);
-      actions.upsertConversation(conversation);
-      return conversation.id;
-    });
+  const openDirect = (userId: number) => run(() => startDirectChat(userId));
+  const createGroup = () => run(() => startGroupChat(groupName.trim(), [...picked]));
 
   function toggle(id: number) {
     setPicked((current) => {
@@ -90,20 +80,25 @@ export function NewChatDialog({ onClose }: { onClose: () => void }) {
         {people.map((user) => (
           <li key={user.id}>
             {mode === 'person' ? (
-              <button className="person" onClick={() => void openDirect(user.id)} disabled={busy}>
+              <button className="person" onClick={() => void openDirect(user.id)} disabled={busy || !user.keys}>
                 <Avatar name={user.displayName} seed={user.id} size={38} online={user.online} />
                 <span>
                   <strong>{user.displayName}</strong>
-                  <small>{presenceText(user)}</small>
+                  <small>{user.keys ? presenceText(user) : NO_KEYS}</small>
                 </span>
               </button>
             ) : (
               <label className="person">
-                <input type="checkbox" checked={picked.has(user.id)} onChange={() => toggle(user.id)} />
+                <input
+                  type="checkbox"
+                  checked={picked.has(user.id)}
+                  onChange={() => toggle(user.id)}
+                  disabled={!user.keys}
+                />
                 <Avatar name={user.displayName} seed={user.id} size={38} online={user.online} />
                 <span>
                   <strong>{user.displayName}</strong>
-                  <small>@{user.username}</small>
+                  <small>{user.keys ? `@${user.username}` : NO_KEYS}</small>
                 </span>
               </label>
             )}

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { attachDatabasePool } from '@vercel/functions';
 import express from 'express';
 import { createApiRouter } from './api.js';
+import { randomBytes, toBase64Url } from '../shared/e2ee.js';
 import { randomInviteCode } from './auth.js';
 import type { Config } from './config.js';
 import { openDb } from './db.js';
@@ -25,6 +26,8 @@ export const CONTENT_SECURITY_POLICY = [
 export interface WebChatApp {
   app: express.Express;
   inviteCode: string;
+  /** Raw database access, for tests and maintenance scripts. */
+  sql: Sql;
   close(): Promise<void>;
 }
 
@@ -38,9 +41,12 @@ async function connect(config: Config): Promise<Sql> {
 
 /** Builds the Express app. It does not listen: server/index.ts does locally, and Vercel does in production. */
 export async function createApp(config: Config): Promise<WebChatApp> {
-  const db = await openDb(await connect(config));
+  const sql = await connect(config);
+  const db = await openDb(sql);
 
   const inviteCode = config.inviteCode ?? (await db.claimMeta('invite_code', randomInviteCode()));
+  // Mixed into every password key derivation, so keys from one deployment are useless on another.
+  const kdfSalt = await db.claimMeta('kdf_salt', toBase64Url(randomBytes(16)));
 
   const push = await createPush(db, config);
   const app = express();
@@ -53,7 +59,8 @@ export async function createApp(config: Config): Promise<WebChatApp> {
     res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
     next();
   });
-  app.use('/api', express.json({ limit: '16kb' }), createApiRouter({ db, push, config, inviteCode }));
+  // Room for a group's wrapped chat keys and the longest encrypted message.
+  app.use('/api', express.json({ limit: '64kb' }), createApiRouter({ db, push, config, inviteCode, kdfSalt }));
 
   const clientDir = config.clientDir;
   if (clientDir && fs.existsSync(path.join(clientDir, 'index.html'))) {
@@ -73,5 +80,5 @@ export async function createApp(config: Config): Promise<WebChatApp> {
     config.logger.warn(`No built client in ${clientDir}. Run "npm run build", or use "npm run dev".`);
   }
 
-  return { app, inviteCode, close: () => db.close() };
+  return { app, inviteCode, sql, close: () => db.close() };
 }

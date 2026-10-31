@@ -1,8 +1,12 @@
 import type {
+  AccountKeysInput,
   BootstrapDTO,
+  ChatKeyInput,
   ConfigDTO,
   ConversationDTO,
+  LoginResponse,
   MessageDTO,
+  RegisterInput,
   SendMessageInput,
   SyncRequest,
   SyncResponse,
@@ -11,9 +15,12 @@ import type {
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** The server's machine-readable reason, such as "upgrade_required". */
+  code: string | undefined;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -30,27 +37,27 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     throw new ApiError(0, 'Cannot reach the server. Check your connection.');
   }
   if (res.status === 204) return undefined as T;
-  const data = (await res.json().catch(() => ({}))) as { error?: string };
-  if (!res.ok) throw new ApiError(res.status, data.error ?? `Request failed (${res.status}).`);
+  const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+  if (!res.ok) throw new ApiError(res.status, data.error ?? `Request failed (${res.status}).`, data.code);
   return data as T;
-}
-
-export interface RegisterInput {
-  username: string;
-  displayName: string;
-  password: string;
-  inviteCode: string;
 }
 
 export const api = {
   config: () => request<ConfigDTO>('GET', '/config'),
   register: (input: RegisterInput) => request<UserDTO>('POST', '/auth/register', input),
-  login: (username: string, password: string) => request<UserDTO>('POST', '/auth/login', { username, password }),
+  login: (username: string, authKey: string) => request<LoginResponse>('POST', '/auth/login', { username, authKey }),
+  upgrade: (username: string, password: string, authKey: string) =>
+    request<LoginResponse>('POST', '/auth/upgrade', { username, password, authKey }),
   logout: () => request<void>('POST', '/auth/logout'),
+  keysBackup: (authKey: string) => request<LoginResponse>('POST', '/keys/backup', { authKey }),
+  putKeys: (authKey: string, keys: AccountKeysInput) => request<UserDTO>('PUT', '/keys', { authKey, keys }),
   bootstrap: () => request<BootstrapDTO>('GET', '/bootstrap'),
-  openDirect: (userId: number) => request<ConversationDTO>('POST', '/conversations/direct', { userId }),
-  createGroup: (title: string, memberIds: number[]) =>
-    request<ConversationDTO>('POST', '/conversations/group', { title, memberIds }),
+  openDirect: (userId: number, key: ChatKeyInput) =>
+    request<ConversationDTO>('POST', '/conversations/direct', { userId, key }),
+  createGroup: (title: string, memberIds: number[], key: ChatKeyInput) =>
+    request<ConversationDTO>('POST', '/conversations/group', { title, memberIds, key }),
+  setChatKey: (conversationId: number, key: ChatKeyInput) =>
+    request<ConversationDTO>('POST', `/conversations/${conversationId}/key`, key),
   sync: (input: SyncRequest) => request<SyncResponse>('POST', '/sync', input),
   messages: (conversationId: number, before?: number) =>
     request<MessageDTO[]>('GET', `/conversations/${conversationId}/messages${before ? `?before=${before}` : ''}`),

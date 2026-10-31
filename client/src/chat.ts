@@ -3,10 +3,14 @@
 // There is no open connection: the server runs as short-lived serverless functions. Instead the
 // page checks in with POST /api/sync. A push from the service worker makes it check in at once;
 // otherwise it checks in on a timer that is faster when the user is looking and push is off.
-import { LIMITS, type MessageDTO, type SyncResponse, type WorkerToPageMessage } from '../../shared/types';
+//
+// Everything the server sends is decrypted on the way in, and every message is encrypted on the
+// way out (see e2ee/keyring.ts). The store only ever holds readable text.
+import { LIMITS, type ConversationDTO, type SyncResponse, type UserDTO, type WorkerToPageMessage } from '../../shared/types';
 import { showUnreadInTab, sound } from './alerts';
 import { api, ApiError, sendAwayBeacon } from './api';
 import { attention } from './attention';
+import { EncryptionUnavailableError, keyring, type ChatConversation, type ChatMessage, type KeyLookup } from './e2ee/keyring';
 import { forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
 import { actions, chatTitle, store } from './store';
 
@@ -15,6 +19,7 @@ const newClientId = () =>
 
 const tabId = newClientId();
 let running = false;
+let meId = 0;
 let cursor = 0;
 let stamp = '';
 let pushActiveHere = false;
@@ -25,6 +30,17 @@ let onSignedOut: () => void = () => undefined;
 const cleanups: Array<() => void> = [];
 // Bumped on every start, so an older start that is still loading knows to stop.
 let generation = 0;
+
+/** Public keys by person: the unlocked keys for oneself, the given server list for everyone else. */
+function lookupFrom(users: UserDTO[]): KeyLookup {
+  const byId = new Map(users.map((u) => [u.id, u.keys]));
+  return (userId) => (userId === meId ? keyring.myKeys() : (byId.get(userId) ?? null));
+}
+
+const currentLookup = () => lookupFrom(Object.values(store.get().users));
+
+const openConversations = (list: ConversationDTO[], keysOf: KeyLookup): Promise<ChatConversation[]> =>
+  Promise.all(list.map(async (c) => ({ ...c, lastMessage: c.lastMessage ? await keyring.open(c.lastMessage, c, keysOf) : null })));
 
 /** How long to wait before the next check-in. */
 function syncInterval(): number {
@@ -55,12 +71,12 @@ export async function syncNow(): Promise<void> {
     const result = await api.sync({ cursor, stamp, attentive: attention.isAttentive(), tabId, endpoint: pushEndpoint });
     failures = 0;
     actions.setConnected(true);
+    if (result.changed) await applyChanges(result);
     stamp = result.stamp;
     cursor = Math.max(cursor, result.cursor);
-    if (result.changed) applyChanges(result);
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
-      endSession();
+      void endSession();
       return;
     }
     failures++;
@@ -76,24 +92,49 @@ export async function syncNow(): Promise<void> {
   }
 }
 
-function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
-  const fresh = result.messages.filter((m) => !seen.has(m.id));
-  for (const m of fresh) seen.add(m.id);
-  actions.applySync(result.users, result.conversations, result.messages);
+async function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
+  const keysOf = lookupFrom(result.users);
+  actions.setKeyWarnings(await keyring.checkKeys(result.users));
+  const conversations = await openConversations(result.conversations, keysOf);
+  const byId = new Map(conversations.map((c) => [c.id, c]));
+  const messages = await Promise.all(
+    result.messages.filter((m) => byId.has(m.conversationId)).map((m) => keyring.open(m, byId.get(m.conversationId)!, keysOf)),
+  );
+  if (!running) return;
 
-  const meId = store.get().me?.id;
+  const fresh = messages.filter((m) => !seen.has(m.id));
+  for (const m of fresh) seen.add(m.id);
+  actions.applySync(result.users, conversations, messages);
   for (const message of fresh) if (message.senderId !== meId) onIncoming(message);
 }
 
-/** Loads the account's data, starts checking in, and wires up alerts. */
-export async function startChat(signedOut: () => void): Promise<void> {
+/** Fetches everything again, for when this device missed a change such as a new chat key. */
+async function reloadAll() {
+  const data = await api.bootstrap();
+  await applyChanges({ changed: true, stamp: data.stamp, cursor: data.cursor, users: data.users, conversations: data.conversations, messages: [] });
+}
+
+export type StartResult = { status: 'ready' } | { status: 'locked'; me: UserDTO } | { status: 'stale' };
+
+/**
+ * Loads the account's data, starts checking in, and wires up alerts. Returns "locked" when this
+ * device does not hold the account's keys yet; the user then unlocks with their password.
+ */
+export async function startChat(signedOut: () => void): Promise<StartResult> {
   const run = ++generation;
   teardown();
   onSignedOut = signedOut;
   const data = await api.bootstrap();
-  if (run !== generation) return;
+  if (run !== generation) return { status: 'stale' };
+  if (!(await keyring.load(data.me.id))) return { status: 'locked', me: data.me };
 
-  actions.bootstrap(data);
+  meId = data.me.id;
+  const keysOf = lookupFrom(data.users);
+  actions.setKeyWarnings(await keyring.checkKeys(data.users));
+  const conversations = await openConversations(data.conversations, keysOf);
+  if (run !== generation) return { status: 'stale' };
+
+  actions.bootstrap({ me: data.me, users: data.users, conversations });
   cursor = data.cursor;
   stamp = data.stamp;
   running = true;
@@ -133,6 +174,7 @@ export async function startChat(signedOut: () => void): Promise<void> {
     history.replaceState(null, '', '/');
     void openConversation(requested);
   }
+  return { status: 'ready' };
 }
 
 export async function refreshPushState() {
@@ -143,7 +185,11 @@ export async function refreshPushState() {
   return state;
 }
 
-function onIncoming(message: MessageDTO) {
+/** The text to show for a message in a toast or notification. */
+export const previewText = (message: ChatMessage) =>
+  message.security === 'failed' ? 'Encrypted message. Open the chat to read it.' : message.text;
+
+function onIncoming(message: ChatMessage) {
   const state = store.get();
   if (attention.isAttentive() && state.activeId === message.conversationId) {
     markRead(message.conversationId);
@@ -155,7 +201,7 @@ function onIncoming(message: MessageDTO) {
   const sender = state.users[message.senderId]?.displayName ?? 'Someone';
   const isGroup = conversation.type === 'group';
   const title = isGroup ? chatTitle(conversation) : sender;
-  const body = isGroup ? `${sender}: ${message.body}` : message.body;
+  const body = isGroup ? `${sender}: ${previewText(message)}` : previewText(message);
 
   if (message.urgent) actions.addUrgent(message);
   else sound.message();
@@ -217,11 +263,83 @@ export async function openConversation(conversationId: number) {
 
 export async function loadOlder(conversationId: number) {
   const state = store.get();
-  if (state.historyComplete[conversationId]) return;
+  const conversation = state.conversations[conversationId];
+  if (!conversation || state.historyComplete[conversationId]) return;
   const oldest = state.messages[conversationId]?.find((m) => m.id > 0);
-  const page = await api.messages(conversationId, oldest?.id);
+  const raw = await api.messages(conversationId, oldest?.id);
+  const keysOf = currentLookup();
+  const page = await Promise.all(raw.map((m) => keyring.open(m, conversation, keysOf)));
   for (const m of page) seen.add(m.id);
   actions.setHistory(conversationId, page, page.length < LIMITS.pageSize);
+}
+
+/** Adds a chat the server just returned, keeping the key this device created for it. */
+async function adoptConversation(dto: ConversationDTO, created?: { keyId: string; key: CryptoKey }) {
+  if (created && dto.keyId === created.keyId) await keyring.remember(dto.id, created.keyId, created.key);
+  const [conversation] = await openConversations([dto], currentLookup());
+  actions.upsertConversation(conversation!);
+  return dto.id;
+}
+
+const warnedIds = () => new Set(Object.keys(store.get().keyWarnings).map(Number));
+
+/** Opens the direct chat with a person, creating it with a fresh encrypted key if needed. */
+export async function startDirectChat(userId: number): Promise<number> {
+  const state = store.get();
+  const existing = Object.values(state.conversations).find(
+    (c) => c.type === 'direct' && c.members.some((m) => m.userId === userId),
+  );
+  if (existing) return existing.id;
+  const other = state.users[userId];
+  if (!other) throw new Error('Person not found.');
+  const { input, key } = await keyring.createChatKey(
+    [
+      { id: meId, name: 'You', keys: keyring.myKeys() },
+      { id: other.id, name: other.displayName, keys: other.keys },
+    ],
+    warnedIds(),
+  );
+  return adoptConversation(await api.openDirect(userId, input), { keyId: input.keyId, key });
+}
+
+export async function startGroupChat(title: string, memberIds: number[]): Promise<number> {
+  const state = store.get();
+  const members = [
+    { id: meId, name: 'You', keys: keyring.myKeys() },
+    ...memberIds.map((id) => ({ id, name: state.users[id]?.displayName ?? 'Someone', keys: state.users[id]?.keys ?? null })),
+  ];
+  const { input, key } = await keyring.createChatKey(members, warnedIds());
+  return adoptConversation(await api.createGroup(title, memberIds, input), { keyId: input.keyId, key });
+}
+
+/** Returns the chat's key, giving a chat from before encryption its first key if it has none. */
+async function ensureChatKey(conversationId: number, retried = false): Promise<{ key: CryptoKey; keyId: string }> {
+  const state = store.get();
+  const conversation = state.conversations[conversationId];
+  if (!conversation) throw new Error('Chat not found.');
+  const keysOf = currentLookup();
+  if (conversation.keyId) {
+    const key = await keyring.chatKey(conversation, keysOf);
+    if (!key) throw new EncryptionUnavailableError('This chat has no key for you. Reload the page.');
+    return { key, keyId: conversation.keyId };
+  }
+  const members = conversation.members.map((m) => ({
+    id: m.userId,
+    name: m.userId === meId ? 'You' : (state.users[m.userId]?.displayName ?? 'Someone'),
+    keys: keysOf(m.userId),
+  }));
+  const { input, key } = await keyring.createChatKey(members, warnedIds());
+  try {
+    await adoptConversation(await api.setChatKey(conversationId, input), { keyId: input.keyId, key });
+    return { key, keyId: input.keyId };
+  } catch (error) {
+    // Another member set a key first: use theirs.
+    if (!retried && error instanceof ApiError && error.code === 'has_key') {
+      await reloadAll();
+      return ensureChatKey(conversationId, true);
+    }
+    throw error;
+  }
 }
 
 export async function sendMessage(conversationId: number, body: string, urgent: boolean) {
@@ -233,27 +351,43 @@ export async function sendMessage(conversationId: number, body: string, urgent: 
     id: -Date.now(),
     conversationId,
     senderId: me.id,
-    body: text,
+    body: '',
+    envelope: null,
     urgent,
     createdAt: Date.now(),
     clientId,
+    text,
+    security: 'encrypted',
   });
   try {
-    const message = await api.sendMessage(conversationId, { body: text, urgent, clientId });
+    const { key, keyId } = await ensureChatKey(conversationId);
+    const envelope = await keyring.seal(key, keyId, { conversationId, urgent, clientId }, text);
+    const message = await api.sendMessage(conversationId, { envelope, urgent, clientId });
     seen.add(message.id);
-    actions.addMessage(message, false);
+    keyring.rememberText(message.id, text);
+    actions.addMessage({ ...message, text, security: 'encrypted' }, false);
     actions.setPending(clientId, null);
     // Check back soon, so "delivered" shows up without waiting for the regular timer.
     schedule(2500);
-  } catch {
+  } catch (error) {
     actions.setPending(clientId, 'failed');
+    if (error instanceof ApiError && error.code === 'stale_key') void reloadAll();
+    if (error instanceof EncryptionUnavailableError || (error instanceof ApiError && error.status >= 400)) {
+      actions.addToast({ conversationId, title: 'Message not sent', body: error.message });
+    }
   }
 }
 
-export function retryMessage(message: MessageDTO) {
+export function retryMessage(message: ChatMessage) {
   actions.dropSending(message.conversationId, message.clientId!);
   actions.setPending(message.clientId!, null);
-  void sendMessage(message.conversationId, message.body, message.urgent);
+  void sendMessage(message.conversationId, message.text, message.urgent);
+}
+
+/** Accepts a person's changed keys after the user compared security codes with them. */
+export async function trustKeys(user: UserDTO) {
+  await keyring.trust(user);
+  actions.setKeyWarnings(await keyring.checkKeys(Object.values(store.get().users)));
 }
 
 function teardown() {
@@ -269,8 +403,10 @@ function teardown() {
   actions.reset();
 }
 
-function endSession() {
+async function endSession() {
   teardown();
+  // The keys stay usable only while signed in on this device.
+  await keyring.forget();
   onSignedOut();
 }
 
@@ -278,5 +414,5 @@ export async function signOut() {
   sendAwayBeacon(tabId);
   await forgetPushOnServer();
   await api.logout().catch(() => undefined);
-  endSession();
+  await endSession();
 }

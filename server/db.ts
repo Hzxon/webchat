@@ -1,4 +1,14 @@
-import type { ConversationDTO, ConversationType, MemberState, MessageDTO, UserDTO } from '../shared/types.js';
+import type {
+  AccountKeysInput,
+  ConversationDTO,
+  ConversationType,
+  EnvelopeDTO,
+  MemberState,
+  MessageDTO,
+  SealedBackupDTO,
+  UserDTO,
+  WrappedKeyInput,
+} from '../shared/types.js';
 import type { Querier, Sql } from './sql.js';
 
 // Everything lives in its own schema. Supabase exposes only the "public" schema through its
@@ -80,6 +90,38 @@ CREATE TABLE IF NOT EXISTS webchat.rate_limits (
 );
 `;
 
+// Changes to tables that already exist. Each runs once, in order; webchat.meta's schema_version
+// row records how many have run.
+const MIGRATIONS = [
+  // 1: end-to-end encryption.
+  `
+-- 1: password_hash covers the raw password (accounts from before encryption).
+-- 2: it covers a login key the browser derives from the password; the server never sees the password.
+ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS dh_public TEXT;
+ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS sign_public TEXT;
+-- The user's private keys, encrypted with a key only their password can derive.
+ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS key_backup TEXT;
+ALTER TABLE webchat.conversations ADD COLUMN IF NOT EXISTS key_id TEXT;
+ALTER TABLE webchat.messages ADD COLUMN IF NOT EXISTS envelope TEXT;
+-- Each chat's key, encrypted separately for every member.
+CREATE TABLE IF NOT EXISTS webchat.conversation_keys (
+  conversation_id INTEGER NOT NULL REFERENCES webchat.conversations(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES webchat.users(id) ON DELETE CASCADE,
+  wrapped_by      INTEGER NOT NULL REFERENCES webchat.users(id),
+  iv              TEXT NOT NULL,
+  wrapped         TEXT NOT NULL,
+  PRIMARY KEY (conversation_id, user_id)
+);
+`,
+];
+
+const statements = (sql: string) =>
+  sql
+    .split(/;\s*\n/)
+    .map((part) => part.trim())
+    .filter((part) => part.replace(/--.*$/gm, '').trim());
+
 /** A user counts as online while their app checked in within this window. */
 const ONLINE_WINDOW_MS = 60_000;
 /** How long an "I am looking" check-in lasts. Attentive tabs check in more often than this. */
@@ -97,6 +139,10 @@ export interface UserRow {
   attentive_until: number;
   attentive_tab: string | null;
   attentive_endpoint: string | null;
+  auth_version: number;
+  dh_public: string | null;
+  sign_public: string | null;
+  key_backup: string | null;
 }
 
 interface ConversationRow {
@@ -105,6 +151,10 @@ interface ConversationRow {
   title: string | null;
   updated_at: number;
   unread: number;
+  key_id: string | null;
+  my_wrapped_by: number | null;
+  my_iv: string | null;
+  my_wrapped: string | null;
 }
 
 interface MemberRow {
@@ -119,6 +169,7 @@ interface MessageRow {
   conversation_id: number;
   sender_id: number;
   body: string;
+  envelope: string | null;
   urgent: boolean;
   client_id: string | null;
   created_at: number;
@@ -137,6 +188,7 @@ function toMessageDTO(row: MessageRow): MessageDTO {
     conversationId: row.conversation_id,
     senderId: row.sender_id,
     body: row.body,
+    envelope: row.envelope ? (JSON.parse(row.envelope) as EnvelopeDTO) : null,
     urgent: row.urgent,
     createdAt: row.created_at,
     clientId: row.client_id,
@@ -154,8 +206,12 @@ export function toUserDTO(row: UserRow, now = Date.now()): UserDTO {
     displayName: row.display_name,
     online: row.last_active_at !== null && now - row.last_active_at < ONLINE_WINDOW_MS,
     lastSeen: row.last_active_at,
+    keys: row.dh_public && row.sign_public ? { dh: row.dh_public, sign: row.sign_public } : null,
   };
 }
+
+export const keyBackupOf = (row: UserRow) =>
+  row.key_backup ? (JSON.parse(row.key_backup) as SealedBackupDTO) : null;
 
 export const isAttentive = (user: UserRow, now = Date.now()) => user.attentive_until > now;
 
@@ -169,18 +225,31 @@ export async function openDb(sql: Sql) {
     // Several serverless instances can start at once; the lock makes them create tables one at a time.
     await tx.query('SELECT pg_advisory_xact_lock(7349201)');
     // One statement per query: PGlite's query() does not accept several at once.
-    for (const statement of SCHEMA.split(/;\s*\n/).map((part) => part.trim()).filter(Boolean)) {
-      await tx.query(statement);
+    for (const statement of statements(SCHEMA)) await tx.query(statement);
+    const version = Number(
+      (await one(tx.query<{ value: string }>("SELECT value FROM webchat.meta WHERE key = 'schema_version'")))?.value ?? 0,
+    );
+    for (const migration of MIGRATIONS.slice(version)) {
+      for (const statement of statements(migration)) await tx.query(statement);
+    }
+    if (version < MIGRATIONS.length) {
+      await tx.query(
+        `INSERT INTO webchat.meta (key, value) VALUES ('schema_version', $1)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [String(MIGRATIONS.length)],
+      );
     }
   });
 
   async function conversations(userId: number, onlyId: number | null): Promise<ConversationDTO[]> {
     const [rows, members, lastMessages] = await Promise.all([
       sql.query<ConversationRow>(
-        `SELECT c.id, c.type, c.title, c.updated_at,
+        `SELECT c.id, c.type, c.title, c.updated_at, c.key_id,
+           k.wrapped_by AS my_wrapped_by, k.iv AS my_iv, k.wrapped AS my_wrapped,
            (SELECT COUNT(*)::int FROM webchat.messages x
              WHERE x.conversation_id = c.id AND x.id > m.last_read_id AND x.sender_id <> m.user_id) AS unread
          FROM webchat.conversations c JOIN webchat.members m ON m.conversation_id = c.id
+         LEFT JOIN webchat.conversation_keys k ON k.conversation_id = c.id AND k.user_id = m.user_id
          WHERE m.user_id = $1 AND ($2::int IS NULL OR c.id = $2)
          ORDER BY c.updated_at DESC, c.id DESC`,
         [userId, onlyId],
@@ -215,6 +284,11 @@ export async function openDb(sql: Sql) {
       lastMessage: lastByChat.get(row.id) ?? null,
       unread: row.unread,
       updatedAt: row.updated_at,
+      keyId: row.key_id,
+      myKey:
+        row.my_wrapped_by !== null && row.my_iv && row.my_wrapped
+          ? { wrappedBy: row.my_wrapped_by, iv: row.my_iv, data: row.my_wrapped }
+          : null,
     }));
   }
 
@@ -229,6 +303,16 @@ export async function openDb(sql: Sql) {
       ),
     );
     return row && toMemberState(row);
+  }
+
+  async function insertWrappedKeys(q: Querier, conversationId: number, wrappedBy: number, wrappedKeys: WrappedKeyInput[]) {
+    for (const k of wrappedKeys) {
+      await q.query(
+        `INSERT INTO webchat.conversation_keys (conversation_id, user_id, wrapped_by, iv, wrapped)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [conversationId, k.userId, wrappedBy, k.iv, k.data],
+      );
+    }
   }
 
   return {
@@ -265,13 +349,32 @@ export async function openDb(sql: Sql) {
       await sql.query('DELETE FROM webchat.rate_limits WHERE window_start <= $1', [now - 24 * 3600_000]);
     },
 
-    /** Returns undefined when the username is taken. */
-    createUser: async (username: string, displayName: string, passwordHash: string) =>
+    /** Creates an account with its keys. Returns undefined when the username is taken. */
+    createUser: async (username: string, displayName: string, loginKeyHash: string, keys: AccountKeysInput) =>
       one(
         sql.query<UserRow>(
-          `INSERT INTO webchat.users (username, display_name, password_hash, created_at) VALUES ($1, $2, $3, $4)
+          `INSERT INTO webchat.users
+             (username, display_name, password_hash, created_at, auth_version, dh_public, sign_public, key_backup)
+           VALUES ($1, $2, $3, $4, 2, $5, $6, $7)
            ON CONFLICT DO NOTHING RETURNING *`,
-          [username, displayName, passwordHash, Date.now()],
+          [username, displayName, loginKeyHash, Date.now(), keys.dh, keys.sign, JSON.stringify(keys.backup)],
+        ),
+      ),
+    /** Switches an account from a raw-password hash to a login-key hash. */
+    upgradeAuth: (userId: number, loginKeyHash: string) =>
+      one(
+        sql.query<UserRow>(
+          'UPDATE webchat.users SET password_hash = $2, auth_version = 2 WHERE id = $1 AND auth_version = 1 RETURNING *',
+          [userId, loginKeyHash],
+        ),
+      ),
+    /** Stores an account's keys once. Returns undefined if the account already has keys. */
+    setUserKeys: (userId: number, keys: AccountKeysInput) =>
+      one(
+        sql.query<UserRow>(
+          `UPDATE webchat.users SET dh_public = $2, sign_public = $3, key_backup = $4
+           WHERE id = $1 AND dh_public IS NULL RETURNING *`,
+          [userId, keys.dh, keys.sign, JSON.stringify(keys.backup)],
         ),
       ),
     getUser: (id: number) => one(sql.query<UserRow>('SELECT * FROM webchat.users WHERE id = $1', [id])),
@@ -328,16 +431,24 @@ export async function openDb(sql: Sql) {
         )
       )?.id,
 
-    /** Creates a chat with its members. For a direct chat that already exists, returns the existing id. */
-    createConversation(type: ConversationType, title: string | null, memberIds: number[]): Promise<number> {
+    /**
+     * Creates a chat with its members and its key, wrapped for each member. For a direct chat that
+     * already exists, returns the existing id and ignores the new key.
+     */
+    createConversation(
+      type: ConversationType,
+      title: string | null,
+      memberIds: number[],
+      key: { keyId: string; wrappedBy: number; wrappedKeys: WrappedKeyInput[] },
+    ): Promise<number> {
       const now = Date.now();
       const directKey = type === 'direct' ? `${Math.min(...memberIds)}:${Math.max(...memberIds)}` : null;
       return sql.transaction(async (tx) => {
         const created = await one(
           tx.query<{ id: number }>(
-            `INSERT INTO webchat.conversations (type, title, direct_key, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $4) ON CONFLICT (direct_key) DO NOTHING RETURNING id`,
-            [type, title, directKey, now],
+            `INSERT INTO webchat.conversations (type, title, direct_key, created_at, updated_at, key_id)
+             VALUES ($1, $2, $3, $4, $4, $5) ON CONFLICT (direct_key) DO NOTHING RETURNING id`,
+            [type, title, directKey, now, key.keyId],
           ),
         );
         if (!created) {
@@ -353,9 +464,32 @@ export async function openDb(sql: Sql) {
             now,
           ]);
         }
+        await insertWrappedKeys(tx, created.id, key.wrappedBy, key.wrappedKeys);
         return created.id;
       });
     },
+
+    /**
+     * Gives a chat from before encryption its key. Only the first caller wins; returns false if the
+     * chat already has one.
+     */
+    setConversationKey(conversationId: number, keyId: string, wrappedBy: number, wrappedKeys: WrappedKeyInput[]) {
+      return sql.transaction(async (tx) => {
+        const updated = await tx.query(
+          'UPDATE webchat.conversations SET key_id = $2 WHERE id = $1 AND key_id IS NULL RETURNING id',
+          [conversationId, keyId],
+        );
+        if (updated.length === 0) return false;
+        await insertWrappedKeys(tx, conversationId, wrappedBy, wrappedKeys);
+        return true;
+      });
+    },
+    conversationKeyId: async (conversationId: number) =>
+      (
+        await one(
+          sql.query<{ key_id: string | null }>('SELECT key_id FROM webchat.conversations WHERE id = $1', [conversationId]),
+        )
+      )?.key_id ?? null,
     conversationsFor: (userId: number) => conversations(userId, null),
     conversationFor: async (userId: number, conversationId: number) => (await conversations(userId, conversationId))[0],
     memberIds: async (conversationId: number) =>
@@ -372,15 +506,15 @@ export async function openDb(sql: Sql) {
         ])
       ).length > 0,
 
-    /** Stores a message, moves the chat to the top, and marks it read for its sender. */
-    insertMessage(conversationId: number, senderId: number, body: string, urgent: boolean, clientId: string | null) {
+    /** Stores an encrypted message, moves the chat to the top, and marks it read for its sender. */
+    insertMessage(conversationId: number, senderId: number, envelope: EnvelopeDTO, urgent: boolean, clientId: string) {
       return sql.transaction(async (tx) => {
         const now = Date.now();
         const row = (await one(
           tx.query<MessageRow>(
-            `INSERT INTO webchat.messages (conversation_id, sender_id, body, urgent, client_id, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-            [conversationId, senderId, body, urgent, clientId, now],
+            `INSERT INTO webchat.messages (conversation_id, sender_id, body, envelope, urgent, client_id, created_at)
+             VALUES ($1, $2, '', $3, $4, $5, $6) RETURNING *`,
+            [conversationId, senderId, JSON.stringify(envelope), urgent, clientId, now],
           ),
         ))!;
         await tx.query(
@@ -441,10 +575,21 @@ export async function openDb(sql: Sql) {
      */
     async stamp(userId: number): Promise<string> {
       const row = await one(
-        sql.query<{ messages: number; pointers: number; chats: number; people: number; online: string | null }>(
+        sql.query<{
+          messages: number;
+          pointers: number;
+          chats: number;
+          keyed: number;
+          people: number;
+          withKeys: number;
+          online: string | null;
+        }>(
           `WITH mine AS (SELECT conversation_id FROM webchat.members WHERE user_id = $1)
            SELECT
              (SELECT COALESCE(SUM(last_message_id), 0) FROM webchat.conversations WHERE id IN (SELECT * FROM mine)) AS messages,
+             (SELECT COUNT(*)::int FROM webchat.conversations
+               WHERE id IN (SELECT * FROM mine) AND key_id IS NOT NULL) AS keyed,
+             (SELECT COUNT(*)::int FROM webchat.users WHERE dh_public IS NOT NULL) AS "withKeys",
              (SELECT COALESCE(SUM(last_read_id + last_delivered_id), 0) FROM webchat.members
                WHERE conversation_id IN (SELECT * FROM mine)) AS pointers,
              (SELECT COUNT(*)::int FROM mine) AS chats,
@@ -453,7 +598,9 @@ export async function openDb(sql: Sql) {
           [userId, Date.now() - ONLINE_WINDOW_MS],
         ),
       );
-      return row ? `${row.messages}.${row.pointers}.${row.chats}.${row.people}.${row.online ?? ''}` : '';
+      return row
+        ? `${row.messages}.${row.pointers}.${row.chats}.${row.keyed}.${row.people}.${row.withKeys}.${row.online ?? ''}`
+        : '';
     },
 
     /** Messages in the user's chats after the cursor, plus recent ones as an overlap. */

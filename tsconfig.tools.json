@@ -3,10 +3,19 @@
   "compilerOptions": {
     "module": "nodenext",
     "moduleResolution": "nodenext",
-    "lib": ["es2023"],
-    "types": ["node"],
+    "lib": [
+      "es2023"
+    ],
+    "types": [
+      "node"
+    ],
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["vite.config.ts", "test", "scripts"]
+  "include": [
+    "vite.config.ts",
+    "vite.sw.config.ts",
+    "test",
+    "scripts"
+  ]
 }

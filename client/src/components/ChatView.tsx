@@ -1,17 +1,35 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { LIMITS, type ConversationDTO, type MessageDTO } from '../../../shared/types';
+import { LIMITS } from '../../../shared/types';
 import { loadOlder, retryMessage, sendMessage } from '../chat';
-import { actions, chatTitle, otherMemberId, useAppState } from '../store';
+import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
+import { actions, chatTitle, otherMemberId, useAppState, type State } from '../store';
 import { Avatar, nameColor } from './Avatar';
 import { dayLabel, formatTime, linkify, presenceText } from './format';
-import { AlertIcon, BackIcon, BellRingIcon, ClockIcon, SendIcon, Ticks } from './icons';
+import { AlertIcon, BackIcon, BellRingIcon, ClockIcon, LockIcon, LockOpenIcon, SendIcon, Ticks } from './icons';
 import { receiptState } from './receipts';
+import { SecurityCodeDialog } from './SecurityCodeDialog';
 
-const EMPTY: MessageDTO[] = [];
+const EMPTY: ChatMessage[] = [];
 
-export function ChatView({ conversation }: { conversation: ConversationDTO }) {
-  const meId = useAppState((s) => s.me?.id);
+/**
+ * Why messages cannot be sent here yet, if so. A chat from before encryption gets its key on the
+ * first send, which needs every member's public keys.
+ */
+function sendBlockedReason(conversation: ChatConversation, state: Pick<State, 'me' | 'users'>): string | null {
+  if (conversation.keyId) return null;
+  const missing = conversation.members
+    .filter((m) => m.userId !== state.me?.id && !state.users[m.userId]?.keys)
+    .map((m) => state.users[m.userId]?.displayName ?? 'Someone');
+  if (missing.length === 0) return null;
+  return `${missing.join(', ')} must sign in again before you can send encrypted messages here.`;
+}
+
+export function ChatView({ conversation }: { conversation: ChatConversation }) {
+  const me = useAppState((s) => s.me);
+  const meId = me?.id;
   const users = useAppState((s) => s.users);
+  const warnings = useAppState((s) => s.keyWarnings);
+  const [showCodes, setShowCodes] = useState(false);
 
   const title = chatTitle(conversation);
   const otherId = otherMemberId(conversation, meId);
@@ -21,6 +39,9 @@ export function ChatView({ conversation }: { conversation: ConversationDTO }) {
       : conversation.members
           .map((m) => (m.userId === meId ? 'You' : (users[m.userId]?.displayName ?? 'Unknown')))
           .join(', ');
+  const changed = conversation.members
+    .filter((m) => warnings[m.userId])
+    .map((m) => users[m.userId]?.displayName ?? 'Someone');
 
   return (
     <section className="chat">
@@ -33,14 +54,31 @@ export function ChatView({ conversation }: { conversation: ConversationDTO }) {
           <strong>{title}</strong>
           <span>{subtitle}</span>
         </div>
+        <button
+          className="icon-button header-end"
+          onClick={() => setShowCodes(true)}
+          title="Encryption and security codes"
+          aria-label="Encryption and security codes"
+        >
+          <LockIcon />
+        </button>
       </header>
-      <MessageList conversation={conversation} />
-      <Composer conversationId={conversation.id} />
+      {changed.length > 0 && (
+        <button className="banner banner-warn" onClick={() => setShowCodes(true)}>
+          <AlertIcon width={18} height={18} />
+          <span>
+            {changed.join(', ')}’s security code changed. Check it with them before trusting new messages.
+          </span>
+        </button>
+      )}
+      <MessageList conversation={conversation} onShowCodes={() => setShowCodes(true)} />
+      <Composer conversationId={conversation.id} blockedReason={sendBlockedReason(conversation, { me, users })} />
+      {showCodes && <SecurityCodeDialog conversation={conversation} onClose={() => setShowCodes(false)} />}
     </section>
   );
 }
 
-function MessageList({ conversation }: { conversation: ConversationDTO }) {
+function MessageList({ conversation, onShowCodes }: { conversation: ChatConversation; onShowCodes: () => void }) {
   const meId = useAppState((s) => s.me?.id);
   const users = useAppState((s) => s.users);
   const messages = useAppState((s) => s.messages[conversation.id] ?? EMPTY);
@@ -88,6 +126,12 @@ function MessageList({ conversation }: { conversation: ConversationDTO }) {
         stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       }}
     >
+      <button className="encryption-notice" onClick={onShowCodes}>
+        <LockIcon width={14} height={14} />
+        {conversation.keyId
+          ? 'Messages are end-to-end encrypted. No one outside this chat, not even the server, can read them.'
+          : 'Messages you send here will be end-to-end encrypted. Earlier ones were sent before encryption.'}
+      </button>
       {!complete && messages.length > 0 && (
         <button className="load-older" onClick={() => void showOlder()} disabled={loadingOlder}>
           {loadingOlder ? 'Loading…' : 'Show earlier messages'}
@@ -116,8 +160,19 @@ function MessageList({ conversation }: { conversation: ConversationDTO }) {
                     <BellRingIcon width={13} height={13} /> URGENT
                   </span>
                 )}
-                <span className="bubble-text">{linkify(message.body)}</span>
+                {message.security === 'failed' ? (
+                  <span className="bubble-text bubble-failed">
+                    <LockIcon width={13} height={13} /> This message could not be decrypted. It may have been altered.
+                  </span>
+                ) : (
+                  <span className="bubble-text">{linkify(message.text)}</span>
+                )}
                 <span className="bubble-meta">
+                  {message.security === 'plain' && (
+                    <span className="not-encrypted" title="Sent before end-to-end encryption was turned on">
+                      <LockOpenIcon width={11} height={11} /> Not encrypted
+                    </span>
+                  )}
                   {formatTime(message.createdAt)}
                   {mine && status === 'sending' && <ClockIcon width={13} height={13} aria-label="sending" />}
                   {mine && !status && message.id > 0 && <Ticks state={receiptState(conversation, message.id, meId)} />}
@@ -136,7 +191,7 @@ function MessageList({ conversation }: { conversation: ConversationDTO }) {
   );
 }
 
-function Composer({ conversationId }: { conversationId: number }) {
+function Composer({ conversationId, blockedReason }: { conversationId: number; blockedReason: string | null }) {
   const [text, setText] = useState('');
   const [urgent, setUrgent] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -159,7 +214,7 @@ function Composer({ conversationId }: { conversationId: number }) {
   }, [text]);
 
   function submit() {
-    if (!text.trim()) return;
+    if (!text.trim() || blockedReason) return;
     void sendMessage(conversationId, text, urgent);
     setText('');
     setUrgent(false);
@@ -175,6 +230,7 @@ function Composer({ conversationId }: { conversationId: number }) {
 
   return (
     <footer className={`composer ${urgent ? 'is-urgent' : ''}`}>
+      {blockedReason && <p className="composer-blocked">{blockedReason}</p>}
       {urgent && <p className="composer-hint">Urgent: their device keeps ringing until they see it.</p>}
       <div className="composer-row">
         <button
@@ -195,7 +251,7 @@ function Composer({ conversationId }: { conversationId: number }) {
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
         />
-        <button className="send-button" onClick={submit} disabled={!text.trim()} aria-label="Send">
+        <button className="send-button" onClick={submit} disabled={!text.trim() || blockedReason !== null} aria-label="Send">
           <SendIcon />
         </button>
       </div>

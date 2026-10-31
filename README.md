@@ -8,6 +8,9 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
 
 ## Features
 
+- **End-to-end encryption**: messages are encrypted and signed in the browser. The server, Supabase
+  and Vercel only ever store and relay ciphertext. Friends can compare a security code to confirm
+  nobody is in between.
 - One-to-one and group chats, with history and online / last-active status.
 - Sent, delivered, and read ticks.
 - **Web Push notifications** that arrive when the tab or the browser window is closed, including on
@@ -34,6 +37,39 @@ allowance in about a week.
   and active in the last 2 minutes. While you are, only that browser gets the push, so your phone
   stays quiet at the desk. Once you look away or close the tab, every device you enabled gets it.
 - **Urgent** always alerts. An open tab rings until you dismiss it, even with message sounds off.
+
+## End-to-end encryption
+
+All of it runs in the browser with Web Crypto ([shared/e2ee.ts](shared/e2ee.ts)).
+
+- **Your password never leaves the browser.** PBKDF2 (600,000 rounds) and HKDF turn it into two
+  unrelated keys: a login key, which the server stores only as a scrypt hash, and a backup key.
+- **Account keys** are a P-256 ECDH pair (receives chat keys) and an ECDSA pair (signs your
+  messages). The private keys are stored on the server only sealed with the backup key, so signing
+  in on any device unlocks your full history. On each device they live in IndexedDB as
+  non-exportable keys, and signing out removes them.
+- **Each chat has its own AES-256-GCM key.** Its creator wraps it for every member with a key from
+  ECDH between the two of them, so a wrapped key proves who made it.
+- **Every message is encrypted and then signed.** The signature covers the ciphertext, the chat,
+  the sender and the urgent flag. A message the server altered, or one a group member forged in
+  someone else's name, shows as "could not be decrypted".
+- **Notifications still show the text.** The push carries the encrypted message, and the service
+  worker decrypts it on the device. A message too long for a push shows "New encrypted message".
+- **Security codes.** The lock button in a chat shows a 60-digit code per person. If it matches on
+  both phones, nobody swapped keys in between. Each device also remembers everyone's keys and warns
+  if they ever change.
+
+What it does not protect against:
+
+- **Forgetting your password loses your encrypted history.** There is no reset.
+- **A server that sends tampered app code.** Like any web app, the page runs the code the server
+  sends, so encryption protects you from anyone who reads the database or the hosts, not from a
+  malicious operator who changes the app itself.
+- **Metadata stays visible to the server:** who talks to whom and when, group names, display
+  names, and whether a message is urgent.
+- **Accounts from before encryption** upgrade once: on the next visit the app asks for the password,
+  and that one request sends it to the server so it can be checked against the old hash. Messages
+  from before stay readable and are marked "Not encrypted".
 
 ## Run it locally
 
@@ -121,10 +157,11 @@ npm test
 ```
 
 The integration test runs the app on a random port with an in-memory PGlite database and drives it
-over HTTP. It checks sign-up with the invite code, sync and its "unchanged" answer, delivered and
-read receipts, access control, history paging, and logout. For push, it runs a fake push service,
-checks which browsers get a push while the recipient is looking, looking away, or has closed the
-tab, and decrypts a push to check its contents.
+over HTTP, with every client doing real encryption. It checks that the database and pushes hold no
+plain text, that a message the server alters is rejected, the one-time upgrade of old accounts,
+chat keys, receipts, access control, and which browsers get a push while the recipient is looking,
+looking away, or has closed the tab. The crypto tests cover wrong passwords, swapped keys,
+tampering, forged senders, and security codes.
 
 `npm run typecheck` checks the server, client, service worker, and tooling separately, since each
 has its own environment.
@@ -134,8 +171,8 @@ has its own environment.
 ```
 api/      Vercel function entry point (wraps the Express app)
 server/   Express API, Postgres queries, Web Push sender
-client/   React app (Vite) and the service worker (client/src/sw.ts)
-shared/   Types shared by server, client, and service worker
+client/   React app (Vite), the service worker (client/src/sw.ts), and the key store (client/src/e2ee)
+shared/   Types and the end-to-end encryption code shared by server, client, and service worker
 test/     Integration tests (node:test)
 scripts/  Icon generator (npm run icons)
 ```
@@ -145,5 +182,5 @@ scripts/  Icon generator (npm run icons)
 - Text only: no voice or video calls, photos, or files yet. No typing indicator.
 - With push turned off on a device, new messages show up on its next check-in (up to 3 seconds
   while you are looking, longer in the background).
-- Messages are stored as plain text in the database. Transport is encrypted by HTTPS, and push
-  payloads are encrypted for each browser, but this is not end-to-end encryption.
+- No key rotation: a chat keeps one key for its lifetime, and members cannot be added to a group
+  after it is created.

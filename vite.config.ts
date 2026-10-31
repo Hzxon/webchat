@@ -7,7 +7,8 @@ const apiServer = `http://localhost:${process.env.PORT ?? 3000}`;
 
 /**
  * Serves the TypeScript service worker at /sw.js in dev, the same path the production build uses,
- * so the worker's scope is the whole site in both modes.
+ * so the worker's scope is the whole site in both modes. In dev it runs as an ES module; the
+ * production build (vite.sw.config.ts) bundles it into one plain script.
  */
 function serviceWorkerInDev(): Plugin {
   return {
@@ -35,12 +36,6 @@ export default defineConfig({
   build: {
     outDir: resolve(import.meta.dirname, 'dist', 'client'),
     emptyOutDir: true,
-    rolldownOptions: {
-      input: { main: resolve(root, 'index.html'), sw: resolve(root, 'src', 'sw.ts') },
-      output: {
-        entryFileNames: (chunk) => (chunk.name === 'sw' ? 'sw.js' : 'assets/[name]-[hash].js'),
-      },
-    },
   },
   server: {
     port: 5173,
