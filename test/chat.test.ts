@@ -7,6 +7,7 @@ import ece from 'http_ece';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { hashPassword } from '../server/auth.ts';
 import type { Config } from '../server/config.ts';
+import { openDb } from '../server/db.ts';
 import {
   createIdentity,
   decryptContent,
@@ -227,6 +228,9 @@ async function waitForPushes(received: ReceivedPush[], count: number, timeoutMs 
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** The member ids of a chat, in order, to compare with assert.deepEqual. */
+const memberIdsOf = (chat: ConversationDTO) => chat.members.map((m) => m.userId).sort((a, b) => a - b);
+
 describe('chat server', () => {
   let instance: WebChatApp;
   let server: http.Server;
@@ -236,7 +240,11 @@ describe('chat server', () => {
   let bob: Client;
   let carol: Client;
   let directChat: ConversationDTO;
+  let weekend: ConversationDTO;
   const keysOf = (c: Client) => c.identity!.publicKeys;
+  /** A chat as this person's next bootstrap lists it, without moving their sync cursor. */
+  const viewOf = async (client: Client, conversationId: number) =>
+    (await client.request<BootstrapDTO>('GET', '/bootstrap')).data.conversations.find((c) => c.id === conversationId)!;
 
   before(async () => {
     pushService = await startFakePushService();
@@ -484,6 +492,8 @@ describe('chat server', () => {
       key,
     });
     assert.equal(group.status, 201);
+    weekend = group.data;
+    assert.equal(weekend.createdBy, alice.id);
     alice.chatKeys.set(group.data.id, { keyId: key.keyId, key: await importChatKey(key.raw) });
     await alice.send(group.data.id, 'Dinner at 7?');
 
@@ -506,6 +516,53 @@ describe('chat server', () => {
       (await carol.request('POST', '/delivered', { conversationId: directChat.id, messageId: 1 })).status,
       404,
     );
+  });
+
+  test('only the person who made a group can remove someone, and its key is wrapped again for those who stay', async () => {
+    const path = `/conversations/${weekend.id}/members/${carol.id}`;
+    const notOwner = await bob.request<{ code?: string }>('DELETE', path, { key: null });
+    assert.equal(notOwner.status, 403);
+    assert.equal(notOwner.data.code, 'not_owner');
+
+    const view = await viewOf(alice, weekend.id);
+    const withCarol = await alice.shareChatKey(view, keysOf(alice), [alice, bob, carol]);
+    const stale = await alice.request<{ code?: string }>('DELETE', path, { key: withCarol });
+    assert.equal(stale.data.code, 'stale_group', 'no copy may be wrapped for the person removed');
+    assert.equal((await alice.request('DELETE', `/conversations/${weekend.id}/members/${alice.id}`, { key: null })).status, 400);
+    assert.equal((await alice.request('DELETE', `/conversations/${directChat.id}/members/${bob.id}`, { key: null })).status, 400);
+
+    const removed = await alice.request<ConversationDTO>('DELETE', path, {
+      key: await alice.shareChatKey(view, keysOf(alice), [alice, bob]),
+    });
+    assert.equal(removed.status, 200, JSON.stringify(removed.data));
+    assert.deepEqual(memberIdsOf(removed.data), [alice.id, bob.id]);
+
+    assert.equal((await carol.request('GET', `/conversations/${weekend.id}/messages`)).status, 404);
+    assert.equal((await carol.send(weekend.id, 'Still invited?')).status, 404);
+    const carolView = await carol.sync(true);
+    assert.ok(carolView.changed);
+    assert.ok(!carolView.conversations.some((c) => c.id === weekend.id));
+
+    const bobView = await bob.sync(true);
+    assert.ok(bobView.changed, 'the others see who left');
+    const chat = bobView.conversations.find((c) => c.id === weekend.id)!;
+    assert.deepEqual(memberIdsOf(chat), [alice.id, bob.id]);
+    assert.equal(chat.myKey!.wrappedBy, alice.id);
+    await bob.openChatKey(chat, keysOf(alice));
+  });
+
+  test('only the person who made a group can delete it, for everyone', async () => {
+    const notOwner = await bob.request<{ code?: string }>('DELETE', `/conversations/${weekend.id}`);
+    assert.equal(notOwner.status, 403);
+    assert.equal((await alice.request('DELETE', `/conversations/${directChat.id}`)).status, 400, 'a direct chat stays');
+
+    assert.equal((await alice.request('DELETE', `/conversations/${weekend.id}`)).status, 204);
+    assert.equal((await bob.request('GET', `/conversations/${weekend.id}/messages`)).status, 404);
+    const left = await instance.sql.query('SELECT 1 FROM webchat.messages WHERE conversation_id = $1', [weekend.id]);
+    assert.equal(left.length, 0, 'its messages are deleted');
+    const bobView = await bob.sync(true);
+    assert.ok(bobView.changed);
+    assert.ok(!bobView.conversations.some((c) => c.id === weekend.id));
   });
 
   describe('projects', () => {
@@ -643,6 +700,85 @@ describe('chat server', () => {
       });
       assert.equal(unknown.status, 400);
     });
+
+    /** Alice's copy of each channel key, wrapped for the given people. */
+    const shareChannelKeys = async (recipients: Client[]) =>
+      Promise.all(
+        [general, design].map(async (channel) => alice.shareChatKey(await viewOf(alice, channel.id), keysOf(alice), recipients)),
+      );
+
+    test('only the person who made a project can remove someone, and the keys they wrapped are replaced', async () => {
+      const path = `/projects/${project.id}/members/${bob.id}`;
+      const notOwner = await carol.request<{ code?: string }>('DELETE', path, { channelKeys: [] });
+      assert.equal(notOwner.status, 403);
+      assert.equal(notOwner.data.code, 'not_owner');
+      assert.equal((await alice.request('DELETE', `/projects/${project.id}/members/${alice.id}`, { channelKeys: [] })).status, 400);
+
+      const [generalKey, designKey] = await shareChannelKeys([alice, carol]);
+      const missing = await alice.request<{ code?: string }>('DELETE', path, { channelKeys: [generalKey] });
+      assert.equal(missing.data.code, 'stale_project', 'every channel key must be wrapped again');
+      const withBob = await alice.request<{ code?: string }>('DELETE', path, { channelKeys: await shareChannelKeys([alice, bob, carol]) });
+      assert.equal(withBob.data.code, 'stale_project', 'no copy may be wrapped for the person removed');
+
+      const removed = await alice.request<ProjectDTO>('DELETE', path, { channelKeys: [generalKey, designKey] });
+      assert.equal(removed.status, 200, JSON.stringify(removed.data));
+      assert.deepEqual(removed.data.memberIds, [alice.id, carol.id]);
+
+      for (const channel of [general, design]) {
+        assert.equal((await bob.request('GET', `/conversations/${channel.id}/messages`)).status, 404);
+      }
+      const bobView = await bob.sync(true);
+      assert.ok(bobView.changed);
+      assert.ok(!bobView.projects.some((p) => p.id === project.id));
+      assert.ok(!bobView.conversations.some((c) => c.projectId === project.id));
+
+      // Bob wrapped Carol's copies when he added her. Alice's copies replace them, so Carol's browser
+      // still finds every key made by someone in the project.
+      const res = await carol.sync(true);
+      assert.ok(res.changed);
+      for (const channel of [general, design]) {
+        const chat: ConversationDTO = res.conversations.find((c) => c.id === channel.id)!;
+        assert.deepEqual(memberIdsOf(chat), [alice.id, carol.id]);
+        assert.equal(chat.myKey!.wrappedBy, alice.id);
+        await carol.openChatKey(chat, keysOf(alice));
+      }
+      const history = await carol.request<MessageDTO[]>('GET', `/conversations/${general.id}/messages`);
+      assert.equal(await carol.read(history.data[0]!, keysOf(alice)), kickoff);
+    });
+
+    test('someone removed from a project can be added again', async () => {
+      const added = await alice.request<ProjectDTO>('POST', `/projects/${project.id}/members`, {
+        userIds: [bob.id],
+        channelKeys: await shareChannelKeys([bob]),
+      });
+      assert.equal(added.status, 200, JSON.stringify(added.data));
+      assert.deepEqual(added.data.memberIds, [alice.id, carol.id, bob.id]);
+      const res = await bob.sync(true);
+      assert.ok(res.changed);
+      await bob.openChatKey(res.conversations.find((c) => c.id === general.id)!, keysOf(alice));
+      const history = await bob.request<MessageDTO[]>('GET', `/conversations/${general.id}/messages`);
+      assert.equal(await bob.read(history.data[0]!, keysOf(alice)), kickoff);
+    });
+
+    test('only the person who made a project can delete it, with every channel and message in it', async () => {
+      const notOwner = await carol.request<{ code?: string }>('DELETE', `/projects/${project.id}`);
+      assert.equal(notOwner.status, 403);
+      assert.equal((await alice.request('DELETE', `/projects/${project.id}`)).status, 204);
+      assert.equal((await alice.request('DELETE', `/projects/${project.id}`)).status, 404, 'it is gone');
+      assert.equal((await carol.request('GET', `/conversations/${general.id}/messages`)).status, 404);
+
+      for (const table of ['messages', 'members', 'conversation_keys']) {
+        const rows = await instance.sql.query(`SELECT 1 FROM webchat.${table} WHERE conversation_id IN ($1, $2)`, [
+          general.id,
+          design.id,
+        ]);
+        assert.equal(rows.length, 0, `no ${table} rows are left`);
+      }
+      const res = await carol.sync(true);
+      assert.ok(res.changed);
+      assert.ok(!res.projects.some((p) => p.id === project.id));
+      assert.ok(!res.conversations.some((c) => c.projectId === project.id));
+    });
   });
 
   test('message history pages backwards', async () => {
@@ -718,11 +854,35 @@ describe('chat server', () => {
     assert.equal(early.status, 409);
     assert.equal(early.data.code, 'no_chat_key');
 
-    const first = await alice.request('POST', `/conversations/${id}/key`, await alice.newChatKey(members));
+    const first = await alice.request<ConversationDTO>('POST', `/conversations/${id}/key`, await alice.newChatKey(members));
     const second = await bob.request<{ code?: string }>('POST', `/conversations/${id}/key`, await bob.newChatKey(members));
     assert.equal(first.status, 200);
+    assert.equal(first.data.createdBy, alice.id, 'the group becomes the one who set up its encryption');
     assert.equal(second.status, 409);
     assert.equal(second.data.code, 'has_key');
+  });
+
+  test('migration 4 gives each older group the owner its key names; a group without a key has none', async () => {
+    const now = Date.now();
+    const [{ id }] = (await instance.sql.query<{ id: number }>(
+      `INSERT INTO webchat.conversations (type, title, created_at, updated_at) VALUES ('group', 'Older chat', $1, $1) RETURNING id`,
+      [now],
+    )) as [{ id: number }];
+    for (const user of [alice, bob]) {
+      await instance.sql.query('INSERT INTO webchat.members (conversation_id, user_id, joined_at) VALUES ($1, $2, $3)', [id, user.id, now]);
+    }
+    await instance.sql.query("UPDATE webchat.conversations SET created_by = NULL WHERE type = 'group'");
+    await instance.sql.query("UPDATE webchat.meta SET value = '3' WHERE key = 'schema_version'");
+    await openDb(instance.sql);
+
+    const groups = await instance.sql.query<{ title: string; created_by: number | null }>(
+      "SELECT title, created_by FROM webchat.conversations WHERE type = 'group' ORDER BY id",
+    );
+    assert.deepEqual(groups, [
+      { title: 'Old chat', created_by: alice.id },
+      { title: 'Older chat', created_by: null },
+    ]);
+    assert.equal((await bob.request('DELETE', `/conversations/${id}`)).status, 204, 'any member manages a group without an owner');
   });
 
   test('a tab still showing another account is refused instead of acting as the signed-in one', async () => {

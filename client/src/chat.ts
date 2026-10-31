@@ -106,8 +106,19 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
 
   const fresh = messages.filter((m) => !seen.has(m.id));
   for (const m of fresh) seen.add(m.id);
+  const before = store.get();
   actions.applySync(result.users, result.projects, conversations, messages);
   for (const message of fresh) if (message.senderId !== meId && message.kind === 'message') onIncoming(message);
+
+  // Its owner deleted the open chat or removed this user from it. The chat closes, so say why.
+  const open = before.activeId === null ? undefined : before.conversations[before.activeId];
+  if (open && !byId.has(open.id)) {
+    actions.addToast({
+      conversationId: null,
+      title: chatTitle(open, before),
+      body: `This ${open.type === 'channel' ? 'project' : 'group'} was deleted, or you were removed from it.`,
+    });
+  }
 }
 
 /** Fetches everything again, for when this device missed a change such as a new chat key. */
@@ -297,6 +308,14 @@ async function adoptConversation(dto: ConversationDTO, created?: { keyId: string
 
 const warnedIds = () => new Set(Object.keys(store.get().keyWarnings).map(Number));
 
+/** Someone to wrap a chat key for: this user with their unlocked keys, anyone else with the keys the server lists. */
+function keyRecipient(id: number) {
+  const user = store.get().users[id];
+  return id === meId
+    ? { id, name: 'You', keys: keyring.myKeys() }
+    : { id, name: user?.displayName ?? 'Someone', keys: user?.keys ?? null };
+}
+
 /** Opens the direct chat with a person, creating it with a fresh encrypted key if needed. */
 export async function startDirectChat(userId: number): Promise<number> {
   const state = store.get();
@@ -447,14 +466,15 @@ export async function createProject(name: string, memberIds: number[]): Promise<
 }
 
 /**
- * Runs a change to a project. When the server says the project changed meanwhile (a member or a
- * channel was added), it reloads and tries once more, so nobody is left out of a channel key.
+ * Runs a change to a project or group. When the server says it changed meanwhile (someone joined
+ * or left, or a channel was added), it reloads and tries once more, so every key is wrapped for
+ * exactly the people in it.
  */
-async function withFreshProject<T>(work: () => Promise<T>): Promise<T> {
+async function retryIfStale<T>(work: () => Promise<T>): Promise<T> {
   try {
     return await work();
   } catch (error) {
-    if (!(error instanceof ApiError && error.code === 'stale_project')) throw error;
+    if (!(error instanceof ApiError && (error.code === 'stale_project' || error.code === 'stale_group'))) throw error;
     await reloadAll();
     return work();
   }
@@ -462,23 +482,17 @@ async function withFreshProject<T>(work: () => Promise<T>): Promise<T> {
 
 /** Adds a channel, with a new key for every member of the project. Returns the channel's id. */
 export function createChannel(projectId: number, name: string): Promise<number> {
-  return withFreshProject(async () => {
-    const state = store.get();
-    const project = state.projects[projectId];
+  return retryIfStale(async () => {
+    const project = store.get().projects[projectId];
     if (!project) throw new Error('Project not found.');
-    const members = project.memberIds.map((id) => ({
-      id,
-      name: id === meId ? 'You' : (state.users[id]?.displayName ?? 'Someone'),
-      keys: id === meId ? keyring.myKeys() : (state.users[id]?.keys ?? null),
-    }));
-    const { input, key } = await keyring.createChatKey(members, warnedIds());
+    const { input, key } = await keyring.createChatKey(project.memberIds.map(keyRecipient), warnedIds());
     return adoptConversation(await api.createChannel(projectId, { name, key: input }), { keyId: input.keyId, key });
   });
 }
 
 /** Adds people to a project, sharing every channel key with them so they can read the history. */
 export function addProjectMembers(projectId: number, userIds: number[]): Promise<void> {
-  return withFreshProject(async () => {
+  return retryIfStale(async () => {
     const state = store.get();
     const keysOf = currentLookup();
     const recipients = userIds.map((id) => ({
@@ -497,6 +511,64 @@ export function addProjectMembers(projectId: number, userIds: number[]): Promise
     actions.upsertProject(await api.addProjectMembers(projectId, { userIds, channelKeys }));
     void syncNow();
   });
+}
+
+/**
+ * Removes someone from a project. This browser wraps every channel key again for the people who
+ * stay, so none of their copies was made by the person removed.
+ */
+export function removeProjectMember(projectId: number, userId: number): Promise<void> {
+  return retryIfStale(async () => {
+    const state = store.get();
+    const project = state.projects[projectId];
+    if (!project) throw new Error('Project not found.');
+    // Removed already, for example from another tab.
+    if (!project.memberIds.includes(userId)) return;
+    const keysOf = currentLookup();
+    const staying = project.memberIds.filter((id) => id !== userId).map(keyRecipient);
+    const channels = Object.values(state.conversations).filter((c) => c.projectId === projectId);
+    const channelKeys = await Promise.all(
+      channels.map(async (c) => ({
+        conversationId: c.id,
+        keyId: c.keyId ?? '',
+        wrappedKeys: await keyring.shareChatKey(c, keysOf, staying, warnedIds()),
+      })),
+    );
+    actions.upsertProject(await api.removeProjectMember(projectId, userId, { channelKeys }));
+    void syncNow();
+  });
+}
+
+/** Removes someone from a group, wrapping its key again for the people who stay. */
+export function removeGroupMember(conversationId: number, userId: number): Promise<void> {
+  return retryIfStale(async () => {
+    const conversation = store.get().conversations[conversationId];
+    if (!conversation) throw new Error('Group not found.');
+    if (!conversation.members.some((m) => m.userId === userId)) return;
+    const staying = conversation.members.filter((m) => m.userId !== userId).map((m) => keyRecipient(m.userId));
+    const key = conversation.keyId
+      ? {
+          keyId: conversation.keyId,
+          wrappedKeys: await keyring.shareChatKey(conversation, currentLookup(), staying, warnedIds()),
+        }
+      : null;
+    await adoptConversation(await api.removeGroupMember(conversationId, userId, { key }));
+    void syncNow();
+  });
+}
+
+/** Deletes a project for everyone, with its channels and their messages. */
+export async function deleteProject(projectId: number) {
+  await api.deleteProject(projectId);
+  actions.dropProject(projectId);
+  void syncNow();
+}
+
+/** Deletes a group for everyone, with its messages. */
+export async function deleteGroup(conversationId: number) {
+  await api.deleteGroup(conversationId);
+  actions.dropConversation(conversationId);
+  void syncNow();
 }
 
 /** Accepts a person's changed keys after the user compared security codes with them. */

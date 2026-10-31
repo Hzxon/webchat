@@ -13,6 +13,8 @@ import type {
   MessageDTO,
   ProjectDTO,
   RegisterInput,
+  RemoveGroupMemberInput,
+  RemoveProjectMemberInput,
   SendMessageInput,
   SyncRequest,
   SyncResponse,
@@ -80,11 +82,17 @@ export const api = {
     request<ConversationDTO>('POST', '/conversations/direct', { userId, key }),
   createGroup: (title: string, memberIds: number[], key: ChatKeyInput) =>
     request<ConversationDTO>('POST', '/conversations/group', { title, memberIds, key }),
+  removeGroupMember: (conversationId: number, userId: number, input: RemoveGroupMemberInput) =>
+    request<ConversationDTO>('DELETE', `/conversations/${conversationId}/members/${userId}`, input),
+  deleteGroup: (conversationId: number) => request<void>('DELETE', `/conversations/${conversationId}`),
   createProject: (input: CreateProjectInput) => request<CreateProjectResponse>('POST', '/projects', input),
   createChannel: (projectId: number, input: CreateChannelInput) =>
     request<ConversationDTO>('POST', `/projects/${projectId}/channels`, input),
   addProjectMembers: (projectId: number, input: AddProjectMembersInput) =>
     request<ProjectDTO>('POST', `/projects/${projectId}/members`, input),
+  removeProjectMember: (projectId: number, userId: number, input: RemoveProjectMemberInput) =>
+    request<ProjectDTO>('DELETE', `/projects/${projectId}/members/${userId}`, input),
+  deleteProject: (projectId: number) => request<void>('DELETE', `/projects/${projectId}`),
   setChatKey: (conversationId: number, key: ChatKeyInput) =>
     request<ConversationDTO>('POST', `/conversations/${conversationId}/key`, key),
   sync: (input: SyncRequest) => request<SyncResponse>('POST', '/sync', input),

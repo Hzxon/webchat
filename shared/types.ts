@@ -72,6 +72,11 @@ export interface ConversationDTO {
   title: string | null;
   /** The project a channel belongs to; null for other chats. */
   projectId: number | null;
+  /**
+   * The person who made a group, the only one who can remove people from it or delete it. Null for
+   * other chats, and for a group from before encryption that has no key yet, which any member can manage.
+   */
+  createdBy: number | null;
   members: MemberState[];
   /** Newest message of kind "message". Reactions never replace it. */
   lastMessage: MessageDTO | null;
@@ -202,7 +207,7 @@ export interface CreateChannelInput {
   key: ChatKeyInput;
 }
 
-/** One channel's existing key, wrapped for the people being added. */
+/** One channel's existing key, wrapped for the people being added, or again for everyone who stays. */
 export interface SharedChannelKeyInput {
   conversationId: number;
   keyId: string;
@@ -213,6 +218,19 @@ export interface SharedChannelKeyInput {
 export interface AddProjectMembersInput {
   userIds: number[];
   channelKeys: SharedChannelKeyInput[];
+}
+
+/**
+ * Every channel key of a project, wrapped again for exactly the people who stay, so no copy left
+ * was made by the person being removed.
+ */
+export interface RemoveProjectMemberInput {
+  channelKeys: SharedChannelKeyInput[];
+}
+
+/** The group's key wrapped again for exactly the people who stay. Null for a group without a key. */
+export interface RemoveGroupMemberInput {
+  key: ChatKeyInput | null;
 }
 
 /** JSON body of every Web Push message. The service worker turns it into a notification. */

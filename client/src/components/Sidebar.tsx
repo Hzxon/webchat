@@ -18,6 +18,7 @@ import {
   SearchIcon,
   Ticks,
   UserPlusIcon,
+  UsersIcon,
 } from './icons';
 import { receiptState } from './receipts';
 
@@ -26,13 +27,14 @@ interface SidebarProps {
   onNewProject: () => void;
   onNewChannel: (projectId: number) => void;
   onAddPeople: (projectId: number) => void;
+  onMembers: (projectId: number) => void;
   onNotifications: () => void;
 }
 
 const newestFirst = (a: ChatConversation, b: ChatConversation) =>
   (b.lastMessage?.createdAt ?? b.updatedAt) - (a.lastMessage?.createdAt ?? a.updatedAt);
 
-export function Sidebar({ onNewChat, onNewProject, onNewChannel, onAddPeople, onNotifications }: SidebarProps) {
+export function Sidebar({ onNewChat, onNewProject, onNewChannel, onAddPeople, onMembers, onNotifications }: SidebarProps) {
   const me = useAppState((s) => s.me);
   const conversations = useAppState((s) => s.conversations);
   const projects = useAppState((s) => s.projects);
@@ -148,6 +150,7 @@ export function Sidebar({ onNewChat, onNewProject, onNewChannel, onAddPeople, on
               channels={channels}
               onNewChannel={() => onNewChannel(project.id)}
               onAddPeople={() => onAddPeople(project.id)}
+              onMembers={() => onMembers(project.id)}
             />
           ))}
           {projectList.length === 0 &&
@@ -175,8 +178,9 @@ function ProjectSection(props: {
   channels: ChatConversation[];
   onNewChannel: () => void;
   onAddPeople: () => void;
+  onMembers: () => void;
 }) {
-  const { project, channels, onNewChannel, onAddPeople } = props;
+  const { project, channels, onNewChannel, onAddPeople, onMembers } = props;
   const activeId = useAppState((s) => s.activeId);
   const urgent = useAppState((s) => s.urgent);
   const people = project.memberIds.length;
@@ -191,6 +195,9 @@ function ProjectSection(props: {
             {people} {people === 1 ? 'member' : 'members'}
           </small>
         </span>
+        <button className="icon-button icon-button-small" onClick={onMembers} title="Members" aria-label={`Members of ${project.name}`}>
+          <UsersIcon width={18} height={18} />
+        </button>
         <button className="icon-button icon-button-small" onClick={onAddPeople} title="Add people" aria-label={`Add people to ${project.name}`}>
           <UserPlusIcon width={18} height={18} />
         </button>
