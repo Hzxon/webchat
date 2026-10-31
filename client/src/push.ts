@@ -110,8 +110,11 @@ export async function forgetPushOnServer(): Promise<void> {
   if (subscription) await api.unsubscribePush(subscription.endpoint).catch(() => undefined);
 }
 
+/** What a click on a notification opens: a chat, or a page such as a pull request on GitHub. */
+export type NotificationTarget = { conversationId: number } | { url: string };
+
 /** For browsers without Web Push: show the notification from the page while the tab is open. */
-export async function showLocalNotification(title: string, body: string, tag: string, urgent: boolean, conversationId: number) {
+export async function showLocalNotification(title: string, body: string, tag: string, urgent: boolean, target: NotificationTarget) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const reg = await registerServiceWorker();
   const options: NotificationOptions & { renotify?: boolean } = {
@@ -121,7 +124,7 @@ export async function showLocalNotification(title: string, body: string, tag: st
     requireInteraction: urgent,
     icon: '/icons/icon-192.png',
     badge: '/icons/badge-72.png',
-    data: { conversationId },
+    data: target,
   };
   if (reg) await reg.showNotification(title, options);
   else new Notification(title, options);

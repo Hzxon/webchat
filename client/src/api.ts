@@ -4,6 +4,7 @@ import type {
   ChatKeyInput,
   ConfigDTO,
   ConversationDTO,
+  GithubDTO,
   LoginResponse,
   MessageDTO,
   RegisterInput,
@@ -86,6 +87,9 @@ export const api = {
   subscribePush: (subscription: PushSubscriptionJSON) => request<void>('POST', '/push/subscribe', subscription),
   unsubscribePush: (endpoint: string) => request<void>('POST', '/push/unsubscribe', { endpoint }),
   testPush: () => request<{ sent: number; failed: number }>('POST', '/push/test'),
+  github: (refresh = false) => request<GithubDTO>('GET', `/github${refresh ? '?refresh=1' : ''}`),
+  setGithubNotify: (notify: boolean) => request<GithubDTO>('PATCH', '/github', { notify }),
+  disconnectGithub: () => request<GithubDTO>('DELETE', '/github'),
 };
 
 /** Tells the server this tab closed. A beacon still gets sent while the page unloads. */

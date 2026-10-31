@@ -7,6 +7,7 @@ import { randomBytes, toBase64Url } from '../shared/e2ee.js';
 import { randomInviteCode } from './auth.js';
 import type { Config } from './config.js';
 import { openDb } from './db.js';
+import { createGithub } from './github.js';
 import { createPush } from './push.js';
 import { connectPostgres, openPglite, type Sql } from './sql.js';
 
@@ -28,6 +29,9 @@ export interface WebChatApp {
   inviteCode: string;
   /** Raw database access, for tests and maintenance scripts. */
   sql: Sql;
+  /** Polls every connected GitHub account that is due. server/index.ts runs it on a timer. */
+  pollGithub(): Promise<number>;
+  githubConfigured: boolean;
   close(): Promise<void>;
 }
 
@@ -49,6 +53,7 @@ export async function createApp(config: Config): Promise<WebChatApp> {
   const kdfSalt = await db.claimMeta('kdf_salt', toBase64Url(randomBytes(16)));
 
   const push = await createPush(db, config);
+  const github = createGithub(db, push, config);
   const app = express();
   app.set('trust proxy', config.trustProxy);
   app.disable('x-powered-by');
@@ -60,7 +65,7 @@ export async function createApp(config: Config): Promise<WebChatApp> {
     next();
   });
   // Room for a group's wrapped chat keys and the longest encrypted message.
-  app.use('/api', express.json({ limit: '64kb' }), createApiRouter({ db, push, config, inviteCode, kdfSalt }));
+  app.use('/api', express.json({ limit: '64kb' }), createApiRouter({ db, push, github, config, inviteCode, kdfSalt }));
 
   const clientDir = config.clientDir;
   if (clientDir && fs.existsSync(path.join(clientDir, 'index.html'))) {
@@ -80,5 +85,12 @@ export async function createApp(config: Config): Promise<WebChatApp> {
     config.logger.warn(`No built client in ${clientDir}. Run "npm run build", or use "npm run dev".`);
   }
 
-  return { app, inviteCode, sql, close: () => db.close() };
+  return {
+    app,
+    inviteCode,
+    sql,
+    pollGithub: github.pollAll,
+    githubConfigured: github.configured,
+    close: () => db.close(),
+  };
 }

@@ -6,6 +6,7 @@ import { useAppState } from './store';
 import { Toasts, UrgentAlert } from './components/Alerts';
 import { AuthScreen } from './components/AuthScreen';
 import { ChatView } from './components/ChatView';
+import { GithubView } from './components/GithubView';
 import { NewChatDialog } from './components/NewChatDialog';
 import { NotificationDialog } from './components/NotificationDialog';
 import { Sidebar } from './components/Sidebar';
@@ -64,12 +65,15 @@ function ChatLayout() {
   const activeId = useAppState((s) => s.activeId);
   const active = useAppState((s) => (s.activeId === null ? undefined : s.conversations[s.activeId]));
   const push = useAppState((s) => s.push);
+  const githubOpen = useAppState((s) => s.githubOpen);
   const [dialog, setDialog] = useState<'new-chat' | 'notifications' | null>(null);
 
   return (
-    <div className={`layout ${activeId !== null ? 'has-active' : ''}`}>
+    <div className={`layout ${activeId !== null || githubOpen ? 'has-active' : ''}`}>
       <Sidebar onNewChat={() => setDialog('new-chat')} onNotifications={() => setDialog('notifications')} />
-      {active ? (
+      {githubOpen ? (
+        <GithubView />
+      ) : active ? (
         <ChatView key={active.id} conversation={active} />
       ) : (
         <section className="chat chat-empty">
