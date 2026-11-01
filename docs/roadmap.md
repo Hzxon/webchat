@@ -100,6 +100,58 @@ Constraints: Vercel Functions accept request bodies of at most 4.5 MB, so files 
 straight to a storage service, such as Vercel Blob with private access. The Content Security Policy
 allows connections only to the site itself, so it must also allow the storage service (D-009).
 
+### R-013: Share a pull request into a channel
+
+Status: Planned. Found in a review of the GitHub connector on 2026-11-01.
+
+Why: the pull requests pane is personal (D-033). Nothing about a pull request reaches a project
+channel, so a team learns that one was opened or merged only when its author types it. The
+discussion and the pull request stay in different apps, which is what WebChat set out to fix.
+
+Scope:
+
+- A "Share" button on a pull request in the pane sends a message to a chosen chat or channel.
+- The message is a new signed kind, like reactions (D-016, D-030). It carries the repository, the
+  number, the title, the URL and the status at that moment: checks, review decision, conflicts,
+  draft, merged or closed.
+- The page renders it as a card with the status tags of the pane, and a click opens GitHub.
+- Later: the author's browser can post a card by itself to a channel they pick when one of their
+  own pull requests opens or is merged. The server sees nothing new, because the browser encrypts
+  the card like any message.
+
+Done when: a card sent from the pane shows in the channel for every member, with the server holding
+only ciphertext, and a test proves it.
+
+### R-014: Cards for pasted pull request links
+
+Status: Planned.
+
+Why: a pasted `github.com/.../pull/N` link renders as bare text (`linkify` in
+`client/src/components/format.tsx`). Students paste links all day and have to open each one to see
+whether it is reviewed or merged.
+
+Scope: after decrypting a message, the page spots pull request links and asks a new endpoint,
+`GET /api/github/pull`, for the title and status, with the viewer's own token. The server caches the
+answer for a minute. The card shows the same tags as the pane.
+
+Constraint: the server learns which pull request a viewer looked up. List that in the README and in
+D-020. Without a connected account, the link stays a plain link.
+
+### R-015: Catch comment-only reviews
+
+Status: Planned.
+
+Why: a review submitted as "Comment" moves neither `reviewDecision` nor the conversation comment
+count that `PULL_FIELDS` in `server/github.ts` reads, so the author hears nothing. Student teams
+leave this kind of review often. Not yet confirmed against GitHub.
+
+Scope: add `reviews(last: 1) { totalCount nodes { state author { login } } }` to the query, and
+report a `commented` event when the count grows and the newest review is by someone else. Also
+report a comment by someone else when two comments arrive between polls and the newest is the
+user's own (`comparePulls` only looks at the last commenter).
+
+Done when: a comment-only review on the fake GitHub becomes an event, and a test proves it.
+
 ## Ideas
 
 ### R-004: Private channels
@@ -163,6 +215,22 @@ Status: Idea, out of scope for now.
 
 Calls need WebRTC and TURN servers, which cost money (D-003).
 
+### R-016: Link a project to repositories
+
+Status: Idea. Depends on Q-3 for a shared read.
+
+Why: the pane lists one person's pull requests across every repository, with no grouping. A team
+wants to see every open pull request of its repositories, by any member, next to its channels. Only
+pull requests are watched today: pushes and commits are not, and teams that push to main see
+nothing.
+
+Scope: a project names one or more repositories. The Projects tab shows their open pull requests,
+grouped by repository. Reading them needs a token that sees the repository: one member's OAuth
+token, or a GitHub App installation on the organization (Q-3).
+
+Open question: should a project's channel get a card (R-013) for every pull request in its
+repositories, or only for the ones members share by hand?
+
 ## Known issues
 
 ### K-1: Old tabs show reactions as messages they cannot decrypt
@@ -193,6 +261,23 @@ The likely cause, not yet confirmed: the members query in `conversations()` in `
 `ORDER BY`, so Postgres returns the rows in storage order, which an update changes. Ordering the
 members, for example by when they joined, would keep the names still.
 
+### K-5: The connect card promises alerts with every tab closed
+
+The connect card in `client/src/components/GithubView.tsx` says WebChat alerts "even with this tab
+closed". On Vercel Hobby that holds only after the owner sets `CRON_SECRET` and a scheduler calls
+`GET /api/github/poll` (D-034). Without one, nothing polls while every tab is closed, and nobody is
+told. The server could record when `pollAll` last ran and show a banner in the pane when no
+scheduler has called in for 10 minutes.
+
+### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
+
+Course repositories usually live in an instructor's organization, such as a GitHub Classroom one.
+An organization that restricts OAuth Apps hides its pull requests until an owner approves WebChat
+(D-033), and a student cannot fix that alone. The README says so in one line; the connect card and
+the pane say nothing. GitHub's GraphQL answer carries the error next to the data (`graphql` in
+`server/github.ts` drops it). Show it in the pane, and say in the connect card that an organization
+may need to approve the app. Not yet seen on a real organization.
+
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
@@ -206,6 +291,16 @@ what WebSockets cost on the Hobby plan before changing D-004.
 Everyone on a deployment can see everyone else (D-002). A student in several classes may want
 separate spaces. Projects already group people. Is that enough, or should one deployment host
 several communities?
+
+### Q-3: Should the GitHub connector become a GitHub App?
+
+The connector is an OAuth App (D-032). The polling, the scheduler and the `repo` scope all follow
+from that choice (D-033, D-034). A GitHub App gets webhooks, so pull request changes would arrive
+at once instead of minutes later; a read-only `pull_requests` permission instead of full access to
+every repository; and an installation on an organization that an instructor approves once, which
+also gives a shared read for R-016. Cost: the owner has to register an app with a private key and a
+webhook secret, and the server has to receive webhooks. Measure the setup cost against the gain
+before changing D-032.
 
 ## Done
 
