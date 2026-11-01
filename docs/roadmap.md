@@ -295,6 +295,36 @@ The test "pushes carry no plain text" in `test/chat.test.ts` looks for `urgent, 
 `Call me back, it is urgent` does not contain. Only its separate check of `payload.body` guards rule
 7. Search the payload for the whole message instead.
 
+### K-21: An urgent message from while every tab was closed does not ring
+
+Found while testing a closed browser on 2026-11-01.
+
+A page alerts only for messages that arrive after it loads (D-049). An urgent message sent while
+every tab was closed shows only its URGENT tag in the chat list when the page opens again. If its
+push reached the device, the notification stays until it is tapped. Without push, for example with
+notifications blocked, nothing ever rings, though D-023 says urgent messages ring until the user
+acknowledges them. Decide whether an unread urgent message should ring once when a page opens.
+
+### K-23: The Home Screen banner promises notifications on iOS before 16.4
+
+Found while fixing the phone layout in #20. Seen on iOS 15.8 in #21.
+
+Web Push reached Home Screen apps in iOS 16.4. On iOS 15.4 to 16.3, the banner in
+`client/src/components/Sidebar.tsx` still says to add the site to the Home Screen to get
+notifications, which never works there. In the Home Screen app it says "Turn on notifications",
+though that iOS has no `Notification` at all. `needsInstall` in `client/src/push.ts` checks only for
+iPhone or iPad. Read the iOS version from the user agent, and before 16.4 say that notifications
+need iOS 16.4.
+
+### K-24: Quick sends can be stored out of order
+
+Found while testing #21.
+
+`sendContent` in `client/src/chat.ts` encrypts and posts each message on its own, and the server
+numbers messages in the order they arrive. Sending "one" to "five" with Enter in quick succession
+stored them as one, three, four, two, five, and a reload showed the same order. Send a chat's
+messages one at a time, in the order they were written.
+
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
@@ -336,7 +366,35 @@ requests for the record. Nothing here is a candidate for what to do next.
 | R-003: Add people to groups, who read the history (D-043) | #10 |
 | R-002: New keys when someone leaves or is removed, leaving, handing over (D-044, D-045) | #13 |
 | New pull requests shared into linked projects; cards name the reviewers (D-046) | #14 |
-| R-018: Alerts on iPhones without Web Push, through the Bark app (D-051) | #23 |
+| K-20: Drafts and unsent messages survive a closed tab (D-051) | #19 |
+| K-22: The chat header stays in view over the iPhone keyboard (D-053) | #21 |
+| K-25: The page no longer slides as the iPhone keyboard opens (D-053) | #22 |
+| R-018: Alerts on iPhones without Web Push, through the Bark app (D-054) | #23 |
+### K-25: The page slid as the iPhone keyboard opened
+
+Status: Fixed in #22 (D-053). Seen by the owner on iOS 15.8 after #21, in a screen recording. The
+fix was checked in Chromium, not yet on an iPhone.
+
+Opening a chat focused the message box, and the keyboard came up. Safari animated its scroll to
+lift the box, and the reset from #21 ran midway through. The page dropped by about a keyboard's
+height, showed a band of the status bar colour, and slid back up as the keyboard rose.
+
+### K-22: The keyboard on iPhone pushed the chat header off screen
+
+Status: Fixed in #21 (D-053). Suspected in #20, and seen on iOS 15.8 by the owner. The fix was
+checked in Chromium with a simulated keyboard, not yet on an iPhone.
+
+Safari on iPhone does not shrink the page when the keyboard opens. It scrolls the page up until the
+focused field shows, so the chat header left the screen while you typed, and a dialog's lower
+fields could sit behind the keyboard.
+
+### K-20: Closing the tab lost drafts and messages not sent
+
+Status: Fixed in #19 (D-051). Found while testing a closed browser on 2026-11-01, with K-21.
+
+A draft lived only in the message box, and a message still sending or not sent lived only in the
+page. Closing or reloading the tab, or opening another chat, dropped them without a warning. The
+person they were for never got them.
 
 ### R-002: Rotate keys on removal, and let people leave
 
@@ -427,7 +485,7 @@ changes.
 
 ### R-018: Alerts on iPhones without Web Push, through the Bark app
 
-Status: Done in #23 (D-051).
+Status: Done in #23 (D-054).
 
 Why: an iPhone on iOS 15, such as an iPhone 7 Plus, can never get Web Push, which Apple added in
 iOS 16.4, and a native app would need the paid Apple Developer Program for its push. Students keep

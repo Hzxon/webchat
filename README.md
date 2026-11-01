@@ -23,6 +23,8 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
 - **Replies and reactions.** Reply to a message to quote it above yours, and tap the quote to jump
   to the original. React with one of six emoji; tap a reaction again to take it back.
 - Sent, delivered, and read ticks.
+- Drafts, and messages that could not be sent, stay on the device until they are sent, so closing
+  the tab loses nothing.
 - **Web Push notifications** that arrive when the tab or the browser window is closed, including on
   Android and on iPhone (as a Home Screen app, iOS 16.4 or later). An older iPhone gets its alerts
   through the free Bark app instead.
@@ -99,6 +101,8 @@ All of it runs in the browser with Web Crypto ([shared/e2ee.ts](shared/e2ee.ts))
 What it does not protect against:
 
 - **Forgetting your password loses your encrypted history.** There is no reset.
+- **Drafts and messages not sent yet are stored on your device unencrypted**, until they are sent or
+  you sign out. Anyone with access to the browser's files can read them.
 - **A server that sends tampered app code.** Like any web app, the page runs the code the server
   sends, so encryption protects you from anyone who reads the database or the hosts, not from a
   malicious operator who changes the app itself.
@@ -412,6 +416,8 @@ Before you change the code, read [AGENTS.md](AGENTS.md). It links to
 
 ## Limits
 
+- It runs in Chrome and Edge 111, Firefox 114, and Safari 15.4 or later. On iPhone and iPad that
+  means iOS 15.4, and push needs iOS 16.4.
 - Text only: no voice or video calls, photos, or files yet. No typing indicator.
 - With push turned off on a device, new messages show up on its next check-in (up to 3 seconds
   while you are looking, longer in the background).

@@ -240,6 +240,44 @@ the install scripts of esbuild and fsevents, which nothing needs.
 Cost: moving to a new major Node release is a deliberate change to `engines`, and the README's
 requirement moves with it. Local development runs on the same Node 26 as Vercel (K-3).
 
+### D-052: The build supports iOS 15.4 and later
+
+Accepted 2026-11-01 in #20.
+
+`browserTargets` in `vite.config.ts` names the browsers the page and the service worker must run
+in: Chrome and Edge 111, Firefox 114, and Safari and iOS 15.4. Vite's default starts at Safari 16.4.
+With it, Lightning CSS wrote `max-width` media queries as `width<=` ranges. Safari before 16.4 drops
+a query it cannot parse, so iPhones on older iOS got the desktop layout. iOS 15.4 is the floor
+because the page needs `<dialog>` and `Array.prototype.at`.
+
+Cost: the code cannot use CSS or JavaScript that iOS 15.4 lacks without a fallback. Push on iPhone
+still needs iOS 16.4. Raising the floor is a deliberate change to `browserTargets`, and the README's
+line moves with it.
+
+### D-053: The chat fits the part of a touch screen still visible
+
+Accepted 2026-11-02 in #21, extended in #22.
+
+Safari on iPhone keeps the page at full height when the on-screen keyboard opens, and scrolls the
+page up until the focused field shows. The chat fills the screen, so its header left the top.
+`client/src/viewport.ts` sets the CSS variable `--visible-height` from the visual viewport, the
+layout takes that height, and the page stays at the top. Dialogs centre in the same area and scroll
+inside. This runs only while the chat layout shows, so the sign-in pages scroll as usual, and it
+leaves a pinch-zoomed page alone.
+
+Safari animates that scroll, and resetting it midway made the page drop and slide back up (K-25).
+Since #22, on a touch screen with the keyboard closed, a field that takes the focus is moved far
+above the screen. Safari then finds nothing to scroll to. The field comes back when the visual
+viewport resizes, or after 400ms. Opening a chat on a touch screen no longer focuses the message
+box, so the keyboard waits for a tap.
+
+A touch screen also keeps `:hover` on the last thing tapped, so every hover style sits behind
+`@media (hover: hover)`.
+
+Cost: the field disappears for a moment as the keyboard starts to open. Whether Safari skips its
+scroll depends on when it reads the field's position. Both changes were checked in Chromium, not
+yet on an iPhone.
+
 ## End-to-end encryption
 
 ### D-014: End-to-end encryption in the browser
@@ -475,9 +513,36 @@ cursor the page loaded with and the user's own read pointer in that chat, and it
 Cost: a message that commits more than a moment after a newer one while the page loads shows up
 without an alert.
 
+### D-051: Drafts and unsent messages stay on the device
+
+Accepted 2026-11-02 in #19.
+
+What someone types in a chat's message box, and every message the server has not confirmed, stay in
+the device's IndexedDB next to the account's keys. A draft comes back when its chat opens again:
+after a closed tab, a reload, or a visit to another chat. A message that was sending or failed comes
+back in its chat as "Not sent", with a toast that names the chat, unless the chat's history shows
+that the server has it after all. The page never sends it again by itself, because a retry can
+store a message twice (K-9). A Remove button next to "Tap to retry" drops it. While a message is
+still sending, the tab asks before it closes or reloads. Signing out removes drafts and unsent
+messages with the keys.
+
+A tab holds a Web Lock while it keeps unsent messages, and each one names its tab. A tab that opens
+takes over only the messages of tabs that hold no lock, so it never shows one that another open tab
+is still sending.
+
+Why: drafts and messages still sending lived only in the page. Closing the tab, reloading it, or
+opening another chat dropped them without a word. A test on 2026-11-01 lost both. The person they
+were for never got them, and the writer believed they had.
+
+Cost: drafts and unsent messages sit on the device unencrypted until they are sent or the user
+signs out, so anyone with the device's files can read them. A browser without Web Locks, such as
+Safari before 15.4, can show the same unsent message in two tabs. A message that reached the server
+as its tab closed shows as not sent if newer messages push it off the chat's first page, and a retry
+then sends it twice.
+
 ## Projects and channels
 
-### D-051: iPhones without Web Push get alerts through the Bark app
+### D-054: iPhones without Web Push get alerts through the Bark app
 
 Accepted 2026-11-02 in #23.
 
