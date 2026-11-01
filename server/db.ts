@@ -278,6 +278,28 @@ ALTER TABLE webchat.messages ALTER COLUMN sender_id DROP NOT NULL;
 ALTER TABLE webchat.messages DROP CONSTRAINT IF EXISTS messages_kind_check;
 ALTER TABLE webchat.messages ADD CONSTRAINT messages_kind_check CHECK (kind IN ('message', 'reaction', 'github'));
 `,
+  // 9: alerts to the Bark app on iPhones without Web Push (R-018).
+  `
+-- One Bark server link per person. The token is the secret in the server URL the Bark app calls.
+CREATE TABLE IF NOT EXISTS webchat.bark_links (
+  user_id    INTEGER PRIMARY KEY REFERENCES webchat.users(id) ON DELETE CASCADE,
+  token      TEXT NOT NULL UNIQUE,
+  -- Where the person's browser and phone reach this server, for the page a tap on an alert opens.
+  origin     TEXT NOT NULL,
+  -- 32 characters for AES-256-GCM, the same key typed into Bark. Null while alerts go in plain text.
+  cipher_key TEXT,
+  created_at BIGINT NOT NULL
+);
+-- Each Bark install that registered through a link: the key Bark shows for it, and its APNs token.
+CREATE TABLE IF NOT EXISTS webchat.bark_devices (
+  device_key   TEXT PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES webchat.users(id) ON DELETE CASCADE,
+  device_token TEXT NOT NULL UNIQUE,
+  created_at   BIGINT NOT NULL,
+  seen_at      BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS bark_devices_by_user ON webchat.bark_devices (user_id);
+`,
 ];
 
 const statements = (sql: string) =>
@@ -430,6 +452,22 @@ export interface PushSubscriptionRow {
   user_id: number;
   p256dh: string;
   auth: string;
+}
+
+export interface BarkLinkRow {
+  user_id: number;
+  token: string;
+  origin: string;
+  cipher_key: string | null;
+  created_at: number;
+}
+
+export interface BarkDeviceRow {
+  device_key: string;
+  user_id: number;
+  device_token: string;
+  created_at: number;
+  seen_at: number;
 }
 
 function toMessageDTO(row: MessageRow): MessageDTO {
@@ -745,6 +783,23 @@ export async function openDb(sql: Sql) {
       await sql.query('INSERT INTO webchat.meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING', [key, value]);
       const row = await one(sql.query<{ value: string }>('SELECT value FROM webchat.meta WHERE key = $1', [key]));
       return row!.value;
+    },
+    getMeta: async (key: string): Promise<string | null> =>
+      (await one(sql.query<{ value: string }>('SELECT value FROM webchat.meta WHERE key = $1', [key])))?.value ?? null,
+
+    /**
+     * Replaces a value only while it still is what the caller last read (null: nothing stored yet).
+     * False means another instance changed it first, and the caller should read that instead.
+     */
+    setMetaIf: async (key: string, expected: string | null, value: string): Promise<boolean> => {
+      const rows =
+        expected === null
+          ? await sql.query('INSERT INTO webchat.meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING RETURNING key', [
+              key,
+              value,
+            ])
+          : await sql.query('UPDATE webchat.meta SET value = $3 WHERE key = $1 AND value = $2 RETURNING key', [key, expected, value]);
+      return rows.length > 0;
     },
 
     /** Counts one hit in a fixed window. Returns false once the key is over its limit. */
@@ -1546,6 +1601,58 @@ export async function openDb(sql: Sql) {
         'SELECT endpoint, user_id, p256dh, auth FROM webchat.push_subscriptions WHERE user_id = $1',
         [userId],
       ),
+
+    barkLinkFor: (userId: number) => one(sql.query<BarkLinkRow>('SELECT * FROM webchat.bark_links WHERE user_id = $1', [userId])),
+    barkLinkByToken: (token: string) => one(sql.query<BarkLinkRow>('SELECT * FROM webchat.bark_links WHERE token = $1', [token])),
+    /** Makes the person's link, or keeps the one they have. */
+    createBarkLink: async (userId: number, token: string, origin: string): Promise<BarkLinkRow> => {
+      await sql.query(
+        `INSERT INTO webchat.bark_links (user_id, token, origin, cipher_key, created_at) VALUES ($1, $2, $3, NULL, $4)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [userId, token, origin, Date.now()],
+      );
+      return (await one(sql.query<BarkLinkRow>('SELECT * FROM webchat.bark_links WHERE user_id = $1', [userId])))!;
+    },
+    setBarkCipherKey: async (userId: number, cipherKey: string | null) => {
+      await sql.query('UPDATE webchat.bark_links SET cipher_key = $2 WHERE user_id = $1', [userId, cipherKey]);
+    },
+    deleteBarkLink: async (userId: number) => {
+      await sql.query('DELETE FROM webchat.bark_devices WHERE user_id = $1', [userId]);
+      await sql.query('DELETE FROM webchat.bark_links WHERE user_id = $1', [userId]);
+    },
+    /**
+     * Records a Bark install. The app registers again on every launch, so the same phone, found by
+     * its APNs token or by the key it was given, keeps its key. A phone that moves to another
+     * account leaves the old one, so only one person's alerts reach it.
+     */
+    registerBarkDevice: async (userId: number, deviceToken: string, key: string | null, newKey: string): Promise<BarkDeviceRow> => {
+      const now = Date.now();
+      await sql.query('DELETE FROM webchat.bark_devices WHERE device_token = $1 AND user_id <> $2', [deviceToken, userId]);
+      const existing = await one(
+        sql.query<BarkDeviceRow>(
+          'SELECT * FROM webchat.bark_devices WHERE user_id = $1 AND (device_token = $2 OR device_key = $3) ORDER BY created_at LIMIT 1',
+          [userId, deviceToken, key ?? ''],
+        ),
+      );
+      if (existing) {
+        await sql.query('UPDATE webchat.bark_devices SET device_token = $2, seen_at = $3 WHERE device_key = $1', [
+          existing.device_key,
+          deviceToken,
+          now,
+        ]);
+        return { ...existing, device_token: deviceToken, seen_at: now };
+      }
+      await sql.query(
+        'INSERT INTO webchat.bark_devices (device_key, user_id, device_token, created_at, seen_at) VALUES ($1, $2, $3, $4, $5)',
+        [newKey, userId, deviceToken, now, now],
+      );
+      return { device_key: newKey, user_id: userId, device_token: deviceToken, created_at: now, seen_at: now };
+    },
+    barkDevicesFor: (userId: number) =>
+      sql.query<BarkDeviceRow>('SELECT * FROM webchat.bark_devices WHERE user_id = $1 ORDER BY created_at', [userId]),
+    deleteBarkDevice: async (deviceKey: string) => {
+      await sql.query('DELETE FROM webchat.bark_devices WHERE device_key = $1', [deviceKey]);
+    },
 
     /**
      * Links a GitHub account, replacing any linked before. The first poll after this only records

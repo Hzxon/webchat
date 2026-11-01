@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import http from 'node:http';
+import http2 from 'node:http2';
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, test } from 'node:test';
 import ece from 'http_ece';
@@ -29,6 +30,7 @@ import {
   type MessageContent,
 } from '../shared/e2ee.ts';
 import type {
+  BarkDTO,
   BootstrapDTO,
   ChatKeyInput,
   ConfigDTO,
@@ -70,6 +72,54 @@ async function startFakePushService() {
     host: `127.0.0.1:${(server.address() as AddressInfo).port}`,
     received,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+interface ReceivedApns {
+  path: string;
+  headers: http2.IncomingHttpHeaders;
+  body: Record<string, unknown>;
+}
+
+/** Stands in for Apple's push service, which only speaks HTTP/2, and records what the server sends to it. */
+async function startFakeApns() {
+  const received: ReceivedApns[] = [];
+  /** Every provider token seen, to check that one serves many pushes. */
+  const authorizations: string[] = [];
+  /** An answer to give for a device token instead of 200, once or every time. */
+  const failing = new Map<string, { status: number; reason: string; once: boolean }>();
+  const sessions = new Set<http2.ServerHttp2Session>();
+  const server = http2.createServer();
+  server.on('session', (session) => sessions.add(session));
+  server.on('stream', (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
+    const chunks: Buffer[] = [];
+    stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+    stream.on('end', () => {
+      const path = String(headers[':path']);
+      received.push({ path, headers, body: JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown> });
+      authorizations.push(String(headers.authorization));
+      const token = path.slice(path.lastIndexOf('/') + 1);
+      const failure = failing.get(token);
+      if (failure) {
+        if (failure.once) failing.delete(token);
+        stream.respond({ ':status': failure.status, 'content-type': 'application/json' });
+        stream.end(JSON.stringify({ reason: failure.reason }));
+      } else {
+        stream.respond({ ':status': 200, 'apns-id': crypto.randomUUID() });
+        stream.end();
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    received,
+    authorizations,
+    failing,
+    close: () => {
+      for (const session of sessions) session.destroy();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    },
   };
 }
 
@@ -250,7 +300,7 @@ class Client {
 }
 
 /** Pushes go out after the send request returns, so wait until the expected number arrive. */
-async function waitForPushes(received: ReceivedPush[], count: number, timeoutMs = 3000) {
+async function waitForPushes<T>(received: T[], count: number, timeoutMs = 3000): Promise<T[]> {
   const deadline = Date.now() + timeoutMs;
   while (received.length < count && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
   return received.slice(0, count);
@@ -266,6 +316,7 @@ describe('chat server', () => {
   let server: http.Server;
   let baseUrl: string;
   let pushService: Awaited<ReturnType<typeof startFakePushService>>;
+  let apns: Awaited<ReturnType<typeof startFakeApns>>;
   let alice: Client;
   let bob: Client;
   let carol: Client;
@@ -279,6 +330,9 @@ describe('chat server', () => {
 
   before(async () => {
     pushService = await startFakePushService();
+    apns = await startFakeApns();
+    // Stands in for the key Bark publishes. The fake APNs never checks the signature.
+    const apnsKey = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ type: 'pkcs8', format: 'pem' });
     const silent = { info() {}, warn() {}, error() {} };
     const config: Config = {
       port: 0,
@@ -293,6 +347,10 @@ describe('chat server', () => {
       trustProxy: false,
       sessionDays: 1,
       extraPushHosts: [pushService.host],
+      barkApnsKey: String(apnsKey),
+      barkApnsKeyId: 'TESTKEY123',
+      barkApnsTeamId: 'TEAM123456',
+      apnsOrigin: apns.origin,
       clientDir: null,
       githubClientId: undefined,
       githubClientSecret: undefined,
@@ -322,6 +380,7 @@ describe('chat server', () => {
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     await instance?.close();
     await pushService?.close();
+    await apns?.close();
   });
 
   test('every API response names the build, so old tabs can reload after a deploy', async () => {
@@ -1091,6 +1150,166 @@ describe('chat server', () => {
     );
     const older = await alice.request<MessageDTO[]>('GET', `/conversations/${directChat.id}/messages?before=${page.data[2]!.id}`);
     assert.equal(older.data.length, 2);
+  });
+
+  // Alerts for iPhones without Web Push, through the Bark app (R-018).
+  let bobServerUrl = '';
+  let bobPhoneToken = '';
+  let bobBarkKey = '';
+  type Registered = { code: number; data: { key: string; device_key: string; device_token: string } };
+
+  test('Bark: linking gives the app a server URL it can ping and register with', async () => {
+    const link = await bob.request<BarkDTO>('POST', '/bark/link');
+    assert.equal(link.status, 200);
+    assert.equal(link.data.configured, true);
+    bobServerUrl = link.data.link!.serverUrl;
+    assert.ok(bobServerUrl.startsWith(`${baseUrl}/api/bark/`));
+    assert.equal((await bob.request<BarkDTO>('POST', '/bark/link')).data.link!.serverUrl, bobServerUrl, 'linking again keeps the link');
+
+    const ping = await fetch(`${bobServerUrl}/ping`);
+    assert.equal(ping.status, 200);
+    assert.equal(((await ping.json()) as { message: string }).message, 'pong');
+
+    bobPhoneToken = 'ab'.repeat(32);
+    const registered = (await (await fetch(`${bobServerUrl}/register?devicetoken=${bobPhoneToken.toUpperCase()}`)).json()) as Registered;
+    assert.equal(registered.code, 200);
+    assert.equal(registered.data.device_token, bobPhoneToken);
+    assert.equal(registered.data.key, registered.data.device_key);
+    bobBarkKey = registered.data.key;
+    // The app registers again on every launch, with the key it was given: same phone, same key.
+    const again = (await (await fetch(`${bobServerUrl}/register?devicetoken=${bobPhoneToken}&key=${bobBarkKey}`)).json()) as Registered;
+    assert.equal(again.data.key, bobBarkKey);
+    assert.deepEqual(
+      (await bob.request<BarkDTO>('GET', '/bark')).data.link!.devices.map((d) => d.key),
+      [bobBarkKey],
+    );
+
+    assert.equal((await fetch(`${baseUrl}/api/bark/${'x'.repeat(43)}/ping`)).status, 404);
+    assert.equal((await fetch(`${bobServerUrl}/register?devicetoken=nope`)).status, 400);
+
+    apns.received.length = 0;
+    const test = await bob.request<{ sent: number }>('POST', '/push/test');
+    const [push] = await waitForPushes(apns.received, 1);
+    assert.equal((push!.body.aps as { alert: { title: string } }).alert.title, 'Notifications work');
+    assert.ok(test.data.sent >= 1, 'the test counts the phone');
+  });
+
+  test('Bark: a message to someone away reaches the phone, with no text', async () => {
+    await bob.sync(false);
+    apns.received.length = 0;
+    await alice.send(directChat.id, 'Meet at the library');
+    const [push] = await waitForPushes(apns.received, 1);
+    assert.equal(push!.path, `/3/device/${bobPhoneToken}`);
+    assert.equal(push!.headers['apns-topic'], 'me.fin.bark');
+    assert.equal(push!.headers['apns-push-type'], 'alert');
+    assert.equal(push!.headers['apns-priority'], '10');
+    const [header, claims] = String(push!.headers.authorization).replace('bearer ', '').split('.');
+    assert.deepEqual(JSON.parse(Buffer.from(header!, 'base64url').toString()), { alg: 'ES256', kid: 'TESTKEY123' });
+    assert.equal((JSON.parse(Buffer.from(claims!, 'base64url').toString()) as { iss: string }).iss, 'TEAM123456');
+    const aps = push!.body.aps as { alert: { title: string; body: string }; 'mutable-content': number; 'thread-id': string };
+    assert.equal(aps.alert.title, 'Alice');
+    assert.equal(aps.alert.body, 'New message');
+    assert.equal(aps['mutable-content'], 1);
+    assert.equal(aps['thread-id'], `chat-${directChat.id}`);
+    assert.equal(push!.body.url, `${baseUrl}/?chat=${directChat.id}`);
+    assert.equal(push!.body.level, 'active');
+    assert.equal(push!.body.call, undefined);
+    assert.ok(!JSON.stringify(push!.body).includes('library'), 'no message text in the alert');
+  });
+
+  test('Bark: nothing while the person is looking at the app, and never for a reaction', async () => {
+    await bob.sync(true, null);
+    apns.received.length = 0;
+    await alice.send(directChat.id, 'Looking?');
+    await sleep(300);
+    assert.equal(apns.received.length, 0);
+
+    await bob.sync(false);
+    const last = (await bob.bootstrap()).conversations.find((c) => c.id === directChat.id)!.lastMessage!;
+    const wave = { text: '', reaction: { messageId: last.id, emoji: '👋' } };
+    assert.equal((await alice.send(directChat.id, wave, false, 'reaction')).status, 201);
+    await sleep(300);
+    assert.equal(apns.received.length, 0);
+  });
+
+  test('Bark: an urgent message rings, and a newer message replaces an older alert', async () => {
+    apns.received.length = 0;
+    await alice.send(directChat.id, 'first');
+    await alice.send(directChat.id, 'second');
+    const [first, second] = await waitForPushes(apns.received, 2);
+    assert.equal(first!.headers['apns-collapse-id'], second!.headers['apns-collapse-id'], 'one alert per chat');
+    assert.ok(!String(first!.headers['apns-collapse-id']).includes(String(directChat.id)), 'the collapse id names no chat');
+
+    apns.received.length = 0;
+    await alice.send(directChat.id, 'Call me', true);
+    const [push] = await waitForPushes(apns.received, 1);
+    assert.notEqual(push!.headers['apns-collapse-id'], first!.headers['apns-collapse-id'], 'an urgent alert stands on its own');
+    assert.ok(Number(push!.headers['apns-expiration']) > Date.now() / 1000 + 2 * 24 * 3600, 'urgent waits up to 3 days');
+    const aps = push!.body.aps as { alert: { title: string }; sound: string };
+    assert.equal(aps.alert.title, 'URGENT from Alice');
+    assert.equal(aps.sound, 'alarm.caf');
+    assert.equal(push!.body.level, 'timeSensitive');
+    assert.equal(push!.body.call, '1');
+  });
+
+  test('Bark: with encryption on, Apple sees only a placeholder and ciphertext', async () => {
+    const on = await bob.request<BarkDTO>('PUT', '/bark/encryption', { enabled: true });
+    const key = on.data.link!.cipherKey!;
+    assert.equal(key.length, 32);
+
+    apns.received.length = 0;
+    await alice.send(directChat.id, 'Secret plans');
+    const [push] = await waitForPushes(apns.received, 1);
+    const outer = JSON.stringify(push!.body);
+    assert.ok(!outer.includes('Alice') && !outer.includes('plans') && !outer.includes(`chat-${directChat.id}`), 'nothing readable outside');
+    assert.equal((push!.body.aps as { alert: { body: string } }).alert.body, 'New message');
+    const iv = push!.body.iv as string;
+    assert.equal(iv.length, 12);
+    // Decrypt as Bark does: AES-256-GCM, the key and IV as text, the tag after the ciphertext.
+    const data = Buffer.from(push!.body.ciphertext as string, 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', Buffer.from(key, 'utf8'), Buffer.from(iv, 'utf8'));
+    decipher.setAuthTag(data.subarray(data.length - 16));
+    const inner = JSON.parse(Buffer.concat([decipher.update(data.subarray(0, data.length - 16)), decipher.final()]).toString()) as Record<
+      string,
+      string
+    >;
+    assert.equal(inner.title, 'Alice');
+    assert.equal(inner.body, 'New message');
+    assert.equal(inner.group, `chat-${directChat.id}`);
+    assert.equal(inner.url, `${baseUrl}/?chat=${directChat.id}`);
+    assert.ok(!JSON.stringify(inner).includes('plans'), 'the text is not in the alert either');
+
+    const off = await bob.request<BarkDTO>('PUT', '/bark/encryption', { enabled: false });
+    assert.equal(off.data.link!.cipherKey, null);
+  });
+
+  test('Bark: one provider token serves every push, and Apple can retire it or the phone', async () => {
+    assert.equal(new Set(apns.authorizations).size, 1, 'the token is minted once and reused');
+    apns.failing.set(bobPhoneToken, { status: 403, reason: 'ExpiredProviderToken', once: true });
+    apns.received.length = 0;
+    await alice.send(directChat.id, 'Again');
+    const [rejected, retried] = await waitForPushes(apns.received, 2);
+    assert.notEqual(rejected!.headers.authorization, retried!.headers.authorization, 'retried with a new token');
+    assert.equal(new Set(apns.authorizations).size, 2);
+
+    apns.failing.set(bobPhoneToken, { status: 410, reason: 'Unregistered', once: false });
+    apns.received.length = 0;
+    await alice.send(directChat.id, 'Still there?');
+    await waitForPushes(apns.received, 1);
+    await sleep(100);
+    assert.deepEqual((await bob.request<BarkDTO>('GET', '/bark')).data.link!.devices, [], 'a phone Apple no longer knows is forgotten');
+    apns.failing.delete(bobPhoneToken);
+  });
+
+  test('Bark: unlinking ends the alerts and the server URL', async () => {
+    assert.equal((await fetch(`${bobServerUrl}/register?devicetoken=${bobPhoneToken}`)).status, 200);
+    assert.equal((await bob.request<BarkDTO>('GET', '/bark')).data.link!.devices.length, 1);
+    assert.equal((await bob.request<BarkDTO>('DELETE', '/bark/link')).data.link, null);
+    assert.equal((await fetch(`${bobServerUrl}/ping`)).status, 404);
+    apns.received.length = 0;
+    await alice.send(directChat.id, 'Anyone?');
+    await sleep(300);
+    assert.equal(apns.received.length, 0);
   });
 
   test('an account from before encryption upgrades once, then signs in with a login key', async () => {

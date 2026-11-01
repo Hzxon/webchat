@@ -54,22 +54,6 @@ Open questions:
 
 ## Planned
 
-### R-018: Alerts on iPhones without Web Push, through the Bark app
-
-Status: In progress, branch `claude/webchat-notification-behavior-14c1e5`.
-
-Why: an iPhone on iOS 15, such as an iPhone 7 Plus, can never get Web Push, which Apple added in
-iOS 16.4, and a native app would need the paid Apple Developer Program for its push. Students keep
-such phones, and WebChat on them alerts only while the page is open.
-
-Scope: WebChat acts as a Bark server for one person at a time. Bark is a free, open-source
-notification app whose author publishes the APNs key the app's pushes are signed with. The person
-installs Bark, gives it a server URL from the bell dialog, and from then on the server sends an
-APNs push to that phone whenever a Web Push would go to their other devices: chat and sender name,
-never the message text. Optional encryption with a key typed into Bark hides even those names from
-Apple. Done when a phone on iOS 15.8 shows a banner within seconds of a message, with the tests and
-the README setup.
-
 ### R-005: Photos and files
 
 Status: Planned.
@@ -352,6 +336,7 @@ requests for the record. Nothing here is a candidate for what to do next.
 | R-003: Add people to groups, who read the history (D-043) | #10 |
 | R-002: New keys when someone leaves or is removed, leaving, handing over (D-044, D-045) | #13 |
 | New pull requests shared into linked projects; cards name the reviewers (D-046) | #14 |
+| R-018: Alerts on iPhones without Web Push, through the Bark app (D-051) | #23 |
 
 ### R-002: Rotate keys on removal, and let people leave
 
@@ -439,3 +424,20 @@ Status: Fixed in #6 (D-040).
 A tab that still runs the app from before #2 shows each reaction as "could not be decrypted" until
 it reloads. A version check that reloads tabs after a deploy would fix this one and future format
 changes.
+
+### R-018: Alerts on iPhones without Web Push, through the Bark app
+
+Status: Done in #23 (D-051).
+
+Why: an iPhone on iOS 15, such as an iPhone 7 Plus, can never get Web Push, which Apple added in
+iOS 16.4, and a native app would need the paid Apple Developer Program for its push. Students keep
+such phones, and WebChat on them alerts only while the page is open.
+
+Scope: WebChat acts as a Bark server for one person at a time. Bark is a free, open-source
+notification app whose author publishes the APNs key the app's pushes are signed with. The person
+installs Bark, gives it a server URL from the bell dialog, and from then on the server sends an
+APNs push to that phone whenever a Web Push would go to their other devices: chat and sender name,
+never the message text. Optional encryption with a key typed into Bark hides even those names from
+Apple. Done when a phone on iOS 15.8 shows a banner within seconds of a message, with the tests and
+the README setup. The tests run against a fake Apple push service; the run on an iPhone 7 Plus on
+iOS 15.8.8 is the owner's check before the pull request leaves draft.

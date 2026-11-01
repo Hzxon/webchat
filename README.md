@@ -24,7 +24,8 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
   to the original. React with one of six emoji; tap a reaction again to take it back.
 - Sent, delivered, and read ticks.
 - **Web Push notifications** that arrive when the tab or the browser window is closed, including on
-  Android and on iPhone (as a Home Screen app, iOS 16.4 or later).
+  Android and on iPhone (as a Home Screen app, iOS 16.4 or later). An older iPhone gets its alerts
+  through the free Bark app instead.
 - **Urgent messages**: tap the bell next to the message box. The other person sees a full-screen
   alert, the page keeps ringing, and the tab title flashes until they open it. On their phone the
   notification stays until they act on it.
@@ -53,6 +54,9 @@ allowance in about a week.
   stays quiet at the desk. Once you look away or close the tab, every device you enabled gets it.
   Safari gets no push while you look, except urgent ones, because it turns push off for a site
   whose pushes show nothing. Its tab checks in every 3 seconds instead.
+- **iPhones without Web Push** get alerts through the Bark app. The server sends the alert to Apple
+  itself, with the key Bark's author publishes, whenever a Web Push would go to your other devices.
+  It carries the chat and sender names and never the text. See "Turning on notifications".
 - **Urgent** always alerts. An open tab rings until you dismiss it, even with message sounds off.
 - **After a deploy, open tabs reload** on their next check-in, so a page from before it does not
   show new kinds of data as errors. A tab waits while you type in it, while it holds a draft or a
@@ -98,6 +102,9 @@ What it does not protect against:
 - **A server that sends tampered app code.** Like any web app, the page runs the code the server
   sends, so encryption protects you from anyone who reads the database or the hosts, not from a
   malicious operator who changes the app itself.
+- **Alerts through Bark pass Apple.** For an iPhone linked to Bark, Apple sees when an alert goes
+  to it, and, unless encryption is turned on in the bell dialog, the chat and sender names in it.
+  The Bark app on the phone sees the alert in full. The message text is never in it.
 - **Metadata stays visible to the server:** who talks to whom and when, group, project and
   channel names, who is in which project or group and who added them, who owns each project and
   group, who left, when a chat got a new key, display names, whether a message is urgent, and that
@@ -163,6 +170,12 @@ bell icon, then **Turn on notifications**, then **Send a test notification**.
    (never change it later), `VAPID_SUBJECT` (defaults to the site's production URL), and
    `DATABASE_CA_CERT` (Supabase's root CA, to verify the database server).
 
+   To alert iPhones that cannot get Web Push, add `BARK_APNS_KEY`: the APNs key that
+   [Bark's documentation](https://github.com/Finb/Bark/blob/master/docs/en-us/cert.md) publishes
+   for self-hosted servers, as the text of the `.p8` file. Its id and team id are built in;
+   `BARK_APNS_KEY_ID` and `BARK_APNS_TEAM_ID` override them for a build of Bark with another key.
+   Without the variable, the bell dialog says Bark is not set up.
+
 3. Deploy:
 
    ```bash
@@ -194,6 +207,14 @@ Share the address and the invite code with your friends, or send a link that fil
 - **iPhone and iPad**: open the site in Safari, tap Share, then **Add to Home Screen**. Open
   WebChat from the Home Screen, sign in, and turn on notifications there. Safari tabs on iOS cannot
   receive push.
+- **iPhone or iPad on iOS 15 or earlier**, which has no Web Push at all: install the free
+  [Bark](https://apps.apple.com/app/id1403753865) app. In WebChat, open the bell, press **Link
+  Bark**, and copy the server URL it shows. In Bark, open the server list, add that URL, and
+  allow notifications. Bark registers itself; the dialog then counts the phone, and alerts arrive
+  whenever you are not looking at WebChat on another device. Alerts name the chat and the sender,
+  never the text, and a tap opens the chat in Safari. To keep even those names from Apple, press
+  **Turn encryption on**, then in Bark open Push Encryption, choose AES256 and GCM, and type the
+  key the dialog shows. Needs `BARK_APNS_KEY` on the server, see the deploy steps.
 
 ## GitHub pull requests
 
@@ -355,7 +376,9 @@ The integration test runs the app on a random port with an in-memory PGlite data
 over HTTP, with every client doing real encryption. It checks that the database and pushes hold no
 plain text, that a message the server alters is rejected, the one-time upgrade of old accounts, chat
 keys, receipts, access control, and which browsers get a push while the recipient is looking,
-looking away, or has closed the tab. For projects it checks that channel keys must cover exactly the
+looking away, or has closed the tab. A fake Apple push service checks that alerts to Bark carry no
+text, that one provider token serves many of them, and that a phone Apple no longer knows is
+forgotten. For projects it checks that channel keys must cover exactly the
 members, that a person added later reads the earlier messages, and that replies and reactions stay
 encrypted and reactions never count as unread. Any member of a group can add people, whose copy of
 the key must come for exactly them, and who then read the earlier messages. Only the owner of a
@@ -375,7 +398,7 @@ has its own environment.
 
 ```
 api/      Vercel function entry point (wraps the Express app)
-server/   Express API, Postgres queries, Web Push sender
+server/   Express API, Postgres queries, Web Push sender, alerts through Bark
 client/   React app (Vite), the service worker (client/src/sw.ts), and the key store (client/src/e2ee)
 shared/   Types and the end-to-end encryption code shared by server, client, and service worker
 test/     Integration tests (node:test)
@@ -398,6 +421,9 @@ Before you change the code, read [AGENTS.md](AGENTS.md). It links to
   open tab of any member makes it within seconds.
 - Reactions never notify anyone. They show up at once in a chat that is open, and otherwise on the
   next check-in.
+- An alert through Bark cannot show the message text, and it cannot mark the message delivered.
+  The delivered tick comes when the chat is opened. If Bark's author ever withdraws the published
+  key, those alerts stop; nothing else is affected.
 - Adding someone to a project or group needs a member whose browser can open every key in it. Up
   to 20 people can be added at a time.
 - Pull requests show at most 30 per list, and only from github.com, not GitHub Enterprise Server.
