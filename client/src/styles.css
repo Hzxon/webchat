@@ -64,6 +64,12 @@ body,
   margin: 0;
 }
 
+/* Safari on iPhone enlarges text in landscape unless told not to. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -77,6 +83,15 @@ select,
 textarea {
   font: inherit;
   color: inherit;
+}
+
+/* Safari on iPhone zooms into a field whose text is smaller than 16px, and stays zoomed after. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
 }
 
 button {
@@ -303,6 +318,8 @@ a {
   height: 100%;
   max-width: 1600px;
   margin: 0 auto;
+  /* viewport-fit=cover lets the page run under an iPhone's notch in landscape. */
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
   background: var(--panel);
   box-shadow: var(--shadow);
 }
@@ -454,7 +471,7 @@ a {
 .chat-list {
   flex: 1;
   margin: 0;
-  padding: 0;
+  padding: 0 0 env(safe-area-inset-bottom);
   overflow-y: auto;
   list-style: none;
 }
@@ -1095,7 +1112,7 @@ button.quote:hover {
 /* Composer */
 
 .composer {
-  padding: 8px 12px;
+  padding: 8px 12px max(8px, env(safe-area-inset-bottom));
   background: var(--panel-2);
   border-top: 1px solid var(--line);
 }
@@ -1584,8 +1601,8 @@ button.quote:hover {
 
 .toasts {
   position: fixed;
-  top: 12px;
-  right: 12px;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
   z-index: 40;
   display: grid;
   gap: 8px;
@@ -1658,10 +1675,6 @@ button.quote:hover {
   .bubble-line,
   .reactions {
     max-width: 85%;
-  }
-
-  .composer {
-    padding-bottom: max(8px, env(safe-area-inset-bottom));
   }
 }
 
@@ -1778,7 +1791,7 @@ button.quote:hover {
 .github-body {
   flex: 1;
   overflow-y: auto;
-  padding: 18px 6% 28px;
+  padding: 18px 6% calc(28px + env(safe-area-inset-bottom));
   overscroll-behavior: contain;
 }
 
@@ -2144,7 +2157,7 @@ button.quote:hover {
 
 @media (max-width: 760px) {
   .github-body {
-    padding: 14px 10px 24px;
+    padding: 14px 10px calc(24px + env(safe-area-inset-bottom));
   }
 
   .github-card {

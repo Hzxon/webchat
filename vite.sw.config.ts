@@ -3,6 +3,7 @@
 // classic service worker cannot do.
 import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
+import { browserTargets } from './vite.config.ts';
 
 const root = resolve(import.meta.dirname, 'client');
 
@@ -13,6 +14,7 @@ export default defineConfig({
     outDir: resolve(import.meta.dirname, 'dist', 'client'),
     emptyOutDir: false,
     copyPublicDir: false,
+    target: browserTargets,
     lib: {
       entry: resolve(root, 'src', 'sw.ts'),
       formats: ['iife'],
