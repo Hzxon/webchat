@@ -65,6 +65,18 @@ export interface WrappedKeyDTO {
   data: string;
 }
 
+/**
+ * A chat's earlier key, encrypted with the key that replaced it. Whoever holds the current key opens
+ * the earlier ones in turn, so the whole history stays readable after a rotation.
+ */
+export interface KeyLinkDTO {
+  /** The key that replaced it, and encrypts it. */
+  keyId: string;
+  previousKeyId: string;
+  iv: string;
+  data: string;
+}
+
 export interface ConversationDTO {
   id: number;
   type: ConversationType;
@@ -73,10 +85,11 @@ export interface ConversationDTO {
   /** The project a channel belongs to; null for other chats. */
   projectId: number | null;
   /**
-   * The person who made a group, the only one who can remove people from it or delete it. Null for
-   * other chats, and for a group from before encryption that has no key yet, which any member can manage.
+   * The owner of a group: the person who made it, or the member they handed it to. Only the owner
+   * can remove people from it or delete it. Null for other chats, and for a group from before
+   * encryption that has no key yet, which any member can manage.
    */
-  createdBy: number | null;
+  ownerId: number | null;
   members: MemberState[];
   /** Newest message of kind "message". Reactions never replace it. */
   lastMessage: MessageDTO | null;
@@ -87,13 +100,21 @@ export interface ConversationDTO {
   keyId: string | null;
   /** The chat key wrapped for the user this DTO was built for. */
   myKey: WrappedKeyDTO | null;
+  /** Every key the chat used before keyId, oldest first. */
+  keyLinks: KeyLinkDTO[];
+  /**
+   * Someone who holds the current key left. The server takes no messages until a member who stays
+   * replaces the key, which their browser does on its next check-in or before it sends.
+   */
+  needsNewKey: boolean;
 }
 
 /** A project: a team with its own channels. Every project member is a member of every channel in it. */
 export interface ProjectDTO {
   id: number;
   name: string;
-  createdBy: number;
+  /** The person who made it, or the member they handed it to. Only they can remove people or delete it. */
+  ownerId: number;
   createdAt: number;
   /** In the order they joined. */
   memberIds: number[];
@@ -220,12 +241,28 @@ export interface AddProjectMembersInput {
   channelKeys: SharedChannelKeyInput[];
 }
 
+/** A chat's current key, encrypted with the key that replaces it. */
+export interface KeyLinkInput {
+  previousKeyId: string;
+  iv: string;
+  data: string;
+}
+
+/** A new key that replaces a chat's current one, wrapped for every member, with the current key inside. */
+export interface RotatedKeyInput extends ChatKeyInput {
+  link: KeyLinkInput;
+}
+
+export interface RotatedChannelKeyInput extends RotatedKeyInput {
+  conversationId: number;
+}
+
 /**
- * Every channel key of a project, wrapped again for exactly the people who stay, so no copy left
- * was made by the person being removed.
+ * A new key for every channel of a project, wrapped for exactly the people who stay, so the person
+ * being removed cannot read what is sent next.
  */
 export interface RemoveProjectMemberInput {
-  channelKeys: SharedChannelKeyInput[];
+  channelKeys: RotatedChannelKeyInput[];
 }
 
 /** People to add to a group, with its existing key wrapped for each of them. Null for a group without a key. */
@@ -234,9 +271,14 @@ export interface AddGroupMembersInput {
   key: ChatKeyInput | null;
 }
 
-/** The group's key wrapped again for exactly the people who stay. Null for a group without a key. */
+/** The group's new key, wrapped for exactly the people who stay. Null for a group without a key. */
 export interface RemoveGroupMemberInput {
-  key: ChatKeyInput | null;
+  key: RotatedKeyInput | null;
+}
+
+/** The member who becomes the owner of a project or group. */
+export interface NewOwnerInput {
+  userId: number;
 }
 
 /** JSON body of every Web Push message. The service worker turns it into a notification. */

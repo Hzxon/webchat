@@ -175,8 +175,8 @@ Accepted 2026-11-01 in 10ba6d8. The rule about numbers comes from #2.
 `SCHEMA` in `server/db.ts` creates the original tables. Every later change is an entry at the end of
 `MIGRATIONS`. Each entry runs once, in order, in a transaction that holds an advisory lock, because
 several serverless instances can start at once. `webchat.meta` records how many have run. So far:
-1 is end-to-end encryption, 2 is the GitHub connector, 3 is projects with replies and reactions, and
-4 is group owners (#4).
+1 is end-to-end encryption, 2 is the GitHub connector, 3 is projects with replies and reactions, 4
+is group owners (#4), and 5 is key rotation, leaving and handing over (#13).
 
 Two branches once both added a migration 2. The projects migration became 3 when its branch merged,
 because a database that had already run the connector's migration 2 would have skipped it. When two
@@ -186,15 +186,16 @@ Cost: a mistake in a migration on main is fixed with a new migration, never by e
 
 ### D-011: Limits live in one place
 
-Accepted 2026-11-01 in 74d53ff, extended in 10ba6d8, #2, #4 and #10.
+Accepted 2026-11-01 in 74d53ff, extended in 10ba6d8, #2, #4, #10 and #13.
 
 `LIMITS` in `shared/types.ts` holds the sizes that the server enforces and the page respects: 4,000
 characters per message, 160 per quote, 24,000 per ciphertext, the lengths of names, 50 messages per
-history page, and 20 people added to a project or group at once. Express accepts JSON bodies of up to 64 KB
-(`server/app.ts`), raised from 16 KB for encryption in 10ba6d8. That caps batch requests: adding 20
-people to a project sends every channel's key wrapped for each of them. Removing someone sends every
-channel's key wrapped again for each person who stays (D-039). A copy takes about 110 bytes, so a
-project nears the cap at about 20 people with 30 channels.
+history page, and 20 people added to a project or group at once. Express accepts JSON bodies of up
+to 64 KB (`server/app.ts`), raised from 16 KB for encryption in 10ba6d8. That caps batch requests:
+adding 20 people to a project sends every channel's key wrapped for each of them. Removing someone
+sends a new key for every channel, wrapped for each person who stays, with the old key inside
+(D-044). A copy takes about 110 bytes, so a project nears the cap at about 20 people with 30
+channels.
 
 Cost: raising a limit can need a larger body limit too. Check both.
 
@@ -236,17 +237,17 @@ server can still see.
 
 ### D-015: One key per chat, wrapped for each member
 
-Accepted 2026-11-01 in 10ba6d8, extended in #4 and #10.
+Accepted 2026-11-01 in 10ba6d8, extended in #4, #10 and #13.
 
 Each chat has a random AES-256-GCM key. The member who creates it wraps a copy for every member with
 a key from ECDH between the two of them, so a wrapped copy proves who made it. The page accepts a
 copy only when the person who wrapped it is a member of the chat. The server checks that a new key
 comes wrapped exactly once for every member. When someone joins, the member adding them wraps their
-own copy for the newcomer (D-026, D-043). When someone is removed, the person removing them wraps
-every copy again, so each copy left was made by a current member (D-039).
+own copy for the newcomer (D-026, D-043). When someone leaves or is removed, the chat gets a new
+key, wrapped by a member who stays (D-044).
 
-Cost: a chat keeps one key for its lifetime, so people removed from it keep that key (D-039, roadmap
-R-002).
+Cost: a page opens a copy wrapped by someone who left only to make the chat's next key, never to
+encrypt with it (D-044).
 
 ### D-016: Encrypt, then sign everything the server could change
 
@@ -298,37 +299,76 @@ message, and the first key set wins.
 
 ### D-020: Known limits of the encryption
 
-Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4 and #10.
+Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4, #10 and #13.
 
 WebChat accepts these limits and lists them in the README:
 
 - The page runs the code the server sends, so an operator who changes the app could read messages.
 - Metadata stays visible to the server: who talks to whom and when, group, project and channel
-  names, who is in which project or group and who added them, who made each project and group,
-  display names, whether a message is urgent, and that someone reacted.
+  names, who is in which project or group and who added them, who owns each project and group, who
+  left, when a chat got a new key, display names, whether a message is urgent, and that someone
+  reacted.
 - Pull request titles and repository names are not end-to-end encrypted (D-033).
 - The member list that a new channel's key is wrapped for comes from the server. The New channel
-  dialog shows it so people can check it.
-- People removed from a project or group keep the keys they had (D-039).
+  dialog shows it so people can check it. The same holds for the people a new key is wrapped for
+  after someone leaves (D-044).
+- People who leave or are removed keep the keys they had, so they could read the messages from
+  before if they got them another way, for example from a copy of the database (D-044).
 
 Cost: a feature that shows the server something new must add it to this list and to the README.
+
+### D-044: A new key when someone leaves or is removed
+
+Accepted 2026-11-01 in #13. Replaces the part of D-039 that kept keys the same.
+
+When someone leaves a chat or is removed from it, the chat gets a new key, and the person who left
+never gets a copy. The browser that makes it wraps it for everyone who stays and encrypts the old
+key with the new one. The server keeps these links in `key_links`, and `ConversationDTO.keyLinks`
+hands them to members. A browser that holds the current key opens each earlier key in turn, so the
+whole history stays readable. Each message names its key in its signed header (D-016). Someone added
+after a rotation gets the current key and reads the history the same way (D-026, D-043), which
+answers the open question of roadmap R-002.
+
+- Removal: the owner's browser makes the new key of every channel, or of the group, in the request
+  that removes the person. The server checks under the project's or group's lock that each new key
+  names the current one in its link and is wrapped for exactly the people who stay.
+- Leaving: the person who leaves cannot make keys for the others. The server marks each chat they
+  left with `needs_new_key` and refuses messages there with `409 needs_new_key`. The first member's
+  browser that checks in, or sends, makes the new key with `PUT /conversations/:id/key`. The first
+  one wins; the others get `409 stale_key` and take its key.
+- The person who left may have wrapped a member's copy of the old key. The browser making the new
+  key opens that copy without the membership check of D-015. The old key only goes inside the new
+  one and never encrypts again, so a forged copy could only spoil the history, not expose new
+  messages.
+- A page never encrypts with a key that a link says was replaced.
+
+Why: removal kept keys the same (D-039), so people removed could read later messages if they got
+them another way. Wrapping every earlier key again for everyone who stays would grow with each
+rotation. One link per rotation does not.
+
+Cost: anyone with the current key reads the whole history, as before. After someone leaves, nobody
+can send in that chat until a member's browser has made the new key. That waits for a member to be
+online, or for a security code check when someone's keys changed (D-018). A service worker that has
+not seen a new key yet shows "New encrypted message" for a push, until a page opens the key (D-017).
 
 ## Messaging
 
 ### D-021: The sync fingerprint is the change detector
 
-Accepted 2026-11-01 in 74d53ff, extended in #2 and #4.
+Accepted 2026-11-01 in 74d53ff, extended in #2, #4 and #13.
 
 `db.stamp` builds one string per user from a single query. It covers the sum of the newest event
 ids in their chats, the read and delivered pointers, how many chats they are in, the sum of the
-times their members joined those chats, how many chats have keys, how many people there are and how
-many have keys, and who is online. A check-in whose stamp matches answers "unchanged" without
+times their members joined those chats, how many chats have keys, the sum of the times their keys
+were replaced, a hash of who owns each of their projects and groups, how many people there are and
+how many have keys, and who is online. A check-in whose stamp matches answers "unchanged" without
 loading anything else.
 
 Cost: any state that pages must see has to change this string, or pages miss it until something
 else changes. #2 added the newest event ids, so reactions show up, and the member count, so new
 members show up. #4 replaced the member count with the sum of join times, so one person leaving and
-another joining between two check-ins still show up.
+another joining between two check-ins still show up. #13 added new keys (D-044) and owners (D-045).
+Owners go in as a hash, not a sum, so two handovers at once cannot cancel out.
 
 ### D-022: Receipts are per-member pointers
 
@@ -378,10 +418,10 @@ error.
 Accepted 2026-11-01 in #2.
 
 When a member adds someone, that member's browser opens its own copy of each channel key and wraps
-it for the newcomer. Keys never rotate, so the newcomer can read every earlier message, as when
-joining a Slack channel. Their read pointers start at the newest message, so the history does not
-count as unread. Being added sends a notification (D-031). Groups work the same way since #10
-(D-043).
+it for the newcomer. Each key holds the one it replaced (D-044), so the newcomer can read every
+earlier message, as when joining a Slack channel. Their read pointers start at the newest message,
+so the history does not count as unread. Being added sends a notification (D-031). Groups work the
+same way since #10 (D-043).
 
 Cost: only a member whose browser can open every channel key can add people. The server records who
 added whom.
@@ -407,7 +447,8 @@ needs a new group (roadmap R-003).
 
 ### D-039: Owners remove people and delete, before key rotation
 
-Accepted 2026-11-01 in #4. Replaces D-028.
+Partly superseded by D-044 and D-045: removal now gives each chat a new key, and people can leave.
+Owners still remove people and delete. Accepted 2026-11-01 in #4. Replaces D-028.
 
 The person who made a project or group is its owner. Only the owner can remove people from it, or
 delete it for everyone with every channel and message. Projects already recorded who made them.
@@ -434,14 +475,14 @@ every key wrapped for everyone who stays (D-011).
 
 ### D-043: Any group member adds people, and they read the history
 
-Accepted 2026-11-01 in #10. It answers the open question of roadmap item R-003.
+Accepted 2026-11-01 in #10, extended in #13. It answers the open question of roadmap item R-003.
 
-Groups take new members the way projects do (D-026). Any member can add up to 20 people at once
-with the Add people button in the group's header. That member's browser opens its own copy of the
-group's key and wraps it for each newcomer. Keys never rotate, so newcomers read every earlier
-message. Their read pointers start at the newest message, so the history does not count as unread.
-Being added sends a push, as for projects (D-031). Someone removed from a group can come back this
-way.
+Groups take new members the way projects do (D-026). Any member can add up to 20 people at once with
+the Add people button in the group's header. That member's browser opens its own copy of the group's
+key and wraps it for each newcomer. Each key holds the one it replaced (D-044), so newcomers read
+every earlier message. Their read pointers start at the newest message, so the history does not
+count as unread. Being added sends a push, as for projects (D-031). Someone removed from a group can
+come back this way.
 
 The server checks under the group's lock that the copies cover exactly the people added. It also
 checks that the group still has the key the copies were made from, and that the person adding is
@@ -465,8 +506,25 @@ refuse.
 
 Cost: any member can let someone read the whole history, and only the owner can take them out again.
 The other members see a newcomer only in the member list; the chat shows no note (roadmap R-017).
-The server knows who added whom in a group only from who wrapped each copy, until a removal wraps
-every copy again.
+The server knows who added whom in a group only from who wrapped each copy, until a new key
+replaces every copy (D-044).
+
+### D-045: People leave on their own, and owners hand over
+
+Accepted 2026-11-01 in #13. Replaces the rule of D-039 that nobody can leave.
+
+Any member can leave a project or group from its members dialog, and a member who stays makes each
+chat's next key (D-044). The owner can make another member the owner, and only then leave, so a
+project or group always has an owner among its members. The last person in a group deletes it
+instead of leaving. Only the owner removes people, deletes, or hands over, as in D-039. A group
+without an owner stays open to any member, who can also give it one.
+
+`projects.created_by` and `conversations.created_by` name the owner from migration 5 on. The API
+calls the field `ownerId`, since it is no longer always the person who made it. Leaving and handing
+over send no notification, like removal.
+
+Cost: once a project or group is handed over, nothing records who made it. Someone who left can
+come back only when a member adds them again (D-026, D-043).
 
 ## Replies and reactions
 

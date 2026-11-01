@@ -12,6 +12,8 @@ import {
   type ConversationDTO,
   type PullCardDTO,
   type PullRequestDTO,
+  type MessageDTO,
+  type MessageKind,
   type SyncResponse,
   type UserDTO,
   type WorkerToPageMessage,
@@ -132,6 +134,10 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
   if (open && !byId.has(open.id)) {
     actions.addToast({ conversationId: null, title: chatTitle(open, before), body: 'It was deleted, or you were removed.' });
   }
+
+  // Someone left these chats. The first member's browser to notice gives each a new key; a failure
+  // here waits for the next send, which tries again and says why.
+  for (const c of conversations) if (c.keyId && c.needsNewKey) replaceChatKey(c.id).catch(() => undefined);
 }
 
 /** Fetches everything again, for when this device missed a change such as a new chat key. */
@@ -361,12 +367,48 @@ export async function startGroupChat(title: string, memberIds: number[]): Promis
   return adoptConversation(await api.createGroup(title, memberIds, input), { keyId: input.keyId, key });
 }
 
-/** Returns the chat's key, giving a chat from before encryption its first key if it has none. */
+/** Key replacements running in this tab, by chat, so a check-in and a send never make two. */
+const replacing = new Map<number, Promise<void>>();
+
+/**
+ * Gives a chat that someone left a new key for everyone still in it, with the old key inside, so
+ * the history stays readable. When another member's browser was first, takes their key instead.
+ */
+function replaceChatKey(conversationId: number): Promise<void> {
+  let pending = replacing.get(conversationId);
+  if (!pending) {
+    pending = (async () => {
+      const conversation = store.get().conversations[conversationId];
+      if (!conversation?.keyId || !conversation.needsNewKey) return;
+      const members = conversation.members.map((m) => keyRecipient(m.userId));
+      const { input, key } = await keyring.rotateChatKey(conversation, currentLookup(), members, warnedIds());
+      try {
+        await adoptConversation(await api.replaceChatKey(conversationId, input), { keyId: input.keyId, key });
+      } catch (error) {
+        if (!(error instanceof ApiError && error.code === 'stale_key')) throw error;
+        await reloadAll();
+      }
+    })().finally(() => replacing.delete(conversationId));
+    replacing.set(conversationId, pending);
+  }
+  return pending;
+}
+
+/**
+ * Returns the chat's key. Gives a chat that someone left a new key first, and a chat from before
+ * encryption its first key if it has none.
+ */
 async function ensureChatKey(conversationId: number, retried = false): Promise<{ key: CryptoKey; keyId: string }> {
   const state = store.get();
   const conversation = state.conversations[conversationId];
   if (!conversation) throw new Error('Chat not found.');
   const keysOf = currentLookup();
+  if (conversation.keyId && conversation.needsNewKey) {
+    // Never send with a key that someone who left holds.
+    if (retried) throw new EncryptionUnavailableError('Someone left this chat, and its new key is not ready yet. Try again.');
+    await replaceChatKey(conversationId);
+    return ensureChatKey(conversationId, true);
+  }
   if (conversation.keyId) {
     const key = await keyring.chatKey(conversation, keysOf);
     if (!key) throw new EncryptionUnavailableError('This chat has no key for you. Reload the page.');
@@ -388,6 +430,27 @@ async function ensureChatKey(conversationId: number, retried = false): Promise<{
       return ensureChatKey(conversationId, true);
     }
     throw error;
+  }
+}
+
+/**
+ * Encrypts and sends a message or reaction. When the chat got a new key meanwhile, or someone left
+ * it, this reloads and tries once more with the chat's next key.
+ */
+async function sealAndSend(
+  conversationId: number,
+  meta: { urgent: boolean; clientId: string; kind: MessageKind },
+  content: MessageContent,
+  retried = false,
+): Promise<MessageDTO> {
+  const { key, keyId } = await ensureChatKey(conversationId);
+  const envelope = await keyring.seal(key, keyId, { conversationId, ...meta }, content);
+  try {
+    return await api.sendMessage(conversationId, { envelope, ...meta });
+  } catch (error) {
+    if (retried || !(error instanceof ApiError && (error.code === 'stale_key' || error.code === 'needs_new_key'))) throw error;
+    await reloadAll();
+    return sealAndSend(conversationId, meta, content, true);
   }
 }
 
@@ -443,9 +506,7 @@ async function sendContent(conversationId: number, content: MessageContent, urge
     security: 'encrypted',
   });
   try {
-    const { key, keyId } = await ensureChatKey(conversationId);
-    const envelope = await keyring.seal(key, keyId, { conversationId, urgent, clientId, kind: 'message' }, content);
-    const message = await api.sendMessage(conversationId, { envelope, urgent, clientId, kind: 'message' });
+    const message = await sealAndSend(conversationId, { urgent, clientId, kind: 'message' }, content);
     seen.add(message.id);
     keyring.rememberContent(message.id, content);
     actions.addMessage({ ...message, ...opened, security: 'encrypted' }, false);
@@ -454,7 +515,6 @@ async function sendContent(conversationId: number, content: MessageContent, urge
     schedule(2500);
   } catch (error) {
     actions.setPending(clientId, 'failed');
-    if (error instanceof ApiError && error.code === 'stale_key') void reloadAll();
     if (error instanceof EncryptionUnavailableError || (error instanceof ApiError && error.status >= 400)) {
       actions.addToast({ conversationId, title: 'Message not sent', body: error.message });
     }
@@ -480,11 +540,8 @@ export async function react(message: ChatMessage, emoji: string) {
   const next = previous.emoji === emoji ? '' : emoji;
   actions.setMyReaction(conversationId, message.id, me.id, { eventId: Number.MAX_SAFE_INTEGER, emoji: next });
   try {
-    const { key, keyId } = await ensureChatKey(conversationId);
-    const clientId = newClientId();
     const content = { text: '', reaction: { messageId: message.id, emoji: next } };
-    const envelope = await keyring.seal(key, keyId, { conversationId, urgent: false, clientId, kind: 'reaction' }, content);
-    const event = await api.sendMessage(conversationId, { envelope, urgent: false, clientId, kind: 'reaction' });
+    const event = await sealAndSend(conversationId, { urgent: false, clientId: newClientId(), kind: 'reaction' }, content);
     seen.add(event.id);
     keyring.rememberContent(event.id, content);
     actions.setMyReaction(conversationId, message.id, me.id, { eventId: event.id, emoji: next });
@@ -535,6 +592,9 @@ export function createChannel(projectId: number, name: string): Promise<number> 
 /** Adds people to a project, sharing every channel key with them so they can read the history. */
 export function addProjectMembers(projectId: number, userIds: number[]): Promise<void> {
   return retryIfStale(async () => {
+    // A channel that someone left gets its new key first, so newcomers never get one they hold.
+    const leftBehind = Object.values(store.get().conversations).filter((c) => c.projectId === projectId && c.needsNewKey);
+    await Promise.all(leftBehind.map((c) => replaceChatKey(c.id)));
     const state = store.get();
     const keysOf = currentLookup();
     const recipients = userIds.map((id) => ({
@@ -556,8 +616,8 @@ export function addProjectMembers(projectId: number, userIds: number[]): Promise
 }
 
 /**
- * Removes someone from a project. This browser wraps every channel key again for the people who
- * stay, so none of their copies was made by the person removed.
+ * Removes someone from a project. This browser gives every channel a new key for the people who
+ * stay, so the person removed cannot read what is sent next.
  */
 export function removeProjectMember(projectId: number, userId: number): Promise<void> {
   return retryIfStale(async () => {
@@ -569,14 +629,12 @@ export function removeProjectMember(projectId: number, userId: number): Promise<
     const keysOf = currentLookup();
     const staying = project.memberIds.filter((id) => id !== userId).map(keyRecipient);
     const channels = Object.values(state.conversations).filter((c) => c.projectId === projectId);
-    const channelKeys = await Promise.all(
-      channels.map(async (c) => ({
-        conversationId: c.id,
-        keyId: c.keyId ?? '',
-        wrappedKeys: await keyring.shareChatKey(c, keysOf, staying, warnedIds()),
-      })),
+    const rotated = await Promise.all(
+      channels.map(async (c) => ({ conversationId: c.id, ...(await keyring.rotateChatKey(c, keysOf, staying, warnedIds())) })),
     );
+    const channelKeys = rotated.map(({ conversationId, input }) => ({ conversationId, ...input }));
     actions.upsertProject(await api.removeProjectMember(projectId, userId, { channelKeys }));
+    await Promise.all(rotated.map(({ conversationId, input, key }) => keyring.remember(conversationId, input.keyId, key)));
     void syncNow();
   });
 }
@@ -584,6 +642,8 @@ export function removeProjectMember(projectId: number, userId: number): Promise<
 /** Adds people to a group, sharing its key with them so they can read the history. */
 export function addGroupMembers(conversationId: number, userIds: number[]): Promise<void> {
   return retryIfStale(async () => {
+    // A group that someone left gets its new key first, so newcomers never get one they hold.
+    if (store.get().conversations[conversationId]?.needsNewKey) await replaceChatKey(conversationId);
     const conversation = store.get().conversations[conversationId];
     if (!conversation) throw new Error('Group not found.');
     const key = conversation.keyId
@@ -597,22 +657,52 @@ export function addGroupMembers(conversationId: number, userIds: number[]): Prom
   });
 }
 
-/** Removes someone from a group, wrapping its key again for the people who stay. */
+/** Removes someone from a group, with a new key for the people who stay. */
 export function removeGroupMember(conversationId: number, userId: number): Promise<void> {
   return retryIfStale(async () => {
     const conversation = store.get().conversations[conversationId];
     if (!conversation) throw new Error('Group not found.');
     if (!conversation.members.some((m) => m.userId === userId)) return;
     const staying = conversation.members.filter((m) => m.userId !== userId).map((m) => keyRecipient(m.userId));
-    const key = conversation.keyId
-      ? {
-          keyId: conversation.keyId,
-          wrappedKeys: await keyring.shareChatKey(conversation, currentLookup(), staying, warnedIds()),
-        }
+    // A group from before encryption has no key to replace.
+    const rotated = conversation.keyId
+      ? await keyring.rotateChatKey(conversation, currentLookup(), staying, warnedIds())
       : null;
-    await adoptConversation(await api.removeGroupMember(conversationId, userId, { key }));
+    await adoptConversation(
+      await api.removeGroupMember(conversationId, userId, { key: rotated?.input ?? null }),
+      rotated ? { keyId: rotated.input.keyId, key: rotated.key } : undefined,
+    );
     void syncNow();
   });
+}
+
+/**
+ * Leaves a project. This browser cannot make new keys for the others, so a member who stays gives
+ * each channel one before anyone sends there again.
+ */
+export async function leaveProject(projectId: number) {
+  await api.leaveProject(projectId);
+  actions.dropProject(projectId);
+  void syncNow();
+}
+
+/** Leaves a group. A member who stays gives it a new key, as for a project. */
+export async function leaveGroup(conversationId: number) {
+  await api.leaveGroup(conversationId);
+  actions.dropConversation(conversationId);
+  void syncNow();
+}
+
+/** Makes another member the project's owner, so this user can leave it. */
+export async function handOverProject(projectId: number, userId: number) {
+  actions.upsertProject(await api.handOverProject(projectId, { userId }));
+  void syncNow();
+}
+
+/** Makes another member the group's owner, so this user can leave it. */
+export async function handOverGroup(conversationId: number, userId: number) {
+  await adoptConversation(await api.handOverGroup(conversationId, { userId }));
+  void syncNow();
 }
 
 /** Deletes a project for everyone, with its channels and their messages. */

@@ -1429,18 +1429,44 @@ button.quote:hover {
   font-size: 13px;
 }
 
+.member-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.member-hand-over,
 .member-remove {
   flex: none;
   padding: 6px 10px;
   border: 0;
   border-radius: var(--radius);
   background: transparent;
-  color: var(--danger);
   font-weight: 600;
+}
+
+.member-hand-over {
+  color: var(--accent-strong);
+}
+
+.member-hand-over:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.member-remove {
+  color: var(--danger);
 }
 
 .member-remove:hover:not(:disabled) {
   background: var(--danger-soft);
+}
+
+/* Side by side, two actions leave a phone almost no room for the name, so they stack there. */
+@media (max-width: 480px) {
+  .member-actions {
+    flex-direction: column;
+    align-items: flex-end;
+  }
 }
 
 /* Urgent alert */

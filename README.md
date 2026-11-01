@@ -12,14 +12,14 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
   and Vercel only ever store and relay ciphertext. Friends can compare a security code to confirm
   nobody is in between.
 - One-to-one and group chats, with history and online / last-active status. Any member can add
-  people to a group later, and newcomers can read the earlier messages too. The person who makes a
-  group can remove people from it, or delete it for everyone.
+  people to a group later, and newcomers can read the earlier messages too. Anyone can leave a
+  group. Its owner, who made it or was handed it, can remove people or delete it for everyone.
 - **Projects with channels**, for a team that works together, such as a class project. A project
   starts with #general, and any member can add channels such as #slides or #research. Everyone in a
   project is in all of its channels. Any member can add more people later, and newcomers can read
-  the earlier messages too. The person who made the project can remove people from it, or delete it
-  with every channel and message for everyone. Channels have their own Projects tab, with unread
-  counts per channel.
+  the earlier messages too. Any member can leave. The project's owner can remove people, hand the
+  project to another member, or delete it with every channel and message for everyone. An owner
+  hands it over before leaving. Channels have their own Projects tab, with unread counts per channel.
 - **Replies and reactions.** Reply to a message to quote it above yours, and tap the quote to jump
   to the original. React with one of six emoji; tap a reaction again to take it back.
 - Sent, delivered, and read ticks.
@@ -75,10 +75,12 @@ All of it runs in the browser with Web Crypto ([shared/e2ee.ts](shared/e2ee.ts))
 - **Adding someone to a project or group.** The member who adds them opens their own copy of each
   chat key in the browser and wraps it for the newcomer. The server checks that every key is
   included, so nobody joins a chat they cannot read.
-- **Removing someone.** Only the person who made the project or group can. Their browser wraps each
-  chat key again for everyone who stays, and the server checks that every key comes for exactly
-  them. Every copy left was then made by a current member, which each browser checks before it
-  opens a key. The keys themselves stay the same; see below.
+- **A new key when someone leaves or is removed.** The chat gets a new key, wrapped for everyone
+  who stays and never for the person who left, so they cannot read what is sent next. The old key
+  travels inside the new one, so members, and anyone added later, still read the whole history.
+  When the owner removes someone, the owner's browser makes the new keys in the same step. When
+  someone leaves, the chat takes no new messages until the browser of a member who stays makes the
+  new key, which an open tab does on its next check-in.
 - **Notifications still show the text.** The push carries the encrypted message, and the service
   worker decrypts it on the device. A message too long for a push shows "New message".
 - **Security codes.** The lock button in a chat shows a 60-digit code per person. If it matches on
@@ -92,15 +94,15 @@ What it does not protect against:
   sends, so encryption protects you from anyone who reads the database or the hosts, not from a
   malicious operator who changes the app itself.
 - **Metadata stays visible to the server:** who talks to whom and when, group, project and
-  channel names, who is in which project or group and who added them, who made each project and
-  group, display names, whether a message is urgent, and that someone reacted (not with which emoji,
-  or to which message).
+  channel names, who is in which project or group and who added them, who owns each project and
+  group, who left, when a chat got a new key, display names, whether a message is urgent, and that
+  someone reacted (not with which emoji, or to which message).
 - **Who gets a new channel's key comes from the server.** A new channel's key is wrapped for
   everyone the server lists as a project member. The New channel dialog names them, so check that
-  list.
-- **People removed from a project or group keep the keys they had.** Keys never rotate, so someone
-  removed could still read later messages if they got them another way, for example from a copy of
-  the database. The server stops sending them anything.
+  list. The same goes for the new key a chat gets after someone leaves.
+- **People who leave keep the keys they had.** Someone who left or was removed could still read the
+  messages from before, if they got them another way, for example from a copy of the database.
+  Everything sent after they left uses a new key they never get.
 - **Accounts from before encryption** upgrade once: on the next visit the app asks for the password,
   and that one request sends it to the server so it can be checked against the old hash. Messages
   from before stay readable and are marked "Not encrypted".
@@ -284,12 +286,14 @@ looking away, or has closed the tab. For projects it checks that channel keys mu
 members, that a person added later reads the earlier messages, and that replies and reactions stay
 encrypted and reactions never count as unread. Any member of a group can add people, whose copy of
 the key must come for exactly them, and who then read the earlier messages. Only the owner of a
-project or group can remove people or delete it; a removal must wrap every key again for exactly the
-people who stay, the person removed loses access at once, and someone whose copy they had wrapped
-can still open it. The crypto tests cover wrong passwords, swapped keys, tampering, forged senders,
-sharing a chat key with a newcomer, and security codes. The GitHub tests run against a fake GitHub:
-the sign-in's state and PKCE checks, the encrypted token, which changes become alerts, the scheduler
-secret, a revoked token, and disconnecting.
+project or group can remove people, delete it or hand it over. Removing or leaving gives each chat a
+new key for exactly the people who stay: the person who left cannot decrypt anything sent after, the
+others and anyone added later read the history through the old key inside the new one, and nothing
+is sent until the new key exists. The crypto tests cover wrong passwords, swapped keys, tampering,
+forged senders, sharing a chat key with a newcomer, the old key inside a new one, and security
+codes. The GitHub tests run against a fake GitHub: the sign-in's state and PKCE checks, the
+encrypted token, which changes become alerts, the scheduler secret, a revoked token, and
+disconnecting.
 
 `npm run typecheck` checks the server, client, service worker, and tooling separately, since each
 has its own environment.
@@ -315,9 +319,10 @@ Before you change the code, read [AGENTS.md](AGENTS.md). It links to
 - Text only: no voice or video calls, photos, or files yet. No typing indicator.
 - With push turned off on a device, new messages show up on its next check-in (up to 3 seconds
   while you are looking, longer in the background).
-- No key rotation: a chat keeps one key for its lifetime, so people removed from it keep that key.
-  People can join a project or group later. Only the person who made a project or group can
-  remove people or delete it. Nobody can leave on their own, and the owner cannot hand it over.
+- People can join a project or group later. Only the owner of a project or group can remove people
+  or delete it, and an owner hands it over before leaving.
+- After someone leaves, a chat takes no new messages until a member who stays has its new key. An
+  open tab of any member makes it within seconds.
 - Reactions never notify anyone. They show up at once in a chat that is open, and otherwise on the
   next check-in.
 - Adding someone to a project or group needs a member whose browser can open every key in it. Up

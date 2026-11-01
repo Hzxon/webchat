@@ -1,5 +1,14 @@
 import { useState } from 'react';
-import { deleteGroup, deleteProject, removeGroupMember, removeProjectMember } from '../chat';
+import {
+  deleteGroup,
+  deleteProject,
+  handOverGroup,
+  handOverProject,
+  leaveGroup,
+  leaveProject,
+  removeGroupMember,
+  removeProjectMember,
+} from '../chat';
 import { useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
@@ -8,8 +17,8 @@ import { Dialog } from './Dialog';
 export type MembersTarget = { kind: 'project'; projectId: number } | { kind: 'group'; conversationId: number };
 
 /**
- * The people in a project or group. The person who made it can remove people and delete it for
- * everyone; everyone else sees who can.
+ * The people in a project or group. Its owner can remove people, hand it to someone else, and
+ * delete it for everyone. Everyone else can leave, and sees who owns it.
  */
 export function MembersDialog({ target, onClose }: { target: MembersTarget; onClose: () => void }) {
   const me = useAppState((s) => s.me);
@@ -24,7 +33,7 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
   const name = project?.name ?? group?.title ?? 'Group';
   const memberIds = project?.memberIds ?? group?.members.map((m) => m.userId) ?? [];
   // A group from before encryption may have no owner; then any member can manage it.
-  const ownerId = project?.createdBy ?? group?.createdBy ?? null;
+  const ownerId = project?.ownerId ?? group?.ownerId ?? null;
   const canManage = ownerId === null || ownerId === me.id;
   const rank = (id: number) => (id === ownerId ? 0 : id === me.id ? 1 : 2);
   const people = memberIds
@@ -32,6 +41,8 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
     .map(({ id, user }) => ({ id, name: user?.displayName ?? 'Someone', username: user?.username ?? '', online: user?.online }))
     .sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));
   const owner = people.find((p) => p.id === ownerId);
+  // The owner hands it over first, so it always has one. The last person in it deletes it instead.
+  const canLeave = ownerId !== me.id && people.length > 1;
 
   async function run(work: () => Promise<void>): Promise<boolean> {
     setBusy(true);
@@ -50,12 +61,26 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
   function remove(person: { id: number; name: string }) {
     const after =
       target.kind === 'project'
-        ? 'They leave every channel and stop getting its messages. You can add them again later.'
-        : 'They stop getting its messages. You can add them again later.';
+        ? 'They leave every channel and cannot read anything sent after this. You can add them again later.'
+        : 'They cannot read anything sent after this. You can add them again later.';
     if (!confirm(`Remove ${person.name} from ${name}? ${after}`)) return;
     void run(() =>
       target.kind === 'project' ? removeProjectMember(target.projectId, person.id) : removeGroupMember(target.conversationId, person.id),
     );
+  }
+
+  function handOver(person: { id: number; name: string }) {
+    if (!confirm(`Make ${person.name} the owner of ${name}? Only they can then remove people or delete it, and you can leave.`)) return;
+    void run(() =>
+      target.kind === 'project' ? handOverProject(target.projectId, person.id) : handOverGroup(target.conversationId, person.id),
+    );
+  }
+
+  async function leave() {
+    const warning = 'You stop getting its messages and cannot read anything sent after you leave.';
+    if (!confirm(`Leave ${name}? ${warning} Someone in it can add you again later.`)) return;
+    const left = await run(() => (target.kind === 'project' ? leaveProject(target.projectId) : leaveGroup(target.conversationId)));
+    if (left) onClose();
   }
 
   async function deleteForEveryone() {
@@ -71,7 +96,7 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
     <Dialog title={name} onClose={onClose}>
       <p className="dialog-intro">
         {people.length} {people.length === 1 ? 'member' : 'members'}
-        {owner && `. ${owner.id === me.id ? 'You' : owner.name} made this ${noun}.`}
+        {owner && `. ${owner.id === me.id ? 'You own' : `${owner.name} owns`} this ${noun}.`}
       </p>
       <ul className="people-list">
         {people.map((person) => (
@@ -82,27 +107,51 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
               <small>{person.id === ownerId ? 'Owner' : `@${person.username}`}</small>
             </span>
             {canManage && person.id !== me.id && person.id !== ownerId && (
-              <button
-                className="member-remove"
-                onClick={() => remove(person)}
-                disabled={busy}
-                aria-label={`Remove ${person.name} from ${name}`}
-              >
-                Remove
-              </button>
+              <span className="member-actions">
+                <button
+                  className="member-hand-over"
+                  onClick={() => handOver(person)}
+                  disabled={busy}
+                  aria-label={`Make ${person.name} the owner of ${name}`}
+                >
+                  Make owner
+                </button>
+                <button
+                  className="member-remove"
+                  onClick={() => remove(person)}
+                  disabled={busy}
+                  aria-label={`Remove ${person.name} from ${name}`}
+                >
+                  Remove
+                </button>
+              </span>
             )}
           </li>
         ))}
       </ul>
       {error && <p className="form-error">{error}</p>}
-      {canManage ? (
-        <button className="button-danger" onClick={() => void deleteForEveryone()} disabled={busy}>
-          Delete {noun}
-        </button>
+      {(canLeave || canManage) && (
+        <div className="dialog-actions">
+          {canLeave && (
+            <button className="button-secondary" onClick={() => void leave()} disabled={busy}>
+              Leave {noun}
+            </button>
+          )}
+          {canManage && (
+            <button className="button-danger" onClick={() => void deleteForEveryone()} disabled={busy}>
+              Delete {noun}
+            </button>
+          )}
+        </div>
+      )}
+      {ownerId === me.id ? (
+        people.length > 1 && <p className="dialog-intro">To leave, make someone else the owner first.</p>
       ) : (
-        <p className="dialog-intro">
-          Only {owner?.name ?? 'its owner'} can remove people or delete this {noun}.
-        </p>
+        owner && (
+          <p className="dialog-intro">
+            Only {owner.name} can remove people or delete this {noun}.
+          </p>
+        )
       )}
     </Dialog>
   );

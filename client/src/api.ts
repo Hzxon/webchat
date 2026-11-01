@@ -14,8 +14,10 @@ import type {
   MessageDTO,
   ProjectDTO,
   RegisterInput,
+  NewOwnerInput,
   RemoveGroupMemberInput,
   RemoveProjectMemberInput,
+  RotatedKeyInput,
   SendMessageInput,
   SyncRequest,
   SyncResponse,
@@ -89,6 +91,9 @@ export const api = {
     request<ConversationDTO>('POST', `/conversations/${conversationId}/members`, input),
   removeGroupMember: (conversationId: number, userId: number, input: RemoveGroupMemberInput) =>
     request<ConversationDTO>('DELETE', `/conversations/${conversationId}/members/${userId}`, input),
+  leaveGroup: (conversationId: number) => request<void>('POST', `/conversations/${conversationId}/leave`),
+  handOverGroup: (conversationId: number, input: NewOwnerInput) =>
+    request<ConversationDTO>('PUT', `/conversations/${conversationId}/owner`, input),
   deleteGroup: (conversationId: number) => request<void>('DELETE', `/conversations/${conversationId}`),
   createProject: (input: CreateProjectInput) => request<CreateProjectResponse>('POST', '/projects', input),
   createChannel: (projectId: number, input: CreateChannelInput) =>
@@ -97,9 +102,13 @@ export const api = {
     request<ProjectDTO>('POST', `/projects/${projectId}/members`, input),
   removeProjectMember: (projectId: number, userId: number, input: RemoveProjectMemberInput) =>
     request<ProjectDTO>('DELETE', `/projects/${projectId}/members/${userId}`, input),
+  leaveProject: (projectId: number) => request<void>('POST', `/projects/${projectId}/leave`),
+  handOverProject: (projectId: number, input: NewOwnerInput) => request<ProjectDTO>('PUT', `/projects/${projectId}/owner`, input),
   deleteProject: (projectId: number) => request<void>('DELETE', `/projects/${projectId}`),
   setChatKey: (conversationId: number, key: ChatKeyInput) =>
     request<ConversationDTO>('POST', `/conversations/${conversationId}/key`, key),
+  replaceChatKey: (conversationId: number, key: RotatedKeyInput) =>
+    request<ConversationDTO>('PUT', `/conversations/${conversationId}/key`, key),
   sync: (input: SyncRequest) => request<SyncResponse>('POST', '/sync', input),
   messages: (conversationId: number, before?: number) =>
     request<MessageDTO[]>('GET', `/conversations/${conversationId}/messages${before ? `?before=${before}` : ''}`),
