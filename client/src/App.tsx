@@ -67,7 +67,7 @@ type OpenDialog =
   | { kind: 'new-chat'; mode: NewChatMode }
   | { kind: 'notifications' }
   | { kind: 'new-channel'; projectId: number }
-  | { kind: 'add-people'; projectId: number }
+  | { kind: 'add-people'; target: MembersTarget }
   | { kind: 'members'; target: MembersTarget }
   | { kind: 'repos'; projectId: number };
 
@@ -77,7 +77,7 @@ function ChatLayout() {
   const push = useAppState((s) => s.push);
   const githubOpen = useAppState((s) => s.githubOpen);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
-  const addPeople = (projectId: number) => setDialog({ kind: 'add-people', projectId });
+  const addPeople = (target: MembersTarget) => setDialog({ kind: 'add-people', target });
   const showMembers = (target: MembersTarget) => setDialog({ kind: 'members', target });
 
   return (
@@ -86,7 +86,7 @@ function ChatLayout() {
         onNewChat={() => setDialog({ kind: 'new-chat', mode: 'person' })}
         onNewProject={() => setDialog({ kind: 'new-chat', mode: 'project' })}
         onNewChannel={(projectId) => setDialog({ kind: 'new-channel', projectId })}
-        onAddPeople={addPeople}
+        onAddPeople={(projectId) => addPeople({ kind: 'project', projectId })}
         onMembers={(projectId) => showMembers({ kind: 'project', projectId })}
         onRepos={(projectId) => setDialog({ kind: 'repos', projectId })}
         onNotifications={() => setDialog({ kind: 'notifications' })}
@@ -115,7 +115,7 @@ function ChatLayout() {
       {dialog?.kind === 'new-chat' && <NewChatDialog initialMode={dialog.mode} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'notifications' && <NotificationDialog onClose={() => setDialog(null)} />}
       {dialog?.kind === 'new-channel' && <NewChannelDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
-      {dialog?.kind === 'add-people' && <AddPeopleDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'add-people' && <AddPeopleDialog target={dialog.target} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'members' && <MembersDialog target={dialog.target} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'repos' && <ProjectReposDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
       <UrgentAlert />

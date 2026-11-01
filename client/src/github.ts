@@ -81,7 +81,7 @@ function alertAbout(event: GithubEventDTO) {
 
 /**
  * Posts the user's new pull requests into the channels of the projects that link their repository
- * (D-043). The server only says which ones wait: this browser encrypts and signs each card, like a
+ * (D-046). The server only says which ones wait: this browser encrypts and signs each card, like a
  * card shared by hand. The claim comes first, so only one of the user's tabs posts it.
  */
 async function shareWaiting(github: GithubDTO) {

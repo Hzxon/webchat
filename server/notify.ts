@@ -99,24 +99,21 @@ export async function notifyNewMessage(db: Db, push: Push, config: Config, messa
   ).catch((error: unknown) => config.logger.error('Push delivery failed', error));
 }
 
-/** Tells people someone added them to a project. Tapping the notification opens its #general channel. */
-export async function notifyAddedToProject(
+/**
+ * Tells people someone added them to a project or group. Project and group names are not
+ * end-to-end encrypted, so the server can say this in plain text.
+ */
+async function notifyAdded(
   push: Push,
   config: Config,
-  project: ProjectDTO,
-  channelId: number | null,
+  invite: Pick<PushPayload, 'kind' | 'title' | 'body' | 'tag' | 'conversationId'>,
   adder: UserRow,
   userIds: number[],
 ) {
   const payload: PushPayload = {
-    kind: 'project',
-    title: project.name,
-    // Project names are not end-to-end encrypted, so the server can say this in plain text.
-    body: `${adder.display_name} added you to this project.`,
+    ...invite,
     bodyPrefix: '',
     urgent: false,
-    tag: `project-${project.id}`,
-    conversationId: channelId,
     messageId: null,
     senderId: adder.id,
     clientId: null,
@@ -128,4 +125,35 @@ export async function notifyAddedToProject(
   await Promise.all(userIds.map((id) => push.sendToUser(id, payload))).catch((error: unknown) =>
     config.logger.error('Push delivery failed', error),
   );
+}
+
+/** Tapping the notification opens the project's #general channel. */
+export function notifyAddedToProject(
+  push: Push,
+  config: Config,
+  project: ProjectDTO,
+  channelId: number | null,
+  adder: UserRow,
+  userIds: number[],
+) {
+  const invite = {
+    kind: 'project' as const,
+    title: project.name,
+    body: `${adder.display_name} added you to this project.`,
+    tag: `project-${project.id}`,
+    conversationId: channelId,
+  };
+  return notifyAdded(push, config, invite, adder, userIds);
+}
+
+/** Tapping the notification opens the group. */
+export function notifyAddedToGroup(push: Push, config: Config, group: ConversationDTO, adder: UserRow, userIds: number[]) {
+  const invite = {
+    kind: 'group' as const,
+    title: group.title ?? 'Group',
+    body: `${adder.display_name} added you to this group.`,
+    tag: `group-${group.id}`,
+    conversationId: group.id,
+  };
+  return notifyAdded(push, config, invite, adder, userIds);
 }

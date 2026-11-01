@@ -10,6 +10,9 @@
 //   metadata, so no one, including other members, can alter it or send as someone else.
 // - New member of a project: an existing member opens their own copy of each channel key and
 //   wraps it for the newcomer, who can then read the channel's history.
+// - Rotation: when someone leaves or is removed, a member who stays makes a new chat key, wraps it
+//   for everyone who stays, and encrypts the old key with the new one. Whoever holds the new key
+//   opens every earlier key in turn; the person who left never gets the new one.
 import {
   LIMITS,
   type EnvelopeDTO,
@@ -253,6 +256,44 @@ export async function unwrapChatKey(
   keyId: string,
 ): Promise<CryptoKey> {
   return importChatKey(await openChatKeyBytes(wrapped, me, wrapper, keyId));
+}
+
+// A link is bound to its chat and to both key ids, so the server cannot move it to another chat
+// or splice the chain in a different order.
+const linkData = (conversationId: number, keyId: string, previousKeyId: string) =>
+  utf8(`webchat/key-link/v1|conv:${conversationId}|kid:${keyId}|prev:${previousKeyId}`);
+
+/** Encrypts a chat's current key with the new key that replaces it. */
+export async function linkChatKey(
+  newKey: CryptoKey,
+  keyId: string,
+  conversationId: number,
+  previous: Uint8Array<ArrayBuffer>,
+  previousKeyId: string,
+): Promise<WrappedKey> {
+  const iv = randomBytes(12);
+  const data = await subtle().encrypt(
+    { name: 'AES-GCM', iv, additionalData: linkData(conversationId, keyId, previousKeyId) },
+    newKey,
+    previous,
+  );
+  return { iv: toBase64Url(iv), data: toBase64Url(data) };
+}
+
+/** Opens the key that keyId replaced. Throws if the link was changed, or belongs to another chat or key. */
+export async function openKeyLink(
+  newKey: CryptoKey,
+  keyId: string,
+  conversationId: number,
+  link: WrappedKey,
+  previousKeyId: string,
+): Promise<CryptoKey> {
+  const raw = await subtle().decrypt(
+    { name: 'AES-GCM', iv: fromBase64Url(link.iv), additionalData: linkData(conversationId, keyId, previousKeyId) },
+    newKey,
+    fromBase64Url(link.data),
+  );
+  return importChatKey(new Uint8Array(raw));
 }
 
 // ---------------------------------------------------------------------------------------------

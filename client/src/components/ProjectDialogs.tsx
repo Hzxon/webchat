@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { LIMITS, type ProjectRepoDTO } from '../../../shared/types';
 import { api } from '../api';
-import { addProjectMembers, createChannel, openConversation } from '../chat';
+import { addGroupMembers, addProjectMembers, createChannel, openConversation } from '../chat';
 import { actions, useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
 import { GithubIcon, HashIcon } from './icons';
+import type { MembersTarget } from './MembersDialog';
 
 /** Slack-style channel name: lowercase, words joined by single hyphens, letters and digits in any script. */
 export const toChannelName = (value: string) =>
@@ -15,21 +16,32 @@ export const toChannelName = (value: string) =>
     .replace(/^-+|-+$/g, '')
     .slice(0, LIMITS.channelNameLength);
 
-/** Names of a project's members, with "You" first. */
-function useMemberNames(projectId: number) {
-  const project = useAppState((s) => s.projects[projectId]);
+/** A project or group from the store, with its members' ids in the order they joined. */
+function useTarget(target: MembersTarget) {
+  const project = useAppState((s) => (target.kind === 'project' ? s.projects[target.projectId] : undefined));
+  const group = useAppState((s) => (target.kind === 'group' ? s.conversations[target.conversationId] : undefined));
+  return useMemo(() => {
+    if (project) return { name: project.name, memberIds: project.memberIds };
+    if (group) return { name: group.title ?? 'Group', memberIds: group.members.map((m) => m.userId) };
+    return undefined;
+  }, [project, group]);
+}
+
+/** Names of the people in a project or group, with "You" first. */
+function useMemberNames(memberIds: number[]) {
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
   return useMemo(() => {
-    const ids = project?.memberIds ?? [];
-    const others = ids.filter((id) => id !== meId).map((id) => users[id]?.displayName ?? 'Someone');
-    return ids.includes(meId ?? -1) ? ['You', ...others] : others;
-  }, [project, users, meId]);
+    const others = memberIds.filter((id) => id !== meId).map((id) => users[id]?.displayName ?? 'Someone');
+    return memberIds.includes(meId ?? -1) ? ['You', ...others] : others;
+  }, [memberIds, users, meId]);
 }
+
+const NO_MEMBERS: number[] = [];
 
 export function NewChannelDialog({ projectId, onClose }: { projectId: number; onClose: () => void }) {
   const project = useAppState((s) => s.projects[projectId]);
-  const names = useMemberNames(projectId);
+  const names = useMemberNames(project?.memberIds ?? NO_MEMBERS);
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -89,7 +101,7 @@ export function NewChannelDialog({ projectId, onClose }: { projectId: number; on
 
 /**
  * The GitHub repositories a project links. A member's new pull request in one is shared into the
- * linked channel by that member's own WebChat (D-043). Everyone sees the list; the owner changes it.
+ * linked channel by that member's own WebChat (D-046). Everyone sees the list; the owner changes it.
  */
 export function ProjectReposDialog({ projectId, onClose }: { projectId: number; onClose: () => void }) {
   const project = useAppState((s) => s.projects[projectId]);
@@ -133,7 +145,7 @@ export function ProjectReposDialog({ projectId, onClose }: { projectId: number; 
   }
 
   if (!project) return null;
-  const isOwner = project.createdBy === meId;
+  const isOwner = project.ownerId === meId;
   const channelName = (id: number) => `#${conversations[id]?.title ?? 'channel'}`;
   return (
     <Dialog title={`Repositories in ${project.name}`} onClose={onClose}>
@@ -215,7 +227,7 @@ export function ProjectReposDialog({ projectId, onClose }: { projectId: number; 
         <>
           {error && <p className="form-error">{error}</p>}
           <p className="dialog-intro">
-            Only {users[project.createdBy]?.displayName ?? 'its owner'} can link or unlink repositories.
+            Only {users[project.ownerId]?.displayName ?? 'its owner'} can link or unlink repositories.
           </p>
         </>
       )}
@@ -225,10 +237,11 @@ export function ProjectReposDialog({ projectId, onClose }: { projectId: number; 
 
 const NO_KEYS = 'Must sign in again to turn on encryption';
 
-export function AddPeopleDialog({ projectId, onClose }: { projectId: number; onClose: () => void }) {
-  const project = useAppState((s) => s.projects[projectId]);
+/** Adds people to a project or a group. Any member can, and the people added read the history. */
+export function AddPeopleDialog({ target, onClose }: { target: MembersTarget; onClose: () => void }) {
+  const chat = useTarget(target);
   const users = useAppState((s) => s.users);
-  const names = useMemberNames(projectId);
+  const names = useMemberNames(chat?.memberIds ?? NO_MEMBERS);
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [error, setError] = useState('');
@@ -236,12 +249,12 @@ export function AddPeopleDialog({ projectId, onClose }: { projectId: number; onC
 
   const people = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const members = new Set(project?.memberIds ?? []);
+    const members = new Set(chat?.memberIds ?? []);
     return Object.values(users)
       .filter((u) => !members.has(u.id))
       .filter((u) => !q || u.displayName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q))
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
-  }, [users, project, query]);
+  }, [users, chat, query]);
 
   function toggle(id: number) {
     setPicked((current) => {
@@ -256,7 +269,8 @@ export function AddPeopleDialog({ projectId, onClose }: { projectId: number; onC
     setBusy(true);
     setError('');
     try {
-      await addProjectMembers(projectId, [...picked]);
+      const ids = [...picked];
+      await (target.kind === 'project' ? addProjectMembers(target.projectId, ids) : addGroupMembers(target.conversationId, ids));
       onClose();
     } catch (err) {
       setError((err as Error).message);
@@ -265,14 +279,16 @@ export function AddPeopleDialog({ projectId, onClose }: { projectId: number; onC
     }
   }
 
-  if (!project) return null;
+  if (!chat) return null;
+  const noun = target.kind;
   const tooMany = picked.size > LIMITS.addMembersAtOnce;
   return (
-    <Dialog title={`Add people to ${project.name}`} onClose={onClose}>
-      <p className="dialog-intro">In this project: {names.join(', ')}.</p>
+    <Dialog title={`Add people to ${chat.name}`} onClose={onClose}>
+      <p className="dialog-intro">In this {noun}: {names.join(', ')}.</p>
       <p className="dialog-intro">
-        People you add join every channel and can read earlier messages too. Your browser shares the channel keys with
-        them, so this works only while you can open every channel.
+        {target.kind === 'project'
+          ? 'People you add join every channel and can read earlier messages too. Your browser shares the channel keys with them, so this works only while you can open every channel.'
+          : 'People you add can read earlier messages too. Your browser shares the group’s key with them.'}
       </p>
       <input
         className="field-input"
@@ -301,7 +317,7 @@ export function AddPeopleDialog({ projectId, onClose }: { projectId: number; onC
       {tooMany && <p className="form-error">Add up to {LIMITS.addMembersAtOnce} people at a time.</p>}
       {error && <p className="form-error">{error}</p>}
       <button className="button-primary" onClick={() => void add()} disabled={busy || picked.size === 0 || tooMany}>
-        {picked.size > 1 ? `Add ${picked.size} people` : 'Add to project'}
+        {picked.size > 1 ? `Add ${picked.size} people` : `Add to ${noun}`}
       </button>
     </Dialog>
   );
