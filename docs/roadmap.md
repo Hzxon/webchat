@@ -497,5 +497,7 @@ installs Bark, gives it a server URL from the bell dialog, and from then on the 
 APNs push to that phone whenever a Web Push would go to their other devices: chat and sender name,
 never the message text. Optional encryption with a key typed into Bark hides even those names from
 Apple. Done when a phone on iOS 15.8 shows a banner within seconds of a message, with the tests and
-the README setup. The tests run against a fake Apple push service; the run on an iPhone 7 Plus on
-iOS 15.8.8 is the owner's check before the pull request leaves draft.
+the README setup. The tests run against a fake Apple push service. Checked by the owner on an
+iPhone 7 Plus on iOS 15.8.8 on 2026-11-02 against a local server with Bark's key: the test banner,
+a normal and an urgent alert, and an encrypted one that Bark read on the phone. The first alert
+from the production deployment confirms HTTP/2 to Apple from a Vercel function.
