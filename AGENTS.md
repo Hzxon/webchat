@@ -49,7 +49,8 @@ keeps its own cookies and keys.
 | `server/db.ts` | The schema, the migrations, the sync fingerprint and every SQL query. |
 | `server/notify.ts` | Decides who gets a push for a message, a reaction or a project invite. |
 | `server/push.ts` | Sends Web Push with VAPID keys. |
-| `server/github.ts` | The GitHub connector: OAuth, polling and pull request events. |
+| `server/github.ts` | The GitHub connector for each person's pane: OAuth, polling and pull request events. |
+| `server/githubApp.ts` | The GitHub App: projects link repositories through it, and its webhooks post cards. |
 | `shared/types.ts` | Types shared by the server, the page and the service worker, and `LIMITS`. |
 | `shared/e2ee.ts` | All end-to-end encryption, on Web Crypto only, for the page, the service worker and the tests. |
 | `client/src/chat.ts` | The sync loop, sending, projects and reactions. It decrypts on the way in. |

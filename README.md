@@ -32,8 +32,9 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
 - Invite-code sign-up, so only people you give the code to can join.
 - **GitHub pull requests**: connect your GitHub account to see the pull requests waiting for your
   review and how your own are doing, with alerts when they change, and share one into a chat as a
-  card that names its reviewers. A project can link its repositories, so members' new pull requests
-  show up in a channel by themselves. See [GitHub pull requests](#github-pull-requests).
+  card that names its reviewers. A project can link its repositories through the WebChat GitHub App,
+  so every pull request in them shows up in a channel as a card. See
+  [GitHub pull requests](#github-pull-requests).
 
 ## How messages and notifications travel
 
@@ -101,8 +102,10 @@ What it does not protect against:
   channel names, who is in which project or group and who added them, who owns each project and
   group, who left, when a chat got a new key, display names, whether a message is urgent, and that
   someone reacted (not with which emoji, or to which message).
-- **Which GitHub repositories a project links**, and which of its members' pull requests went into
-  which channel by themselves. The cards themselves are encrypted like any message.
+- **Which GitHub repositories a project links, and the cards from GitHub in its channels.** The
+  server writes those cards from what GitHub sends, so they are not end-to-end encrypted, and a
+  server that was changed could write fake ones. Their links still lead only to github.com. A card
+  someone shares by hand is encrypted like any message.
 - **Who gets a new channel's key comes from the server.** A new channel's key is wrapped for
   everyone the server lists as a project member. The New channel dialog names them, so check that
   list. The same goes for the new key a chat gets after someone leaves.
@@ -204,20 +207,21 @@ repository and number, how it stood at that moment, who still has to review it a
 assigned to, with a link to GitHub. A reviewer who sees their own GitHub login there reads "you".
 The card is encrypted like any message, so the server does not learn which pull request was shared.
 
-A project's owner can link its GitHub repositories with the GitHub button on the project. When a
-member opens a pull request in a linked repository, their WebChat shares it into the channel the
-owner picked, #general by default, as the same card. A draft waits until it is ready for review.
-This works for members who connected GitHub, and the card goes out when their WebChat next checks
-GitHub: within a minute while a tab is open, or the next time they open it. Each person can turn it
-off for their own pull requests in the pane. Everyone in the project sees each shared title, even
-without access to the repository.
+A project's owner can link its GitHub repositories with the GitHub button on the project. They
+install the WebChat GitHub App on the repository, sign in to it once, and pick the repository and a
+channel, #general by default. From then on, GitHub tells WebChat about every pull request in the
+repository, whoever opens it. WebChat posts a card into the channel when a pull request opens, and
+a short card when it is ready for review, reopened, merged or closed. Members get a push, as for a
+message. Nobody has to connect GitHub for this. Everyone in the project sees each card, even
+without access to the repository. The server writes these cards, so unlike the cards people share,
+they are not end-to-end encrypted.
 
 WebChat alerts you the same way as a message when someone asks for your review, approves or asks
 for changes on your pull request, comments on it, its checks fail or pass again, it gets merge
 conflicts, or it is merged or closed. Clicking the alert opens the pull request on GitHub. The
 pane has a switch to turn these alerts off.
 
-### Set it up
+### Set up the Pull requests pane
 
 1. On GitHub, open [New OAuth App](https://github.com/settings/applications/new) (Settings >
    Developer settings > OAuth Apps). Set the homepage URL to your site and the authorization
@@ -240,9 +244,55 @@ An OAuth App has one callback URL, so register a second one for local developmen
 `http://localhost:5173/api/github/callback`, and start the dev server with its values:
 `GITHUB_CLIENT_ID=... GITHUB_CLIENT_SECRET=... npm run dev`.
 
-### How it watches
+### Set up project repositories
 
-GitHub does not tell WebChat when a pull request changes, so the server asks. It asks at most once a
+Projects link repositories through a GitHub App, a separate registration from the OAuth App above.
+
+1. On GitHub, open [New GitHub App](https://github.com/settings/apps/new) (Settings > Developer
+   settings > GitHub Apps). Fill it in:
+   - **GitHub App name**: any name, such as "WebChat for Capstone". Note the name in the app's URL
+     on GitHub, such as `webchat-for-capstone`.
+   - **Homepage URL**: your site.
+   - **Callback URL**: `https://your-app.vercel.app/api/github/app/callback`. Add
+     `http://localhost:5173/api/github/app/callback` too, for local development.
+   - Leave **Request user authorization (OAuth) during installation** off.
+   - **Setup URL**: `https://your-app.vercel.app/api/github/app/setup`, with **Redirect on update**
+     ticked.
+   - **Webhook URL**: `https://your-app.vercel.app/api/github/webhook`, and a **Webhook secret**.
+     `openssl rand -hex 32` makes a good one.
+   - **Repository permissions**: Pull requests, Read-only. Nothing else.
+   - **Subscribe to events**: Pull request.
+   - **Where can this GitHub App be installed**: Any account, so students can install it on their
+     own repositories.
+2. Create the app, then generate a client secret on its page.
+3. Give the server the app's URL name, its client ID, the client secret and the webhook secret. Each
+   command asks for the value:
+
+   ```bash
+   npx vercel env add GITHUB_APP_SLUG production
+   ```
+
+   ```bash
+   npx vercel env add GITHUB_APP_CLIENT_ID production
+   ```
+
+   ```bash
+   npx vercel env add GITHUB_APP_CLIENT_SECRET production
+   ```
+
+   ```bash
+   npx vercel env add GITHUB_WEBHOOK_SECRET production
+   ```
+
+4. Deploy again. A project's owner opens the GitHub button on the project and presses **Install on
+   GitHub**.
+
+GitHub cannot reach `localhost`, so local development of webhooks needs a tunnel, such as
+[smee.io](https://smee.io).
+
+### How the pane watches
+
+GitHub does not tell the OAuth App when a pull request changes, so the server asks. It asks at most once a
 minute per account, with one GraphQL query, a small part of the 5,000 points an hour GitHub allows
 each person. It compares the answer with the last one and records what changed.
 
@@ -282,6 +332,12 @@ each person. It compares the answer with the last one and records what changed.
 - **Disconnect** deletes the token and the app's grant on GitHub. Revoking the app on GitHub
   (Settings > Applications) works too; the pane then asks you to connect again.
 - An organization that restricts OAuth Apps hides its pull requests until an owner approves the app.
+- The GitHub App can only read pull requests, and only in the repositories it is installed on.
+  Signing in to it to link a repository lists those repositories, and WebChat revokes that sign-in
+  at once, so it keeps no token of the app. GitHub signs every webhook with the webhook secret, and
+  WebChat drops any that does not match.
+- A team asked to review does not show, in the pane or on cards. Reading teams needs the
+  `read:org` scope, which WebChat does not ask for.
 
 ## Self-hosting instead
 
