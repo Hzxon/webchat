@@ -500,4 +500,5 @@ Apple. Done when a phone on iOS 15.8 shows a banner within seconds of a message,
 the README setup. The tests run against a fake Apple push service. Checked by the owner on an
 iPhone 7 Plus on iOS 15.8.8 on 2026-11-02 against a local server with Bark's key: the test banner,
 a normal and an urgent alert, and an encrypted one that Bark read on the phone. The first alert
-from the production deployment confirms HTTP/2 to Apple from a Vercel function.
+from the production deployment reached the same phone the same day, which confirmed that a Vercel
+function can open HTTP/2 to Apple.
