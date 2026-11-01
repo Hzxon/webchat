@@ -284,6 +284,23 @@ export interface PullRequestDTO {
   updatedAt: number;
 }
 
+/**
+ * A pull request shared into a chat: a snapshot of how it stood when it was shared. It travels
+ * inside the message's envelope, so the server never sees which pull request was shared.
+ */
+export interface PullCardDTO {
+  /** "owner/name". */
+  repo: string;
+  number: number;
+  title: string;
+  /** Always the pull request's page on github.com; the page checks that before it shows a card. */
+  url: string;
+  draft: boolean;
+  review: PullReview;
+  checks: PullChecks;
+  conflicts: boolean;
+}
+
 export interface PullListsDTO {
   /** Open pull requests that ask this user, or one of their teams, for a review. */
   reviewRequested: PullRequestDTO[];
@@ -358,5 +375,7 @@ export const LIMITS = {
   /** People added to a project at once. Each needs every channel key, and requests stop at 64 KB. */
   addMembersAtOnce: 20,
   displayNameLength: 40,
+  /** GitHub's own limit for a pull request title. */
+  pullTitleLength: 256,
   pageSize: 50,
 } as const;

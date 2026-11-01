@@ -1,7 +1,7 @@
 // Service worker: turns Web Push messages into system notifications, even when no tab is open.
 // Pushed messages arrive encrypted; it decrypts them here, on the device, with the keys the page
 // left in IndexedDB. vite.sw.config.ts bundles it into one plain script at /sw.js.
-import { decryptMessage } from '../../shared/e2ee';
+import { decryptContent } from '../../shared/e2ee';
 import type { ConfigDTO, PushPayload, WorkerToPageMessage } from '../../shared/types';
 import { keystore } from './e2ee/keystore';
 
@@ -53,8 +53,8 @@ async function notificationBody(payload: PushPayload): Promise<string> {
     const [key, directory] = await Promise.all([keystore.getChatKey(conversationId, envelope.kid), keystore.getDirectory()]);
     const senderKeys = directory?.[senderId];
     if (!key || !senderKeys) throw new Error('Keys are not on this device yet.');
-    const text = await decryptMessage(key, senderKeys.sign, { conversationId, senderId, urgent: payload.urgent, clientId }, envelope);
-    return payload.bodyPrefix + preview(text);
+    const content = await decryptContent(key, senderKeys.sign, { conversationId, senderId, urgent: payload.urgent, clientId }, envelope);
+    return payload.bodyPrefix + preview(content.pull ? `Pull request: ${content.pull.title}` : content.text);
   } catch {
     return payload.bodyPrefix + (payload.urgent ? 'Urgent message. Open the chat to read it.' : 'New encrypted message');
   }

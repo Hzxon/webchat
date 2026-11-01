@@ -24,6 +24,7 @@ import type {
   MessageDTO,
   MessageKind,
   PublicKeysDTO,
+  PullCardDTO,
   UserDTO,
   WrappedKeyInput,
 } from '../../../shared/types';
@@ -36,6 +37,8 @@ interface Opened {
   replyTo: QuotedMessage | null;
   /** Set on every readable message of kind "reaction". */
   reaction: { messageId: number; emoji: string } | null;
+  /** A shared pull request, shown as a card instead of the text. */
+  pull: PullCardDTO | null;
   /** "plain" for messages from before encryption; "failed" if decryption or the signature check failed. */
   security: 'encrypted' | 'plain' | 'failed';
 }
@@ -60,6 +63,7 @@ const openedFrom = (content: MessageContent): Opened => ({
   text: content.text,
   replyTo: content.replyTo ?? null,
   reaction: content.reaction ?? null,
+  pull: content.pull ?? null,
   security: 'encrypted',
 });
 
@@ -220,7 +224,7 @@ export const keyring = {
 
   /** Decrypts a message and checks its signature. Never throws: failures come back as "failed". */
   async open(message: MessageDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup): Promise<ChatMessage> {
-    if (!message.envelope) return { ...message, text: message.body, replyTo: null, reaction: null, security: 'plain' };
+    if (!message.envelope) return { ...message, text: message.body, replyTo: null, reaction: null, pull: null, security: 'plain' };
     const known = opened.get(message.id);
     if (known) return { ...message, ...known };
     try {
@@ -229,7 +233,7 @@ export const keyring = {
       if (message.id > 0) opened.set(message.id, result);
       return { ...message, ...result };
     } catch {
-      return { ...message, text: '', replyTo: null, reaction: null, security: 'failed' };
+      return { ...message, text: '', replyTo: null, reaction: null, pull: null, security: 'failed' };
     }
   },
 };
