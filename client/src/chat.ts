@@ -14,7 +14,7 @@ import {
   type PullCardDTO,
   type PullRequestDTO,
   type MessageDTO,
-  type MessageKind,
+  type SendMessageInput,
   type SyncResponse,
   type UserDTO,
   type WorkerToPageMessage,
@@ -26,7 +26,7 @@ import { holdReloadWhile } from './build';
 import { EncryptionUnavailableError, keyring, type ChatConversation, type ChatMessage, type KeyLookup } from './e2ee/keyring';
 import { refreshGithub, startGithub } from './github';
 import { forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
-import { actions, chatTitle, store } from './store';
+import { actions, chatTitle, senderName, store } from './store';
 
 const newClientId = () =>
   typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -158,10 +158,11 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
  * Only a message that is new to this user alerts. Not one from before the page loaded, which sync
  * re-sends as its overlap; not one their read pointer already covers, such as a project's history
  * when they join (D-026); and not one without encryption. The server has refused those since
- * encryption came, so a new one can only come from someone writing to the database (D-019).
+ * encryption came, so a new one can only come from someone writing to the database (D-019). A
+ * card from GitHub alerts like a message.
  */
 function shouldAlert(message: ChatMessage, conversation: ChatConversation): boolean {
-  if (message.senderId === meId || message.kind !== 'message' || message.security === 'plain') return false;
+  if (message.senderId === meId || message.kind === 'reaction' || message.security === 'plain') return false;
   const readUpTo = conversation.members.find((m) => m.userId === meId)?.lastReadId ?? 0;
   return message.id > alertFloor && message.id > readUpTo;
 }
@@ -241,7 +242,7 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
   void syncPushSubscription()
     .then(refreshPushState)
     .then(() => syncNow());
-  cleanups.push(startGithub(() => pushActiveHere, autoSharePull));
+  cleanups.push(startGithub(() => pushActiveHere));
 
   // A notification click on a closed app opens /?chat=<id>.
   const requested = Number(new URLSearchParams(location.search).get('chat'));
@@ -264,6 +265,7 @@ export async function refreshPushState() {
 export function previewText(message: ChatMessage): string {
   if (message.security === 'failed') return 'Encrypted message. Open the chat to read it.';
   if (message.security === 'plain') return `Not encrypted: ${message.text}`;
+  if (message.github) return message.text;
   if (message.pull) return `Pull request: ${message.pull.title}`;
   return message.text;
 }
@@ -277,7 +279,7 @@ function onIncoming(message: ChatMessage) {
 
   const conversation = state.conversations[message.conversationId];
   if (!conversation) return;
-  const sender = state.users[message.senderId]?.displayName ?? 'Someone';
+  const sender = senderName(state.users, message.senderId);
   const isGroup = conversation.type !== 'direct';
   const title = isGroup ? chatTitle(conversation) : sender;
   const body = isGroup ? `${sender}: ${previewText(message)}` : previewText(message);
@@ -306,7 +308,7 @@ function syncAlerts() {
   const state = store.get();
   const unread = Object.values(state.conversations).reduce((sum, c) => sum + c.unread, 0);
   const first = state.urgent[0];
-  const urgentFrom = first ? (state.users[first.senderId]?.displayName ?? 'Someone') : null;
+  const urgentFrom = first ? senderName(state.users, first.senderId) : null;
   const key = `${unread}|${urgentFrom}`;
   if (key === lastAlertState) return;
   lastAlertState = key;
@@ -498,29 +500,28 @@ async function ensureChatKey(conversationId: number, retried = false): Promise<{
  */
 async function sealAndSend(
   conversationId: number,
-  meta: { urgent: boolean; clientId: string; kind: MessageKind },
+  meta: { urgent: boolean; clientId: string; kind: NonNullable<SendMessageInput['kind']> },
   content: MessageContent,
-  auto = false,
   retried = false,
 ): Promise<MessageDTO> {
   const { key, keyId } = await ensureChatKey(conversationId);
   const envelope = await keyring.seal(key, keyId, { conversationId, ...meta }, content);
   try {
-    const message = await api.sendMessage(conversationId, { envelope, ...meta, auto });
+    const message = await api.sendMessage(conversationId, { envelope, ...meta });
     // This device knows what it sent, so it never needs to decrypt it.
     keyring.rememberContent(message.id, { conversationId, senderId: meId, ...meta }, envelope, content);
     return message;
   } catch (error) {
     if (retried || !(error instanceof ApiError && (error.code === 'stale_key' || error.code === 'needs_new_key'))) throw error;
     await reloadAll();
-    return sealAndSend(conversationId, meta, content, auto, true);
+    return sealAndSend(conversationId, meta, content, true);
   }
 }
 
-/** What a reply carries of the message it answers. */
+/** What a reply carries of the message it answers. A card from GitHub has no sender, so it quotes 0. */
 export const quoteOf = (message: ChatMessage): QuotedMessage => ({
   id: message.id,
-  senderId: message.senderId,
+  senderId: message.senderId ?? 0,
   text: message.text.slice(0, LIMITS.quoteLength),
 });
 
@@ -533,9 +534,8 @@ export function sendMessage(conversationId: number, body: string, urgent: boolea
 /**
  * Sends a pull request into a chat as a card. The text says the same in words, so an older page,
  * a notification and the chat list have something to show. The server sees an ordinary message.
- * auto marks a card this page posted on its own for a project that links the repository (D-046).
  */
-export function sharePull(conversationId: number, pull: PullRequestDTO, auto = false) {
+export function sharePull(conversationId: number, pull: PullRequestDTO) {
   const card: PullCardDTO = {
     repo: pull.repo,
     number: pull.number,
@@ -548,32 +548,18 @@ export function sharePull(conversationId: number, pull: PullRequestDTO, auto = f
   };
   if (pull.reviewers) card.reviewers = pull.reviewers.slice(0, LIMITS.pullPeople);
   if (pull.assignees) card.assignees = pull.assignees.slice(0, LIMITS.pullPeople);
-  if (auto) card.auto = true;
   const lines = [`Pull request ${card.repo}#${card.number}: ${card.title}`];
   if (card.reviewers?.length) lines.push(`Reviewers: ${card.reviewers.map((name) => `@${name}`).join(', ')}`);
   lines.push(card.url);
-  return sendContent(conversationId, { text: lines.join('\n'), pull: card }, false, auto);
+  return sendContent(conversationId, { text: lines.join('\n'), pull: card }, false);
 }
 
-/**
- * Posts a card the page shares on its own (D-046), without opening the chat. A message being sent
- * joins the chat's loaded history, so that is loaded first, as opening the chat would. If loading
- * fails the card still goes: losing it would be worse than a short history.
- */
-async function autoSharePull(conversationId: number, pull: PullRequestDTO) {
-  if (!store.get().messages[conversationId]) await loadOlder(conversationId).catch(() => undefined);
-  await sharePull(conversationId, pull, true);
-}
-
-/**
- * Encrypts and sends one message, showing it as sending until the server has it. auto says the
- * page sent it on its own, so the server leaves the chat unread for the sender.
- */
-async function sendContent(conversationId: number, content: MessageContent, urgent: boolean, auto = false) {
+/** Encrypts and sends one message, showing it as sending until the server has it. */
+async function sendContent(conversationId: number, content: MessageContent, urgent: boolean) {
   const me = store.get().me;
   if (!me) return;
   const clientId = newClientId();
-  const opened = { text: content.text, replyTo: content.replyTo ?? null, reaction: null, pull: content.pull ?? null };
+  const opened = { text: content.text, replyTo: content.replyTo ?? null, reaction: null, pull: content.pull ?? null, github: null };
   actions.addSending({
     id: -Date.now(),
     conversationId,
@@ -588,7 +574,7 @@ async function sendContent(conversationId: number, content: MessageContent, urge
     security: 'encrypted',
   });
   try {
-    const message = await sealAndSend(conversationId, { urgent, clientId, kind: 'message' }, content, auto);
+    const message = await sealAndSend(conversationId, { urgent, clientId, kind: 'message' }, content);
     seen.add(message.id);
     actions.addMessage({ ...message, ...opened, security: 'encrypted' }, false);
     actions.setPending(clientId, null);

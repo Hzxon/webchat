@@ -30,16 +30,21 @@ export interface EnvelopeDTO {
 
 /**
  * "message" is a chat message. "reaction" puts an emoji on an earlier message, or takes it back;
- * which message and which emoji are inside the envelope, so only members can see them.
+ * which message and which emoji are inside the envelope, so only members can see them. "github" is
+ * a card the server writes from GitHub's webhook, in plain text, with no sender (D-050).
  */
-export type MessageKind = 'message' | 'reaction';
+export type MessageKind = 'message' | 'reaction' | 'github';
 
 export interface MessageDTO {
   id: number;
   conversationId: number;
-  senderId: number;
+  /** Null for a card the server wrote from GitHub. */
+  senderId: number | null;
   kind: MessageKind;
-  /** Plain text only for messages sent before encryption existed; empty when envelope is set. */
+  /**
+   * Plain text only for messages sent before encryption existed, and a GithubCardDTO as JSON for
+   * kind "github"; empty when envelope is set.
+   */
   body: string;
   envelope: EnvelopeDTO | null;
   urgent: boolean;
@@ -91,7 +96,7 @@ export interface ConversationDTO {
    */
   ownerId: number | null;
   members: MemberState[];
-  /** Newest message of kind "message". Reactions never replace it. */
+  /** Newest message or GitHub card. Reactions never replace it. */
   lastMessage: MessageDTO | null;
   /** Unread count for the user this DTO was built for. */
   unread: number;
@@ -206,13 +211,8 @@ export interface SendMessageInput {
   envelope: EnvelopeDTO;
   urgent: boolean;
   clientId: string;
-  /** Defaults to "message". */
-  kind?: MessageKind;
-  /**
-   * The page sent it on its own, such as a pull request card (D-046). The sender has not read the
-   * chat, so their read pointer stays where it was.
-   */
-  auto?: boolean;
+  /** Defaults to "message". Only the server writes kind "github". */
+  kind?: Exclude<MessageKind, 'github'>;
 }
 
 /** A new project, with the key of its first channel, #general, wrapped for every member. */
@@ -338,8 +338,9 @@ export interface PullRequestDTO {
   deletions: number;
   updatedAt: number;
   /**
-   * Who still has to review: GitHub logins, and teams as "org/team". GitHub drops a person from
-   * the list once they review. Absent in lists stored before WebChat read it.
+   * Who still has to review, as GitHub logins. GitHub drops a person from the list once they
+   * review. Teams are left out: reading them needs the read:org scope. Absent in lists stored
+   * before WebChat read it.
    */
   reviewers?: string[];
   /** GitHub logins of the people assigned. Absent in lists stored before WebChat read it. */
@@ -364,29 +365,58 @@ export interface PullCardDTO {
   /** As in PullRequestDTO. Absent on cards from before cards named reviewers, which then show none. */
   reviewers?: string[];
   assignees?: string[];
-  /** The author's page shared it on its own, because a project links the repository (D-046). */
-  auto?: true;
 }
 
-/** A new pull request of the user's that waits for their page to share it into a channel (D-046). */
-export interface PullShareDTO {
-  id: number;
-  conversationId: number;
-  /** How the pull request stands now, from the user's latest poll. */
-  pull: PullRequestDTO;
+/** What a GitHub card says happened to a pull request. */
+export type PullEvent = 'opened' | 'ready' | 'reopened' | 'merged' | 'closed';
+
+/**
+ * The body of a message of kind "github". The server writes it from GitHub's webhook into each
+ * channel that links the repository, so it is plain text, not end-to-end encrypted (D-050).
+ */
+export interface GithubCardDTO {
+  event: PullEvent;
+  /** The pull request as GitHub described it at that moment. GitHub's webhook says nothing of checks or reviews. */
+  pull: PullCardDTO;
+  /** GitHub login of the person who opened it. */
+  author: string | null;
+  /** GitHub login of the person who marked it ready, merged, closed or reopened it. */
+  actor: string | null;
 }
 
-/** A repository linked to a project: new pull requests that members open in it go to the channel. */
+/** A repository linked to a project through the GitHub App. Its pull requests go to the channel as cards. */
 export interface ProjectRepoDTO {
-  /** "owner/name" in lower case. */
+  /** GitHub's id, which stays the same when the repository is renamed or moved. */
+  repoId: number;
+  /** "owner/name", as GitHub last named it. */
   repo: string;
   conversationId: number;
   addedBy: number | null;
   addedAt: number;
 }
 
+/** A repository the user just showed GitHub they reach through the app, so they can link it. */
+export interface RepoChoiceDTO {
+  repoId: number;
+  repo: string;
+}
+
+export interface ProjectReposDTO {
+  /** False until the server owner sets up the GitHub App. */
+  configured: boolean;
+  repos: ProjectRepoDTO[];
+  /** For the project's owner after they signed in to the app: the repositories they can link. Empty otherwise. */
+  choices: RepoChoiceDTO[];
+}
+
+/** Links a repository the owner can reach through the GitHub App to a channel. */
+export interface LinkRepoInput {
+  repoId: number;
+  conversationId: number;
+}
+
 export interface PullListsDTO {
-  /** Open pull requests that ask this user, or one of their teams, for a review. */
+  /** Open pull requests that ask this user, or one of their teams, for a review. GitHub's search finds both. */
   reviewRequested: PullRequestDTO[];
   /** Open pull requests this user opened. */
   authored: PullRequestDTO[];
@@ -421,8 +451,6 @@ export interface GithubAccountDTO {
   name: string | null;
   /** Push alerts for pull request changes. */
   notify: boolean;
-  /** Share the user's new pull requests into the projects that link their repository. */
-  autoShare: boolean;
 }
 
 export interface GithubDTO {
@@ -431,8 +459,6 @@ export interface GithubDTO {
   /** Null while no GitHub account is connected. */
   account: GithubAccountDTO | null;
   pulls: PullListsDTO | null;
-  /** The user's new pull requests that linked projects wait for. The page claims each one, then posts it. */
-  shares: PullShareDTO[];
   /** Newest first. */
   events: GithubEventDTO[];
   /** When the pull requests were last fetched from GitHub. */
@@ -482,7 +508,7 @@ export const LIMITS = {
   pullTitleLength: 256,
   /** Reviewers, and assignees, that the poll reads and a card names. */
   pullPeople: 10,
-  /** Repositories one project links. Each new pull request in them becomes a message. */
+  /** Repositories one project links. Each pull request event in them becomes a message. */
   reposPerProject: 10,
   pageSize: 50,
 } as const;

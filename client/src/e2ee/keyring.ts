@@ -19,10 +19,12 @@ import {
   type MessageContent,
   type QuotedMessage,
 } from '../../../shared/e2ee';
+import { describeGithubCard, readGithubCard } from '../../../shared/github';
 import type {
   ChatKeyInput,
   ConversationDTO,
   EnvelopeDTO,
+  GithubCardDTO,
   MessageDTO,
   MessageKind,
   PublicKeysDTO,
@@ -42,8 +44,13 @@ interface Opened {
   reaction: { messageId: number; emoji: string } | null;
   /** A shared pull request, shown as a card instead of the text. */
   pull: PullCardDTO | null;
-  /** "plain" for messages from before encryption; "failed" if decryption or the signature check failed. */
-  security: 'encrypted' | 'plain' | 'failed';
+  /** Set on every readable message of kind "github": the card the server wrote from GitHub. */
+  github: GithubCardDTO | null;
+  /**
+   * "plain" for messages from before encryption; "github" for a card the server wrote, which
+   * nobody signs; "failed" if decryption or the signature check failed.
+   */
+  security: 'encrypted' | 'plain' | 'github' | 'failed';
 }
 
 /** A message as the page shows it: the server's copy plus its readable content. */
@@ -77,6 +84,7 @@ const openedFrom = (content: MessageContent): Opened => ({
   replyTo: content.replyTo ?? null,
   reaction: content.reaction ?? null,
   pull: content.pull ?? null,
+  github: null,
   security: 'encrypted',
 });
 
@@ -292,7 +300,15 @@ export const keyring = {
 
   /** Decrypts a message and checks its signature. Never throws: failures come back as "failed". */
   async open(message: MessageDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup): Promise<ChatMessage> {
-    if (!message.envelope) return { ...message, text: message.body, replyTo: null, reaction: null, pull: null, security: 'plain' };
+    const none = { replyTo: null, reaction: null, pull: null, github: null };
+    if (message.kind === 'github') {
+      // Shown as GitHub's, never as a person's, whatever sender the server names.
+      const card = readGithubCard(message.body);
+      return card
+        ? { ...message, ...none, senderId: null, text: describeGithubCard(card), pull: card.pull, github: card, security: 'github' }
+        : { ...message, ...none, senderId: null, text: '', security: 'failed' };
+    }
+    if (!message.envelope) return { ...message, ...none, text: message.body, security: 'plain' };
     const signed = signedFields(message, message.envelope);
     const known = opened.get(message.id);
     if (known?.signed === signed) return { ...message, ...known.content };
@@ -302,15 +318,15 @@ export const keyring = {
       if (message.id > 0) opened.set(message.id, { content: result, signed });
       return { ...message, ...result };
     } catch {
-      return { ...message, text: '', replyTo: null, reaction: null, pull: null, security: 'failed' };
+      return { ...message, ...none, text: '', security: 'failed' };
     }
   },
 };
 
 async function decrypt(message: MessageDTO, envelope: EnvelopeDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup) {
-  const key = await keyring.keyFor(conversation, envelope.kid, keysOf);
-  const senderKeys = keysOf(message.senderId);
-  if (!key || !senderKeys) throw new Error('Missing keys.');
   const { conversationId, senderId, urgent, clientId, kind } = message;
+  const key = await keyring.keyFor(conversation, envelope.kid, keysOf);
+  const senderKeys = senderId === null ? null : keysOf(senderId);
+  if (!key || !senderKeys || senderId === null) throw new Error('Missing keys.');
   return decryptContent(key, senderKeys.sign, { conversationId, senderId, urgent, clientId: clientId ?? '', kind }, envelope);
 }

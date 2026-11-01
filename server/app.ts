@@ -10,6 +10,7 @@ import { randomInviteCode } from './auth.js';
 import type { Config } from './config.js';
 import { openDb } from './db.js';
 import { createGithub } from './github.js';
+import { createGithubApp } from './githubApp.js';
 import { createPush } from './push.js';
 import { connectPostgres, openPglite, type Sql } from './sql.js';
 
@@ -69,6 +70,7 @@ export async function createApp(config: Config): Promise<WebChatApp> {
 
   const push = await createPush(db, config);
   const github = createGithub(db, push, config);
+  const githubApp = createGithubApp(db, config);
   const app = express();
   app.set('trust proxy', config.trustProxy);
   app.disable('x-powered-by');
@@ -85,8 +87,15 @@ export async function createApp(config: Config): Promise<WebChatApp> {
       next();
     });
   }
+  // GitHub signs the webhook's exact bytes, so that route gets them unparsed. A pull request's
+  // description alone can be 65,536 characters. The JSON parser below leaves a parsed body alone.
+  app.use('/api/github/webhook', express.raw({ type: () => true, limit: '1mb' }));
   // Room for a project's wrapped channel keys and the longest encrypted message (D-011).
-  app.use('/api', express.json({ limit: '256kb' }), createApiRouter({ db, push, github, config, inviteCode, kdfSalt }));
+  app.use(
+    '/api',
+    express.json({ limit: '256kb' }),
+    createApiRouter({ db, push, github, githubApp, config, inviteCode, kdfSalt }),
+  );
   // The body parser runs before the API router, so its errors never reach the router's handler.
   // Answer them as JSON too, which the page can show, and without Express's stack-trace page.
   app.use('/api', (error: { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { UserDTO } from '../../shared/types';
 import { ApiError } from './api';
 import { signOut, startChat } from './chat';
-import { useAppState } from './store';
+import { actions, useAppState } from './store';
 import { Toasts, UrgentAlert } from './components/Alerts';
 import { AuthScreen } from './components/AuthScreen';
 import { ChatView } from './components/ChatView';
@@ -68,14 +68,14 @@ type OpenDialog =
   | { kind: 'notifications' }
   | { kind: 'new-channel'; projectId: number }
   | { kind: 'add-people'; target: MembersTarget }
-  | { kind: 'members'; target: MembersTarget }
-  | { kind: 'repos'; projectId: number };
+  | { kind: 'members'; target: MembersTarget };
 
 function ChatLayout() {
   const activeId = useAppState((s) => s.activeId);
   const active = useAppState((s) => (s.activeId === null ? undefined : s.conversations[s.activeId]));
   const push = useAppState((s) => s.push);
   const githubOpen = useAppState((s) => s.githubOpen);
+  const reposFor = useAppState((s) => s.reposFor);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const addPeople = (target: MembersTarget) => setDialog({ kind: 'add-people', target });
   const showMembers = (target: MembersTarget) => setDialog({ kind: 'members', target });
@@ -88,7 +88,7 @@ function ChatLayout() {
         onNewChannel={(projectId) => setDialog({ kind: 'new-channel', projectId })}
         onAddPeople={(projectId) => addPeople({ kind: 'project', projectId })}
         onMembers={(projectId) => showMembers({ kind: 'project', projectId })}
-        onRepos={(projectId) => setDialog({ kind: 'repos', projectId })}
+        onRepos={(projectId) => actions.setReposFor(projectId)}
         onNotifications={() => setDialog({ kind: 'notifications' })}
       />
       {githubOpen ? (
@@ -117,7 +117,7 @@ function ChatLayout() {
       {dialog?.kind === 'new-channel' && <NewChannelDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'add-people' && <AddPeopleDialog target={dialog.target} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'members' && <MembersDialog target={dialog.target} onClose={() => setDialog(null)} />}
-      {dialog?.kind === 'repos' && <ProjectReposDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
+      {reposFor !== null && <ProjectReposDialog projectId={reposFor} onClose={() => actions.setReposFor(null)} />}
       <UrgentAlert />
       <Toasts />
     </div>

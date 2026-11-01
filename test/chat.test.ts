@@ -186,7 +186,7 @@ class Client {
     return key;
   }
 
-  async send(conversationId: number, content: string | MessageContent, urgent = false, kind: MessageKind = 'message', auto = false) {
+  async send(conversationId: number, content: string | MessageContent, urgent = false, kind: MessageKind = 'message') {
     const { keyId, key } = this.chatKeys.get(conversationId)!;
     const clientId = crypto.randomUUID();
     const meta = { conversationId, senderId: this.id, urgent, clientId, kind };
@@ -196,7 +196,6 @@ class Client {
       urgent,
       clientId,
       kind,
-      auto,
     });
   }
 
@@ -210,7 +209,7 @@ class Client {
     const kid = message.envelope!.kid;
     const key = chat && kid !== current.keyId ? await this.earlierKey(chat, kid) : current.key;
     const { conversationId, senderId, urgent, clientId, kind } = message;
-    return decryptContent(key, senderKeys.sign, { conversationId, senderId, urgent, clientId: clientId!, kind }, message.envelope!);
+    return decryptContent(key, senderKeys.sign, { conversationId, senderId: senderId!, urgent, clientId: clientId!, kind }, message.envelope!);
   }
 
   /** Opens an earlier key of a chat through its links, starting from this user's current key. */
@@ -298,6 +297,11 @@ describe('chat server', () => {
       githubClientId: undefined,
       githubClientSecret: undefined,
       githubCallbackUrl: undefined,
+      githubAppSlug: undefined,
+      githubAppClientId: undefined,
+      githubAppClientSecret: undefined,
+      githubWebhookSecret: undefined,
+      githubAppCallbackUrl: undefined,
       githubOauthUrl: 'https://github.com',
       githubApiUrl: 'https://api.github.com',
       githubPollSeconds: 0,
@@ -910,11 +914,7 @@ describe('chat server', () => {
       assert.equal(unknown.status, 400);
     });
 
-    test('a pull request card the page posts on its own leaves the channel unread for its sender', async () => {
-      assert.equal((await alice.send(general.id, 'Standup moves to 10')).status, 201);
-      const unreadOf = async (client: Client) => (await client.bootstrap()).conversations.find((c) => c.id === general.id)!.unread;
-      const unread = await unreadOf(carol);
-      assert.ok(unread > 0);
+    test('a shared pull request card reaches members as its sender signed it', async () => {
       const pull = {
         repo: 'acme/app',
         number: 4,
@@ -925,11 +925,9 @@ describe('chat server', () => {
         checks: null,
         conflicts: false,
         reviewers: ['bob-gh'],
-        auto: true as const,
       };
-      const card = await carol.send(general.id, { text: 'Pull request acme/app#4: Add sign-up page', pull }, false, 'message', true);
+      const card = await carol.send(general.id, { text: 'Pull request acme/app#4: Add sign-up page', pull });
       assert.equal(card.status, 201);
-      assert.equal(await unreadOf(carol), unread, 'what Carol had not read stays unread');
 
       const bobView = await bob.sync(true);
       assert.ok(bobView.changed);

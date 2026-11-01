@@ -21,6 +21,7 @@ import {
   type UserRow,
 } from './db.js';
 import { GithubError, type Github } from './github.js';
+import type { GithubApp } from './githubApp.js';
 import { notifyAddedToGroup, notifyAddedToProject, notifyNewMessage } from './notify.js';
 import type { Push, PushSubscriptionInput } from './push.js';
 import {
@@ -35,6 +36,7 @@ import {
   type KeyLinkInput,
   type MessageDTO,
   type MessageKind,
+  type ProjectReposDTO,
   type PushPayload,
   type RotatedChannelKeyInput,
   type RotatedKeyInput,
@@ -67,6 +69,8 @@ const USERNAME = /^[a-z0-9_.]{3,24}$/i;
 
 /** Holds the OAuth state while the user signs in on GitHub. Only the GitHub routes ever see it. */
 const GITHUB_STATE_COOKIE = 'webchat_github';
+/** Holds the project, and the GitHub App sign-in's state, while a project's owner links a repository on GitHub. */
+const GITHUB_APP_COOKIE = 'webchat_github_app';
 
 function text(value: unknown, field: string, min: number, max: number): string {
   const result = typeof value === 'string' ? value.trim() : '';
@@ -164,16 +168,11 @@ function channelName(value: unknown): string {
   return name;
 }
 
-/** GitHub's rules: an owner of up to 39 letters, digits and hyphens, a name of up to 100 letters, digits, ".", "-" and "_". */
-const REPO = /^[a-z0-9][a-z0-9-]{0,38}\/[\w.-]{1,100}$/;
-
-/** "owner/name", or any github.com link inside the repository. Kept in lower case, as GitHub ignores case there. */
-function repoName(value: unknown): string {
-  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  const link = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/?#]+)\/([^/?#]+)/.exec(raw);
-  const repo = (link ? `${link[1]}/${link[2]}` : raw).replace(/\.git$/, '');
-  if (!REPO.test(repo)) throw new HttpError(400, 'Name the repository as owner/name, such as acme/app.');
-  return repo;
+/** GitHub's ids outgrow a Postgres INTEGER, so they get their own check. */
+function githubId(value: unknown, field: string): number {
+  const result = Number(value);
+  if (!Number.isSafeInteger(result) || result <= 0) throw new HttpError(400, `${field} is invalid.`);
+  return result;
 }
 
 /** Turns a refused project change into the error the client acts on. */
@@ -235,12 +234,13 @@ interface ApiDeps {
   db: Db;
   push: Push;
   github: Github;
+  githubApp: GithubApp;
   config: Config;
   inviteCode: string;
   kdfSalt: string;
 }
 
-export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt }: ApiDeps) {
+export function createApiRouter({ db, push, github, githubApp, config, inviteCode, kdfSalt }: ApiDeps) {
   const router = express.Router();
 
   function startSession(req: Request, res: Response, user: UserRow) {
@@ -303,6 +303,14 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
       throw new HttpError(403, 'Only the owner of this group can do that.', 'not_owner');
     }
   }
+
+  /** True when the user owns the project. For page loads, which answer with redirects instead of errors. */
+  const ownsProject = async (projectId: number, userId: number) =>
+    Number.isInteger(projectId) &&
+    projectId > 0 &&
+    projectId <= MAX_ID &&
+    (await db.isProjectMember(projectId, userId)) &&
+    (await db.getProject(projectId))?.created_by === userId;
 
   /** A chat key can only be wrapped for people who have set up encryption. */
   async function requireKeys(userIds: number[]) {
@@ -661,37 +669,51 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     res.json(await db.projectFor(me.id, projectId));
   });
 
-  /** The repositories a project links. Every member sees them; only the owner changes them. */
+  /** The repositories a project links, and for its owner, the ones they can link now. */
+  async function reposView(projectId: number, userId: number): Promise<ProjectReposDTO> {
+    const owner = (await db.getProject(projectId))?.created_by === userId;
+    return {
+      configured: githubApp.configured,
+      repos: await db.projectRepos(projectId),
+      choices: owner && githubApp.configured ? await db.githubChoices(userId, projectId) : [],
+    };
+  }
+
+  /** Every member sees the links; only the owner changes them. */
   router.get('/projects/:id/repos', requireAuth, async (req, res) => {
     const me = currentUser(res);
     const projectId = positiveInt(req.params.id, 'Project id');
     await requireProjectMember(projectId, me.id);
-    res.json(await db.projectRepos(projectId));
+    res.json(await reposView(projectId, me.id));
   });
 
   /**
-   * Links a repository to a project, or moves its link to another channel. Members' new pull
-   * requests in it are then shared into that channel by their own browsers (D-046).
+   * Links a repository to a project, or moves its link to another channel. Only a repository the
+   * owner just showed GitHub they reach through the GitHub App, so nobody links one they cannot
+   * see. Its pull requests then come in as cards from GitHub's webhook (D-050).
    */
   router.post('/projects/:id/repos', requireAuth, async (req, res) => {
     const me = currentUser(res);
     const projectId = positiveInt(req.params.id, 'Project id');
     await requireProjectOwner(projectId, me.id);
-    const repo = repoName(req.body?.repo);
-    const result = await db.linkProjectRepo(projectId, repo, positiveInt(req.body?.conversationId, 'conversationId'), me.id);
+    const grant = await db.githubGrant(me.id, githubId(req.body?.repoId, 'repoId'));
+    if (!grant) {
+      throw new HttpError(409, 'Choose the repository on GitHub again, then link it within half an hour.', 'no_grant');
+    }
+    const result = await db.linkProjectRepo(projectId, grant, positiveInt(req.body?.conversationId, 'conversationId'), me.id);
     if (result === 'no_channel') throw new HttpError(400, 'Pick a channel of this project.');
     if (result === 'too_many') {
       throw new HttpError(409, `A project links at most ${LIMITS.reposPerProject} repositories.`, 'too_many_repos');
     }
-    res.json(await db.projectRepos(projectId));
+    res.json(await reposView(projectId, me.id));
   });
 
-  router.delete('/projects/:id/repos/:owner/:name', requireAuth, async (req, res) => {
+  router.delete('/projects/:id/repos/:repoId', requireAuth, async (req, res) => {
     const me = currentUser(res);
     const projectId = positiveInt(req.params.id, 'Project id');
     await requireProjectOwner(projectId, me.id);
-    await db.unlinkProjectRepo(projectId, repoName(`${req.params.owner}/${req.params.name}`));
-    res.json(await db.projectRepos(projectId));
+    await db.unlinkProjectRepo(projectId, githubId(req.params.repoId, 'repoId'));
+    res.json(await reposView(projectId, me.id));
   });
 
   /**
@@ -759,7 +781,7 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     const sealed = envelope(req.body?.envelope);
     // Signed into the envelope, so it must stay exactly as the client sent it.
     const clientId = base64url(req.body?.clientId, 'clientId', 1, 64);
-    const kind: MessageKind = req.body?.kind === 'reaction' ? 'reaction' : 'message';
+    const kind: Exclude<MessageKind, 'github'> = req.body?.kind === 'reaction' ? 'reaction' : 'message';
     if (req.body?.kind !== undefined && req.body.kind !== kind) throw new HttpError(400, 'Unknown message kind.');
     await requireMember(conversationId, me.id);
     const chat = await db.conversationKey(conversationId);
@@ -772,9 +794,7 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     const urgent = req.body?.urgent === true;
     // The urgent flag is signed into the envelope, so it is refused rather than quietly dropped.
     if (urgent && kind === 'reaction') throw new HttpError(400, 'A reaction cannot be urgent.');
-    // Not signed: it only moves the sender's own read pointer, which the server keeps anyway.
-    const senderRead = req.body?.auto !== true;
-    const message = await db.insertMessage(conversationId, me.id, kind, sealed, urgent, clientId, senderRead);
+    const message = await db.insertMessage(conversationId, me.id, kind, sealed, urgent, clientId);
     // Answer the sender first; pushes go out after, while the function stays alive.
     inBackground(notifyNewMessage(db, push, config, message, me), config.logger);
     res.status(201).json(message);
@@ -876,25 +896,10 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
 
   router.patch('/github', requireAuth, async (req, res) => {
     const me = currentUser(res);
-    const { notify, autoShare } = (req.body ?? {}) as { notify?: unknown; autoShare?: unknown };
-    if (notify === undefined && autoShare === undefined) throw new HttpError(400, 'Send notify or autoShare.');
-    if (notify !== undefined && typeof notify !== 'boolean') throw new HttpError(400, 'notify must be true or false.');
-    if (autoShare !== undefined && typeof autoShare !== 'boolean') throw new HttpError(400, 'autoShare must be true or false.');
-    if (notify !== undefined) await github.setNotify(me.id, notify);
-    if (autoShare !== undefined) await github.setAutoShare(me.id, autoShare);
+    const notify = (req.body as { notify?: unknown } | undefined)?.notify;
+    if (typeof notify !== 'boolean') throw new HttpError(400, 'notify must be true or false.');
+    await github.setNotify(me.id, notify);
     res.json(await github.view(me.id));
-  });
-
-  /**
-   * Claims a pull request that waits to be shared, for the tab about to post it. Only one tab of
-   * the user's gets it; the others hear 409 and leave it.
-   */
-  router.post('/github/shares/:id/claim', requireAuth, async (req, res) => {
-    const me = currentUser(res);
-    if (!(await db.claimPullShare(positiveInt(req.params.id, 'Share id'), me.id))) {
-      throw new HttpError(409, 'This pull request was shared already.', 'already_shared');
-    }
-    res.status(204).end();
   });
 
   router.delete('/github', requireAuth, async (_req, res) => {
@@ -912,6 +917,90 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
       throw new HttpError(401, 'Send the CRON_SECRET as a bearer token.');
     }
     res.json({ polled: await github.pollAll() });
+  });
+
+  /** Where GitHub sends the owner back after signing in to the GitHub App. It must be a callback URL registered on the app. */
+  const githubAppCallbackUrl = (req: Request) =>
+    config.githubAppCallbackUrl ?? `${req.protocol}://${req.get('host')}/api/github/app/callback`;
+
+  const githubAppCookie = (req: Request) => ({
+    httpOnly: true,
+    // Lax still sends it when GitHub redirects back, since that is a top-level page load.
+    sameSite: 'lax' as const,
+    secure: req.secure,
+    maxAge: 15 * 60_000,
+    path: '/api/github',
+  });
+
+  /** Sends the browser back to the project's repositories dialog, and says how linking went. */
+  const backToRepos = (res: Response, projectId: number | null, result: 'repos' | 'repos-denied' | 'repos-error') =>
+    res.redirect(303, projectId ? `/?github=${result}&project=${projectId}` : `/?github=${result}`);
+
+  /**
+   * The repositories dialog navigates here to install the GitHub App on more repositories. GitHub
+   * sends the browser to /github/app/setup afterwards. These routes are page loads, not API calls,
+   * so they answer with redirects to the app instead of JSON.
+   */
+  router.get('/github/app/install', async (req, res) => {
+    const { user } = await sessionOf(req);
+    const projectId = Number(queryOf(req).get('project'));
+    if (!user || !githubApp.configured || !(await ownsProject(projectId, user.id))) return backToRepos(res, null, 'repos-error');
+    res.cookie(GITHUB_APP_COOKIE, githubApp.installCookie(user.id, projectId), githubAppCookie(req));
+    res.redirect(303, githubApp.installUrl!);
+  });
+
+  /** The Setup URL registered on the app. After an install, the owner signs in to the app to list what they installed it on. */
+  router.get('/github/app/setup', async (req, res) => {
+    const { user } = await sessionOf(req);
+    const projectId = user ? githubApp.projectOf(parseCookies(req.headers.cookie)[GITHUB_APP_COOKIE], user.id) : null;
+    if (!projectId) return res.redirect(303, '/');
+    res.redirect(303, `/api/github/app/link?project=${projectId}`);
+  });
+
+  /** Starts the sign-in to the GitHub App, which shows the server what the owner can link. */
+  router.get('/github/app/link', async (req, res) => {
+    const { user } = await sessionOf(req);
+    const projectId = Number(queryOf(req).get('project'));
+    if (!user || !githubApp.configured || !(await ownsProject(projectId, user.id))) return backToRepos(res, null, 'repos-error');
+    if (!(await db.takeRateLimit(`github-app:${user.id}`, 10, 15 * 60_000))) return backToRepos(res, projectId, 'repos-error');
+    const { url, cookie } = githubApp.beginLink(user.id, projectId, githubAppCallbackUrl(req));
+    res.cookie(GITHUB_APP_COOKIE, cookie, githubAppCookie(req));
+    res.redirect(303, url);
+  });
+
+  router.get('/github/app/callback', async (req, res) => {
+    const { user } = await sessionOf(req);
+    const cookie = parseCookies(req.headers.cookie)[GITHUB_APP_COOKIE];
+    const query = queryOf(req);
+    res.clearCookie(GITHUB_APP_COOKIE, { path: '/api/github' });
+    const projectId = user ? githubApp.projectOf(cookie, user.id) : null;
+    if (!user || !githubApp.configured || !projectId) return backToRepos(res, null, 'repos-error');
+    const oauthError = query.get('error');
+    if (oauthError) return backToRepos(res, projectId, oauthError === 'access_denied' ? 'repos-denied' : 'repos-error');
+    try {
+      await githubApp.completeLink(user.id, cookie, query.get('state') ?? '', query.get('code') ?? '', githubAppCallbackUrl(req));
+    } catch (error) {
+      if (error instanceof GithubError) config.logger.warn(`GitHub App sign-in failed for user ${user.id}: ${error.message}`);
+      else config.logger.error('GitHub App sign-in failed', error);
+      return backToRepos(res, projectId, 'repos-error');
+    }
+    backToRepos(res, projectId, 'repos');
+  });
+
+  /**
+   * GitHub's webhook for the GitHub App. app.ts hands this route the raw body, which the signature
+   * covers. The cards are written before GitHub gets its answer; the pushes go out after.
+   */
+  router.post('/github/webhook', async (req, res) => {
+    if (!githubApp.configured) throw new HttpError(404, 'Not found.');
+    const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    const cards = await githubApp.receive(
+      { signature: req.get('x-hub-signature-256'), event: req.get('x-github-event'), delivery: req.get('x-github-delivery') },
+      body,
+    );
+    if (!cards) throw new HttpError(401, 'The signature does not match.');
+    for (const card of cards) inBackground(notifyNewMessage(db, push, config, card, null), config.logger);
+    res.status(202).end();
   });
 
   router.post('/push/test', requireAuth, async (_req, res) => {

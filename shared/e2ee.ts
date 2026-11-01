@@ -312,6 +312,7 @@ export interface MessageMeta {
 /** The message a reply answers, with a short copy of its text in case the original is not loaded. */
 export interface QuotedMessage {
   id: number;
+  /** 0 for a card the server wrote from GitHub, which has no sender. */
   senderId: number;
   text: string;
 }
@@ -376,10 +377,10 @@ function readPeople(raw: unknown): string[] | undefined {
 }
 
 /**
- * A shared pull request, if it has the right shape. The link is rebuilt from the repository and
+ * A pull request card, if it has the right shape. The link is rebuilt from the repository and
  * number, so a card can only ever lead to that pull request on github.com.
  */
-function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | undefined {
+export function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | undefined {
   if (!raw || typeof raw.repo !== 'string' || !REPO.test(raw.repo) || !isId(raw.number) || typeof raw.title !== 'string') return;
   const url = `https://github.com/${raw.repo}/pull/${raw.number}`;
   if (raw.url !== url) return;
@@ -397,7 +398,6 @@ function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | undefine
   if (reviewers) card.reviewers = reviewers;
   const assignees = readPeople(raw.assignees);
   if (assignees) card.assignees = assignees;
-  if (raw.auto === true) card.auto = true;
   return card;
 }
 
@@ -412,7 +412,7 @@ function readContent(value: unknown): MessageContent {
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
   const quote = raw.replyTo;
-  if (quote && isId(quote.id) && isId(quote.senderId) && typeof quote.text === 'string') {
+  if (quote && isId(quote.id) && (isId(quote.senderId) || quote.senderId === 0) && typeof quote.text === 'string') {
     content.replyTo = { id: quote.id, senderId: quote.senderId, text: quote.text.slice(0, LIMITS.quoteLength) };
   }
   const reaction = raw.reaction;

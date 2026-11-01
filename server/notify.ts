@@ -1,3 +1,4 @@
+import { describeGithubCard, readGithubCard } from '../shared/github.js';
 import { showsEveryPush, type ConversationDTO, type MessageDTO, type ProjectDTO, type PushPayload } from '../shared/types.js';
 import type { Config } from './config.js';
 import { isAttentive, type Db, type UserRow } from './db.js';
@@ -12,14 +13,27 @@ function preview(text: string, length = 180): string {
 const MAX_PAYLOAD_BYTES = 3000;
 
 /** "#design · Capstone" for a channel, the group name for a group, the sender's name for a direct chat. */
-async function chatName(db: Db, conversation: ConversationDTO, sender: UserRow) {
-  if (conversation.type === 'direct') return sender.display_name;
+async function chatName(db: Db, conversation: ConversationDTO, sender: UserRow | null) {
+  if (conversation.type === 'direct') return sender?.display_name ?? 'Direct chat';
   if (conversation.type === 'group') return conversation.title ?? 'Group';
   const project = conversation.projectId === null ? undefined : await db.getProject(conversation.projectId);
   return `#${conversation.title ?? 'channel'}${project ? ` · ${project.name}` : ''}`;
 }
 
-async function payloadFor(db: Db, recipientId: number, message: MessageDTO, conversation: ConversationDTO, sender: UserRow) {
+/** The text of a message the server can read: a card from GitHub, or one sent before encryption. */
+function plainText(message: MessageDTO): string {
+  if (message.kind !== 'github') return preview(message.body);
+  const card = readGithubCard(message.body);
+  return card ? preview(`GitHub: ${describeGithubCard(card)}`) : 'GitHub';
+}
+
+async function payloadFor(
+  db: Db,
+  recipientId: number,
+  message: MessageDTO,
+  conversation: ConversationDTO,
+  sender: UserRow | null,
+) {
   const isGroup = conversation.type !== 'direct';
   const name = await chatName(db, conversation, sender);
   if (message.kind === 'reaction') {
@@ -27,13 +41,13 @@ async function payloadFor(db: Db, recipientId: number, message: MessageDTO, conv
     const payload: PushPayload = {
       kind: 'reaction',
       title: name,
-      body: `${sender.display_name} reacted to a message`,
+      body: `${sender?.display_name ?? 'Someone'} reacted to a message`,
       bodyPrefix: '',
       urgent: false,
       tag: `chat-${conversation.id}`,
       conversationId: conversation.id,
       messageId: null,
-      senderId: sender.id,
+      senderId: sender?.id ?? null,
       clientId: null,
       envelope: null,
       unreadTotal: null,
@@ -47,14 +61,14 @@ async function payloadFor(db: Db, recipientId: number, message: MessageDTO, conv
     title: message.urgent ? `URGENT from ${name}` : name,
     // The server cannot read encrypted messages. The service worker decrypts the envelope on the
     // device and puts the text after the prefix.
-    body: message.envelope ? '' : preview(message.body),
-    bodyPrefix: isGroup ? `${sender.display_name}: ` : '',
+    body: message.envelope ? '' : plainText(message),
+    bodyPrefix: isGroup && sender ? `${sender.display_name}: ` : '',
     urgent: message.urgent,
     // One notification per chat, replaced by newer messages. Urgent ones never get replaced.
     tag: message.urgent ? `urgent-${message.id}` : `chat-${conversation.id}`,
     conversationId: conversation.id,
     messageId: message.id,
-    senderId: sender.id,
+    senderId: sender?.id ?? null,
     clientId: message.clientId,
     envelope: message.envelope,
     unreadTotal: await db.unreadTotal(recipientId),
@@ -76,13 +90,13 @@ async function payloadFor(db: Db, recipientId: number, message: MessageDTO, conv
  * - Recipient not looking: push to every device they turned notifications on for.
  *
  * A reaction is not worth a notification. It goes only to a browser the recipient is looking at,
- * so the reaction shows up there at once.
+ * so the reaction shows up there at once. A card from GitHub has no sender and goes to everyone.
  */
-export async function notifyNewMessage(db: Db, push: Push, config: Config, message: MessageDTO, sender: UserRow) {
+export async function notifyNewMessage(db: Db, push: Push, config: Config, message: MessageDTO, sender: UserRow | null) {
   const memberIds = await db.memberIds(message.conversationId);
   await Promise.all(
     memberIds
-      .filter((id) => id !== sender.id)
+      .filter((id) => id !== sender?.id)
       .map(async (recipientId) => {
         const [recipient, conversation] = await Promise.all([
           db.getUser(recipientId),
@@ -98,7 +112,7 @@ export async function notifyNewMessage(db: Db, push: Push, config: Config, messa
           if (endpoint && (message.urgent || !showsEveryPush(endpoint))) await push.sendToUser(recipientId, payload, endpoint);
           return;
         }
-        if (message.kind === 'message') await push.sendToUser(recipientId, payload);
+        if (message.kind !== 'reaction') await push.sendToUser(recipientId, payload);
       }),
   ).catch((error: unknown) => config.logger.error('Push delivery failed', error));
 }

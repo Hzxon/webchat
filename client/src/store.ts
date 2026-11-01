@@ -54,6 +54,8 @@ export interface State {
   github: GithubDTO | null;
   /** The pull requests pane is showing instead of a chat. */
   githubOpen: boolean;
+  /** The project whose repositories dialog is open. GitHub sends its owner back to it after linking. */
+  reposFor: number | null;
 }
 
 const initialState: State = {
@@ -74,6 +76,7 @@ const initialState: State = {
   keyWarnings: {},
   github: null,
   githubOpen: false,
+  reposFor: null,
 };
 
 let state = initialState;
@@ -129,7 +132,7 @@ function withEvents(current: State, events: ChatMessage[]): Pick<State, 'message
   let reactions = current.reactions;
   for (const event of events) {
     if (event.kind === 'reaction') {
-      if (event.reaction && event.security !== 'failed') {
+      if (event.reaction && event.security !== 'failed' && event.senderId !== null) {
         const { messageId, emoji } = event.reaction;
         reactions = withReaction(reactions, event.conversationId, messageId, event.senderId, { eventId: event.id, emoji });
       }
@@ -312,6 +315,8 @@ export const actions = {
   setGithubOpen: (githubOpen: boolean) =>
     store.set((s) => ({ ...s, githubOpen, activeId: githubOpen ? null : s.activeId })),
 
+  setReposFor: (reposFor: number | null) => store.set((s) => ({ ...s, reposFor })),
+
   setTab: (tab: SidebarTab) => store.set((s) => (s.tab === tab ? s : { ...s, tab })),
 
   addUrgent: (message: ChatMessage) =>
@@ -336,6 +341,11 @@ export const actions = {
   dismissToast: (id: number) =>
     store.set((s) => (s.toasts.some((t) => t.id === id) ? { ...s, toasts: s.toasts.filter((t) => t.id !== id) } : s)),
 };
+
+/** Who sent a message, as the page names them. A card the server wrote from GitHub has no sender. */
+export function senderName(users: State['users'], senderId: number | null, fallback = 'Someone'): string {
+  return senderId === null ? 'GitHub' : (users[senderId]?.displayName ?? fallback);
+}
 
 /**
  * Name shown for a chat: the group name, "#channel · Project" for a channel, or the other person's

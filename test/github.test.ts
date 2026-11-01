@@ -8,12 +8,26 @@ import { createApp, type WebChatApp } from '../server/app.ts';
 import { newSessionToken } from '../server/auth.ts';
 import type { Config } from '../server/config.ts';
 import { comparePulls } from '../server/github.ts';
-import type { GithubDTO, ProjectRepoDTO, PullListsDTO, PullRequestDTO, PushPayload } from '../shared/types.ts';
+import type {
+  BootstrapDTO,
+  GithubCardDTO,
+  GithubDTO,
+  MessageDTO,
+  ProjectReposDTO,
+  PullListsDTO,
+  PullRequestDTO,
+  PushPayload,
+} from '../shared/types.ts';
 
 const CLIENT_ID = 'Iv1.test-client';
 const CLIENT_SECRET = 'test-client-secret';
 const CRON_SECRET = 'test-cron-secret';
 const TOKEN = 'gho_test_access_token';
+const APP_SLUG = 'webchat-test';
+const APP_CLIENT_ID = 'Iv23.test-app';
+const APP_CLIENT_SECRET = 'test-app-secret';
+const APP_TOKEN = 'ghu_test_app_token';
+const WEBHOOK_SECRET = 'test-webhook-secret';
 
 interface FakePull {
   id: string;
@@ -28,17 +42,33 @@ interface FakePull {
   /** "owner/name"; acme/app unless set. */
   repo?: string;
   draft?: boolean;
-  /** Requested reviewers: people by login, teams as "org/team". */
+  /** Requested reviewers: people by login. */
   reviewers?: string[];
+  /** Teams asked to review. Without a Team fragment in the query, GitHub sends each as an empty object. */
   teams?: string[];
   /** A requested reviewer the token cannot see, which GitHub answers with null. */
   hiddenReviewer?: boolean;
   assignees?: string[];
 }
 
-/** Stands in for github.com and api.github.com: OAuth, the user, GraphQL search, and grant deletion. */
+/**
+ * Stands in for github.com and api.github.com: OAuth, the user, GraphQL search, and grant deletion
+ * for the OAuth App; the sign-in, installations and token deletion for the GitHub App.
+ */
 async function startFakeGithub() {
   const state = {
+    appChallenge: '',
+    /** The GitHub App's installations the signed-in owner reaches, with their repositories. */
+    installations: [
+      {
+        id: 77,
+        repos: [
+          { id: 9001, full_name: 'Acme/App' },
+          { id: 9002, full_name: 'acme/site' },
+        ],
+      },
+    ],
+    appRevoked: [] as string[],
     /** The token GitHub accepts; set to something else to act as if the user revoked access. */
     validToken: TOKEN,
     challenge: '',
@@ -68,7 +98,7 @@ async function startFakeGithub() {
     reviewRequests: {
       nodes: [
         ...(p.reviewers ?? []).map((login) => ({ requestedReviewer: { login } })),
-        ...(p.teams ?? []).map((combinedSlug) => ({ requestedReviewer: { combinedSlug } })),
+        ...(p.teams ?? []).map(() => ({ requestedReviewer: {} })),
         ...(p.hiddenReviewer ? [{ requestedReviewer: null }] : []),
       ],
     },
@@ -83,6 +113,27 @@ async function startFakeGithub() {
       const body = text ? (JSON.parse(text) as Record<string, any>) : {};
       const json = (status: number, data: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(data));
       const authorized = req.headers.authorization === `Bearer ${state.validToken}`;
+      const path = new URL(req.url ?? '/', 'http://github.test').pathname;
+
+      if (req.method === 'POST' && req.url === '/login/oauth/access_token' && body.client_id === APP_CLIENT_ID) {
+        const verifierOk = crypto.createHash('sha256').update(String(body.code_verifier)).digest('base64url') === state.appChallenge;
+        if (body.client_secret !== APP_CLIENT_SECRET) return json(200, { error: 'incorrect_client_credentials' });
+        if (body.code !== 'app-code' || !verifierOk) return json(200, { error: 'bad_verification_code' });
+        return json(200, { access_token: APP_TOKEN, token_type: 'bearer' });
+      }
+      if (req.method === 'GET' && path.startsWith('/user/installations')) {
+        if (req.headers.authorization !== `Bearer ${APP_TOKEN}`) return json(401, { message: 'Bad credentials' });
+        const repos = /^\/user\/installations\/(\d+)\/repositories$/.exec(path);
+        if (!repos) return json(200, { total_count: state.installations.length, installations: state.installations.map(({ id }) => ({ id })) });
+        const installation = state.installations.find((i) => i.id === Number(repos[1]));
+        return installation ? json(200, { total_count: installation.repos.length, repositories: installation.repos }) : json(404, {});
+      }
+      if (req.method === 'DELETE' && req.url === `/applications/${APP_CLIENT_ID}/token`) {
+        const basic = `Basic ${Buffer.from(`${APP_CLIENT_ID}:${APP_CLIENT_SECRET}`).toString('base64')}`;
+        if (req.headers.authorization !== basic) return json(401, {});
+        state.appRevoked.push(String(body.access_token));
+        return res.writeHead(204).end();
+      }
 
       if (req.method === 'POST' && req.url === '/login/oauth/access_token') {
         const verifierOk = crypto.createHash('sha256').update(String(body.code_verifier)).digest('base64url') === state.challenge;
@@ -96,6 +147,12 @@ async function startFakeGithub() {
       if (req.method === 'POST' && req.url === '/graphql') {
         if (!authorized) return json(401, { message: 'Bad credentials' });
         const query = String(body.query);
+        // GitHub checks the scopes a query needs before it runs it, and refuses all of it.
+        if (/\bon Team\b/.test(query)) {
+          return json(200, {
+            errors: [{ type: 'INSUFFICIENT_SCOPES', message: "The 'combinedSlug' field requires one of the following scopes: ['read:org']" }],
+          });
+        }
         if (query.includes('query Pulls')) {
           state.searches.push(body.variables.reviewQuery, body.variables.authoredQuery);
           return json(200, {
@@ -246,6 +303,11 @@ describe('GitHub connector', () => {
       githubClientId: CLIENT_ID,
       githubClientSecret: CLIENT_SECRET,
       githubCallbackUrl: undefined,
+      githubAppSlug: APP_SLUG,
+      githubAppClientId: APP_CLIENT_ID,
+      githubAppClientSecret: APP_CLIENT_SECRET,
+      githubWebhookSecret: WEBHOOK_SECRET,
+      githubAppCallbackUrl: undefined,
       githubOauthUrl: github.url,
       githubApiUrl: github.url,
       githubPollSeconds: 0,
@@ -316,7 +378,7 @@ describe('GitHub connector', () => {
     assert.ok(!row!.token.includes(TOKEN), 'the token is not stored in plain text');
 
     const { data } = await request<GithubDTO>('GET', '/github');
-    assert.deepEqual(data.account, { login: 'octo', name: 'Octo Cat', notify: true, autoShare: true });
+    assert.deepEqual(data.account, { login: 'octo', name: 'Octo Cat', notify: true });
     assert.deepEqual(
       data.pulls!.authored.map((p) => [p.number, p.review, p.checks]),
       [
@@ -375,6 +437,8 @@ describe('GitHub connector', () => {
   });
 
   test('with alerts off, changes are still recorded but nothing is pushed', async () => {
+    assert.equal((await request('PATCH', '/github', { body: {} })).status, 400);
+    assert.equal((await request('PATCH', '/github', { body: { notify: 'no' } })).status, 400);
     assert.equal((await request<GithubDTO>('PATCH', '/github', { body: { notify: false } })).data.account!.notify, false);
     pushService.received.length = 0;
     github.state.authored[1] = { ...github.state.authored[1]!, comments: 3, lastCommenter: 'bob' };
@@ -386,77 +450,249 @@ describe('GitHub connector', () => {
     assert.equal(pushService.received.length, 0);
   });
 
-  let eve: Awaited<ReturnType<typeof addUser>>;
-  let capstone: Awaited<ReturnType<typeof addProject>>;
-
-  test('only a project’s owner links a repository, and every member sees the links', async () => {
-    eve = await addUser('eve', 'Eve');
-    const finn = await addUser('finn', 'Finn');
-    capstone = await addProject('Capstone', [userId, eve.id]);
-    const path = `/projects/${capstone.projectId}/repos`;
-    const general = capstone.generalId;
-
-    const asEve = await request<{ code?: string }>('POST', path, { headers: { cookie: eve.cookie }, body: { repo: 'acme/app', conversationId: general } });
-    assert.deepEqual([asEve.status, asEve.data.code], [403, 'not_owner']);
-    assert.equal((await request('GET', path, { headers: { cookie: finn.cookie } })).status, 404, 'outsiders do not see them');
-    assert.equal((await request('POST', path, { body: { repo: 'not a repository', conversationId: general } })).status, 400);
-    assert.equal((await request('POST', path, { body: { repo: 'acme/app', conversationId: 999_999 } })).status, 400, 'only into its own channels');
-
-    const linked = await request<ProjectRepoDTO[]>('POST', path, { body: { repo: 'https://github.com/Acme/App/pull/3', conversationId: general } });
-    assert.equal(linked.status, 200);
-    assert.deepEqual(linked.data.map((r) => [r.repo, r.conversationId, r.addedBy]), [['acme/app', general, userId]]);
-    assert.deepEqual((await request<ProjectRepoDTO[]>('GET', path, { headers: { cookie: eve.cookie } })).data.map((r) => r.repo), ['acme/app']);
-  });
-
-  test('a new pull request in a linked repository waits for its author’s page, with its reviewers', async () => {
-    github.state.authored.push(
-      { id: 'PR_mine_4', number: 4, title: 'Add sign-up page', author: 'octo', reviewers: ['eve-gh'], teams: ['acme/designers'], hiddenReviewer: true, assignees: ['octo'] },
-      { id: 'PR_mine_5', number: 5, title: 'Fix footer', author: 'octo', repo: 'acme/site' },
-      { id: 'PR_mine_6', number: 6, title: 'Try dark mode', author: 'octo', draft: true },
-    );
+  test('the poll never asks for teams, which need read:org, and leaves a team asked to review out', async () => {
+    github.state.authored.push({
+      id: 'PR_mine_4',
+      number: 4,
+      title: 'Add sign-up page',
+      author: 'octo',
+      reviewers: ['eve-gh'],
+      teams: ['acme/designers'],
+      hiddenReviewer: true,
+      assignees: ['octo'],
+    });
     await pollDue();
-
     const { data } = await request<GithubDTO>('GET', '/github');
-    assert.deepEqual(data.shares.map((s) => [s.pull.number, s.conversationId]), [[4, capstone.generalId]], 'not another repository, not a draft');
-    assert.deepEqual(data.shares[0]!.pull.reviewers, ['eve-gh', 'acme/designers'], 'a reviewer the token cannot see is left out');
-    assert.deepEqual(data.shares[0]!.pull.assignees, ['octo']);
+    assert.equal(data.error, null);
+    const pull = data.pulls!.authored.find((p) => p.number === 4)!;
+    assert.deepEqual([pull.reviewers, pull.assignees], [['eve-gh'], ['octo']]);
   });
 
-  test('one tab claims a share, a draft is shared once it is ready, and nothing is shared twice', async () => {
-    const [share] = (await request<GithubDTO>('GET', '/github')).data.shares;
-    const claim = `/github/shares/${share!.id}/claim`;
-    assert.equal((await request('POST', claim, { headers: { cookie: eve.cookie } })).status, 409, 'not someone else’s');
-    assert.equal((await request('POST', claim)).status, 204);
-    const again = await request<{ code?: string }>('POST', claim);
-    assert.deepEqual([again.status, again.data.code], [409, 'already_shared']);
+  let eve: Awaited<ReturnType<typeof addUser>>;
+  let finn: Awaited<ReturnType<typeof addUser>>;
+  let capstone: Awaited<ReturnType<typeof addProject>>;
+  const reposPath = () => `/projects/${capstone.projectId}/repos`;
 
-    github.state.authored = github.state.authored.map((p) => (p.id === 'PR_mine_6' ? { ...p, draft: false } : p));
-    await pollDue();
-    assert.deepEqual((await request<GithubDTO>('GET', '/github')).data.shares.map((s) => s.pull.number), [6]);
+  /** Signs in to the GitHub App as the project's owner, and comes back the way GitHub sends them. */
+  async function signInToApp(state?: string) {
+    const { res } = await request('GET', `/github/app/link?project=${capstone.projectId}`);
+    const authorize = new URL(res.headers.get('location')!);
+    github.state.appChallenge = authorize.searchParams.get('code_challenge')!;
+    const stateCookie = res.headers.get('set-cookie')!.split(';')[0]!;
+    return request('GET', `/github/app/callback?code=app-code&state=${state ?? authorize.searchParams.get('state')}`, {
+      headers: { cookie: `${cookie}; ${stateCookie}` },
+    });
+  }
+
+  /** Sends a webhook the way GitHub signs it. */
+  async function webhook(event: string, payload: unknown, options: { delivery?: string; secret?: string } = {}) {
+    const body = JSON.stringify(payload);
+    const signature = crypto.createHmac('sha256', options.secret ?? WEBHOOK_SECRET).update(body).digest('hex');
+    const res = await fetch(`${baseUrl}/api/github/webhook`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-github-event': event,
+        'x-github-delivery': options.delivery ?? crypto.randomUUID(),
+        'x-hub-signature-256': `sha256=${signature}`,
+      },
+      body,
+    });
+    return res.status;
+  }
+
+  const appRepo = { id: 9001, full_name: 'Acme/App' };
+  const pullEvent = (action: string, pull: Record<string, unknown> = {}, repository: object = appRepo) => ({
+    action,
+    pull_request: {
+      number: 12,
+      title: 'Add sign-up page',
+      draft: false,
+      merged: false,
+      user: { login: 'octo' },
+      merged_by: null,
+      requested_reviewers: [{ login: 'eve-gh' }],
+      requested_teams: [{ slug: 'designers' }],
+      assignees: [{ login: 'octo' }],
+      ...pull,
+    },
+    repository,
+    sender: { login: 'octo' },
+    installation: { id: 77 },
   });
 
-  test('turning sharing off forgets what waited, and a merged or left behind pull request is not shared', async () => {
-    assert.equal((await request('PATCH', '/github', { body: {} })).status, 400);
-    assert.equal((await request('PATCH', '/github', { body: { autoShare: 'yes' } })).status, 400);
-    const off = await request<GithubDTO>('PATCH', '/github', { body: { autoShare: false } });
-    assert.deepEqual([off.data.account!.autoShare, off.data.shares], [false, []]);
-    const on = await request<GithubDTO>('PATCH', '/github', { body: { autoShare: true } });
-    assert.deepEqual([on.data.account!.autoShare, on.data.shares], [true, []]);
+  const githubCards = async () =>
+    (await instance.sql.query<{ body: string }>("SELECT body FROM webchat.messages WHERE kind = 'github' ORDER BY id")).map(
+      (row) => JSON.parse(row.body) as GithubCardDTO,
+    );
 
-    github.state.authored.push({ id: 'PR_mine_7', number: 7, title: 'Add search', author: 'octo' });
-    await pollDue();
-    assert.deepEqual((await request<GithubDTO>('GET', '/github')).data.shares.map((s) => s.pull.number), [7]);
-    github.state.authored = github.state.authored.filter((p) => p.id !== 'PR_mine_7');
-    github.state.endings.set('PR_mine_7', { state: 'MERGED', mergedBy: 'eve-gh' });
-    await pollDue();
-    assert.deepEqual((await request<GithubDTO>('GET', '/github')).data.shares, [], 'merged before the page posted it');
+  test('only a project’s owner starts linking, through the GitHub App’s own sign-in', async () => {
+    eve = await addUser('eve', 'Eve');
+    finn = await addUser('finn', 'Finn');
+    capstone = await addProject('Capstone', [userId, eve.id]);
 
-    github.state.authored.push({ id: 'PR_mine_8', number: 8, title: 'Add filters', author: 'octo' });
-    await pollDue();
-    const [waiting] = (await request<GithubDTO>('GET', '/github')).data.shares;
-    await instance.sql.query('DELETE FROM webchat.members WHERE conversation_id = $1 AND user_id = $2', [capstone.generalId, userId]);
-    assert.deepEqual((await request<GithubDTO>('GET', '/github')).data.shares, [], 'not into a channel the author left');
-    assert.equal((await request('POST', `/github/shares/${waiting!.id}/claim`)).status, 409);
+    const asEve = await request('GET', `/github/app/link?project=${capstone.projectId}`, { headers: { cookie: eve.cookie } });
+    assert.equal(asEve.res.headers.get('location'), '/?github=repos-error');
+    const { res } = await request('GET', `/github/app/link?project=${capstone.projectId}`);
+    assert.equal(res.status, 303);
+    const authorize = new URL(res.headers.get('location')!);
+    assert.equal(`${authorize.origin}${authorize.pathname}`, `${github.url}/login/oauth/authorize`);
+    assert.equal(authorize.searchParams.get('client_id'), APP_CLIENT_ID);
+    assert.equal(authorize.searchParams.get('scope'), null, 'a GitHub App asks for no scopes');
+    assert.equal(authorize.searchParams.get('redirect_uri'), `${baseUrl}/api/github/app/callback`);
+    assert.equal(authorize.searchParams.get('code_challenge_method'), 'S256');
+
+    // Installing goes through GitHub's page, which sends the browser to the Setup URL afterwards.
+    const install = await request('GET', `/github/app/install?project=${capstone.projectId}`);
+    assert.equal(install.res.headers.get('location'), `${github.url}/apps/${APP_SLUG}/installations/new`);
+    const installCookie = install.res.headers.get('set-cookie')!.split(';')[0]!;
+    const setup = await request('GET', '/github/app/setup?installation_id=77&setup_action=install', {
+      headers: { cookie: `${cookie}; ${installCookie}` },
+    });
+    assert.equal(setup.res.headers.get('location'), `/api/github/app/link?project=${capstone.projectId}`);
+    const setupAsEve = await request('GET', '/github/app/setup', { headers: { cookie: `${eve.cookie}; ${installCookie}` } });
+    assert.equal(setupAsEve.res.headers.get('location'), '/');
+  });
+
+  test('the app sign-in lists what the owner reaches, keeps no token, and only that can be linked', async () => {
+    const forged = await signInToApp('attacker');
+    assert.equal(forged.res.headers.get('location'), `/?github=repos-error&project=${capstone.projectId}`);
+
+    const back = await signInToApp();
+    assert.equal(back.res.headers.get('location'), `/?github=repos&project=${capstone.projectId}`);
+    assert.deepEqual(github.state.appRevoked, [APP_TOKEN], 'the token is revoked once the repositories are listed');
+
+    const view = await request<ProjectReposDTO>('GET', reposPath());
+    assert.deepEqual(view.data, {
+      configured: true,
+      repos: [],
+      choices: [
+        { repoId: 9001, repo: 'Acme/App' },
+        { repoId: 9002, repo: 'acme/site' },
+      ],
+    });
+    const eveView = await request<ProjectReposDTO>('GET', reposPath(), { headers: { cookie: eve.cookie } });
+    assert.deepEqual(eveView.data.choices, [], 'only the owner gets choices');
+    assert.equal((await request('GET', reposPath(), { headers: { cookie: finn.cookie } })).status, 404, 'outsiders see nothing');
+
+    const general = capstone.generalId;
+    const asEve = await request<{ code?: string }>('POST', reposPath(), {
+      headers: { cookie: eve.cookie },
+      body: { repoId: 9001, conversationId: general },
+    });
+    assert.deepEqual([asEve.status, asEve.data.code], [403, 'not_owner']);
+    const unseen = await request<{ code?: string }>('POST', reposPath(), { body: { repoId: 1234, conversationId: general } });
+    assert.deepEqual([unseen.status, unseen.data.code], [409, 'no_grant'], 'not one the owner did not show GitHub they reach');
+    assert.equal((await request('POST', reposPath(), { body: { repoId: 9001, conversationId: 999_999 } })).status, 400);
+
+    const linked = await request<ProjectReposDTO>('POST', reposPath(), { body: { repoId: 9001, conversationId: general } });
+    assert.equal(linked.status, 200);
+    assert.deepEqual(linked.data.repos.map((r) => [r.repoId, r.repo, r.conversationId, r.addedBy]), [[9001, 'Acme/App', general, userId]]);
+    assert.deepEqual(linked.data.choices.map((c) => c.repoId), [9002]);
+  });
+
+  test('a signed webhook posts a card into the linked channel, and pushes it to every member', async () => {
+    const evePhone = makeSubscription(`http://${pushService.host}/eve-phone`);
+    assert.equal((await request('POST', '/push/subscribe', { headers: { cookie: eve.cookie }, body: evePhone.json })).status, 204);
+    pushService.received.length = 0;
+
+    assert.equal(await webhook('pull_request', pullEvent('opened')), 202);
+    const { data } = await request<MessageDTO[]>('GET', `/conversations/${capstone.generalId}/messages`, { headers: { cookie: eve.cookie } });
+    const card = data.at(-1)!;
+    assert.deepEqual([card.kind, card.senderId, card.envelope, card.clientId], ['github', null, null, null]);
+    assert.deepEqual(JSON.parse(card.body), {
+      event: 'opened',
+      pull: {
+        repo: 'Acme/App',
+        number: 12,
+        title: 'Add sign-up page',
+        url: 'https://github.com/Acme/App/pull/12',
+        draft: false,
+        review: null,
+        checks: null,
+        conflicts: false,
+        reviewers: ['eve-gh'],
+        assignees: ['octo'],
+      },
+      author: 'octo',
+      actor: null,
+    });
+    for (const member of [cookie, eve.cookie]) {
+      const boot = await request<BootstrapDTO>('GET', '/bootstrap', { headers: { cookie: member } });
+      const general = boot.data.conversations.find((c) => c.id === capstone.generalId)!;
+      assert.deepEqual([general.unread, general.lastMessage?.id], [1, card.id], 'it counts as unread for everyone, like a message');
+    }
+
+    // Dana's phone and Eve's both get it.
+    const deadline = Date.now() + 3000;
+    while (pushService.received.length < 2 && Date.now() < deadline) await sleep(20);
+    const forEve = pushService.received.flatMap((body) => {
+      try {
+        return [evePhone.decrypt(body)];
+      } catch {
+        return [];
+      }
+    });
+    assert.equal(forEve.length, 1);
+    assert.deepEqual(
+      [forEve[0]!.kind, forEve[0]!.title, forEve[0]!.body, forEve[0]!.senderId, forEve[0]!.conversationId, forEve[0]!.messageId],
+      ['message', '#general · Capstone', 'GitHub: octo opened a pull request: Add sign-up page (Acme/App#12)', null, capstone.generalId, card.id],
+    );
+  });
+
+  test('a delivery sent again posts once; a bad signature, an unlinked repository or a quiet action posts nothing', async () => {
+    const before = (await githubCards()).length;
+    const delivery = crypto.randomUUID();
+    assert.equal(await webhook('pull_request', pullEvent('ready_for_review', { number: 13 }), { delivery }), 202);
+    assert.equal(await webhook('pull_request', pullEvent('ready_for_review', { number: 13 }), { delivery }), 202);
+    assert.equal(await webhook('pull_request', pullEvent('opened'), { secret: 'not-the-secret' }), 401);
+    assert.equal(await webhook('pull_request', pullEvent('opened', {}, { id: 5555, full_name: 'acme/other' })), 202);
+    for (const quiet of ['synchronize', 'edited', 'labeled', 'review_requested', 'converted_to_draft']) {
+      assert.equal(await webhook('pull_request', pullEvent(quiet)), 202);
+    }
+    const cards = await githubCards();
+    assert.equal(cards.length, before + 1);
+    assert.deepEqual([cards.at(-1)!.event, cards.at(-1)!.actor, cards.at(-1)!.pull.number], ['ready', 'octo', 13]);
+  });
+
+  test('a merge names who merged it, and a renamed repository keeps its link', async () => {
+    const renamed = { id: 9001, full_name: 'acme/webapp' };
+    await webhook('pull_request', {
+      ...pullEvent('closed', { merged: true, merged_by: { login: 'eve-gh' } }, renamed),
+      sender: { login: 'hubot' },
+    });
+    await webhook('pull_request', pullEvent('closed', { number: 13 }, renamed));
+    const [merged, closed] = (await githubCards()).slice(-2);
+    assert.deepEqual([merged!.event, merged!.actor, merged!.pull.repo], ['merged', 'eve-gh', 'acme/webapp']);
+    assert.deepEqual([closed!.event, closed!.actor], ['closed', 'octo']);
+    assert.deepEqual((await request<ProjectReposDTO>('GET', reposPath())).data.repos.map((r) => r.repo), ['acme/webapp']);
+  });
+
+  test('the owner unlinks, and taking the app off a repository or uninstalling it unlinks too', async () => {
+    const general = capstone.generalId;
+    await request('POST', reposPath(), { body: { repoId: 9002, conversationId: general } });
+    assert.equal((await request('DELETE', `${reposPath()}/9002`, { headers: { cookie: eve.cookie } })).status, 403);
+    const unlinked = await request<ProjectReposDTO>('DELETE', `${reposPath()}/9002`);
+    assert.deepEqual(unlinked.data.repos.map((r) => r.repoId), [9001]);
+
+    await request('POST', reposPath(), { body: { repoId: 9002, conversationId: general } });
+    await webhook('installation_repositories', { action: 'removed', installation: { id: 77 }, repositories_removed: [{ id: 9002 }] });
+    const afterRemoval = (await request<ProjectReposDTO>('GET', reposPath())).data;
+    assert.deepEqual([afterRemoval.repos.map((r) => r.repoId), afterRemoval.choices.map((c) => c.repoId)], [[9001], []]);
+
+    await webhook('installation', { action: 'deleted', installation: { id: 77 } });
+    assert.deepEqual((await request<ProjectReposDTO>('GET', reposPath())).data.repos, []);
+    const before = (await githubCards()).length;
+    await webhook('pull_request', pullEvent('opened', { number: 14 }));
+    assert.equal((await githubCards()).length, before, 'nothing links the repository any more');
+  });
+
+  test('a choice expires, and linking needs a new sign-in to the app', async () => {
+    await signInToApp();
+    await instance.sql.query('UPDATE webchat.github_app_grants SET expires_at = 0');
+    const stale = await request<{ code?: string }>('POST', reposPath(), { body: { repoId: 9001, conversationId: capstone.generalId } });
+    assert.deepEqual([stale.status, stale.data.code], [409, 'no_grant']);
+    assert.deepEqual((await request<ProjectReposDTO>('GET', reposPath())).data.choices, []);
   });
 
   test('the scheduler endpoint needs the CRON_SECRET', async () => {
@@ -535,17 +771,5 @@ describe('comparing two polls', () => {
   test('pull requests that leave the open list are handed back to look up', () => {
     const before = lists([pull({}), pull({ id: 'PR_2', number: 2 })]);
     assert.deepEqual(comparePulls(before, lists([pull({})]), 'octo').left.map((p) => p.id), ['PR_2']);
-  });
-
-  test('one’s own pull requests that open ready, or leave draft, are handed back for linked projects', () => {
-    const before = lists([pull({}), pull({ id: 'PR_2', number: 2, draft: true }), pull({ id: 'PR_3', number: 3, draft: true })]);
-    const after = lists([
-      pull({}),
-      pull({ id: 'PR_2', number: 2 }),
-      pull({ id: 'PR_3', number: 3, draft: true }),
-      pull({ id: 'PR_4', number: 4 }),
-      pull({ id: 'PR_5', number: 5, draft: true }),
-    ]);
-    assert.deepEqual(comparePulls(before, after, 'octo').ready.map((p) => p.id), ['PR_2', 'PR_4']);
   });
 });

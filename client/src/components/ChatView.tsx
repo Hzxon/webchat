@@ -1,10 +1,11 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import type { QuotedMessage } from '../../../shared/e2ee';
-import { LIMITS, type PullCardDTO } from '../../../shared/types';
+import { githubCardEvent } from '../../../shared/github';
+import { LIMITS, type GithubCardDTO, type PullCardDTO, type PullEvent } from '../../../shared/types';
 import { holdReloadWhile } from '../build';
 import { loadOlder, quoteOf, react, retryMessage, sendMessage } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
-import { actions, chatTitle, otherMemberId, useAppState, type MessageReactions, type State } from '../store';
+import { actions, chatTitle, otherMemberId, senderName, useAppState, type MessageReactions, type State } from '../store';
 import { Avatar, nameColor } from './Avatar';
 import { dayLabel, formatTime, linkify, presenceText } from './format';
 import {
@@ -24,7 +25,7 @@ import {
   UsersIcon,
 } from './icons';
 import type { MembersTarget } from './MembersDialog';
-import { PullTags } from './PullTags';
+import { PullTags, Tag, type Tone } from './PullTags';
 import { receiptState } from './receipts';
 import { SecurityCodeDialog } from './SecurityCodeDialog';
 
@@ -247,7 +248,6 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
         const mine = message.senderId === meId;
         const firstOfRun = newDay || previous?.senderId !== message.senderId;
         const status = message.clientId ? pending[message.clientId] : undefined;
-        const sender = users[message.senderId];
         const canAct = message.id > 0 && message.security !== 'failed';
         const marks = reactions[message.id];
         const rowClass = [
@@ -267,8 +267,8 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                   onClick={canAct ? (e) => onBubbleClick(e, message.id) : undefined}
                 >
                   {conversation.type !== 'direct' && !mine && firstOfRun && (
-                    <span className="bubble-sender" style={{ color: nameColor(message.senderId) }}>
-                      {sender?.displayName ?? 'Unknown'}
+                    <span className="bubble-sender" style={{ color: nameColor(message.senderId ?? 0) }}>
+                      {senderName(users, message.senderId, 'Unknown')}
                     </span>
                   )}
                   {message.urgent && (
@@ -283,6 +283,8 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                     <span className="bubble-text bubble-failed">
                       <LockIcon width={13} height={13} /> This message could not be decrypted. It may have been altered.
                     </span>
+                  ) : message.github ? (
+                    <GithubCard card={message.github} />
                   ) : message.pull ? (
                     <PullCard pull={message.pull} />
                   ) : (
@@ -291,6 +293,11 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                   <span className="bubble-meta">
                     {message.security === 'plain' && (
                       <span className="not-encrypted" title="Sent before end-to-end encryption was turned on">
+                        <LockOpenIcon width={11} height={11} /> Not encrypted
+                      </span>
+                    )}
+                    {message.security === 'github' && (
+                      <span className="not-encrypted" title="WebChat wrote this from what GitHub sent, so it is not end-to-end encrypted">
                         <LockOpenIcon width={11} height={11} /> Not encrypted
                       </span>
                     )}
@@ -361,23 +368,45 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
  * The message a reply answers. A loaded original passed its sender's signature check, so it wins
  * over the copy inside the reply, which only the person replying wrote.
  */
-/** A shared pull request, as it stood when it was shared. A click opens it on GitHub. */
-function PullCard({ pull }: { pull: PullCardDTO }) {
+/**
+ * A shared pull request, as it stood when it was shared. A click opens it on GitHub. A card that
+ * reports a later event names only the pull request, with a tag for what happened.
+ */
+function PullCard({ pull, event }: { pull: PullCardDTO; event?: [Tone, string] }) {
   const login = useAppState((s) => s.github?.account?.login);
   return (
     <a className="pull-card" href={pull.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
       <span className="pull-card-head">
         <PullRequestIcon width={14} height={14} />
-        {pull.auto && 'New pull request · '}
         {pull.repo}#{pull.number}
       </span>
       <span className="pull-title">{pull.title}</span>
-      <span className="pull-tags">
-        <PullTags pull={pull} />
-      </span>
-      {pull.reviewers && <PullPeople label="Reviewers" names={pull.reviewers} login={login} />}
-      {pull.assignees && pull.assignees.length > 0 && <PullPeople label="Assignees" names={pull.assignees} login={login} />}
+      <span className="pull-tags">{event ? <Tag tone={event[0]}>{event[1]}</Tag> : <PullTags pull={pull} />}</span>
+      {!event && pull.reviewers && <PullPeople label="Reviewers" names={pull.reviewers} login={login} />}
+      {!event && pull.assignees && pull.assignees.length > 0 && (
+        <PullPeople label="Assignees" names={pull.assignees} login={login} />
+      )}
     </a>
+  );
+}
+
+const EVENT_TAGS: Record<Exclude<PullEvent, 'opened'>, [Tone, string]> = {
+  ready: ['ok', 'Ready for review'],
+  reopened: ['info', 'Reopened'],
+  merged: ['info', 'Merged'],
+  closed: ['muted', 'Closed'],
+};
+
+/**
+ * A pull request event in a linked repository. The server wrote it from GitHub's webhook (D-050),
+ * so nobody signed it; its link still leads only to the pull request on github.com.
+ */
+function GithubCard({ card }: { card: GithubCardDTO }) {
+  return (
+    <>
+      <span className="bubble-text">{githubCardEvent(card)}</span>
+      <PullCard pull={card.pull} event={card.event === 'opened' ? undefined : EVENT_TAGS[card.event]} />
+    </>
   );
 }
 
@@ -405,10 +434,11 @@ function Quote({ quote, original, onJump }: { quote: QuotedMessage; original?: C
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
   const trusted = original && original.security !== 'failed' ? original : undefined;
-  const senderId = trusted?.senderId ?? quote.senderId;
+  // A reply to a card from GitHub quotes sender 0.
+  const senderId = trusted ? trusted.senderId : quote.senderId || null;
   const text = trusted?.text ?? quote.text;
-  const name = senderId === meId ? 'You' : (users[senderId]?.displayName ?? 'Someone');
-  const color = nameColor(senderId);
+  const name = senderId === meId ? 'You' : senderName(users, senderId);
+  const color = nameColor(senderId ?? 0);
   const body = (
     <>
       <span className="quote-sender" style={{ color }}>
