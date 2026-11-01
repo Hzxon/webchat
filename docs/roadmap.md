@@ -245,11 +245,11 @@ requests for the record. Nothing here is a candidate for what to do next.
 | Known issues K-1 to K-4: reload after deploy, dialog focus, Node version, member order | #6 |
 | Share a pull request into a chat as a card | #8 |
 | R-003: Add people to groups, who read the history (D-043) | #10 |
-| R-002: New keys when someone leaves or is removed, leaving, handing over (D-044, D-045) | #12 |
+| R-002: New keys when someone leaves or is removed, leaving, handing over (D-044, D-045) | #13 |
 
 ### R-002: Rotate keys on removal, and let people leave
 
-Status: Done in #12 (D-044, D-045). Owners could remove people since #4, without rotation (D-039).
+Status: Done in #13 (D-044, D-045). Owners could remove people since #4, without rotation (D-039).
 
 Why: people removed from a project or group keep its keys (D-039). Nobody can leave on their own,
 and an owner cannot hand a project or group to someone else.

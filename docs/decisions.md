@@ -176,7 +176,7 @@ Accepted 2026-11-01 in 10ba6d8. The rule about numbers comes from #2.
 `MIGRATIONS`. Each entry runs once, in order, in a transaction that holds an advisory lock, because
 several serverless instances can start at once. `webchat.meta` records how many have run. So far:
 1 is end-to-end encryption, 2 is the GitHub connector, 3 is projects with replies and reactions, 4
-is group owners (#4), and 5 is key rotation, leaving and handing over (#12).
+is group owners (#4), and 5 is key rotation, leaving and handing over (#13).
 
 Two branches once both added a migration 2. The projects migration became 3 when its branch merged,
 because a database that had already run the connector's migration 2 would have skipped it. When two
@@ -186,7 +186,7 @@ Cost: a mistake in a migration on main is fixed with a new migration, never by e
 
 ### D-011: Limits live in one place
 
-Accepted 2026-11-01 in 74d53ff, extended in 10ba6d8, #2, #4, #10 and #12.
+Accepted 2026-11-01 in 74d53ff, extended in 10ba6d8, #2, #4, #10 and #13.
 
 `LIMITS` in `shared/types.ts` holds the sizes that the server enforces and the page respects: 4,000
 characters per message, 160 per quote, 24,000 per ciphertext, the lengths of names, 50 messages per
@@ -237,7 +237,7 @@ server can still see.
 
 ### D-015: One key per chat, wrapped for each member
 
-Accepted 2026-11-01 in 10ba6d8, extended in #4, #10 and #12.
+Accepted 2026-11-01 in 10ba6d8, extended in #4, #10 and #13.
 
 Each chat has a random AES-256-GCM key. The member who creates it wraps a copy for every member with
 a key from ECDH between the two of them, so a wrapped copy proves who made it. The page accepts a
@@ -299,7 +299,7 @@ message, and the first key set wins.
 
 ### D-020: Known limits of the encryption
 
-Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4, #10 and #12.
+Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4, #10 and #13.
 
 WebChat accepts these limits and lists them in the README:
 
@@ -319,7 +319,7 @@ Cost: a feature that shows the server something new must add it to this list and
 
 ### D-044: A new key when someone leaves or is removed
 
-Accepted 2026-11-01 in #12. Replaces the part of D-039 that kept keys the same.
+Accepted 2026-11-01 in #13. Replaces the part of D-039 that kept keys the same.
 
 When someone leaves a chat or is removed from it, the chat gets a new key, and the person who left
 never gets a copy. The browser that makes it wraps it for everyone who stays and encrypts the old
@@ -355,7 +355,7 @@ not seen a new key yet shows "New encrypted message" for a push, until a page op
 
 ### D-021: The sync fingerprint is the change detector
 
-Accepted 2026-11-01 in 74d53ff, extended in #2, #4 and #12.
+Accepted 2026-11-01 in 74d53ff, extended in #2, #4 and #13.
 
 `db.stamp` builds one string per user from a single query. It covers the sum of the newest event
 ids in their chats, the read and delivered pointers, how many chats they are in, the sum of the
@@ -367,7 +367,7 @@ loading anything else.
 Cost: any state that pages must see has to change this string, or pages miss it until something
 else changes. #2 added the newest event ids, so reactions show up, and the member count, so new
 members show up. #4 replaced the member count with the sum of join times, so one person leaving and
-another joining between two check-ins still show up. #12 added new keys (D-044) and owners (D-045).
+another joining between two check-ins still show up. #13 added new keys (D-044) and owners (D-045).
 Owners go in as a hash, not a sum, so two handovers at once cannot cancel out.
 
 ### D-022: Receipts are per-member pointers
@@ -475,7 +475,7 @@ every key wrapped for everyone who stays (D-011).
 
 ### D-043: Any group member adds people, and they read the history
 
-Accepted 2026-11-01 in #10, extended in #12. It answers the open question of roadmap item R-003.
+Accepted 2026-11-01 in #10, extended in #13. It answers the open question of roadmap item R-003.
 
 Groups take new members the way projects do (D-026). Any member can add up to 20 people at once with
 the Add people button in the group's header. That member's browser opens its own copy of the group's
@@ -511,7 +511,7 @@ replaces every copy (D-044).
 
 ### D-045: People leave on their own, and owners hand over
 
-Accepted 2026-11-01 in #12. Replaces the rule of D-039 that nobody can leave.
+Accepted 2026-11-01 in #13. Replaces the rule of D-039 that nobody can leave.
 
 Any member can leave a project or group from its members dialog, and a member who stays makes each
 chat's next key (D-044). The owner can make another member the owner, and only then leave, so a
