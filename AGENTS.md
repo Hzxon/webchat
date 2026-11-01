@@ -86,6 +86,14 @@ decision behind each rule explains why it exists.
 
 - Start from the latest main. Open a pull request. Main is squash-merged, and the squash commit's
   subject is the pull request title followed by "(#N)".
+- Open the pull request as a draft as soon as the branch exists, and mark it ready at the end. The
+  draft reserves the number the docs cite, and shows other agents what is in flight, so two of them
+  do not pick the same roadmap item.
+- While you work, do not merge or rebase on main to stay ahead of other pull requests. Main moves
+  again before you merge, and the work repeats. Resolve conflicts once, when GitHub reports them
+  on your pull request: merge main, fix, push.
+- When two pull requests take the same decision or roadmap number, the one merged second renumbers
+  its own entry. Keep each pull request's edits to the docs small: one entry, one row.
 - Write commit messages as Conventional Commits. The subject has at most 50 characters, capitalizes
   the first word after the type, uses the imperative and has no final period. The body explains what
   changed and why, wrapped at 72 characters. Never add AI attribution, such as a `Co-Authored-By`
@@ -93,8 +101,9 @@ decision behind each rule explains why it exists.
 - Before you open a pull request, run `npm run typecheck`, `npm test` and `npm run build`. For a
   change people can see, also try it in a browser with two accounts, at desktop width and at 375
   pixels, in light and dark mode.
-- Before you open a pull request, show the owner the work and wait for their go: screenshots or a
-  recording of a change people can see, from the browser run above, or the diff of one they cannot.
+- Before you mark the pull request ready, show the owner the work and wait for their go: screenshots
+  or a recording of a change people can see, from the browser run above, or the diff of one they
+  cannot.
 - Write documentation in short, plain sentences with one idea each, like the README. Code comments
   explain why the code is the way it is, not what it does.
 
