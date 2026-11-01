@@ -475,6 +475,33 @@ cursor the page loaded with and the user's own read pointer in that chat, and it
 Cost: a message that commits more than a moment after a newer one while the page loads shows up
 without an alert.
 
+### D-051: Drafts and unsent messages stay on the device
+
+Accepted 2026-11-02 in #19.
+
+What someone types in a chat's message box, and every message the server has not confirmed, stay in
+the device's IndexedDB next to the account's keys. A draft comes back when its chat opens again:
+after a closed tab, a reload, or a visit to another chat. A message that was sending or failed comes
+back in its chat as "Not sent", with a toast that names the chat, unless the chat's history shows
+that the server has it after all. The page never sends it again by itself, because a retry can
+store a message twice (K-9). A Remove button next to "Tap to retry" drops it. While a message is
+still sending, the tab asks before it closes or reloads. Signing out removes drafts and unsent
+messages with the keys.
+
+A tab holds a Web Lock while it keeps unsent messages, and each one names its tab. A tab that opens
+takes over only the messages of tabs that hold no lock, so it never shows one that another open tab
+is still sending.
+
+Why: drafts and messages still sending lived only in the page. Closing the tab, reloading it, or
+opening another chat dropped them without a word. A test on 2026-11-01 lost both. The person they
+were for never got them, and the writer believed they had.
+
+Cost: drafts and unsent messages sit on the device unencrypted until they are sent or the user
+signs out, so anyone with the device's files can read them. A browser without Web Locks, such as
+Safari before 15.4, can show the same unsent message in two tabs. A message that reached the server
+as its tab closed shows as not sent if newer messages push it off the chat's first page, and a retry
+then sends it twice.
+
 ## Projects and channels
 
 ### D-024: Every project member is in every channel

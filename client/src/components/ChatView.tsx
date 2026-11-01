@@ -3,7 +3,7 @@ import type { QuotedMessage } from '../../../shared/e2ee';
 import { githubCardEvent } from '../../../shared/github';
 import { LIMITS, type GithubCardDTO, type PullCardDTO, type PullEvent } from '../../../shared/types';
 import { holdReloadWhile } from '../build';
-import { loadOlder, quoteOf, react, retryMessage, sendMessage } from '../chat';
+import { discardMessage, loadDraft, loadOlder, quoteOf, react, retryMessage, saveDraft, sendMessage } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { actions, chatTitle, otherMemberId, senderName, useAppState, type MessageReactions, type State } from '../store';
 import { Avatar, nameColor } from './Avatar';
@@ -352,9 +352,14 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
               </div>
               {marks && <ReactionChips marks={marks} onToggle={(emoji) => void react(message, emoji)} />}
               {status === 'failed' && (
-                <button className="send-failed" onClick={() => retryMessage(message)}>
-                  <AlertIcon width={14} height={14} /> Not sent. Tap to retry.
-                </button>
+                <div className="send-failed-row">
+                  <button className="send-failed" onClick={() => retryMessage(message)}>
+                    <AlertIcon width={14} height={14} /> Not sent. Tap to retry.
+                  </button>
+                  <button className="send-discard" onClick={() => discardMessage(message)}>
+                    Remove
+                  </button>
+                </div>
               )}
             </div>
           </Fragment>
@@ -511,17 +516,30 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
   const input = useRef<HTMLTextAreaElement>(null);
   const draft = useRef('');
 
-  // The draft lives only here, so a reload after a deploy waits until it is sent or cleared.
+  // A reload after a deploy waits until the draft is sent or cleared (D-040).
   useEffect(() => {
     draft.current = text;
   }, [text]);
   useEffect(() => holdReloadWhile(() => draft.current.trim() !== ''), []);
 
+  // The draft stays on this device, so it comes back here after a close, a reload or another chat (D-051).
   useEffect(() => {
+    let current = true;
     setText('');
     setUrgent(false);
     input.current?.focus();
+    void loadDraft(conversationId).then((saved) => {
+      if (current && saved) setText((typed) => typed || saved);
+    });
+    return () => {
+      current = false;
+    };
   }, [conversationId]);
+
+  function edit(value: string) {
+    setText(value);
+    saveDraft(conversationId, value);
+  }
 
   useEffect(() => {
     if (replyTo) input.current?.focus();
@@ -541,7 +559,7 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
   function submit() {
     if (!text.trim() || blockedReason) return;
     void sendMessage(conversationId, text, urgent, replyTo ? quoteOf(replyTo) : null);
-    setText('');
+    edit('');
     setUrgent(false);
     onCancelReply();
     input.current?.focus();
@@ -587,7 +605,7 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
           value={text}
           maxLength={LIMITS.messageLength}
           placeholder={urgent ? 'Urgent message' : 'Type a message'}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => edit(e.target.value)}
           onKeyDown={onKeyDown}
         />
         <button className="send-button" onClick={submit} disabled={!text.trim() || blockedReason !== null} aria-label="Send">

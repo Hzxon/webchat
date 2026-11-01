@@ -1,7 +1,8 @@
 // This device's encryption keys, kept in IndexedDB so the page and the service worker share them.
 // Private keys are stored as non-exportable CryptoKey objects: code can use them but never read
 // their bytes, so even a script running on the page cannot copy them off the device.
-import type { Identity } from '../../../shared/e2ee';
+// Drafts and unsent messages live here too, so that signing out removes them with the keys.
+import type { Identity, MessageContent } from '../../../shared/e2ee';
 import type { PublicKeysDTO } from '../../../shared/types';
 
 const DB_NAME = 'webchat-keys';
@@ -10,6 +11,24 @@ const STORE = 'keys';
 export interface StoredIdentity {
   userId: number;
   identity: Identity;
+}
+
+/** What someone typed in a chat's message box and has not sent. */
+export interface StoredDraft {
+  userId: number;
+  text: string;
+}
+
+/** A message the server has not confirmed. It stays until the server has it or the user removes it. */
+export interface StoredUnsent {
+  userId: number;
+  /** The tab sending it. Another tab takes it over only once this one has closed. */
+  tabId: string;
+  conversationId: number;
+  clientId: string;
+  urgent: boolean;
+  createdAt: number;
+  content: MessageContent;
 }
 
 let opening: Promise<IDBDatabase> | undefined;
@@ -48,6 +67,7 @@ async function run<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) 
 
 const get = <T>(key: string) => run<T | undefined>('readonly', (s) => s.get(key));
 const set = (key: string, value: unknown) => run<IDBValidKey>('readwrite', (s) => s.put(value, key));
+const remove = (key: string) => run<undefined>('readwrite', (s) => s.delete(key));
 
 export const keystore = {
   getIdentity: () => get<StoredIdentity>('identity'),
@@ -64,10 +84,19 @@ export const keystore = {
   getPins: () => get<Record<number, string>>('pins'),
   setPins: (pins: Record<number, string>) => set('pins', pins),
 
+  getDraft: (conversationId: number) => get<StoredDraft>(`draft:${conversationId}`),
+  setDraft: (conversationId: number, draft: StoredDraft) => set(`draft:${conversationId}`, draft),
+  deleteDraft: (conversationId: number) => remove(`draft:${conversationId}`),
+
+  /** Every unsent message on this device, from every tab. ";" is the character after ":". */
+  getUnsent: () => run<StoredUnsent[]>('readonly', (s) => s.getAll(IDBKeyRange.bound('unsent:', 'unsent;', false, true))),
+  setUnsent: (message: StoredUnsent) => set(`unsent:${message.clientId}`, message),
+  deleteUnsent: (clientId: string) => remove(`unsent:${clientId}`),
+
   /**
-   * Removes the account's keys from this device, as on sign-out or when an account signs in. The
-   * pins stay: they hold only other people's public key fingerprints, and keeping them is what lets
-   * a later sign-in notice keys that changed in between (D-018).
+   * Removes the account's keys, drafts and unsent messages from this device, as on sign-out or when
+   * an account signs in. The pins stay: they hold only other people's public key fingerprints, and
+   * keeping them is what lets a later sign-in notice keys that changed in between (D-018).
    */
   clearKeys: () =>
     run<undefined>('readwrite', (s) => {

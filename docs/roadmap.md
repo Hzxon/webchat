@@ -295,6 +295,16 @@ The test "pushes carry no plain text" in `test/chat.test.ts` looks for `urgent, 
 `Call me back, it is urgent` does not contain. Only its separate check of `payload.body` guards rule
 7. Search the payload for the whole message instead.
 
+### K-21: An urgent message from while every tab was closed does not ring
+
+Found while testing a closed browser on 2026-11-01.
+
+A page alerts only for messages that arrive after it loads (D-049). An urgent message sent while
+every tab was closed shows only its URGENT tag in the chat list when the page opens again. If its
+push reached the device, the notification stays until it is tapped. Without push, for example with
+notifications blocked, nothing ever rings, though D-023 says urgent messages ring until the user
+acknowledges them. Decide whether an unread urgent message should ring once when a page opens.
+
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
@@ -336,6 +346,15 @@ requests for the record. Nothing here is a candidate for what to do next.
 | R-003: Add people to groups, who read the history (D-043) | #10 |
 | R-002: New keys when someone leaves or is removed, leaving, handing over (D-044, D-045) | #13 |
 | New pull requests shared into linked projects; cards name the reviewers (D-046) | #14 |
+| K-20: Drafts and unsent messages survive a closed tab (D-051) | #19 |
+
+### K-20: Closing the tab lost drafts and messages not sent
+
+Status: Fixed in #19 (D-051). Found while testing a closed browser on 2026-11-01, with K-21.
+
+A draft lived only in the message box, and a message still sending or not sent lived only in the
+page. Closing or reloading the tab, or opening another chat, dropped them without a warning. The
+person they were for never got them.
 
 ### R-002: Rotate keys on removal, and let people leave
 
