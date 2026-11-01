@@ -1,20 +1,22 @@
-import type {
-  AccountKeysInput,
-  ConversationDTO,
-  ConversationType,
-  EnvelopeDTO,
-  GithubEventDTO,
-  GithubEventKind,
-  KeyLinkDTO,
-  MemberState,
-  MessageDTO,
-  MessageKind,
-  ProjectDTO,
-  RotatedChannelKeyInput,
-  RotatedKeyInput,
-  SealedBackupDTO,
-  UserDTO,
-  WrappedKeyInput,
+import {
+  LIMITS,
+  type AccountKeysInput,
+  type ConversationDTO,
+  type ConversationType,
+  type EnvelopeDTO,
+  type GithubEventDTO,
+  type GithubEventKind,
+  type KeyLinkDTO,
+  type MemberState,
+  type MessageDTO,
+  type MessageKind,
+  type ProjectDTO,
+  type ProjectRepoDTO,
+  type RotatedChannelKeyInput,
+  type RotatedKeyInput,
+  type SealedBackupDTO,
+  type UserDTO,
+  type WrappedKeyInput,
 } from '../shared/types.js';
 import type { Querier, Sql } from './sql.js';
 
@@ -208,6 +210,31 @@ CREATE TABLE IF NOT EXISTS webchat.key_links (
 -- Someone who holds the current key left. Messages wait until a member who stays replaces it.
 ALTER TABLE webchat.conversations ADD COLUMN IF NOT EXISTS needs_new_key BOOLEAN NOT NULL DEFAULT false;
 `,
+  // 6: sharing new pull requests into the channel of a project that links their repository.
+  `
+CREATE TABLE IF NOT EXISTS webchat.project_repos (
+  project_id      INTEGER NOT NULL REFERENCES webchat.projects(id) ON DELETE CASCADE,
+  -- "owner/name" in lower case, because GitHub ignores case in repository names.
+  repo            TEXT NOT NULL,
+  conversation_id INTEGER NOT NULL REFERENCES webchat.conversations(id) ON DELETE CASCADE,
+  added_by        INTEGER REFERENCES webchat.users(id),
+  added_at        BIGINT NOT NULL,
+  PRIMARY KEY (project_id, repo)
+);
+-- A pull request waiting for its author's page to share it into a channel, and afterwards the
+-- record that it was, so it never goes there twice. Only GitHub's node id is kept here.
+CREATE TABLE IF NOT EXISTS webchat.pull_shares (
+  id              INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES webchat.conversations(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES webchat.users(id) ON DELETE CASCADE,
+  pull_id         TEXT NOT NULL,
+  created_at      BIGINT NOT NULL,
+  claimed_at      BIGINT,
+  UNIQUE (conversation_id, pull_id)
+);
+CREATE INDEX IF NOT EXISTS pull_shares_by_user ON webchat.pull_shares (user_id);
+ALTER TABLE webchat.github_accounts ADD COLUMN IF NOT EXISTS auto_share BOOLEAN NOT NULL DEFAULT true;
+`,
 ];
 
 const statements = (sql: string) =>
@@ -288,6 +315,7 @@ export interface GithubAccountRow {
   name: string | null;
   token: string;
   notify: boolean;
+  auto_share: boolean;
   pulls: string | null;
   fetched_at: number | null;
   polled_at: number;
@@ -309,6 +337,19 @@ interface GithubEventRow {
 
 /** Each account keeps this many of its newest pull request events. */
 const GITHUB_EVENTS_KEPT = 50;
+
+interface ProjectRepoRow {
+  repo: string;
+  conversation_id: number;
+  added_by: number | null;
+  added_at: number;
+}
+
+export interface PullShareRow {
+  id: number;
+  conversation_id: number;
+  pull_id: string;
+}
 
 export interface ProjectRow {
   id: number;
@@ -381,6 +422,13 @@ function toGithubEventDTO(row: GithubEventRow): GithubEventDTO {
     createdAt: row.created_at,
   };
 }
+
+const toProjectRepoDTO = (row: ProjectRepoRow): ProjectRepoDTO => ({
+  repo: row.repo,
+  conversationId: row.conversation_id,
+  addedBy: row.added_by,
+  addedAt: row.added_at,
+});
 
 export const keyBackupOf = (row: UserRow) =>
   row.key_backup ? (JSON.parse(row.key_backup) as SealedBackupDTO) : null;
@@ -971,6 +1019,46 @@ export async function openDb(sql: Sql) {
         ])
       ).length > 0,
 
+    projectRepos: async (projectId: number) =>
+      (
+        await sql.query<ProjectRepoRow>(
+          'SELECT repo, conversation_id, added_by, added_at FROM webchat.project_repos WHERE project_id = $1 ORDER BY repo',
+          [projectId],
+        )
+      ).map(toProjectRepoDTO),
+
+    /**
+     * Links a repository to a project, or moves its link to another channel. Refused when the
+     * channel is not one of the project's, or the project links as many repositories as it may.
+     */
+    linkProjectRepo(projectId: number, repo: string, conversationId: number, addedBy: number) {
+      return sql.transaction(async (tx): Promise<true | 'no_channel' | 'too_many'> => {
+        await lockProject(tx, projectId);
+        const channel = await tx.query('SELECT 1 FROM webchat.conversations WHERE id = $1 AND project_id = $2', [
+          conversationId,
+          projectId,
+        ]);
+        if (channel.length === 0) return 'no_channel';
+        const others = await one(
+          tx.query<{ count: number }>(
+            'SELECT COUNT(*)::int AS count FROM webchat.project_repos WHERE project_id = $1 AND repo <> $2',
+            [projectId, repo],
+          ),
+        );
+        if ((others?.count ?? 0) >= LIMITS.reposPerProject) return 'too_many';
+        await tx.query(
+          `INSERT INTO webchat.project_repos (project_id, repo, conversation_id, added_by, added_at)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (project_id, repo) DO UPDATE SET conversation_id = EXCLUDED.conversation_id`,
+          [projectId, repo, conversationId, addedBy, Date.now()],
+        );
+        return true;
+      });
+    },
+    unlinkProjectRepo: async (projectId: number, repo: string) => {
+      await sql.query('DELETE FROM webchat.project_repos WHERE project_id = $1 AND repo = $2', [projectId, repo]);
+    },
+
     conversationsFor: (userId: number) => conversations(userId, null),
     conversationFor: async (userId: number, conversationId: number) => (await conversations(userId, conversationId))[0],
     getConversation: (conversationId: number) =>
@@ -1130,8 +1218,9 @@ export async function openDb(sql: Sql) {
       ).length > 0,
 
     /**
-     * Stores an encrypted message, moves the chat to the top, and marks it read for its sender. A
-     * reaction only bumps the chat's newest event, so it neither reorders chats nor counts as unread.
+     * Stores an encrypted message, moves the chat to the top, and marks it read for its sender,
+     * unless their page sent it on its own. A reaction only bumps the chat's newest event, so it
+     * neither reorders chats nor counts as unread.
      */
     insertMessage(
       conversationId: number,
@@ -1140,6 +1229,7 @@ export async function openDb(sql: Sql) {
       envelope: EnvelopeDTO,
       urgent: boolean,
       clientId: string,
+      senderRead = true,
     ) {
       return sql.transaction(async (tx) => {
         const now = Date.now();
@@ -1157,7 +1247,7 @@ export async function openDb(sql: Sql) {
              WHERE id = $3`,
             [row.id, now, conversationId],
           );
-          await markRead(tx, conversationId, senderId, row.id);
+          if (senderRead) await markRead(tx, conversationId, senderId, row.id);
         } else {
           await tx.query('UPDATE webchat.conversations SET last_event_id = GREATEST(last_event_id, $1) WHERE id = $2', [
             row.id,
@@ -1317,6 +1407,7 @@ export async function openDb(sql: Sql) {
         );
         if (previous && previous.github_id !== account.githubId) {
           await tx.query('DELETE FROM webchat.github_events WHERE user_id = $1', [userId]);
+          await tx.query('DELETE FROM webchat.pull_shares WHERE user_id = $1 AND claimed_at IS NULL', [userId]);
         }
         await tx.query(
           `INSERT INTO webchat.github_accounts (user_id, github_id, login, name, token, created_at)
@@ -1333,11 +1424,18 @@ export async function openDb(sql: Sql) {
     deleteGithubAccount: (userId: number) =>
       sql.transaction(async (tx) => {
         await tx.query('DELETE FROM webchat.github_events WHERE user_id = $1', [userId]);
+        await tx.query('DELETE FROM webchat.pull_shares WHERE user_id = $1 AND claimed_at IS NULL', [userId]);
         await tx.query('DELETE FROM webchat.github_accounts WHERE user_id = $1', [userId]);
       }),
     setGithubNotify: async (userId: number, notify: boolean) => {
       await sql.query('UPDATE webchat.github_accounts SET notify = $2 WHERE user_id = $1', [userId, notify]);
     },
+    /** Turning sharing off also forgets the pull requests that were waiting to be shared. */
+    setGithubAutoShare: (userId: number, autoShare: boolean) =>
+      sql.transaction(async (tx) => {
+        await tx.query('UPDATE webchat.github_accounts SET auto_share = $2 WHERE user_id = $1', [userId, autoShare]);
+        if (!autoShare) await tx.query('DELETE FROM webchat.pull_shares WHERE user_id = $1 AND claimed_at IS NULL', [userId]);
+      }),
     /**
      * Claims an account for one poll, unless it was polled less than minIntervalMs ago or GitHub
      * revoked its token. Returns undefined when there is nothing to do.
@@ -1402,5 +1500,51 @@ export async function openDb(sql: Sql) {
           GITHUB_EVENTS_KEPT,
         ])
       ).map(toGithubEventDTO),
+
+    /**
+     * Queues the user's pull requests for the channels of the projects that link their repository
+     * and have the user as a member. One already queued or shared there is left alone.
+     */
+    async addPullShares(userId: number, pulls: Array<{ id: string; repo: string }>) {
+      const now = Date.now();
+      for (const pull of pulls) {
+        await sql.query(
+          `INSERT INTO webchat.pull_shares (conversation_id, user_id, pull_id, created_at)
+           SELECT r.conversation_id, $1, $2, $3 FROM webchat.project_repos r
+           JOIN webchat.project_members pm ON pm.project_id = r.project_id AND pm.user_id = $1
+           WHERE r.repo = lower($4)
+           ON CONFLICT (conversation_id, pull_id) DO NOTHING`,
+          [userId, pull.id, now, pull.repo],
+        );
+      }
+    },
+    /** Queued shares in chats the user is still in, oldest first. */
+    pendingPullShares: (userId: number) =>
+      sql.query<PullShareRow>(
+        `SELECT s.id, s.conversation_id, s.pull_id FROM webchat.pull_shares s
+         JOIN webchat.members m ON m.conversation_id = s.conversation_id AND m.user_id = s.user_id
+         WHERE s.user_id = $1 AND s.claimed_at IS NULL ORDER BY s.id`,
+        [userId],
+      ),
+    /** Claims a queued share for the tab that posts it. However many tabs try, one wins. */
+    claimPullShare: async (shareId: number, userId: number) =>
+      (
+        await sql.query(
+          `UPDATE webchat.pull_shares s SET claimed_at = $3
+           WHERE s.id = $1 AND s.user_id = $2 AND s.claimed_at IS NULL
+             AND EXISTS (SELECT 1 FROM webchat.members m WHERE m.conversation_id = s.conversation_id AND m.user_id = $2)
+           RETURNING s.id`,
+          [shareId, userId, Date.now()],
+        )
+      ).length > 0,
+    /** Forgets queued shares of pull requests that were merged or closed before the author's page posted them. */
+    async dropPullShares(userId: number, pullIds: string[]) {
+      for (const pullId of pullIds) {
+        await sql.query('DELETE FROM webchat.pull_shares WHERE user_id = $1 AND pull_id = $2 AND claimed_at IS NULL', [
+          userId,
+          pullId,
+        ]);
+      }
+    },
   };
 }

@@ -10,7 +10,7 @@ import { GithubView } from './components/GithubView';
 import { MembersDialog, type MembersTarget } from './components/MembersDialog';
 import { NewChatDialog, type NewChatMode } from './components/NewChatDialog';
 import { NotificationDialog } from './components/NotificationDialog';
-import { AddPeopleDialog, NewChannelDialog } from './components/ProjectDialogs';
+import { AddPeopleDialog, NewChannelDialog, ProjectReposDialog } from './components/ProjectDialogs';
 import { Sidebar } from './components/Sidebar';
 import { UnlockScreen } from './components/UnlockScreen';
 import { BellRingIcon } from './components/icons';
@@ -68,7 +68,8 @@ type OpenDialog =
   | { kind: 'notifications' }
   | { kind: 'new-channel'; projectId: number }
   | { kind: 'add-people'; target: MembersTarget }
-  | { kind: 'members'; target: MembersTarget };
+  | { kind: 'members'; target: MembersTarget }
+  | { kind: 'repos'; projectId: number };
 
 function ChatLayout() {
   const activeId = useAppState((s) => s.activeId);
@@ -87,6 +88,7 @@ function ChatLayout() {
         onNewChannel={(projectId) => setDialog({ kind: 'new-channel', projectId })}
         onAddPeople={(projectId) => addPeople({ kind: 'project', projectId })}
         onMembers={(projectId) => showMembers({ kind: 'project', projectId })}
+        onRepos={(projectId) => setDialog({ kind: 'repos', projectId })}
         onNotifications={() => setDialog({ kind: 'notifications' })}
       />
       {githubOpen ? (
@@ -115,6 +117,7 @@ function ChatLayout() {
       {dialog?.kind === 'new-channel' && <NewChannelDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'add-people' && <AddPeopleDialog target={dialog.target} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'members' && <MembersDialog target={dialog.target} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'repos' && <ProjectReposDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
       <UrgentAlert />
       <Toasts />
     </div>

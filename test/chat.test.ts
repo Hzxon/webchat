@@ -186,7 +186,7 @@ class Client {
     return key;
   }
 
-  async send(conversationId: number, content: string | MessageContent, urgent = false, kind: MessageKind = 'message') {
+  async send(conversationId: number, content: string | MessageContent, urgent = false, kind: MessageKind = 'message', auto = false) {
     const { keyId, key } = this.chatKeys.get(conversationId)!;
     const clientId = crypto.randomUUID();
     const meta = { conversationId, senderId: this.id, urgent, clientId, kind };
@@ -196,6 +196,7 @@ class Client {
       urgent,
       clientId,
       kind,
+      auto,
     });
   }
 
@@ -887,6 +888,33 @@ describe('chat server', () => {
         kind: 'poll',
       });
       assert.equal(unknown.status, 400);
+    });
+
+    test('a pull request card the page posts on its own leaves the channel unread for its sender', async () => {
+      assert.equal((await alice.send(general.id, 'Standup moves to 10')).status, 201);
+      const unreadOf = async (client: Client) => (await client.bootstrap()).conversations.find((c) => c.id === general.id)!.unread;
+      const unread = await unreadOf(carol);
+      assert.ok(unread > 0);
+      const pull = {
+        repo: 'acme/app',
+        number: 4,
+        title: 'Add sign-up page',
+        url: 'https://github.com/acme/app/pull/4',
+        draft: false,
+        review: null,
+        checks: null,
+        conflicts: false,
+        reviewers: ['bob-gh'],
+        auto: true as const,
+      };
+      const card = await carol.send(general.id, { text: 'Pull request acme/app#4: Add sign-up page', pull }, false, 'message', true);
+      assert.equal(card.status, 201);
+      assert.equal(await unreadOf(carol), unread, 'what Carol had not read stays unread');
+
+      const bobView = await bob.sync(true);
+      assert.ok(bobView.changed);
+      const received = bobView.messages.find((m) => m.id === card.data.id)!;
+      assert.deepEqual((await bob.readContent(received, keysOf(carol))).pull, pull);
     });
 
     /** A new key for each channel, made from Alice's copies, wrapped for the given people. */

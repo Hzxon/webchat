@@ -360,17 +360,41 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
  */
 /** A shared pull request, as it stood when it was shared. A click opens it on GitHub. */
 function PullCard({ pull }: { pull: PullCardDTO }) {
+  const login = useAppState((s) => s.github?.account?.login);
   return (
     <a className="pull-card" href={pull.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
       <span className="pull-card-head">
         <PullRequestIcon width={14} height={14} />
+        {pull.auto && 'New pull request · '}
         {pull.repo}#{pull.number}
       </span>
       <span className="pull-title">{pull.title}</span>
       <span className="pull-tags">
         <PullTags pull={pull} />
       </span>
+      {pull.reviewers && <PullPeople label="Reviewers" names={pull.reviewers} login={login} />}
+      {pull.assignees && pull.assignees.length > 0 && <PullPeople label="Assignees" names={pull.assignees} login={login} />}
     </a>
+  );
+}
+
+/** Who a card names. The viewer's own GitHub login reads "you", so a reviewer spots their turn. */
+function PullPeople({ label, names, login }: { label: string; names: string[]; login?: string }) {
+  const mine = login?.toLowerCase();
+  return (
+    <span className="pull-people">
+      <span className="pull-people-label">{label}:</span>{' '}
+      {names.length === 0 ? (
+        'none asked yet'
+      ) : (
+        names.map((name, i) => (
+          <Fragment key={name}>
+            {i > 0 && ', '}
+            {name.toLowerCase() === mine ? <strong className="pull-you">you</strong> : `@${name}`}
+          </Fragment>
+        ))
+      )}
+    </span>
   );
 }
 

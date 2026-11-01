@@ -73,6 +73,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
   color: inherit;
@@ -1938,10 +1939,26 @@ button.quote:hover {
 
 .pull-card-head {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 5px;
   color: var(--muted);
   font-size: 12.5px;
+}
+
+/* Who still has to review a shared pull request, and who it is assigned to. */
+.pull-people {
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.pull-people-label {
+  font-weight: 600;
+}
+
+.pull-you {
+  color: var(--accent-strong);
 }
 
 .pull:hover,

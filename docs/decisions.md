@@ -299,7 +299,7 @@ message, and the first key set wins.
 
 ### D-020: Known limits of the encryption
 
-Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4, #10 and #13.
+Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4, #10, #13 and #14.
 
 WebChat accepts these limits and lists them in the README:
 
@@ -309,6 +309,8 @@ WebChat accepts these limits and lists them in the README:
   left, when a chat got a new key, display names, whether a message is urgent, and that someone
   reacted.
 - Pull request titles and repository names are not end-to-end encrypted (D-033).
+- Which repositories a project links, and which pull requests were shared into which channel on
+  their own (D-046).
 - The member list that a new channel's key is wrapped for comes from the server. The New channel
   dialog shows it so people can check it. The same holds for the people a new key is wrapped for
   after someone leaves (D-044).
@@ -632,6 +634,34 @@ requests. The signature covers the envelope, so the card cannot be altered eithe
 
 Cost: the card shows the state at the time of sharing and does not update. The text of a shared
 pull request is a stock sentence that the user does not write.
+
+### D-046: New pull requests in a linked repository are shared by the author's browser
+
+Accepted 2026-11-01 in #14.
+
+A project's owner links GitHub repositories to the project, each with a channel. When a member's
+poll finds a pull request of theirs in a linked repository that just became ready for review,
+opened as ready or moved out of draft, the server queues it for that member. Their page claims it
+and posts the same card as the share button (D-042), marked as automatic. Every card, shared by
+hand or not, names who still has to review and who is assigned, as GitHub logins, and shows the
+viewer's own login as "you". The share button stays.
+
+Why: the server holds no chat key (D-015), so it cannot write an encrypted, signed message into a
+channel. The author's browser can, so the card stays an ordinary message that only members read.
+The author's own poll already sees the pull request, so WebChat reads nothing new from GitHub and
+shares only what the author could share by hand. The claim lets one tab post it. GitHub drops a
+reviewer from the review requests once they review, so the list is who still has to. A card the
+page posts on its own leaves the author's read pointer where it was, because the author has not
+seen the channel (`auto` in `SendMessageInput`).
+
+Cost: only members who connected GitHub get their pull requests shared; anyone else's needs the
+share button. A card goes out when the author's page next loads pull requests: within a minute
+while a tab is open, otherwise when they next open WebChat. The server learns which repositories a
+project links and which pull requests went into which channel. Everyone in the project sees each
+shared title, even without access to the repository. Reviewers show as GitHub logins, not WebChat
+names, and a card does not update when reviewers change later.
+
+## Engineering process
 
 ### D-035: Pull requests, squash merges and plain commit messages
 

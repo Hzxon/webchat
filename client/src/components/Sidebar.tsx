@@ -11,6 +11,7 @@ import {
   BellRingIcon,
   ChatIcon,
   FolderIcon,
+  GithubIcon,
   HashIcon,
   LogoutIcon,
   PlusIcon,
@@ -28,13 +29,14 @@ interface SidebarProps {
   onNewChannel: (projectId: number) => void;
   onAddPeople: (projectId: number) => void;
   onMembers: (projectId: number) => void;
+  onRepos: (projectId: number) => void;
   onNotifications: () => void;
 }
 
 const newestFirst = (a: ChatConversation, b: ChatConversation) =>
   (b.lastMessage?.createdAt ?? b.updatedAt) - (a.lastMessage?.createdAt ?? a.updatedAt);
 
-export function Sidebar({ onNewChat, onNewProject, onNewChannel, onAddPeople, onMembers, onNotifications }: SidebarProps) {
+export function Sidebar({ onNewChat, onNewProject, onNewChannel, onAddPeople, onMembers, onRepos, onNotifications }: SidebarProps) {
   const me = useAppState((s) => s.me);
   const conversations = useAppState((s) => s.conversations);
   const projects = useAppState((s) => s.projects);
@@ -151,6 +153,7 @@ export function Sidebar({ onNewChat, onNewProject, onNewChannel, onAddPeople, on
               onNewChannel={() => onNewChannel(project.id)}
               onAddPeople={() => onAddPeople(project.id)}
               onMembers={() => onMembers(project.id)}
+              onRepos={() => onRepos(project.id)}
             />
           ))}
           {projectList.length === 0 &&
@@ -179,10 +182,13 @@ function ProjectSection(props: {
   onNewChannel: () => void;
   onAddPeople: () => void;
   onMembers: () => void;
+  onRepos: () => void;
 }) {
-  const { project, channels, onNewChannel, onAddPeople, onMembers } = props;
+  const { project, channels, onNewChannel, onAddPeople, onMembers, onRepos } = props;
   const activeId = useAppState((s) => s.activeId);
   const urgent = useAppState((s) => s.urgent);
+  // Linking a repository only does something where the GitHub connector is set up.
+  const github = useAppState((s) => s.github?.configured ?? false);
   const people = project.memberIds.length;
 
   return (
@@ -201,6 +207,11 @@ function ProjectSection(props: {
         <button className="icon-button icon-button-small" onClick={onAddPeople} title="Add people" aria-label={`Add people to ${project.name}`}>
           <UserPlusIcon width={18} height={18} />
         </button>
+        {github && (
+          <button className="icon-button icon-button-small" onClick={onRepos} title="GitHub repositories" aria-label={`GitHub repositories of ${project.name}`}>
+            <GithubIcon width={18} height={18} />
+          </button>
+        )}
         <button className="icon-button icon-button-small" onClick={onNewChannel} title="New channel" aria-label={`New channel in ${project.name}`}>
           <PlusIcon width={18} height={18} />
         </button>

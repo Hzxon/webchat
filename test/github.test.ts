@@ -8,7 +8,7 @@ import { createApp, type WebChatApp } from '../server/app.ts';
 import { newSessionToken } from '../server/auth.ts';
 import type { Config } from '../server/config.ts';
 import { comparePulls } from '../server/github.ts';
-import type { GithubDTO, PullListsDTO, PullRequestDTO, PushPayload } from '../shared/types.ts';
+import type { GithubDTO, ProjectRepoDTO, PullListsDTO, PullRequestDTO, PushPayload } from '../shared/types.ts';
 
 const CLIENT_ID = 'Iv1.test-client';
 const CLIENT_SECRET = 'test-client-secret';
@@ -25,6 +25,15 @@ interface FakePull {
   conflicting?: boolean;
   comments?: number;
   lastCommenter?: string;
+  /** "owner/name"; acme/app unless set. */
+  repo?: string;
+  draft?: boolean;
+  /** Requested reviewers: people by login, teams as "org/team". */
+  reviewers?: string[];
+  teams?: string[];
+  /** A requested reviewer the token cannot see, which GitHub answers with null. */
+  hiddenReviewer?: boolean;
+  assignees?: string[];
 }
 
 /** Stands in for github.com and api.github.com: OAuth, the user, GraphQL search, and grant deletion. */
@@ -45,17 +54,25 @@ async function startFakeGithub() {
     id: p.id,
     number: p.number,
     title: p.title,
-    url: `https://github.com/acme/app/pull/${p.number}`,
-    isDraft: false,
+    url: `https://github.com/${p.repo ?? 'acme/app'}/pull/${p.number}`,
+    isDraft: p.draft ?? false,
     updatedAt: new Date().toISOString(),
     additions: 10,
     deletions: 2,
     reviewDecision: p.review ?? null,
     mergeable: p.conflicting ? 'CONFLICTING' : 'MERGEABLE',
-    repository: { nameWithOwner: 'acme/app' },
+    repository: { nameWithOwner: p.repo ?? 'acme/app' },
     author: { login: p.author },
     comments: { totalCount: p.comments ?? 0, nodes: p.lastCommenter ? [{ author: { login: p.lastCommenter } }] : [] },
     commits: { nodes: [{ commit: { statusCheckRollup: p.checks ? { state: p.checks } : null } }] },
+    reviewRequests: {
+      nodes: [
+        ...(p.reviewers ?? []).map((login) => ({ requestedReviewer: { login } })),
+        ...(p.teams ?? []).map((combinedSlug) => ({ requestedReviewer: { combinedSlug } })),
+        ...(p.hiddenReviewer ? [{ requestedReviewer: null }] : []),
+      ],
+    },
+    assignees: { nodes: (p.assignees ?? []).map((login) => ({ login })) },
   });
 
   const server = http.createServer((req, res) => {
@@ -161,11 +178,52 @@ describe('GitHub connector', () => {
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
     });
     const text = await res.text();
-    return { res, status: res.status, data: (text && text.startsWith('{') ? JSON.parse(text) : undefined) as T };
+    return { res, status: res.status, data: (text && /^[[{]/.test(text) ? JSON.parse(text) : undefined) as T };
   }
 
   /** Lets the next request poll GitHub again instead of waiting out the minimum interval. */
   const pollDue = () => instance.sql.query('UPDATE webchat.github_accounts SET polled_at = 0');
+
+  /** The connector does not touch encryption, so a user row and a session are enough. */
+  async function addUser(username: string, displayName: string) {
+    const [user] = await instance.sql.query<{ id: number }>(
+      `INSERT INTO webchat.users (username, display_name, password_hash, created_at, auth_version)
+       VALUES ($1, $2, 'unused', $3, 2) RETURNING id`,
+      [username, displayName, Date.now()],
+    );
+    const { token, tokenHash } = newSessionToken();
+    await instance.sql.query('INSERT INTO webchat.sessions (token_hash, user_id, created_at, expires_at) VALUES ($1, $2, $3, $4)', [
+      tokenHash,
+      user!.id,
+      Date.now(),
+      Date.now() + 3600_000,
+    ]);
+    return { id: user!.id, cookie: `webchat_sid=${token}` };
+  }
+
+  /** A project whose first member owns it, with a #general channel for every member. Its key is never used here. */
+  async function addProject(name: string, memberIds: number[]) {
+    const now = Date.now();
+    const [project] = await instance.sql.query<{ id: number }>(
+      'INSERT INTO webchat.projects (name, created_by, created_at) VALUES ($1, $2, $3) RETURNING id',
+      [name, memberIds[0], now],
+    );
+    const [general] = await instance.sql.query<{ id: number }>(
+      `INSERT INTO webchat.conversations (type, title, project_id, created_at, updated_at, key_id)
+       VALUES ('channel', 'general', $1, $2, $2, $3) RETURNING id`,
+      [project!.id, now, 'k'.repeat(22)],
+    );
+    for (const id of memberIds) {
+      await instance.sql.query('INSERT INTO webchat.project_members (project_id, user_id, added_by, joined_at) VALUES ($1, $2, $3, $4)', [
+        project!.id,
+        id,
+        memberIds[0],
+        now,
+      ]);
+      await instance.sql.query('INSERT INTO webchat.members (conversation_id, user_id, joined_at) VALUES ($1, $2, $3)', [general!.id, id, now]);
+    }
+    return { projectId: project!.id, generalId: general!.id };
+  }
 
   before(async () => {
     github = await startFakeGithub();
@@ -200,21 +258,7 @@ describe('GitHub connector', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-    // The connector does not touch encryption, so a user row and a session are enough.
-    const [user] = await instance.sql.query<{ id: number }>(
-      `INSERT INTO webchat.users (username, display_name, password_hash, created_at, auth_version)
-       VALUES ('dana', 'Dana', 'unused', $1, 2) RETURNING id`,
-      [Date.now()],
-    );
-    userId = user!.id;
-    const { token, tokenHash } = newSessionToken();
-    await instance.sql.query('INSERT INTO webchat.sessions (token_hash, user_id, created_at, expires_at) VALUES ($1, $2, $3, $4)', [
-      tokenHash,
-      userId,
-      Date.now(),
-      Date.now() + 3600_000,
-    ]);
-    cookie = `webchat_sid=${token}`;
+    ({ id: userId, cookie } = await addUser('dana', 'Dana'));
 
     github.state.authored = [
       { id: 'PR_mine_1', number: 1, title: 'Add login page', author: 'octo', review: 'REVIEW_REQUIRED', checks: 'PENDING' },
@@ -272,7 +316,7 @@ describe('GitHub connector', () => {
     assert.ok(!row!.token.includes(TOKEN), 'the token is not stored in plain text');
 
     const { data } = await request<GithubDTO>('GET', '/github');
-    assert.deepEqual(data.account, { login: 'octo', name: 'Octo Cat', notify: true });
+    assert.deepEqual(data.account, { login: 'octo', name: 'Octo Cat', notify: true, autoShare: true });
     assert.deepEqual(
       data.pulls!.authored.map((p) => [p.number, p.review, p.checks]),
       [
@@ -340,6 +384,79 @@ describe('GitHub connector', () => {
     assert.deepEqual([data.events[0]!.kind, data.events[0]!.actor], ['commented', 'bob']);
     await sleep(200);
     assert.equal(pushService.received.length, 0);
+  });
+
+  let eve: Awaited<ReturnType<typeof addUser>>;
+  let capstone: Awaited<ReturnType<typeof addProject>>;
+
+  test('only a project’s owner links a repository, and every member sees the links', async () => {
+    eve = await addUser('eve', 'Eve');
+    const finn = await addUser('finn', 'Finn');
+    capstone = await addProject('Capstone', [userId, eve.id]);
+    const path = `/projects/${capstone.projectId}/repos`;
+    const general = capstone.generalId;
+
+    const asEve = await request<{ code?: string }>('POST', path, { headers: { cookie: eve.cookie }, body: { repo: 'acme/app', conversationId: general } });
+    assert.deepEqual([asEve.status, asEve.data.code], [403, 'not_owner']);
+    assert.equal((await request('GET', path, { headers: { cookie: finn.cookie } })).status, 404, 'outsiders do not see them');
+    assert.equal((await request('POST', path, { body: { repo: 'not a repository', conversationId: general } })).status, 400);
+    assert.equal((await request('POST', path, { body: { repo: 'acme/app', conversationId: 999_999 } })).status, 400, 'only into its own channels');
+
+    const linked = await request<ProjectRepoDTO[]>('POST', path, { body: { repo: 'https://github.com/Acme/App/pull/3', conversationId: general } });
+    assert.equal(linked.status, 200);
+    assert.deepEqual(linked.data.map((r) => [r.repo, r.conversationId, r.addedBy]), [['acme/app', general, userId]]);
+    assert.deepEqual((await request<ProjectRepoDTO[]>('GET', path, { headers: { cookie: eve.cookie } })).data.map((r) => r.repo), ['acme/app']);
+  });
+
+  test('a new pull request in a linked repository waits for its author’s page, with its reviewers', async () => {
+    github.state.authored.push(
+      { id: 'PR_mine_4', number: 4, title: 'Add sign-up page', author: 'octo', reviewers: ['eve-gh'], teams: ['acme/designers'], hiddenReviewer: true, assignees: ['octo'] },
+      { id: 'PR_mine_5', number: 5, title: 'Fix footer', author: 'octo', repo: 'acme/site' },
+      { id: 'PR_mine_6', number: 6, title: 'Try dark mode', author: 'octo', draft: true },
+    );
+    await pollDue();
+
+    const { data } = await request<GithubDTO>('GET', '/github');
+    assert.deepEqual(data.shares.map((s) => [s.pull.number, s.conversationId]), [[4, capstone.generalId]], 'not another repository, not a draft');
+    assert.deepEqual(data.shares[0]!.pull.reviewers, ['eve-gh', 'acme/designers'], 'a reviewer the token cannot see is left out');
+    assert.deepEqual(data.shares[0]!.pull.assignees, ['octo']);
+  });
+
+  test('one tab claims a share, a draft is shared once it is ready, and nothing is shared twice', async () => {
+    const [share] = (await request<GithubDTO>('GET', '/github')).data.shares;
+    const claim = `/github/shares/${share!.id}/claim`;
+    assert.equal((await request('POST', claim, { headers: { cookie: eve.cookie } })).status, 409, 'not someone else’s');
+    assert.equal((await request('POST', claim)).status, 204);
+    const again = await request<{ code?: string }>('POST', claim);
+    assert.deepEqual([again.status, again.data.code], [409, 'already_shared']);
+
+    github.state.authored = github.state.authored.map((p) => (p.id === 'PR_mine_6' ? { ...p, draft: false } : p));
+    await pollDue();
+    assert.deepEqual((await request<GithubDTO>('GET', '/github')).data.shares.map((s) => s.pull.number), [6]);
+  });
+
+  test('turning sharing off forgets what waited, and a merged or left behind pull request is not shared', async () => {
+    assert.equal((await request('PATCH', '/github', { body: {} })).status, 400);
+    assert.equal((await request('PATCH', '/github', { body: { autoShare: 'yes' } })).status, 400);
+    const off = await request<GithubDTO>('PATCH', '/github', { body: { autoShare: false } });
+    assert.deepEqual([off.data.account!.autoShare, off.data.shares], [false, []]);
+    const on = await request<GithubDTO>('PATCH', '/github', { body: { autoShare: true } });
+    assert.deepEqual([on.data.account!.autoShare, on.data.shares], [true, []]);
+
+    github.state.authored.push({ id: 'PR_mine_7', number: 7, title: 'Add search', author: 'octo' });
+    await pollDue();
+    assert.deepEqual((await request<GithubDTO>('GET', '/github')).data.shares.map((s) => s.pull.number), [7]);
+    github.state.authored = github.state.authored.filter((p) => p.id !== 'PR_mine_7');
+    github.state.endings.set('PR_mine_7', { state: 'MERGED', mergedBy: 'eve-gh' });
+    await pollDue();
+    assert.deepEqual((await request<GithubDTO>('GET', '/github')).data.shares, [], 'merged before the page posted it');
+
+    github.state.authored.push({ id: 'PR_mine_8', number: 8, title: 'Add filters', author: 'octo' });
+    await pollDue();
+    const [waiting] = (await request<GithubDTO>('GET', '/github')).data.shares;
+    await instance.sql.query('DELETE FROM webchat.members WHERE conversation_id = $1 AND user_id = $2', [capstone.generalId, userId]);
+    assert.deepEqual((await request<GithubDTO>('GET', '/github')).data.shares, [], 'not into a channel the author left');
+    assert.equal((await request('POST', `/github/shares/${waiting!.id}/claim`)).status, 409);
   });
 
   test('the scheduler endpoint needs the CRON_SECRET', async () => {
@@ -418,5 +535,17 @@ describe('comparing two polls', () => {
   test('pull requests that leave the open list are handed back to look up', () => {
     const before = lists([pull({}), pull({ id: 'PR_2', number: 2 })]);
     assert.deepEqual(comparePulls(before, lists([pull({})]), 'octo').left.map((p) => p.id), ['PR_2']);
+  });
+
+  test('one’s own pull requests that open ready, or leave draft, are handed back for linked projects', () => {
+    const before = lists([pull({}), pull({ id: 'PR_2', number: 2, draft: true }), pull({ id: 'PR_3', number: 3, draft: true })]);
+    const after = lists([
+      pull({}),
+      pull({ id: 'PR_2', number: 2 }),
+      pull({ id: 'PR_3', number: 3, draft: true }),
+      pull({ id: 'PR_4', number: 4 }),
+      pull({ id: 'PR_5', number: 5, draft: true }),
+    ]);
+    assert.deepEqual(comparePulls(before, after, 'octo').ready.map((p) => p.id), ['PR_2', 'PR_4']);
   });
 });

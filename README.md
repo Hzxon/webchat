@@ -32,7 +32,8 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
 - Invite-code sign-up, so only people you give the code to can join.
 - **GitHub pull requests**: connect your GitHub account to see the pull requests waiting for your
   review and how your own are doing, with alerts when they change, and share one into a chat as a
-  card. See [GitHub pull requests](#github-pull-requests).
+  card that names its reviewers. A project can link its repositories, so members' new pull requests
+  show up in a channel by themselves. See [GitHub pull requests](#github-pull-requests).
 
 ## How messages and notifications travel
 
@@ -97,6 +98,8 @@ What it does not protect against:
   channel names, who is in which project or group and who added them, who owns each project and
   group, who left, when a chat got a new key, display names, whether a message is urgent, and that
   someone reacted (not with which emoji, or to which message).
+- **Which GitHub repositories a project links**, and which of its members' pull requests went into
+  which channel by themselves. The cards themselves are encrypted like any message.
 - **Who gets a new channel's key comes from the server.** A new channel's key is wrapped for
   everyone the server lists as a project member. The New channel dialog names them, so check that
   list. The same goes for the new key a chat gets after someone leaves.
@@ -192,8 +195,17 @@ teams), their own open pull requests with checks, review decision, merge conflic
 comments, and recent activity.
 
 The share button on a pull request sends it into a chat or channel as a card: the title, the
-repository and number, and how it stood at that moment, with a link to GitHub. The card is
-encrypted like any message, so the server does not learn which pull request was shared.
+repository and number, how it stood at that moment, who still has to review it and who it is
+assigned to, with a link to GitHub. A reviewer who sees their own GitHub login there reads "you".
+The card is encrypted like any message, so the server does not learn which pull request was shared.
+
+A project's owner can link its GitHub repositories with the GitHub button on the project. When a
+member opens a pull request in a linked repository, their WebChat shares it into the channel the
+owner picked, #general by default, as the same card. A draft waits until it is ready for review.
+This works for members who connected GitHub, and the card goes out when their WebChat next checks
+GitHub: within a minute while a tab is open, or the next time they open it. Each person can turn it
+off for their own pull requests in the pane. Everyone in the project sees each shared title, even
+without access to the repository.
 
 WebChat alerts you the same way as a message when someone asks for your review, approves or asks
 for changes on your pull request, comments on it, its checks fail or pass again, it gets merge

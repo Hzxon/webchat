@@ -26,6 +26,7 @@ import {
   type IdentitySecrets,
   type MessageMeta,
 } from '../shared/e2ee.ts';
+import type { PullCardDTO } from '../shared/types.ts';
 
 // Fewer PBKDF2 rounds keep the suite fast; one test runs the real count.
 const FAST = 1000;
@@ -177,6 +178,34 @@ describe('end-to-end encryption', () => {
     const opened = await decryptContent(key, alice.identity.publicKeys.sign, meta, await encryptMessage(key, keyId, alice.identity.signPrivate, meta, elsewhere));
     assert.equal(opened.pull, undefined, 'the text stays, the card goes');
     assert.equal(opened.text, content.text);
+  });
+
+  test('a card names who still has to review; a card from before reviewers keeps none, not an empty list', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const keyId = newKeyId();
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'p2' };
+    // Some cards here are malformed on purpose, as a page with a bug or a hostile member could send.
+    const open = async (pull: object) => {
+      const content = { text: 'Pull request', pull: pull as PullCardDTO };
+      const envelope = await encryptMessage(key, keyId, alice.identity.signPrivate, meta, content);
+      return (await decryptContent(key, alice.identity.publicKeys.sign, meta, envelope)).pull;
+    };
+    const old = {
+      repo: 'acme/app',
+      number: 8,
+      title: 'Add sign-up page',
+      url: 'https://github.com/acme/app/pull/8',
+      draft: false,
+      review: 'review_required' as const,
+      checks: null,
+      conflicts: false,
+    };
+    const card = { ...old, reviewers: ['bob', 'acme/designers'], assignees: ['alice'], auto: true as const };
+
+    assert.deepEqual(await open(card), card);
+    assert.deepEqual(await open(old), old);
+    const odd = await open({ ...card, reviewers: ['bob', 42, 'two words', 'a/b/c'], assignees: 'alice', auto: 'yes' });
+    assert.deepEqual([odd!.reviewers, odd!.assignees, odd!.auto], [['bob'], undefined, undefined]);
   });
 
   test('the creator can wrap the chat key for their own other devices', async () => {

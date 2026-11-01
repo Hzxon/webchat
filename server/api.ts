@@ -164,6 +164,18 @@ function channelName(value: unknown): string {
   return name;
 }
 
+/** GitHub's rules: an owner of up to 39 letters, digits and hyphens, a name of up to 100 letters, digits, ".", "-" and "_". */
+const REPO = /^[a-z0-9][a-z0-9-]{0,38}\/[\w.-]{1,100}$/;
+
+/** "owner/name", or any github.com link inside the repository. Kept in lower case, as GitHub ignores case there. */
+function repoName(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  const link = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/?#]+)\/([^/?#]+)/.exec(raw);
+  const repo = (link ? `${link[1]}/${link[2]}` : raw).replace(/\.git$/, '');
+  if (!REPO.test(repo)) throw new HttpError(400, 'Name the repository as owner/name, such as acme/app.');
+  return repo;
+}
+
 /** Turns a refused project change into the error the client acts on. */
 function projectRefusal(refusal: ProjectChangeRefusal): HttpError {
   if (refusal === 'name_taken') return new HttpError(409, 'This project already has a channel with that name.', 'name_taken');
@@ -636,6 +648,39 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     res.json(await db.projectFor(me.id, projectId));
   });
 
+  /** The repositories a project links. Every member sees them; only the owner changes them. */
+  router.get('/projects/:id/repos', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const projectId = positiveInt(req.params.id, 'Project id');
+    await requireProjectMember(projectId, me.id);
+    res.json(await db.projectRepos(projectId));
+  });
+
+  /**
+   * Links a repository to a project, or moves its link to another channel. Members' new pull
+   * requests in it are then shared into that channel by their own browsers (D-046).
+   */
+  router.post('/projects/:id/repos', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const projectId = positiveInt(req.params.id, 'Project id');
+    await requireProjectOwner(projectId, me.id);
+    const repo = repoName(req.body?.repo);
+    const result = await db.linkProjectRepo(projectId, repo, positiveInt(req.body?.conversationId, 'conversationId'), me.id);
+    if (result === 'no_channel') throw new HttpError(400, 'Pick a channel of this project.');
+    if (result === 'too_many') {
+      throw new HttpError(409, `A project links at most ${LIMITS.reposPerProject} repositories.`, 'too_many_repos');
+    }
+    res.json(await db.projectRepos(projectId));
+  });
+
+  router.delete('/projects/:id/repos/:owner/:name', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const projectId = positiveInt(req.params.id, 'Project id');
+    await requireProjectOwner(projectId, me.id);
+    await db.unlinkProjectRepo(projectId, repoName(`${req.params.owner}/${req.params.name}`));
+    res.json(await db.projectRepos(projectId));
+  });
+
   /**
    * Leaves a project. The person leaving cannot make new keys for the others, so a member who stays
    * replaces each channel's key (PUT /conversations/:id/key) before anyone sends there again.
@@ -714,7 +759,9 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     const urgent = req.body?.urgent === true;
     // The urgent flag is signed into the envelope, so it is refused rather than quietly dropped.
     if (urgent && kind === 'reaction') throw new HttpError(400, 'A reaction cannot be urgent.');
-    const message = await db.insertMessage(conversationId, me.id, kind, sealed, urgent, clientId);
+    // Not signed: it only moves the sender's own read pointer, which the server keeps anyway.
+    const senderRead = req.body?.auto !== true;
+    const message = await db.insertMessage(conversationId, me.id, kind, sealed, urgent, clientId, senderRead);
     // Answer the sender first; pushes go out after, while the function stays alive.
     inBackground(notifyNewMessage(db, push, config, message, me));
     res.status(201).json(message);
@@ -816,9 +863,25 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
 
   router.patch('/github', requireAuth, async (req, res) => {
     const me = currentUser(res);
-    if (typeof req.body?.notify !== 'boolean') throw new HttpError(400, 'notify must be true or false.');
-    await github.setNotify(me.id, req.body.notify);
+    const { notify, autoShare } = (req.body ?? {}) as { notify?: unknown; autoShare?: unknown };
+    if (notify === undefined && autoShare === undefined) throw new HttpError(400, 'Send notify or autoShare.');
+    if (notify !== undefined && typeof notify !== 'boolean') throw new HttpError(400, 'notify must be true or false.');
+    if (autoShare !== undefined && typeof autoShare !== 'boolean') throw new HttpError(400, 'autoShare must be true or false.');
+    if (notify !== undefined) await github.setNotify(me.id, notify);
+    if (autoShare !== undefined) await github.setAutoShare(me.id, autoShare);
     res.json(await github.view(me.id));
+  });
+
+  /**
+   * Claims a pull request that waits to be shared, for the tab about to post it. Only one tab of
+   * the user's gets it; the others hear 409 and leave it.
+   */
+  router.post('/github/shares/:id/claim', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    if (!(await db.claimPullShare(positiveInt(req.params.id, 'Share id'), me.id))) {
+      throw new HttpError(409, 'This pull request was shared already.', 'already_shared');
+    }
+    res.status(204).end();
   });
 
   router.delete('/github', requireAuth, async (_req, res) => {

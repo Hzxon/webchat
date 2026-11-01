@@ -206,6 +206,11 @@ export interface SendMessageInput {
   clientId: string;
   /** Defaults to "message". */
   kind?: MessageKind;
+  /**
+   * The page sent it on its own, such as a pull request card (D-046). The sender has not read the
+   * chat, so their read pointer stays where it was.
+   */
+  auto?: boolean;
 }
 
 /** A new project, with the key of its first channel, #general, wrapped for every member. */
@@ -330,6 +335,13 @@ export interface PullRequestDTO {
   additions: number;
   deletions: number;
   updatedAt: number;
+  /**
+   * Who still has to review: GitHub logins, and teams as "org/team". GitHub drops a person from
+   * the list once they review. Absent in lists stored before WebChat read it.
+   */
+  reviewers?: string[];
+  /** GitHub logins of the people assigned. Absent in lists stored before WebChat read it. */
+  assignees?: string[];
 }
 
 /**
@@ -347,6 +359,28 @@ export interface PullCardDTO {
   review: PullReview;
   checks: PullChecks;
   conflicts: boolean;
+  /** As in PullRequestDTO. Absent on cards from before cards named reviewers, which then show none. */
+  reviewers?: string[];
+  assignees?: string[];
+  /** The author's page shared it on its own, because a project links the repository (D-046). */
+  auto?: true;
+}
+
+/** A new pull request of the user's that waits for their page to share it into a channel (D-046). */
+export interface PullShareDTO {
+  id: number;
+  conversationId: number;
+  /** How the pull request stands now, from the user's latest poll. */
+  pull: PullRequestDTO;
+}
+
+/** A repository linked to a project: new pull requests that members open in it go to the channel. */
+export interface ProjectRepoDTO {
+  /** "owner/name" in lower case. */
+  repo: string;
+  conversationId: number;
+  addedBy: number | null;
+  addedAt: number;
 }
 
 export interface PullListsDTO {
@@ -385,6 +419,8 @@ export interface GithubAccountDTO {
   name: string | null;
   /** Push alerts for pull request changes. */
   notify: boolean;
+  /** Share the user's new pull requests into the projects that link their repository. */
+  autoShare: boolean;
 }
 
 export interface GithubDTO {
@@ -393,6 +429,8 @@ export interface GithubDTO {
   /** Null while no GitHub account is connected. */
   account: GithubAccountDTO | null;
   pulls: PullListsDTO | null;
+  /** The user's new pull requests that linked projects wait for. The page claims each one, then posts it. */
+  shares: PullShareDTO[];
   /** Newest first. */
   events: GithubEventDTO[];
   /** When the pull requests were last fetched from GitHub. */
@@ -425,5 +463,9 @@ export const LIMITS = {
   displayNameLength: 40,
   /** GitHub's own limit for a pull request title. */
   pullTitleLength: 256,
+  /** Reviewers, and assignees, that the poll reads and a card names. */
+  pullPeople: 10,
+  /** Repositories one project links. Each new pull request in them becomes a message. */
+  reposPerProject: 10,
   pageSize: 50,
 } as const;
