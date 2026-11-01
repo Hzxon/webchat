@@ -93,6 +93,8 @@ decision behind each rule explains why it exists.
 - Before you open a pull request, run `npm run typecheck`, `npm test` and `npm run build`. For a
   change people can see, also try it in a browser with two accounts, at desktop width and at 375
   pixels, in light and dark mode.
+- Before you open a pull request, show the owner the work and wait for their go: screenshots or a
+  recording of a change people can see, from the browser run above, or the diff of one they cannot.
 - Write documentation in short, plain sentences with one idea each, like the README. Code comments
   explain why the code is the way it is, not what it does.
 
