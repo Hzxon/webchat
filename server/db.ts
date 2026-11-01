@@ -178,6 +178,16 @@ UPDATE webchat.conversations SET last_event_id = last_message_id;
 -- A reaction's target message and emoji are inside its envelope; the server sees only that one happened.
 ALTER TABLE webchat.messages ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'message' CHECK (kind IN ('message', 'reaction'));
 `,
+  // 4: removing people from projects and groups, and deleting them.
+  `
+-- The person who made a group, the only one who can remove people from it or delete it. Every copy
+-- of a group's key was wrapped by them (or, for a group from before encryption, by whoever set its
+-- key), so the copies name the owner of each group made before this column existed.
+ALTER TABLE webchat.conversations ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES webchat.users(id);
+UPDATE webchat.conversations c
+SET created_by = (SELECT MIN(k.wrapped_by) FROM webchat.conversation_keys k WHERE k.conversation_id = c.id)
+WHERE c.type = 'group';
+`,
 ];
 
 const statements = (sql: string) =>
@@ -214,6 +224,7 @@ interface ConversationRow {
   type: ConversationType;
   title: string | null;
   project_id: number | null;
+  created_by: number | null;
   updated_at: number;
   unread: number;
   key_id: string | null;
@@ -375,7 +386,7 @@ export async function openDb(sql: Sql) {
   async function conversations(userId: number, onlyId: number | null): Promise<ConversationDTO[]> {
     const [rows, members, lastMessages] = await Promise.all([
       sql.query<ConversationRow>(
-        `SELECT c.id, c.type, c.title, c.project_id, c.updated_at, c.key_id,
+        `SELECT c.id, c.type, c.title, c.project_id, c.created_by, c.updated_at, c.key_id,
            k.wrapped_by AS my_wrapped_by, k.iv AS my_iv, k.wrapped AS my_wrapped,
            (SELECT COUNT(*)::int FROM webchat.messages x
              WHERE x.conversation_id = c.id AND x.id > m.last_read_id AND x.sender_id <> m.user_id
@@ -413,6 +424,7 @@ export async function openDb(sql: Sql) {
       type: row.type,
       title: row.title,
       projectId: row.project_id,
+      createdBy: row.created_by,
       members: membersByChat.get(row.id) ?? [],
       lastMessage: lastByChat.get(row.id) ?? null,
       unread: row.unread,
@@ -642,9 +654,10 @@ export async function openDb(sql: Sql) {
       return sql.transaction(async (tx) => {
         const created = await one(
           tx.query<{ id: number }>(
-            `INSERT INTO webchat.conversations (type, title, direct_key, created_at, updated_at, key_id)
-             VALUES ($1, $2, $3, $4, $4, $5) ON CONFLICT (direct_key) DO NOTHING RETURNING id`,
-            [type, title, directKey, now, key.keyId],
+            `INSERT INTO webchat.conversations (type, title, direct_key, created_at, updated_at, key_id, created_by)
+             VALUES ($1, $2, $3, $4, $4, $5, $6) ON CONFLICT (direct_key) DO NOTHING RETURNING id`,
+            // Only a group has an owner: the person who made it, who also wraps its key.
+            [type, title, directKey, now, key.keyId, type === 'group' ? key.wrappedBy : null],
           ),
         );
         if (!created) {
@@ -667,13 +680,16 @@ export async function openDb(sql: Sql) {
 
     /**
      * Gives a chat from before encryption its key. Only the first caller wins; returns false if the
-     * chat already has one.
+     * chat already has one. A group without an owner becomes the caller's, as migration 4 did for
+     * the groups keyed before it.
      */
     setConversationKey(conversationId: number, keyId: string, wrappedBy: number, wrappedKeys: WrappedKeyInput[]) {
       return sql.transaction(async (tx) => {
         const updated = await tx.query(
-          'UPDATE webchat.conversations SET key_id = $2 WHERE id = $1 AND key_id IS NULL RETURNING id',
-          [conversationId, keyId],
+          `UPDATE webchat.conversations
+           SET key_id = $2, created_by = CASE WHEN type = 'group' THEN COALESCE(created_by, $3) ELSE created_by END
+           WHERE id = $1 AND key_id IS NULL RETURNING id`,
+          [conversationId, keyId, wrappedBy],
         );
         if (updated.length === 0) return false;
         await insertWrappedKeys(tx, conversationId, wrappedBy, wrappedKeys);
@@ -769,6 +785,47 @@ export async function openDb(sql: Sql) {
       });
     },
 
+    /**
+     * Removes someone from a project and from every channel in it. Each channel's key must come
+     * wrapped again, by the member removing them, for exactly the people who stay, so no copy left
+     * was made by the person removed. Stale when that person is gone already.
+     */
+    removeProjectMember(
+      projectId: number,
+      removedBy: number,
+      userId: number,
+      channelKeys: SharedChannelKey[],
+    ): Promise<true | ProjectChangeRefusal> {
+      return sql.transaction(async (tx) => {
+        const memberIds = await lockProject(tx, projectId);
+        const staying = memberIds.filter((id) => id !== userId);
+        if (staying.length === memberIds.length) return 'stale';
+        const channels = await tx.query<{ id: number; key_id: string | null }>(
+          'SELECT id, key_id FROM webchat.conversations WHERE project_id = $1',
+          [projectId],
+        );
+        const keyFor = new Map(channelKeys.map((k) => [k.conversationId, k]));
+        const covered = (channel: { id: number; key_id: string | null }) => {
+          const key = keyFor.get(channel.id);
+          return key !== undefined && key.keyId === channel.key_id && sameIds(staying, key.wrappedKeys.map((k) => k.userId));
+        };
+        if (channels.length !== keyFor.size || !channels.every(covered)) return 'stale';
+
+        await tx.query('DELETE FROM webchat.project_members WHERE project_id = $1 AND user_id = $2', [projectId, userId]);
+        for (const channel of channels) {
+          await tx.query('DELETE FROM webchat.members WHERE conversation_id = $1 AND user_id = $2', [channel.id, userId]);
+          await tx.query('DELETE FROM webchat.conversation_keys WHERE conversation_id = $1', [channel.id]);
+          await insertWrappedKeys(tx, channel.id, removedBy, keyFor.get(channel.id)!.wrappedKeys);
+        }
+        return true;
+      });
+    },
+
+    /** Deletes a project for everyone. Its channels, their messages and their keys go with it. */
+    deleteProject: async (projectId: number) => {
+      await sql.query('DELETE FROM webchat.projects WHERE id = $1', [projectId]);
+    },
+
     projectsFor: (userId: number) => projects(userId, null),
     projectFor: async (userId: number, projectId: number) => (await projects(userId, projectId))[0],
     getProject: (projectId: number) =>
@@ -783,6 +840,51 @@ export async function openDb(sql: Sql) {
 
     conversationsFor: (userId: number) => conversations(userId, null),
     conversationFor: async (userId: number, conversationId: number) => (await conversations(userId, conversationId))[0],
+    getConversation: (conversationId: number) =>
+      one(
+        sql.query<{ type: ConversationType; created_by: number | null }>(
+          'SELECT type, created_by FROM webchat.conversations WHERE id = $1',
+          [conversationId],
+        ),
+      ),
+
+    /**
+     * Removes someone from a group. Its key, if it has one, must come wrapped again, by the member
+     * removing them, for exactly the people who stay. Returns false when the group changed since
+     * the client looked, such as that person being gone already.
+     */
+    removeGroupMember(
+      conversationId: number,
+      removedBy: number,
+      userId: number,
+      key: { keyId: string; wrappedKeys: WrappedKeyInput[] } | null,
+    ): Promise<boolean> {
+      return sql.transaction(async (tx) => {
+        const chat = await one(
+          tx.query<{ key_id: string | null }>('SELECT key_id FROM webchat.conversations WHERE id = $1 FOR UPDATE', [
+            conversationId,
+          ]),
+        );
+        const memberIds = (
+          await tx.query<{ user_id: number }>('SELECT user_id FROM webchat.members WHERE conversation_id = $1', [
+            conversationId,
+          ])
+        ).map((row) => row.user_id);
+        const staying = memberIds.filter((id) => id !== userId);
+        if (!chat || staying.length === memberIds.length || chat.key_id !== (key?.keyId ?? null)) return false;
+        if (key && !sameIds(staying, key.wrappedKeys.map((k) => k.userId))) return false;
+
+        await tx.query('DELETE FROM webchat.members WHERE conversation_id = $1 AND user_id = $2', [conversationId, userId]);
+        await tx.query('DELETE FROM webchat.conversation_keys WHERE conversation_id = $1', [conversationId]);
+        if (key) await insertWrappedKeys(tx, conversationId, removedBy, key.wrappedKeys);
+        return true;
+      });
+    },
+
+    /** Deletes a chat for everyone, with its messages and keys. */
+    deleteConversation: async (conversationId: number) => {
+      await sql.query('DELETE FROM webchat.conversations WHERE id = $1', [conversationId]);
+    },
     memberIds: async (conversationId: number) =>
       (
         await sql.query<{ user_id: number }>('SELECT user_id FROM webchat.members WHERE conversation_id = $1', [
@@ -880,8 +982,8 @@ export async function openDb(sql: Sql) {
 
     /**
      * One cheap query that changes whenever anything this user sees changes: a new message or
-     * reaction, a read or delivered pointer, a new chat, channel or project, someone joining one of
-     * them, a new person, or someone coming online or going offline.
+     * reaction, a read or delivered pointer, a new or deleted chat, channel or project, someone
+     * joining or leaving one of them, a new person, or someone coming online or going offline.
      */
     async stamp(userId: number): Promise<string> {
       const row = await one(
@@ -904,7 +1006,10 @@ export async function openDb(sql: Sql) {
              (SELECT COALESCE(SUM(last_read_id + last_delivered_id), 0) FROM webchat.members
                WHERE conversation_id IN (SELECT * FROM mine)) AS pointers,
              (SELECT COUNT(*)::int FROM mine) AS chats,
-             (SELECT COUNT(*)::int FROM webchat.members WHERE conversation_id IN (SELECT * FROM mine)) AS seats,
+             -- Join times rather than a count, so one person leaving and another joining between
+             -- two check-ins still changes it.
+             (SELECT COALESCE(SUM(joined_at), 0)::bigint FROM webchat.members
+               WHERE conversation_id IN (SELECT * FROM mine)) AS seats,
              (SELECT COUNT(*)::int FROM webchat.users) AS people,
              (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE last_active_at > $2) AS online`,
           [userId, Date.now() - ONLINE_WINDOW_MS],

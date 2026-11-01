@@ -19,7 +19,9 @@ import {
   SmilePlusIcon,
   Ticks,
   UserPlusIcon,
+  UsersIcon,
 } from './icons';
+import type { MembersTarget } from './MembersDialog';
 import { receiptState } from './receipts';
 import { SecurityCodeDialog } from './SecurityCodeDialog';
 
@@ -47,9 +49,10 @@ function sendBlockedReason(conversation: ChatConversation, state: Pick<State, 'm
 interface ChatViewProps {
   conversation: ChatConversation;
   onAddPeople: (projectId: number) => void;
+  onMembers: (target: MembersTarget) => void;
 }
 
-export function ChatView({ conversation, onAddPeople }: ChatViewProps) {
+export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps) {
   const me = useAppState((s) => s.me);
   const meId = me?.id;
   const users = useAppState((s) => s.users);
@@ -72,6 +75,12 @@ export function ChatView({ conversation, onAddPeople }: ChatViewProps) {
   const changed = conversation.members
     .filter((m) => warnings[m.userId])
     .map((m) => users[m.userId]?.displayName ?? 'Someone');
+  const membersOf: MembersTarget | null =
+    isChannel && project
+      ? { kind: 'project', projectId: project.id }
+      : conversation.type === 'group'
+        ? { kind: 'group', conversationId: conversation.id }
+        : null;
 
   return (
     <section className="chat">
@@ -89,6 +98,11 @@ export function ChatView({ conversation, onAddPeople }: ChatViewProps) {
           <span>{subtitle}</span>
         </div>
         <div className="header-end">
+          {membersOf && (
+            <button className="icon-button" onClick={() => onMembers(membersOf)} title="Members" aria-label="Members">
+              <UsersIcon />
+            </button>
+          )}
           {isChannel && project && (
             <button className="icon-button" onClick={() => onAddPeople(project.id)} title="Add people" aria-label="Add people">
               <UserPlusIcon />

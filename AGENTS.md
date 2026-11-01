@@ -74,8 +74,9 @@ decision behind each rule explains why it exists.
 4. No connection stays open. Pages learn about changes from `POST /api/sync` and from Web Push. Any
    new state that pages must see has to change the sync fingerprint in `db.stamp`. See D-004 and
    D-021.
-5. A chat key goes to exactly the chat's members. For channels, the server checks this while the
-   project is locked. See D-015 and D-025.
+5. A chat key goes to exactly the chat's members. The server checks this under a lock: the
+   project's for channels, and the group's when someone is removed from it. See D-015, D-025 and
+   D-039.
 6. Read query strings with the WHATWG URL API, never with `req.query`. See D-012.
 7. A push payload is at most 3,000 bytes and never holds the plain text of encrypted content. See
    D-017.

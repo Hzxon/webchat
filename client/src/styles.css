@@ -99,7 +99,8 @@ a {
 /* Buttons */
 
 .button-primary,
-.button-secondary {
+.button-secondary,
+.button-danger {
   border: 0;
   border-radius: var(--radius);
   padding: 10px 16px;
@@ -122,6 +123,17 @@ a {
 
 .button-secondary:hover:not(:disabled) {
   background: var(--hover);
+}
+
+/* For what cannot be undone, such as deleting a project for everyone. */
+.button-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.button-danger:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
 }
 
 .icon-button {
@@ -1388,6 +1400,47 @@ button.quote:hover {
   padding: 16px 8px;
   color: var(--muted);
   font-size: 14px;
+}
+
+/* A project's or group's members */
+
+.member {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+}
+
+.member-name {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.member-name strong,
+.member-name small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-name small {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.member-remove {
+  flex: none;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.member-remove:hover:not(:disabled) {
+  background: var(--danger-soft);
 }
 
 /* Urgent alert */

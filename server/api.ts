@@ -231,6 +231,24 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     if (!(await db.isProjectMember(projectId, userId))) throw new HttpError(404, 'Project not found.');
   }
 
+  /** Only the person who made a project can remove people from it or delete it. */
+  async function requireProjectOwner(projectId: number, userId: number) {
+    await requireProjectMember(projectId, userId);
+    if ((await db.getProject(projectId))?.created_by !== userId) {
+      throw new HttpError(403, 'Only the person who made this project can do that.', 'not_owner');
+    }
+  }
+
+  /** The same for a group. A group without an owner (see ConversationDTO.createdBy) is up to any member. */
+  async function requireGroupOwner(conversationId: number, userId: number) {
+    await requireMember(conversationId, userId);
+    const chat = await db.getConversation(conversationId);
+    if (chat?.type !== 'group') throw new HttpError(400, 'Only a group can be deleted or have people removed.');
+    if (chat.created_by !== null && chat.created_by !== userId) {
+      throw new HttpError(403, 'Only the person who made this group can do that.', 'not_owner');
+    }
+  }
+
   /** A chat key can only be wrapped for people who have set up encryption. */
   async function requireKeys(userIds: number[]) {
     for (const id of userIds) {
@@ -428,6 +446,30 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     res.status(201).json(await db.conversationFor(me.id, id));
   });
 
+  /** Deletes a group for everyone, with its messages. */
+  router.delete('/conversations/:id', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const conversationId = positiveInt(req.params.id, 'Chat id');
+    await requireGroupOwner(conversationId, me.id);
+    await db.deleteConversation(conversationId);
+    res.status(204).end();
+  });
+
+  /** Removes someone from a group. The owner's browser sends its key wrapped again for the people who stay. */
+  router.delete('/conversations/:id/members/:userId', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const conversationId = positiveInt(req.params.id, 'Chat id');
+    const userId = positiveInt(req.params.userId, 'userId');
+    await requireGroupOwner(conversationId, me.id);
+    if (userId === me.id) throw new HttpError(400, 'You cannot remove yourself.');
+    // Whether the key covers exactly the people who stay is checked while the group is locked.
+    const key = req.body?.key == null ? null : wrappedChatKey(req.body.key);
+    if (!(await db.removeGroupMember(conversationId, me.id, userId, key))) {
+      throw new HttpError(409, 'The group changed while you were editing. Try again.', 'stale_group');
+    }
+    res.json(await db.conversationFor(me.id, conversationId));
+  });
+
   /** Creates a project with its #general channel. Starting alone is fine; members can add people later. */
   router.post('/projects', requireAuth, async (req, res) => {
     const me = currentUser(res);
@@ -476,6 +518,36 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     const general = channelKeys.length > 0 ? Math.min(...channelKeys.map((k) => k.conversationId)) : null;
     inBackground(notifyAddedToProject(push, config, project, general, me, added));
     res.json(project);
+  });
+
+  /**
+   * Removes someone from a project and every channel in it. The owner's browser sends each channel
+   * key wrapped again for the people who stay, so every copy left was made by a member.
+   */
+  router.delete('/projects/:id/members/:userId', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const projectId = positiveInt(req.params.id, 'Project id');
+    const userId = positiveInt(req.params.userId, 'userId');
+    await requireProjectOwner(projectId, me.id);
+    if (userId === me.id) throw new HttpError(400, 'You cannot remove yourself.');
+    const list: unknown[] = Array.isArray(req.body?.channelKeys) ? req.body.channelKeys : [];
+    // Whether the keys cover exactly the people who stay is checked while the project is locked.
+    const channelKeys: SharedChannelKey[] = list.map((item) => {
+      const k = item as { conversationId?: unknown } | undefined;
+      return { conversationId: positiveInt(k?.conversationId, 'conversationId'), ...wrappedChatKey(item) };
+    });
+    const result = await db.removeProjectMember(projectId, me.id, userId, channelKeys);
+    if (result !== true) throw projectRefusal(result);
+    res.json(await db.projectFor(me.id, projectId));
+  });
+
+  /** Deletes a project for everyone, with its channels and their messages. */
+  router.delete('/projects/:id', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const projectId = positiveInt(req.params.id, 'Project id');
+    await requireProjectOwner(projectId, me.id);
+    await db.deleteProject(projectId);
+    res.status(204).end();
   });
 
   /** Sets the key of a chat from before encryption. The first member to send a message does this. */

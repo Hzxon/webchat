@@ -147,6 +147,26 @@ function withConversation(current: State, id: number, change: (c: ChatConversati
   return { ...current, conversations: { ...current.conversations, [id]: change(conversation) } };
 }
 
+/**
+ * Forgets chats the user is no longer in, with everything kept for them: loaded messages (so the
+ * history loads again if they come back), urgent alerts, toasts, and the open chat.
+ */
+function withoutChats(current: State, gone: Set<number>): State {
+  if (gone.size === 0) return current;
+  const keep = <T>(record: Record<number, T>) =>
+    Object.fromEntries(Object.entries(record).filter(([id]) => !gone.has(Number(id)))) as Record<number, T>;
+  return {
+    ...current,
+    conversations: keep(current.conversations),
+    messages: keep(current.messages),
+    reactions: keep(current.reactions),
+    historyComplete: keep(current.historyComplete),
+    activeId: current.activeId !== null && gone.has(current.activeId) ? null : current.activeId,
+    urgent: current.urgent.filter((m) => !gone.has(m.conversationId)),
+    toasts: current.toasts.filter((t) => t.conversationId === null || !gone.has(t.conversationId)),
+  };
+}
+
 let toastId = 0;
 
 export const actions = {
@@ -163,15 +183,18 @@ export const actions = {
 
   /**
    * Takes the server's latest people, projects and chats, adds new messages to chats already
-   * loaded, and applies new reactions.
+   * loaded, and applies new reactions. Chats the server no longer lists were deleted, or the user
+   * was removed from them.
    */
   applySync: (users: UserDTO[], projects: ProjectDTO[], conversations: ChatConversation[], messages: ChatMessage[]) =>
     store.set((s) => {
       const pending = { ...s.pending };
       for (const message of messages) if (message.clientId) delete pending[message.clientId];
+      const listed = new Set(conversations.map((c) => c.id));
+      const current = withoutChats(s, new Set(Object.keys(s.conversations).map(Number).filter((id) => !listed.has(id))));
       return {
-        ...s,
-        ...withEvents(s, messages),
+        ...current,
+        ...withEvents(current, messages),
         users: Object.fromEntries(users.map((u) => [u.id, u])),
         projects: Object.fromEntries(projects.map((p) => [p.id, p])),
         conversations: Object.fromEntries(conversations.map((c) => [c.id, c])),
@@ -180,6 +203,18 @@ export const actions = {
     }),
 
   upsertProject: (project: ProjectDTO) => store.set((s) => ({ ...s, projects: { ...s.projects, [project.id]: project } })),
+
+  /** Forgets a project and its channels at once, after deleting it, ahead of the next check-in. */
+  dropProject: (projectId: number) =>
+    store.set((s) => {
+      const projects = { ...s.projects };
+      delete projects[projectId];
+      const channels = Object.values(s.conversations).filter((c) => c.projectId === projectId);
+      return { ...withoutChats(s, new Set(channels.map((c) => c.id))), projects };
+    }),
+
+  /** Forgets a chat at once, after deleting it. */
+  dropConversation: (conversationId: number) => store.set((s) => withoutChats(s, new Set([conversationId]))),
 
   /** Sets this user's own reaction at once, ahead of the server. Force lets a failed send put back the old one. */
   setMyReaction: (conversationId: number, messageId: number, userId: number, mark: ReactionMark) =>

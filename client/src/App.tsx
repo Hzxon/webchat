@@ -7,6 +7,7 @@ import { Toasts, UrgentAlert } from './components/Alerts';
 import { AuthScreen } from './components/AuthScreen';
 import { ChatView } from './components/ChatView';
 import { GithubView } from './components/GithubView';
+import { MembersDialog, type MembersTarget } from './components/MembersDialog';
 import { NewChatDialog, type NewChatMode } from './components/NewChatDialog';
 import { NotificationDialog } from './components/NotificationDialog';
 import { AddPeopleDialog, NewChannelDialog } from './components/ProjectDialogs';
@@ -66,7 +67,8 @@ type OpenDialog =
   | { kind: 'new-chat'; mode: NewChatMode }
   | { kind: 'notifications' }
   | { kind: 'new-channel'; projectId: number }
-  | { kind: 'add-people'; projectId: number };
+  | { kind: 'add-people'; projectId: number }
+  | { kind: 'members'; target: MembersTarget };
 
 function ChatLayout() {
   const activeId = useAppState((s) => s.activeId);
@@ -75,6 +77,7 @@ function ChatLayout() {
   const githubOpen = useAppState((s) => s.githubOpen);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const addPeople = (projectId: number) => setDialog({ kind: 'add-people', projectId });
+  const showMembers = (target: MembersTarget) => setDialog({ kind: 'members', target });
 
   return (
     <div className={`layout ${activeId !== null || githubOpen ? 'has-active' : ''}`}>
@@ -83,12 +86,13 @@ function ChatLayout() {
         onNewProject={() => setDialog({ kind: 'new-chat', mode: 'project' })}
         onNewChannel={(projectId) => setDialog({ kind: 'new-channel', projectId })}
         onAddPeople={addPeople}
+        onMembers={(projectId) => showMembers({ kind: 'project', projectId })}
         onNotifications={() => setDialog({ kind: 'notifications' })}
       />
       {githubOpen ? (
         <GithubView />
       ) : active ? (
-        <ChatView key={active.id} conversation={active} onAddPeople={addPeople} />
+        <ChatView key={active.id} conversation={active} onAddPeople={addPeople} onMembers={showMembers} />
       ) : (
         <section className="chat chat-empty">
           <div className="chat-empty-card">
@@ -110,6 +114,7 @@ function ChatLayout() {
       {dialog?.kind === 'notifications' && <NotificationDialog onClose={() => setDialog(null)} />}
       {dialog?.kind === 'new-channel' && <NewChannelDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'add-people' && <AddPeopleDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'members' && <MembersDialog target={dialog.target} onClose={() => setDialog(null)} />}
       <UrgentAlert />
       <Toasts />
     </div>
