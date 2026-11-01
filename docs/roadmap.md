@@ -162,9 +162,9 @@ Calls need WebRTC and TURN servers, which cost money (D-003).
 
 ### R-016: Link a project to repositories
 
-Status: Started in #14 (D-046). A project links repositories, and members' new pull requests in
-them go to a channel by themselves. Still to do: the Projects tab list, which depends on Q-3 for a
-shared read, and reviewers shown by their WebChat names instead of GitHub logins.
+Status: In progress on `claude/webchat-token-scopes-ca98f4`: a GitHub App links repositories,
+and its webhooks post cards into the channel. Started in #14 (D-046). Still to do after that: the
+Projects tab list, and reviewers shown by their WebChat names instead of GitHub logins.
 
 Why: the pane lists one person's pull requests across every repository, with no grouping. A team
 wants to see every open pull request of its repositories, by any member, next to its channels. Only
