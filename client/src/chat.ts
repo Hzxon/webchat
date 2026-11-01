@@ -108,7 +108,15 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
   for (const m of fresh) seen.add(m.id);
   const before = store.get();
   actions.applySync(result.users, result.projects, conversations, messages);
-  for (const message of fresh) if (message.senderId !== meId && message.kind === 'message') onIncoming(message);
+  // A chat this user was just added to sends its history after their cursor. Messages up to their
+  // read pointer came before they joined, or were read on another device, so they never alert.
+  const readUpTo = (conversationId: number) =>
+    byId.get(conversationId)?.members.find((m) => m.userId === meId)?.lastReadId ?? 0;
+  for (const message of fresh) {
+    if (message.senderId !== meId && message.kind === 'message' && message.id > readUpTo(message.conversationId)) {
+      onIncoming(message);
+    }
+  }
 
   // Its owner deleted the open chat or removed this user from it. The chat closes, so say why. A
   // toast shows one line of text, so the title names the chat and the text stays short for phones.
@@ -532,6 +540,22 @@ export function removeProjectMember(projectId: number, userId: number): Promise<
       })),
     );
     actions.upsertProject(await api.removeProjectMember(projectId, userId, { channelKeys }));
+    void syncNow();
+  });
+}
+
+/** Adds people to a group, sharing its key with them so they can read the history. */
+export function addGroupMembers(conversationId: number, userIds: number[]): Promise<void> {
+  return retryIfStale(async () => {
+    const conversation = store.get().conversations[conversationId];
+    if (!conversation) throw new Error('Group not found.');
+    const key = conversation.keyId
+      ? {
+          keyId: conversation.keyId,
+          wrappedKeys: await keyring.shareChatKey(conversation, currentLookup(), userIds.map(keyRecipient), warnedIds()),
+        }
+      : null;
+    await adoptConversation(await api.addGroupMembers(conversationId, { userIds, key }));
     void syncNow();
   });
 }

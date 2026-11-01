@@ -1,5 +1,6 @@
 import type {
   AccountKeysInput,
+  AddGroupMembersInput,
   AddProjectMembersInput,
   BootstrapDTO,
   ChatKeyInput,
@@ -84,6 +85,8 @@ export const api = {
     request<ConversationDTO>('POST', '/conversations/direct', { userId, key }),
   createGroup: (title: string, memberIds: number[], key: ChatKeyInput) =>
     request<ConversationDTO>('POST', '/conversations/group', { title, memberIds, key }),
+  addGroupMembers: (conversationId: number, input: AddGroupMembersInput) =>
+    request<ConversationDTO>('POST', `/conversations/${conversationId}/members`, input),
   removeGroupMember: (conversationId: number, userId: number, input: RemoveGroupMemberInput) =>
     request<ConversationDTO>('DELETE', `/conversations/${conversationId}/members/${userId}`, input),
   deleteGroup: (conversationId: number) => request<void>('DELETE', `/conversations/${conversationId}`),

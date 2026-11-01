@@ -557,6 +557,53 @@ describe('chat server', () => {
     await bob.openChatKey(chat, keysOf(alice));
   });
 
+  test('any member can add someone to a group, who then reads its history', async () => {
+    const path = `/conversations/${weekend.id}/members`;
+    const view = await viewOf(bob, weekend.id);
+    const forCarol = await bob.shareChatKey(view, keysOf(alice), [carol]);
+    assert.equal((await carol.request('POST', path, { userIds: [carol.id], key: forCarol })).status, 404);
+    assert.equal(
+      (await bob.request('POST', `/conversations/${directChat.id}/members`, { userIds: [carol.id], key: forCarol })).status,
+      400,
+      'a direct chat stays between two people',
+    );
+    const forBoth = await bob.shareChatKey(view, keysOf(alice), [alice, carol]);
+    assert.equal((await bob.request('POST', path, { userIds: [carol.id], key: forBoth })).status, 400, 'a copy for each person added, no more');
+    const keyless = await bob.request<{ code?: string }>('POST', path, { userIds: [carol.id], key: null });
+    assert.equal(keyless.data.code, 'stale_group', 'a group with a key must share it');
+    const forAlice = await bob.shareChatKey(view, keysOf(alice), [alice]);
+    const again = await bob.request<{ code?: string }>('POST', path, { userIds: [alice.id], key: forAlice });
+    assert.equal(again.data.code, 'already_member');
+
+    const phone = makeSubscription(`http://${pushService.host}/carol-phone`);
+    assert.equal((await carol.request('POST', '/push/subscribe', phone.json)).status, 204);
+    pushService.received.length = 0;
+    const added = await bob.request<ConversationDTO>('POST', path, { userIds: [carol.id], key: forCarol });
+    assert.equal(added.status, 200, JSON.stringify(added.data));
+    assert.deepEqual(memberIdsOf(added.data), [alice.id, bob.id, carol.id]);
+    const [push] = await waitForPushes(pushService.received, 1);
+    const invite = phone.decrypt(push!.body);
+    assert.deepEqual(
+      [invite.kind, invite.title, invite.body, invite.conversationId],
+      ['group', 'Weekend', 'Bob added you to this group.', weekend.id],
+    );
+
+    const aliceView = await alice.sync(true);
+    assert.ok(aliceView.changed, 'the others see the newcomer');
+    assert.deepEqual(memberIdsOf(aliceView.conversations.find((c) => c.id === weekend.id)!), [alice.id, bob.id, carol.id]);
+
+    const res = await carol.sync(true);
+    assert.ok(res.changed);
+    const chat = res.conversations.find((c) => c.id === weekend.id)!;
+    assert.equal(chat.unread, 0, 'history from before joining is not unread');
+    const mine = chat.members.find((m) => m.userId === carol.id)!;
+    assert.equal(mine.lastReadId, chat.lastMessage!.id, 'so the page alerts for none of it');
+    assert.equal(chat.myKey!.wrappedBy, bob.id);
+    await carol.openChatKey(chat, keysOf(bob));
+    const history = await carol.request<MessageDTO[]>('GET', `/conversations/${weekend.id}/messages`);
+    assert.equal(await carol.read(history.data[0]!, keysOf(alice)), 'Dinner at 7?');
+  });
+
   test('only the person who made a group can delete it, for everyone', async () => {
     const notOwner = await bob.request<{ code?: string }>('DELETE', `/conversations/${weekend.id}`);
     assert.equal(notOwner.status, 403);
@@ -889,6 +936,27 @@ describe('chat server', () => {
       { title: 'Older chat', created_by: null },
     ]);
     assert.equal((await bob.request('DELETE', `/conversations/${id}`)).status, 204, 'any member manages a group without an owner');
+  });
+
+  test('a group without a key takes new people without one, and its first message keys it for everyone', async () => {
+    const now = Date.now();
+    const [{ id }] = (await instance.sql.query<{ id: number }>(
+      `INSERT INTO webchat.conversations (type, title, created_at, updated_at) VALUES ('group', 'Study group', $1, $1) RETURNING id`,
+      [now],
+    )) as [{ id: number }];
+    for (const user of [alice, bob]) {
+      await instance.sql.query('INSERT INTO webchat.members (conversation_id, user_id, joined_at) VALUES ($1, $2, $3)', [id, user.id, now]);
+    }
+    const path = `/conversations/${id}/members`;
+    const withKey = await bob.request<{ code?: string }>('POST', path, {
+      userIds: [carol.id],
+      key: await bob.newChatKey([{ id: carol.id, keys: keysOf(carol) }]),
+    });
+    assert.equal(withKey.data.code, 'stale_group', 'a new key would leave Alice and Bob without a copy');
+    const added = await bob.request<ConversationDTO>('POST', path, { userIds: [carol.id], key: null });
+    assert.equal(added.status, 200, JSON.stringify(added.data));
+    assert.deepEqual(memberIdsOf(added.data), [alice.id, bob.id, carol.id]);
+    assert.equal(added.data.keyId, null);
   });
 
   test('a tab still showing another account is refused instead of acting as the signed-in one', async () => {

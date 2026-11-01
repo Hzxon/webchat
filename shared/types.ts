@@ -228,6 +228,12 @@ export interface RemoveProjectMemberInput {
   channelKeys: SharedChannelKeyInput[];
 }
 
+/** People to add to a group, with its existing key wrapped for each of them. Null for a group without a key. */
+export interface AddGroupMembersInput {
+  userIds: number[];
+  key: ChatKeyInput | null;
+}
+
 /** The group's key wrapped again for exactly the people who stay. Null for a group without a key. */
 export interface RemoveGroupMemberInput {
   key: ChatKeyInput | null;
@@ -235,8 +241,8 @@ export interface RemoveGroupMemberInput {
 
 /** JSON body of every Web Push message. The service worker turns it into a notification. */
 export interface PushPayload {
-  /** "reaction" only wakes a tab the user is looking at; "project" says someone added them to one. */
-  kind: 'message' | 'reaction' | 'project' | 'github' | 'test';
+  /** "reaction" only wakes a tab the user is looking at; "project" and "group" say someone added them to one. */
+  kind: 'message' | 'reaction' | 'project' | 'group' | 'github' | 'test';
   title: string;
   /** Text for messages the server can read (tests, old plain messages). Empty for encrypted ones. */
   body: string;
@@ -355,7 +361,7 @@ export const LIMITS = {
   groupTitleLength: 60,
   projectNameLength: 60,
   channelNameLength: 40,
-  /** People added to a project at once. Each needs every channel key, and requests stop at 64 KB. */
+  /** People added to a project or group at once. Each needs every channel key, and requests stop at 64 KB. */
   addMembersAtOnce: 20,
   displayNameLength: 40,
   pageSize: 50,

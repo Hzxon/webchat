@@ -100,8 +100,9 @@ self.addEventListener('push', (event) => {
       // While the user is looking at the app, the server pushes only to that browser so the page can
       // show the message at once. A focused tab shows it already, so only urgent ones also go to the system.
       const someoneLooking = clients.some((c) => c.focused && c.visibilityState === 'visible');
-      // Being added to a project is rare, and the page has no alert of its own for it.
-      if (someoneLooking && !payload.urgent && payload.kind !== 'test' && payload.kind !== 'project') return;
+      // Being added to a project or group is rare, and the page has no alert of its own for it.
+      const invite = payload.kind === 'project' || payload.kind === 'group';
+      if (someoneLooking && !payload.urgent && payload.kind !== 'test' && !invite) return;
 
       if (payload.unreadTotal !== null && 'setAppBadge' in self.navigator) {
         await self.navigator.setAppBadge(payload.unreadTotal).catch(() => undefined);

@@ -760,6 +760,8 @@ export async function openDb(sql: Sql) {
       const now = Date.now();
       return sql.transaction(async (tx) => {
         const memberIds = await lockProject(tx, projectId);
+        // Removed meanwhile: the copies they wrapped would come from someone outside the project.
+        if (!memberIds.includes(addedBy)) return 'stale';
         if (userIds.some((id) => memberIds.includes(id))) return 'already_member';
         const channels = await tx.query<{ id: number; key_id: string | null; last_message_id: number }>(
           'SELECT id, key_id, last_message_id FROM webchat.conversations WHERE project_id = $1',
@@ -848,6 +850,46 @@ export async function openDb(sql: Sql) {
           [conversationId],
         ),
       ),
+
+    /**
+     * Adds people to a group. Its key, if it has one, must come wrapped for them by the member
+     * adding them, so they can read its history. Their read pointers start at the newest message,
+     * so that history does not count as unread. Stale when the key changed since the client looked,
+     * or the member adding them was removed meanwhile.
+     */
+    addGroupMembers(
+      conversationId: number,
+      addedBy: number,
+      userIds: number[],
+      key: { keyId: string; wrappedKeys: WrappedKeyInput[] } | null,
+    ): Promise<true | 'stale' | 'already_member'> {
+      const now = Date.now();
+      return sql.transaction(async (tx) => {
+        const chat = await one(
+          tx.query<{ key_id: string | null; last_message_id: number }>(
+            'SELECT key_id, last_message_id FROM webchat.conversations WHERE id = $1 FOR UPDATE',
+            [conversationId],
+          ),
+        );
+        const memberIds = (
+          await tx.query<{ user_id: number }>('SELECT user_id FROM webchat.members WHERE conversation_id = $1', [
+            conversationId,
+          ])
+        ).map((row) => row.user_id);
+        if (!chat || !memberIds.includes(addedBy) || chat.key_id !== (key?.keyId ?? null)) return 'stale';
+        if (userIds.some((id) => memberIds.includes(id))) return 'already_member';
+
+        for (const userId of userIds) {
+          await tx.query(
+            `INSERT INTO webchat.members (conversation_id, user_id, joined_at, last_delivered_id, last_read_id)
+             VALUES ($1, $2, $3, $4, $4)`,
+            [conversationId, userId, now, chat.last_message_id],
+          );
+        }
+        if (key) await insertWrappedKeys(tx, conversationId, addedBy, key.wrappedKeys);
+        return true;
+      });
+    },
 
     /**
      * Removes someone from a group. Its key, if it has one, must come wrapped again, by the member
