@@ -369,7 +369,7 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-20: Drafts and unsent messages survive a closed tab (D-051) | #19 |
 | K-22: The chat header stays in view over the iPhone keyboard (D-053) | #21 |
 | K-25: The page no longer slides as the iPhone keyboard opens (D-053) | #22 |
-
+| R-018: Alerts on iPhones without Web Push, through the Bark app (D-054) | #23 |
 ### K-25: The page slid as the iPhone keyboard opened
 
 Status: Fixed in #22 (D-053). Seen by the owner on iOS 15.8 after #21, in a screen recording. The
@@ -482,3 +482,22 @@ Status: Fixed in #6 (D-040).
 A tab that still runs the app from before #2 shows each reaction as "could not be decrypted" until
 it reloads. A version check that reloads tabs after a deploy would fix this one and future format
 changes.
+
+### R-018: Alerts on iPhones without Web Push, through the Bark app
+
+Status: Done in #23 (D-054).
+
+Why: an iPhone on iOS 15, such as an iPhone 7 Plus, can never get Web Push, which Apple added in
+iOS 16.4, and a native app would need the paid Apple Developer Program for its push. Students keep
+such phones, and WebChat on them alerts only while the page is open.
+
+Scope: WebChat acts as a Bark server for one person at a time. Bark is a free, open-source
+notification app whose author publishes the APNs key the app's pushes are signed with. The person
+installs Bark, gives it a server URL from the bell dialog, and from then on the server sends an
+APNs push to that phone whenever a Web Push would go to their other devices: chat and sender name,
+never the message text. Optional encryption with a key typed into Bark hides even those names from
+Apple. Done when a phone on iOS 15.8 shows a banner within seconds of a message, with the tests and
+the README setup. The tests run against a fake Apple push service. Checked by the owner on an
+iPhone 7 Plus on iOS 15.8.8 on 2026-11-02 against a local server with Bark's key: the test banner,
+a normal and an urgent alert, and an encrypted one that Bark read on the phone. The first alert
+from the production deployment confirms HTTP/2 to Apple from a Vercel function.

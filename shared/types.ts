@@ -142,6 +142,28 @@ export interface ConfigDTO {
   kdfSalt: string;
 }
 
+/** A phone's Bark app that registered through the user's link. The key is what Bark shows for the device. */
+export interface BarkDeviceDTO {
+  key: string;
+  registeredAt: number;
+  seenAt: number;
+}
+
+/**
+ * The user's Bark setup (R-018): the server URL to type into the app, the encryption key, and the
+ * phones that registered. Alerts to Bark carry chat and sender names, never the message text.
+ */
+export interface BarkDTO {
+  /** False until the server holds Bark's APNs key, BARK_APNS_KEY. */
+  configured: boolean;
+  link: {
+    serverUrl: string;
+    /** 32 characters for AES-256-GCM, typed into Bark's Push Encryption settings. Null while alerts go plain. */
+    cipherKey: string | null;
+    devices: BarkDeviceDTO[];
+  } | null;
+}
+
 /** Private keys encrypted with a key only the user's password can derive. */
 export interface SealedBackupDTO {
   iv: string;

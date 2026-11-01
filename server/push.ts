@@ -1,4 +1,5 @@
 import webpush from 'web-push';
+import type { Bark } from './bark.js';
 import type { Config } from './config.js';
 import type { Db } from './db.js';
 import type { PushPayload } from '../shared/types.js';
@@ -20,7 +21,7 @@ export interface PushSubscriptionInput {
 
 export type Push = Awaited<ReturnType<typeof createPush>>;
 
-export async function createPush(db: Db, config: Config) {
+export async function createPush(db: Db, config: Config, bark: Bark) {
   // Keys from the environment win. Otherwise the first server to start generates a pair and saves
   // it as one value, so every instance signs pushes with the same keys.
   const { publicKey, privateKey } =
@@ -48,7 +49,8 @@ export async function createPush(db: Db, config: Config) {
 
   /**
    * Sends one payload to the browsers the user enabled push on: all of them, or only the one with
-   * the given endpoint. Dead subscriptions are deleted.
+   * the given endpoint. Dead subscriptions are deleted. Without an endpoint, the user is not
+   * looking at the app anywhere, so the phones they linked through Bark get the alert too (R-018).
    */
   async function sendToUser(
     userId: number,
@@ -57,6 +59,7 @@ export async function createPush(db: Db, config: Config) {
   ): Promise<{ sent: number; failed: number }> {
     const all = await db.pushSubscriptionsFor(userId);
     const subscriptions = onlyEndpoint ? all.filter((s) => s.endpoint === onlyEndpoint) : all;
+    const phones = onlyEndpoint ? Promise.resolve({ sent: 0, failed: 0 }) : bark.sendToUser(userId, payload);
     const body = JSON.stringify(payload);
     const results = await Promise.all(
       subscriptions.map(async (subscription) => {
@@ -92,8 +95,9 @@ export async function createPush(db: Db, config: Config) {
         return false;
       }),
     );
-    const sent = results.filter(Boolean).length;
-    return { sent, failed: results.length - sent };
+    const viaBark = await phones;
+    const sent = results.filter(Boolean).length + viaBark.sent;
+    return { sent, failed: results.length - results.filter(Boolean).length + viaBark.failed };
   }
 
   return { publicKey, isAllowedEndpoint, sendToUser };

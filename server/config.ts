@@ -26,6 +26,16 @@ export interface Config {
   sessionDays: number;
   /** Extra push endpoint hosts to accept, any protocol. Meant for tests only. */
   extraPushHosts: string[];
+  /**
+   * Bark's APNs key, which its author publishes for self-hosted servers, so WebChat can alert the
+   * Bark app on iPhones without Web Push (R-018). Those alerts stay off until it is set. The key id
+   * and team id default to Bark's own.
+   */
+  barkApnsKey: string | undefined;
+  barkApnsKeyId: string;
+  barkApnsTeamId: string;
+  /** Apple's push gateway. Meant for tests only. */
+  apnsOrigin: string;
   /** Built client to serve, or null to serve the API only (Vercel and the Vite dev server serve the client). */
   clientDir: string | null;
   /** GitHub OAuth App credentials, for each person's Pull requests pane. It stays off until both are set. */
@@ -91,6 +101,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxy: onVercel ? true : parseTrustProxy(env.TRUST_PROXY),
     sessionDays: Number(env.SESSION_DAYS ?? 30),
     extraPushHosts: (env.EXTRA_PUSH_HOSTS ?? '').split(',').map((h) => h.trim()).filter(Boolean),
+    barkApnsKey: env.BARK_APNS_KEY?.replace(/\\n/g, '\n') || undefined,
+    barkApnsKeyId: env.BARK_APNS_KEY_ID || 'LH4T9V5U4R',
+    barkApnsTeamId: env.BARK_APNS_TEAM_ID || '5U8LBRXG3A',
+    apnsOrigin: env.APNS_ORIGIN || 'https://api.push.apple.com',
     clientDir:
       onVercel || env.SERVE_CLIENT === 'false' ? null : path.resolve(env.CLIENT_DIR ?? path.join('dist', 'client')),
     githubClientId: env.GITHUB_CLIENT_ID || undefined,

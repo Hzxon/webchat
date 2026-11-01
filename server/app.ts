@@ -7,6 +7,7 @@ import { createApiRouter } from './api.js';
 import { randomBytes, toBase64Url } from '../shared/e2ee.js';
 import { BUILD_HEADER } from '../shared/types.js';
 import { randomInviteCode } from './auth.js';
+import { createBark } from './bark.js';
 import type { Config } from './config.js';
 import { openDb } from './db.js';
 import { createGithub } from './github.js';
@@ -68,7 +69,8 @@ export async function createApp(config: Config): Promise<WebChatApp> {
   // Mixed into every password key derivation, so keys from one deployment are useless on another.
   const kdfSalt = await db.claimMeta('kdf_salt', toBase64Url(randomBytes(16)));
 
-  const push = await createPush(db, config);
+  const bark = createBark(db, config);
+  const push = await createPush(db, config, bark);
   const github = createGithub(db, push, config);
   const githubApp = createGithubApp(db, config);
   const app = express();
@@ -94,7 +96,7 @@ export async function createApp(config: Config): Promise<WebChatApp> {
   app.use(
     '/api',
     express.json({ limit: '256kb' }),
-    createApiRouter({ db, push, github, githubApp, config, inviteCode, kdfSalt }),
+    createApiRouter({ db, push, bark, github, githubApp, config, inviteCode, kdfSalt }),
   );
   // The body parser runs before the API router, so its errors never reach the router's handler.
   // Answer them as JSON too, which the page can show, and without Express's stack-trace page.

@@ -48,7 +48,9 @@ keeps its own cookies and keys.
 | `server/api.ts` | Every `/api` route, with input checks, sign-in checks and rate limits. |
 | `server/db.ts` | The schema, the migrations, the sync fingerprint and every SQL query. |
 | `server/notify.ts` | Decides who gets a push for a message, a reaction or a project invite. |
-| `server/push.ts` | Sends Web Push with VAPID keys. |
+| `server/push.ts` | Sends Web Push with VAPID keys, and hands alerts to Bark when the user is not looking. |
+| `server/bark.ts` | Alerts for iPhones without Web Push: WebChat stands in for the Bark app's server. |
+| `server/apns.ts` | Sends to Apple's push service over HTTP/2 with a provider token the instances share. |
 | `server/github.ts` | The GitHub connector for each person's pane: OAuth, polling and pull request events. |
 | `server/githubApp.ts` | The GitHub App: projects link repositories through it, and its webhooks post cards. |
 | `shared/types.ts` | Types shared by the server, the page and the service worker, and `LIMITS`. |

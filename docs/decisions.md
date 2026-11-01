@@ -542,6 +542,42 @@ then sends it twice.
 
 ## Projects and channels
 
+### D-054: iPhones without Web Push get alerts through the Bark app
+
+Accepted 2026-11-02 in #23.
+
+An iPhone on iOS 15 can never get Web Push, which Apple added in iOS 16.4, and an app of our own
+could push only through the paid Apple Developer Program. So WebChat alerts such phones through
+Bark, a free, open-source notification app whose author publishes the APNs key its pushes are
+signed with. The server stands in for Bark's own server: the bell dialog makes a server URL with a
+secret token in it, the person types it into Bark, and the app registers its APNs token there.
+From then on, whenever a Web Push would go to the person's other devices (D-007), the server also
+sends an APNs push to the phone, signed with Bark's key, with what a Web Push carries before it is
+decrypted: the chat name, the sender's name, urgency and the unread count, never the message text,
+which the server does not have (D-014). With encryption turned on in the dialog, the person types
+a second key into Bark, and the alert reaches Apple as AES-256-GCM ciphertext under a placeholder
+that Bark replaces on the phone. One provider token signs every push for an hour and is shared
+through the database, because Apple refuses tokens refreshed more often than every 20 minutes and
+serverless instances start often.
+
+Why: the students the product is for keep old phones. Relays through Telegram and similar services
+were turned down because they put another service and account in the path. An app of our own
+signed with a free Apple ID stops after 7 days, a jailbreak wants a computer or a tap after every
+reboot, and a page kept alive with silent audio costs battery and dies with any other sound. Bark
+needs an App Store install and nothing running on the phone.
+
+Cost:
+
+- The route depends on Bark: its app, and a key its author calls permanent but could withdraw. If
+  it stops, these alerts stop until another route is built, and nothing else is affected.
+- The operator downloads the key from Bark's documentation into `BARK_APNS_KEY`. The repository
+  never carries it.
+- Apple sees when a push goes to the phone and its collapse id, and without encryption also the
+  chat and sender names. The Bark app sees the decrypted alert. The README lists this.
+- A Bark alert cannot mark the message delivered; the tick comes when the person opens WebChat.
+- The link's state is not in the sync fingerprint (D-021). The dialog reads it when it opens, so
+  another tab of the same account shows it on its next opening of the dialog.
+
 ### D-024: Every project member is in every channel
 
 Accepted 2026-11-01 in #2.
