@@ -389,6 +389,8 @@ Before you change the code, read [AGENTS.md](AGENTS.md). It links to
 
 ## Limits
 
+- It runs in Chrome and Edge 111, Firefox 114, and Safari 15.4 or later. On iPhone and iPad that
+  means iOS 15.4, and push needs iOS 16.4.
 - Text only: no voice or video calls, photos, or files yet. No typing indicator.
 - With push turned off on a device, new messages show up on its next check-in (up to 3 seconds
   while you are looking, longer in the background).

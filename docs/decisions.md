@@ -240,6 +240,20 @@ the install scripts of esbuild and fsevents, which nothing needs.
 Cost: moving to a new major Node release is a deliberate change to `engines`, and the README's
 requirement moves with it. Local development runs on the same Node 26 as Vercel (K-3).
 
+### D-051: The build supports iOS 15.4 and later
+
+Accepted 2026-11-01 in #20.
+
+`browserTargets` in `vite.config.ts` names the browsers the page and the service worker must run
+in: Chrome and Edge 111, Firefox 114, and Safari and iOS 15.4. Vite's default starts at Safari 16.4.
+With it, Lightning CSS wrote `max-width` media queries as `width<=` ranges. Safari before 16.4 drops
+a query it cannot parse, so iPhones on older iOS got the desktop layout. iOS 15.4 is the floor
+because the page needs `<dialog>` and `Array.prototype.at`.
+
+Cost: the code cannot use CSS or JavaScript that iOS 15.4 lacks without a fallback. Push on iPhone
+still needs iOS 16.4. Raising the floor is a deliberate change to `browserTargets`, and the README's
+line moves with it.
+
 ## End-to-end encryption
 
 ### D-014: End-to-end encryption in the browser
