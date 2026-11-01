@@ -254,6 +254,23 @@ Cost: the code cannot use CSS or JavaScript that iOS 15.4 lacks without a fallba
 still needs iOS 16.4. Raising the floor is a deliberate change to `browserTargets`, and the README's
 line moves with it.
 
+### D-053: The chat fits the part of a touch screen still visible
+
+Accepted 2026-11-02 in #21.
+
+Safari on iPhone keeps the page at full height when the on-screen keyboard opens, and scrolls the
+page up until the focused field shows. The chat fills the screen, so its header left the top.
+`client/src/viewport.ts` sets the CSS variable `--visible-height` from the visual viewport, the
+layout takes that height, and the page stays at the top. Dialogs centre in the same area and scroll
+inside. This runs only while the chat layout shows, so the sign-in pages scroll as usual, and it
+leaves a pinch-zoomed page alone.
+
+A touch screen also keeps `:hover` on the last thing tapped, so every hover style sits behind
+`@media (hover: hover)`.
+
+Cost: the layout follows events that Safari sends after the keyboard moves, so the page may jump
+once as the keyboard opens. It was checked in Chromium with a simulated keyboard, not on an iPhone.
+
 ## End-to-end encryption
 
 ### D-014: End-to-end encryption in the browser
