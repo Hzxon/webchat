@@ -256,7 +256,7 @@ line moves with it.
 
 ### D-053: The chat fits the part of a touch screen still visible
 
-Accepted 2026-11-02 in #21.
+Accepted 2026-11-02 in #21, extended in #22.
 
 Safari on iPhone keeps the page at full height when the on-screen keyboard opens, and scrolls the
 page up until the focused field shows. The chat fills the screen, so its header left the top.
@@ -265,11 +265,18 @@ layout takes that height, and the page stays at the top. Dialogs centre in the s
 inside. This runs only while the chat layout shows, so the sign-in pages scroll as usual, and it
 leaves a pinch-zoomed page alone.
 
+Safari animates that scroll, and resetting it midway made the page drop and slide back up (K-25).
+Since #22, on a touch screen with the keyboard closed, a field that takes the focus is moved far
+above the screen. Safari then finds nothing to scroll to. The field comes back when the visual
+viewport resizes, or after 400ms. Opening a chat on a touch screen no longer focuses the message
+box, so the keyboard waits for a tap.
+
 A touch screen also keeps `:hover` on the last thing tapped, so every hover style sits behind
 `@media (hover: hover)`.
 
-Cost: the layout follows events that Safari sends after the keyboard moves, so the page may jump
-once as the keyboard opens. It was checked in Chromium with a simulated keyboard, not on an iPhone.
+Cost: the field disappears for a moment as the keyboard starts to open. Whether Safari skips its
+scroll depends on when it reads the field's position. Both changes were checked in Chromium, not
+yet on an iPhone.
 
 ## End-to-end encryption
 

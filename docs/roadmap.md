@@ -368,6 +368,16 @@ requests for the record. Nothing here is a candidate for what to do next.
 | New pull requests shared into linked projects; cards name the reviewers (D-046) | #14 |
 | K-20: Drafts and unsent messages survive a closed tab (D-051) | #19 |
 | K-22: The chat header stays in view over the iPhone keyboard (D-053) | #21 |
+| K-25: The page no longer slides as the iPhone keyboard opens (D-053) | #22 |
+
+### K-25: The page slid as the iPhone keyboard opened
+
+Status: Fixed in #22 (D-053). Seen by the owner on iOS 15.8 after #21, in a screen recording. The
+fix was checked in Chromium, not yet on an iPhone.
+
+Opening a chat focused the message box, and the keyboard came up. Safari animated its scroll to
+lift the box, and the reset from #21 ran midway through. The page dropped by about a keyboard's
+height, showed a band of the status bar colour, and slid back up as the keyboard rose.
 
 ### K-22: The keyboard on iPhone pushed the chat header off screen
 
