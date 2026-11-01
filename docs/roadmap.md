@@ -54,29 +54,6 @@ Open questions:
 
 ## Planned
 
-### R-002: Rotate keys on removal, and let people leave
-
-Status: Planned. Owners can remove people since #4, without rotation (D-039).
-
-Why: people removed from a project or group keep its keys (D-039). Nobody can leave on their own,
-and an owner cannot hand a project or group to someone else.
-
-Scope:
-
-- On removal, every chat in the project or group gets a new key, wrapped for the people who stay.
-  Pages keep the old keys to read old messages, so a chat can have more than one key id. The signed
-  header already names the key id (D-016).
-- Leaving. A page accepts a copy of a key only from a current member (D-015), and a person who
-  leaves cannot wrap copies for the others. Someone who stays has to make new copies, so leaving may
-  wait for another member's browser.
-- Handing a project or group to another member, so that its owner can leave too.
-
-Done when: a removed member cannot decrypt anything sent after the removal, and a test proves it.
-Members can leave, and an owner can hand over.
-
-Open question: when someone joins after a rotation, do they get the old keys too, so they can read
-the history (D-026)?
-
 ### R-005: Photos and files
 
 Status: Planned.
@@ -268,6 +245,30 @@ requests for the record. Nothing here is a candidate for what to do next.
 | Known issues K-1 to K-4: reload after deploy, dialog focus, Node version, member order | #6 |
 | Share a pull request into a chat as a card | #8 |
 | R-003: Add people to groups, who read the history (D-043) | #10 |
+| R-002: New keys when someone leaves or is removed, leaving, handing over (D-044, D-045) | #12 |
+
+### R-002: Rotate keys on removal, and let people leave
+
+Status: Done in #12 (D-044, D-045). Owners could remove people since #4, without rotation (D-039).
+
+Why: people removed from a project or group keep its keys (D-039). Nobody can leave on their own,
+and an owner cannot hand a project or group to someone else.
+
+Scope:
+
+- On removal, every chat in the project or group gets a new key, wrapped for the people who stay.
+  Pages keep the old keys to read old messages, so a chat can have more than one key id. The signed
+  header already names the key id (D-016).
+- Leaving. A page accepts a copy of a key only from a current member (D-015), and a person who
+  leaves cannot wrap copies for the others. Someone who stays has to make new copies, so leaving may
+  wait for another member's browser.
+- Handing a project or group to another member, so that its owner can leave too.
+
+Done when: a removed member cannot decrypt anything sent after the removal, and a test proves it.
+Members can leave, and an owner can hand over.
+
+Answered: someone who joins after a rotation reads the whole history. Each new key holds the one it
+replaced, so the current key opens every earlier one (D-044).
 
 ### R-013: Share a pull request into a channel
 

@@ -11,7 +11,15 @@ import {
   verifyPassword,
 } from './auth.js';
 import type { Config } from './config.js';
-import { keyBackupOf, toUserDTO, type Db, type ProjectChangeRefusal, type SharedChannelKey, type UserRow } from './db.js';
+import {
+  keyBackupOf,
+  toUserDTO,
+  type Db,
+  type LeaveRefusal,
+  type ProjectChangeRefusal,
+  type SharedChannelKey,
+  type UserRow,
+} from './db.js';
 import { GithubError, type Github } from './github.js';
 import { notifyAddedToGroup, notifyAddedToProject, notifyNewMessage } from './notify.js';
 import type { Push, PushSubscriptionInput } from './push.js';
@@ -24,9 +32,12 @@ import {
   type CreateProjectResponse,
   type EnvelopeDTO,
   type LoginResponse,
+  type KeyLinkInput,
   type MessageDTO,
   type MessageKind,
   type PushPayload,
+  type RotatedChannelKeyInput,
+  type RotatedKeyInput,
   type SyncRequest,
   type SyncResponse,
 } from '../shared/types.js';
@@ -114,6 +125,20 @@ function wrappedChatKey(value: unknown): ChatKeyInput {
   return { keyId: base64url(key?.keyId, 'Chat key id', 22), wrappedKeys };
 }
 
+/** A new key to replace a chat's current one, with the current key encrypted inside it. */
+function rotatedKey(value: unknown): RotatedKeyInput {
+  const link = (value as { link?: Partial<KeyLinkInput> } | undefined)?.link;
+  return {
+    ...wrappedChatKey(value),
+    link: {
+      previousKeyId: base64url(link?.previousKeyId, 'Chat key id', 22),
+      // The previous 32-byte key plus its 16-byte tag.
+      iv: base64url(link?.iv, 'Key link', 16),
+      data: base64url(link?.data, 'Key link', 64),
+    },
+  };
+}
+
 /** A chat key must come wrapped exactly once for each member. */
 function chatKey(value: unknown, memberIds: number[]): ChatKeyInput {
   const key = wrappedChatKey(value);
@@ -143,7 +168,22 @@ function channelName(value: unknown): string {
 function projectRefusal(refusal: ProjectChangeRefusal): HttpError {
   if (refusal === 'name_taken') return new HttpError(409, 'This project already has a channel with that name.', 'name_taken');
   if (refusal === 'already_member') return new HttpError(409, 'Someone you picked is already in this project.', 'already_member');
+  if (refusal === 'owner') return new HttpError(409, 'Make someone else the owner before you leave.', 'owner');
   return new HttpError(409, 'The project changed while you were editing. Try again.', 'stale_project');
+}
+
+function leaveRefusal(refusal: LeaveRefusal): HttpError {
+  if (refusal === 'owner') return new HttpError(409, 'Make someone else the owner before you leave.', 'owner');
+  if (refusal === 'last_member') return new HttpError(409, 'You are the last member. Delete the group instead.', 'last_member');
+  return new HttpError(409, 'The group changed while you were editing. Try again.', 'stale_group');
+}
+
+function rotatedChannelKeys(value: unknown): RotatedChannelKeyInput[] {
+  const list: unknown[] = Array.isArray(value) ? value : [];
+  return list.map((item) => {
+    const k = item as { conversationId?: unknown } | undefined;
+    return { conversationId: positiveInt(k?.conversationId, 'conversationId'), ...rotatedKey(item) };
+  });
 }
 
 function envelope(value: unknown): EnvelopeDTO {
@@ -231,21 +271,21 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     if (!(await db.isProjectMember(projectId, userId))) throw new HttpError(404, 'Project not found.');
   }
 
-  /** Only the person who made a project can remove people from it or delete it. */
+  /** Only a project's owner can remove people from it, delete it, or hand it over. */
   async function requireProjectOwner(projectId: number, userId: number) {
     await requireProjectMember(projectId, userId);
     if ((await db.getProject(projectId))?.created_by !== userId) {
-      throw new HttpError(403, 'Only the person who made this project can do that.', 'not_owner');
+      throw new HttpError(403, 'Only the owner of this project can do that.', 'not_owner');
     }
   }
 
-  /** The same for a group. A group without an owner (see ConversationDTO.createdBy) is up to any member. */
+  /** The same for a group. A group without an owner (see ConversationDTO.ownerId) is up to any member. */
   async function requireGroupOwner(conversationId: number, userId: number) {
     await requireMember(conversationId, userId);
     const chat = await db.getConversation(conversationId);
     if (chat?.type !== 'group') throw new HttpError(400, 'Only a group can be deleted or have people removed.');
     if (chat.created_by !== null && chat.created_by !== userId) {
-      throw new HttpError(403, 'Only the person who made this group can do that.', 'not_owner');
+      throw new HttpError(403, 'Only the owner of this group can do that.', 'not_owner');
     }
   }
 
@@ -475,7 +515,10 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     res.json(group);
   });
 
-  /** Removes someone from a group. The owner's browser sends its key wrapped again for the people who stay. */
+  /**
+   * Removes someone from a group. The owner's browser sends a new key for the people who stay, so
+   * the person removed cannot read what is sent next.
+   */
   router.delete('/conversations/:id/members/:userId', requireAuth, async (req, res) => {
     const me = currentUser(res);
     const conversationId = positiveInt(req.params.id, 'Chat id');
@@ -483,9 +526,46 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     await requireGroupOwner(conversationId, me.id);
     if (userId === me.id) throw new HttpError(400, 'You cannot remove yourself.');
     // Whether the key covers exactly the people who stay is checked while the group is locked.
-    const key = req.body?.key == null ? null : wrappedChatKey(req.body.key);
+    const key = req.body?.key == null ? null : rotatedKey(req.body.key);
     if (!(await db.removeGroupMember(conversationId, me.id, userId, key))) {
       throw new HttpError(409, 'The group changed while you were editing. Try again.', 'stale_group');
+    }
+    res.json(await db.conversationFor(me.id, conversationId));
+  });
+
+  /**
+   * Leaves a group. The person leaving cannot make a new key for the others, so a member who stays
+   * replaces it (PUT /conversations/:id/key) before anyone sends again.
+   */
+  router.post('/conversations/:id/leave', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const conversationId = positiveInt(req.params.id, 'Chat id');
+    await requireMember(conversationId, me.id);
+    if ((await db.getConversation(conversationId))?.type !== 'group') throw new HttpError(400, 'Only a group can be left.');
+    const result = await db.leaveGroup(conversationId, me.id);
+    if (result !== true) throw leaveRefusal(result);
+    res.status(204).end();
+  });
+
+  /** Hands a group to another member. Its owner does this before leaving. */
+  router.put('/conversations/:id/owner', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const conversationId = positiveInt(req.params.id, 'Chat id');
+    await requireGroupOwner(conversationId, me.id);
+    if (!(await db.handOverGroup(conversationId, me.id, positiveInt(req.body?.userId, 'userId')))) {
+      throw new HttpError(409, 'The group changed while you were editing. Try again.', 'stale_group');
+    }
+    res.json(await db.conversationFor(me.id, conversationId));
+  });
+
+  /** Replaces the key of a chat that someone left. Any member who stays can, and the first one wins. */
+  router.put('/conversations/:id/key', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const conversationId = positiveInt(req.params.id, 'Chat id');
+    await requireMember(conversationId, me.id);
+    // Whether the key covers exactly the members is checked while the chat is locked.
+    if (!(await db.replaceConversationKey(conversationId, me.id, rotatedKey(req.body)))) {
+      throw new HttpError(409, 'This chat has a new key already. Reload and try again.', 'stale_key');
     }
     res.json(await db.conversationFor(me.id, conversationId));
   });
@@ -541,8 +621,8 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
   });
 
   /**
-   * Removes someone from a project and every channel in it. The owner's browser sends each channel
-   * key wrapped again for the people who stay, so every copy left was made by a member.
+   * Removes someone from a project and every channel in it. The owner's browser sends a new key for
+   * each channel, wrapped for the people who stay, so the person removed cannot read what comes next.
    */
   router.delete('/projects/:id/members/:userId', requireAuth, async (req, res) => {
     const me = currentUser(res);
@@ -550,14 +630,33 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     const userId = positiveInt(req.params.userId, 'userId');
     await requireProjectOwner(projectId, me.id);
     if (userId === me.id) throw new HttpError(400, 'You cannot remove yourself.');
-    const list: unknown[] = Array.isArray(req.body?.channelKeys) ? req.body.channelKeys : [];
     // Whether the keys cover exactly the people who stay is checked while the project is locked.
-    const channelKeys: SharedChannelKey[] = list.map((item) => {
-      const k = item as { conversationId?: unknown } | undefined;
-      return { conversationId: positiveInt(k?.conversationId, 'conversationId'), ...wrappedChatKey(item) };
-    });
-    const result = await db.removeProjectMember(projectId, me.id, userId, channelKeys);
+    const result = await db.removeProjectMember(projectId, me.id, userId, rotatedChannelKeys(req.body?.channelKeys));
     if (result !== true) throw projectRefusal(result);
+    res.json(await db.projectFor(me.id, projectId));
+  });
+
+  /**
+   * Leaves a project. The person leaving cannot make new keys for the others, so a member who stays
+   * replaces each channel's key (PUT /conversations/:id/key) before anyone sends there again.
+   */
+  router.post('/projects/:id/leave', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const projectId = positiveInt(req.params.id, 'Project id');
+    await requireProjectMember(projectId, me.id);
+    const result = await db.leaveProject(projectId, me.id);
+    if (result !== true) throw projectRefusal(result);
+    res.status(204).end();
+  });
+
+  /** Hands a project to another member. Its owner does this before leaving. */
+  router.put('/projects/:id/owner', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const projectId = positiveInt(req.params.id, 'Project id');
+    await requireProjectOwner(projectId, me.id);
+    if (!(await db.handOverProject(projectId, me.id, positiveInt(req.body?.userId, 'userId')))) {
+      throw projectRefusal('stale');
+    }
     res.json(await db.projectFor(me.id, projectId));
   });
 
@@ -605,9 +704,11 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     const kind: MessageKind = req.body?.kind === 'reaction' ? 'reaction' : 'message';
     if (req.body?.kind !== undefined && req.body.kind !== kind) throw new HttpError(400, 'Unknown message kind.');
     await requireMember(conversationId, me.id);
-    const keyId = await db.conversationKeyId(conversationId);
-    if (!keyId) throw new HttpError(409, 'Set up encryption for this chat first.', 'no_chat_key');
-    if (sealed.kid !== keyId) throw new HttpError(409, 'This chat uses a different key. Reload and try again.', 'stale_key');
+    const chat = await db.conversationKey(conversationId);
+    if (!chat.key_id) throw new HttpError(409, 'Set up encryption for this chat first.', 'no_chat_key');
+    // The person who left holds the current key, so nothing new is sent with it.
+    if (chat.needs_new_key) throw new HttpError(409, 'Someone left this chat, so it needs a new key first.', 'needs_new_key');
+    if (sealed.kid !== chat.key_id) throw new HttpError(409, 'This chat uses a different key. Reload and try again.', 'stale_key');
     if (!(await db.takeRateLimit(`send:${me.id}`, 30, 10_000))) throw new HttpError(429, 'Slow down a little.');
 
     const urgent = req.body?.urgent === true;

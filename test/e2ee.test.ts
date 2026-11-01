@@ -10,10 +10,12 @@ import {
   importChatKey,
   importIdentity,
   keyFingerprint,
+  linkChatKey,
   newChatKeyBytes,
   newKeyId,
   openChatKeyBytes,
   openIdentity,
+  openKeyLink,
   safetyCode,
   sealIdentity,
   toBase64Url,
@@ -117,6 +119,25 @@ describe('end-to-end encryption', () => {
       unwrapChatKey(forCarol, carol, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId),
       'the copy names Bob as its wrapper, not Alice',
     );
+  });
+
+  test('a new chat key carries the old one, which opens only with the new key, in its own chat and place', async () => {
+    const oldRaw = newChatKeyBytes();
+    const oldId = newKeyId();
+    const meta: MessageMeta = { conversationId: 5, senderId: alice.id, urgent: false, clientId: 'before' };
+    const before = await encryptMessage(await importChatKey(oldRaw), oldId, alice.identity.signPrivate, meta, 'sent before Carol left');
+
+    const newKey = await importChatKey(newChatKeyBytes());
+    const newId = newKeyId();
+    const link = await linkChatKey(newKey, newId, 5, oldRaw, oldId);
+    const opened = await openKeyLink(newKey, newId, 5, link, oldId);
+    assert.equal(await decryptMessage(opened, alice.identity.publicKeys.sign, meta, before), 'sent before Carol left');
+    assert.equal(opened.extractable, false);
+
+    await assert.rejects(openKeyLink(await importChatKey(oldRaw), newId, 5, link, oldId), 'the old key cannot open it');
+    await assert.rejects(openKeyLink(newKey, newId, 6, link, oldId), 'it belongs to one chat');
+    await assert.rejects(openKeyLink(newKey, newKeyId(), 5, link, oldId), 'it belongs to the key that replaced it');
+    await assert.rejects(openKeyLink(newKey, newId, 5, link, newKeyId()), 'it names the key it holds');
   });
 
   test('replies and reactions travel inside the envelope, and the kind is signed', async () => {
