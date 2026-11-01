@@ -1,5 +1,5 @@
 import { openConversation, previewText } from '../chat';
-import { actions, chatTitle, useAppState } from '../store';
+import { actions, chatTitle, senderName, useAppState } from '../store';
 import { formatTime } from './format';
 import { BellRingIcon, CloseIcon } from './icons';
 
@@ -11,7 +11,7 @@ export function UrgentAlert() {
   const first = urgent[0];
   if (!first) return null;
 
-  const sender = users[first.senderId]?.displayName ?? 'Someone';
+  const sender = senderName(users, first.senderId);
   const conversation = conversations[first.conversationId];
   const inGroup = conversation && conversation.type !== 'direct' ? ` in ${chatTitle(conversation)}` : '';
 

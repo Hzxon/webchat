@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { describeGithubEvent } from '../../../shared/github';
 import type { GithubAccountDTO, GithubDTO, GithubEventDTO, GithubEventKind, PullRequestDTO } from '../../../shared/types';
-import { connectGithub, disconnectGithub, refreshGithub, setGithubAutoShare, setGithubNotify } from '../github';
+import { connectGithub, disconnectGithub, refreshGithub, setGithubNotify } from '../github';
 import { actions, useAppState } from '../store';
 import { formatAgo } from './format';
 import { AlertIcon, BackIcon, BellIcon, CommentIcon, GithubIcon, PullRequestIcon, RefreshIcon, ShareIcon } from './icons';
@@ -273,22 +273,6 @@ function Settings({ account }: { account: GithubAccountDTO }) {
           checked={account.notify}
           disabled={busy}
           onChange={(e) => void act(() => setGithubNotify(e.target.checked))}
-        />
-      </label>
-      <label className="toggle-row">
-        <ShareIcon />
-        <span>
-          <strong>Share my new pull requests</strong>
-          <small>
-            Into the projects that link their repository, as a card with the reviewers. Drafts wait until they are ready for
-            review.
-          </small>
-        </span>
-        <input
-          type="checkbox"
-          checked={account.autoShare}
-          disabled={busy}
-          onChange={(e) => void act(() => setGithubAutoShare(e.target.checked))}
         />
       </label>
       <div className="github-account">

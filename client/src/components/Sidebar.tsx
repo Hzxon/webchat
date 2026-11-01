@@ -3,7 +3,7 @@ import type { ProjectDTO } from '../../../shared/types';
 import { sound } from '../alerts';
 import { openConversation, previewText, signOut } from '../chat';
 import type { ChatConversation } from '../e2ee/keyring';
-import { actions, chatTitle, otherMemberId, useAppState } from '../store';
+import { actions, chatTitle, otherMemberId, senderName, useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { formatListTime } from './format';
 import {
@@ -187,8 +187,8 @@ function ProjectSection(props: {
   const { project, channels, onNewChannel, onAddPeople, onMembers, onRepos } = props;
   const activeId = useAppState((s) => s.activeId);
   const urgent = useAppState((s) => s.urgent);
-  // Linking a repository only does something where the GitHub connector is set up.
-  const github = useAppState((s) => s.github?.configured ?? false);
+  // Linking a repository only does something where the GitHub App is set up.
+  const github = useAppState((s) => s.github?.appConfigured ?? false);
   const people = project.memberIds.length;
 
   return (
@@ -319,7 +319,7 @@ function ChatListItem({ conversation }: { conversation: ChatConversation }) {
   if (last) {
     const mine = last.senderId === meId;
     const prefix =
-      conversation.type !== 'direct' && !mine ? `${users[last.senderId]?.displayName.split(' ')[0] ?? 'Someone'}: ` : '';
+      conversation.type !== 'direct' && !mine ? `${senderName(users, last.senderId).split(' ')[0]}: ` : '';
     preview = (
       <>
         {mine && <Ticks state={receiptState(conversation, last.id, meId)} />}

@@ -324,7 +324,7 @@ the chat list, starts with "Not encrypted:".
 
 ### D-020: Known limits of the encryption
 
-Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4, #10, #13 and #14.
+Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4, #10, #13, #14 and #17.
 
 WebChat accepts these limits and lists them in the README:
 
@@ -334,8 +334,8 @@ WebChat accepts these limits and lists them in the README:
   left, when a chat got a new key, display names, whether a message is urgent, and that someone
   reacted.
 - Pull request titles and repository names are not end-to-end encrypted (D-033).
-- Which repositories a project links, and which pull requests were shared into which channel on
-  their own (D-046).
+- Which repositories a project links, and the cards from GitHub in its channels. The server
+  writes those cards in plain text, so a server that was changed could write fake ones (D-050).
 - The member list that a new channel's key is wrapped for comes from the server. The New channel
   dialog shows it so people can check it. The same holds for the people a new key is wrapped for
   after someone leaves (D-044).
@@ -703,31 +703,44 @@ requests. The signature covers the envelope, so the card cannot be altered eithe
 Cost: the card shows the state at the time of sharing and does not update. The text of a shared
 pull request is a stock sentence that the user does not write.
 
-### D-046: New pull requests in a linked repository are shared by the author's browser
+### D-050: Projects link repositories through a GitHub App, and the server writes their cards
 
-Accepted 2026-11-01 in #14.
+Accepted 2026-11-01 in #17. Supersedes D-046.
 
-A project's owner links GitHub repositories to the project, each with a channel. When a member's
-poll finds a pull request of theirs in a linked repository that just became ready for review,
-opened as ready or moved out of draft, the server queues it for that member. Their page claims it
-and posts the same card as the share button (D-042), marked as automatic. Every card, shared by
-hand or not, names who still has to review and who is assigned, as GitHub logins, and shows the
-viewer's own login as "you". The share button stays.
+A project's owner links a repository by installing the WebChat GitHub App on it and signing in to
+the app once. The server lists the repositories the owner reaches through the app, revokes that
+sign-in's token at once, and lets the owner link only those, for half an hour. GitHub then sends a
+signed webhook for every pull request event in the repository. When a pull request opens, is ready
+for review, is reopened, merged or closed, the server writes a card into each channel that links
+the repository, and pushes it to every member like a message. The card is a message of kind
+"github" with no sender, whose body is the card as plain JSON. Pages show it as GitHub's, with a
+"Not encrypted" mark, and rebuild its link from the repository and number, as for a shared card
+(D-042). A card names who still has to review and who is assigned, as GitHub logins, and the
+viewer's own login reads "you", as under D-046. The share button stays. The OAuth App stays for
+each person's Pull requests pane only (D-032 to D-034).
 
-Why: the server holds no chat key (D-015), so it cannot write an encrypted, signed message into a
-channel. The author's browser can, so the card stays an ordinary message that only members read.
-The author's own poll already sees the pull request, so WebChat reads nothing new from GitHub and
-shares only what the author could share by hand. The claim lets one tab post it. GitHub drops a
-reviewer from the review requests once they review, so the list is who still has to. A card the
-page posts on its own leaves the author's read pointer where it was, because the author has not
-seen the channel (`auto` in `SendMessageInput`).
+Why: a team wants its pull requests in its channel whoever opens them, at once, even with every tab
+closed. Under D-046 they came only from members who connected GitHub, and only when their browser
+next polled. A GitHub App gets webhooks, so nothing has to poll. It reads pull requests only, where
+the OAuth App needs the `repo` scope. The sign-in proves the owner can see each repository they
+link, which a typed name did not. The server holds no chat key (D-015), so it cannot write an
+encrypted, signed message. It already reads pull request titles from GitHub for the pane (D-033),
+so writing them in plain text tells it nothing new. With the token revoked once used, no token of
+the app exists anywhere.
 
-Cost: only members who connected GitHub get their pull requests shared; anyone else's needs the
-share button. A card goes out when the author's page next loads pull requests: within a minute
-while a tab is open, otherwise when they next open WebChat. The server learns which repositories a
-project links and which pull requests went into which channel. Everyone in the project sees each
-shared title, even without access to the repository. Reviewers show as GitHub logins, not WebChat
-names, and a card does not update when reviewers change later.
+Cost:
+
+- The cards are the first messages the server writes. They are not end-to-end encrypted, and a
+  server that was changed could write fake ones. Their links still lead only to github.com.
+- The server owner registers a GitHub App, and webhooks need a public address. Local development
+  of linking needs a tunnel, or signed test deliveries.
+- A card shows the pull request as the webhook described it, without checks, review decision or
+  conflicts, and it does not update.
+- Only someone who can install the app on a repository can link it. A repository in an
+  organization needs an owner of that organization to install it.
+- Migration 8 dropped the links made by typing a name under D-046.
+- Neither the pane nor the cards name a team asked to review. Reading a team needs `read:org` from
+  the OAuth App, and a query that asked for one without it made GitHub refuse the whole poll.
 
 ## Engineering process
 
@@ -791,3 +804,29 @@ messages. Groups also cannot take new members after they are created; projects c
 
 Cost: a mistaken add cannot be undone in the app (roadmap R-002), and a teammate who joins late
 needs a new group (roadmap R-003).
+
+### D-046: New pull requests in a linked repository are shared by the author's browser
+
+Superseded by D-050. Accepted 2026-11-01 in #14.
+
+A project's owner links GitHub repositories to the project, each with a channel. When a member's
+poll finds a pull request of theirs in a linked repository that just became ready for review,
+opened as ready or moved out of draft, the server queues it for that member. Their page claims it
+and posts the same card as the share button (D-042), marked as automatic. Every card, shared by
+hand or not, names who still has to review and who is assigned, as GitHub logins, and shows the
+viewer's own login as "you". The share button stays.
+
+Why: the server holds no chat key (D-015), so it cannot write an encrypted, signed message into a
+channel. The author's browser can, so the card stays an ordinary message that only members read.
+The author's own poll already sees the pull request, so WebChat reads nothing new from GitHub and
+shares only what the author could share by hand. The claim lets one tab post it. GitHub drops a
+reviewer from the review requests once they review, so the list is who still has to. A card the
+page posts on its own leaves the author's read pointer where it was, because the author has not
+seen the channel (`auto` in `SendMessageInput`).
+
+Cost: only members who connected GitHub get their pull requests shared; anyone else's needs the
+share button. A card goes out when the author's page next loads pull requests: within a minute
+while a tab is open, otherwise when they next open WebChat. The server learns which repositories a
+project links and which pull requests went into which channel. Everyone in the project sees each
+shared title, even without access to the repository. Reviewers show as GitHub logins, not WebChat
+names, and a card does not update when reviewers change later.

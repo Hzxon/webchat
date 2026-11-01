@@ -1,5 +1,6 @@
 // GitHub connector: links a GitHub account through an OAuth App, watches the user's open pull
-// requests, and turns changes into alerts.
+// requests for their Pull requests pane, and turns changes into alerts. Projects link repositories
+// through the GitHub App instead (githubApp.ts).
 //
 // The server holds the token, never the browser, because polls run on the server: that is how a
 // pull request alert reaches a phone while every tab is closed. The token is stored encrypted with
@@ -17,7 +18,6 @@ import {
   type PullListsDTO,
   type PullRequestDTO,
   type PullReview,
-  type PullShareDTO,
   type PushPayload,
 } from '../shared/types.js';
 import { safeEqual } from './auth.js';
@@ -82,7 +82,7 @@ fragment Pull on PullRequest {
   comments(last: 1) { totalCount nodes { author { login } } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
   reviewRequests(first: ${LIMITS.pullPeople}) {
-    nodes { requestedReviewer { ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Team { combinedSlug } } }
+    nodes { requestedReviewer { ... on User { login } ... on Bot { login } ... on Mannequin { login } } }
   }
   assignees(first: ${LIMITS.pullPeople}) { nodes { login } }
 }`;
@@ -116,9 +116,12 @@ interface PullNode {
   author: { login: string } | null;
   comments: { totalCount: number; nodes: Array<{ author: { login: string } | null } | null> | null };
   commits: { nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } } | null> | null };
-  /** A reviewer is null when the token cannot see it, such as a team in another organization. */
+  /**
+   * A reviewer is null when the token cannot see it. A team comes back empty: any field of a team
+   * needs the read:org scope, and asking for one makes GitHub refuse the whole query.
+   */
   reviewRequests: {
-    nodes: Array<{ requestedReviewer: { login?: string; combinedSlug?: string } | null } | null> | null;
+    nodes: Array<{ requestedReviewer: { login?: string } | null } | null> | null;
   } | null;
   assignees: { nodes: Array<{ login: string } | null> | null } | null;
 }
@@ -168,7 +171,7 @@ function toPulls(list: { nodes: Array<PullNode | null> | null } | null): PullReq
         deletions: node.deletions,
         updatedAt: Date.parse(node.updatedAt),
         reviewers: (node.reviewRequests?.nodes ?? []).flatMap((request) => {
-          const name = request?.requestedReviewer?.login ?? request?.requestedReviewer?.combinedSlug;
+          const name = request?.requestedReviewer?.login;
           return name ? [name] : [];
         }),
         assignees: (node.assignees?.nodes ?? []).flatMap((user) => (user ? [user.login] : [])),
@@ -189,10 +192,8 @@ const eventFor = (pull: PullRequestDTO, kind: NewGithubEvent['kind'], actor: str
 });
 
 /**
- * Compares two polls. Returns the changes worth an alert; the user's own pull requests that became
- * ready for review, opened as ready or moved out of draft, for the projects that link their
- * repository; and those that left the open list (merged, closed, or no longer found), whose fate
- * needs one more question.
+ * Compares two polls. Returns the changes worth an alert, and the pull requests that left the open
+ * list (merged, closed, or no longer found), whose fate needs one more question.
  */
 export function comparePulls(before: PullListsDTO, after: PullListsDTO, login: string) {
   const events: NewGithubEvent[] = [];
@@ -202,7 +203,6 @@ export function comparePulls(before: PullListsDTO, after: PullListsDTO, login: s
   }
 
   const mineBefore = new Map(before.authored.map((p) => [p.id, p]));
-  const ready = after.authored.filter((pull) => !pull.draft && (mineBefore.get(pull.id)?.draft ?? true));
   for (const pull of after.authored) {
     const old = mineBefore.get(pull.id);
     if (!old) continue;
@@ -221,7 +221,7 @@ export function comparePulls(before: PullListsDTO, after: PullListsDTO, login: s
 
   const stillOpen = new Set(after.authored.map((p) => p.id));
   const left = before.authored.filter((p) => !stillOpen.has(p.id));
-  return { events, ready, left };
+  return { events, left };
 }
 
 /** AES-256-GCM, bound to the account it belongs to so a token cannot be moved to another row. */
@@ -350,18 +350,6 @@ export function createGithub(db: Db, push: Push, config: Config) {
   }
 
   /**
-   * Queued shares whose pull request is still open and ready, with how it stands now, so a card
-   * also names the reviewers asked after the pull request opened.
-   */
-  async function waitingShares(userId: number, pulls: PullListsDTO): Promise<PullShareDTO[]> {
-    const open = new Map(pulls.authored.map((p) => [p.id, p]));
-    return (await db.pendingPullShares(userId)).flatMap((share) => {
-      const pull = open.get(share.pull_id);
-      return pull && !pull.draft ? [{ id: share.id, conversationId: share.conversation_id, pull }] : [];
-    });
-  }
-
-  /**
    * Fetches the account's pull requests and records what changed since the last poll, unless it
    * was polled within minIntervalMs. The first poll after connecting only records them.
    */
@@ -381,8 +369,6 @@ export function createGithub(db: Db, push: Push, config: Config) {
       if (before) {
         const changes = comparePulls(before, pulls, login);
         events.push(...changes.events, ...(await endings(token, changes.left)));
-        if (account.auto_share) await db.addPullShares(userId, changes.ready);
-        await db.dropPullShares(userId, changes.left.map((p) => p.id));
       }
       await db.saveGithubPulls(userId, login, JSON.stringify(pulls));
       if (events.length === 0) return;
@@ -414,18 +400,15 @@ export function createGithub(db: Db, push: Push, config: Config) {
       return due.length;
     },
 
-    async view(userId: number): Promise<GithubDTO> {
+    async view(userId: number): Promise<Omit<GithubDTO, 'appConfigured'>> {
       const account = configured ? await db.githubAccount(userId) : undefined;
       if (!account) {
-        return { configured, account: null, pulls: null, shares: [], events: [], fetchedAt: null, error: null, reconnect: false };
+        return { configured, account: null, pulls: null, events: [], fetchedAt: null, error: null, reconnect: false };
       }
-      const pulls = account.pulls ? (JSON.parse(account.pulls) as PullListsDTO) : null;
       return {
         configured,
-        account: { login: account.login, name: account.name, notify: account.notify, autoShare: account.auto_share },
-        pulls,
-        // Lists from a refused token are stale, so nothing is shared from them.
-        shares: pulls && account.auto_share && !account.revoked ? await waitingShares(userId, pulls) : [],
+        account: { login: account.login, name: account.name, notify: account.notify },
+        pulls: account.pulls ? (JSON.parse(account.pulls) as PullListsDTO) : null,
         events: await db.githubEvents(userId),
         fetchedAt: account.fetched_at,
         error: account.error,
@@ -485,7 +468,6 @@ export function createGithub(db: Db, push: Push, config: Config) {
     },
 
     setNotify: (userId: number, notify: boolean) => db.setGithubNotify(userId, notify),
-    setAutoShare: (userId: number, autoShare: boolean) => db.setGithubAutoShare(userId, autoShare),
 
     /** Unlinks the account here, and deletes the app's grant on GitHub so the token stops working. */
     async disconnect(userId: number) {

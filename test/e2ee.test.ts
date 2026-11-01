@@ -200,12 +200,26 @@ describe('end-to-end encryption', () => {
       checks: null,
       conflicts: false,
     };
-    const card = { ...old, reviewers: ['bob', 'acme/designers'], assignees: ['alice'], auto: true as const };
+    const card = { ...old, reviewers: ['bob', 'acme/designers'], assignees: ['alice'] };
 
     assert.deepEqual(await open(card), card);
     assert.deepEqual(await open(old), old);
-    const odd = await open({ ...card, reviewers: ['bob', 42, 'two words', 'a/b/c'], assignees: 'alice', auto: 'yes' });
-    assert.deepEqual([odd!.reviewers, odd!.assignees, odd!.auto], [['bob'], undefined, undefined]);
+    assert.deepEqual(await open({ ...card, auto: true }), card, 'a card from before D-050 loses its automatic mark');
+    const odd = await open({ ...card, reviewers: ['bob', 42, 'two words', 'a/b/c'], assignees: 'alice' });
+    assert.deepEqual([odd!.reviewers, odd!.assignees], [['bob'], undefined]);
+  });
+
+  test('a reply can quote a card from GitHub, which has no sender, as sender 0', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const keyId = newKeyId();
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'q1' };
+    const quoting = async (senderId: number) => {
+      const content = { text: 'On it', replyTo: { id: 12, senderId, text: 'octo opened a pull request' } };
+      const envelope = await encryptMessage(key, keyId, alice.identity.signPrivate, meta, content);
+      return (await decryptContent(key, alice.identity.publicKeys.sign, meta, envelope)).replyTo;
+    };
+    assert.deepEqual(await quoting(0), { id: 12, senderId: 0, text: 'octo opened a pull request' });
+    assert.equal(await quoting(-1), undefined);
   });
 
   test('the creator can wrap the chat key for their own other devices', async () => {

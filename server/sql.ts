@@ -12,8 +12,8 @@ export interface Sql extends Querier {
   close(): Promise<void>;
 }
 
-// node-postgres returns BIGINT as a string by default. Every BIGINT here is a millisecond timestamp
-// or a count, both far below 2^53, so plain numbers are safe and match what PGlite returns.
+// node-postgres returns BIGINT as a string by default. Every BIGINT here is a millisecond timestamp,
+// a count or a GitHub id, all far below 2^53, so plain numbers are safe and match what PGlite returns.
 pg.types.setTypeParser(pg.types.builtins.INT8, (value) => Number(value));
 
 export interface PostgresOptions {

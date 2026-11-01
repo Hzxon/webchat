@@ -28,11 +28,21 @@ export interface Config {
   extraPushHosts: string[];
   /** Built client to serve, or null to serve the API only (Vercel and the Vite dev server serve the client). */
   clientDir: string | null;
-  /** GitHub OAuth App credentials. The GitHub connector stays off until both are set. */
+  /** GitHub OAuth App credentials, for each person's Pull requests pane. It stays off until both are set. */
   githubClientId: string | undefined;
   githubClientSecret: string | undefined;
   /** Callback URL registered on the OAuth App. When unset, it follows the address the request came to. */
   githubCallbackUrl: string | undefined;
+  /**
+   * The GitHub App that projects link repositories through (D-050): the name in its URL, its OAuth
+   * client, and the secret that signs its webhooks. Linking stays off until all four are set.
+   */
+  githubAppSlug: string | undefined;
+  githubAppClientId: string | undefined;
+  githubAppClientSecret: string | undefined;
+  githubWebhookSecret: string | undefined;
+  /** A callback URL registered on the GitHub App. When unset, it follows the address the request came to. */
+  githubAppCallbackUrl: string | undefined;
   /** Base URLs of GitHub's sign-in pages and API. Meant for tests only. */
   githubOauthUrl: string;
   githubApiUrl: string;
@@ -86,6 +96,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     githubClientId: env.GITHUB_CLIENT_ID || undefined,
     githubClientSecret: env.GITHUB_CLIENT_SECRET || undefined,
     githubCallbackUrl: env.GITHUB_CALLBACK_URL || undefined,
+    githubAppSlug: env.GITHUB_APP_SLUG || undefined,
+    githubAppClientId: env.GITHUB_APP_CLIENT_ID || undefined,
+    githubAppClientSecret: env.GITHUB_APP_CLIENT_SECRET || undefined,
+    githubWebhookSecret: env.GITHUB_WEBHOOK_SECRET || undefined,
+    githubAppCallbackUrl: env.GITHUB_APP_CALLBACK_URL || undefined,
     githubOauthUrl: env.GITHUB_OAUTH_URL || 'https://github.com',
     githubApiUrl: env.GITHUB_API_URL || 'https://api.github.com',
     // Serverless instances stop between requests, so on Vercel a scheduler calls /api/github/poll instead.

@@ -162,9 +162,11 @@ Calls need WebRTC and TURN servers, which cost money (D-003).
 
 ### R-016: Link a project to repositories
 
-Status: Started in #14 (D-046). A project links repositories, and members' new pull requests in
-them go to a channel by themselves. Still to do: the Projects tab list, which depends on Q-3 for a
-shared read, and reviewers shown by their WebChat names instead of GitHub logins.
+Status: Planned. Started in #14. Since #17 (D-050), a project links repositories through a
+GitHub App, and its webhooks post a card into the channel for every pull request that opens, is
+ready for review, is reopened, merged or closed. Still to do: the Projects tab list, reviewers
+shown by their WebChat names instead of GitHub logins, and cards that show a pull request's
+current checks and review decision instead of a snapshot.
 
 Why: the pane lists one person's pull requests across every repository, with no grouping. A team
 wants to see every open pull request of its repositories, by any member, next to its channels. Only
@@ -172,12 +174,12 @@ pull requests are watched today: pushes and commits are not, and teams that push
 nothing.
 
 Scope: a project names one or more repositories. The Projects tab shows their open pull requests,
-grouped by repository. Reading them needs a token that sees the repository: one member's OAuth
-token, or a GitHub App installation on the organization (Q-3).
+grouped by repository. Reading them needs the GitHub App's installation token, which needs the
+app's private key on the server (D-050 keeps no token).
 
-Settled in D-046: a member's own new pull requests go to the channel by themselves; anyone else's
-goes by hand. Everyone in the project sees a shared title, even without access to the repository,
-so the list here would show the same to the whole project.
+Settled in D-050: every pull request in a linked repository goes to the channel, whoever opens it.
+Everyone in the project sees its title, even without access to the repository, so the list here
+would show the same to the whole project.
 
 ### R-017: Notes in a chat when people join or are removed
 
@@ -307,15 +309,14 @@ Everyone on a deployment can see everyone else (D-002). A student in several cla
 separate spaces. Projects already group people. Is that enough, or should one deployment host
 several communities?
 
-### Q-3: Should the GitHub connector become a GitHub App?
+### Q-3: Should the Pull requests pane move to the GitHub App too?
 
-The connector is an OAuth App (D-032). The polling, the scheduler and the `repo` scope all follow
-from that choice (D-033, D-034). A GitHub App gets webhooks, so pull request changes would arrive
-at once instead of minutes later; a read-only `pull_requests` permission instead of full access to
-every repository; and an installation on an organization that an instructor approves once, which
-also gives a shared read for R-016. Cost: the owner has to register an app with a private key and a
-webhook secret, and the server has to receive webhooks. Measure the setup cost against the gain
-before changing D-032.
+Projects link repositories through a GitHub App since #17 (D-050). Each person's pane still uses
+the OAuth App (D-032), with its polling, its scheduler and the `repo` scope (D-033, D-034). The
+pane could use the same app: its webhooks would bring review requests at once, and it reads pull
+requests only. Cost: the app only sees repositories it is installed on, so the pane would show
+nothing from the others, such as a course repository whose organization never installed it. The
+owner decided on 2026-11-01 to keep the OAuth App for the pane.
 
 ## Done
 
@@ -362,7 +363,8 @@ replaced, so the current key opens every earlier one (D-044).
 ### R-013: Share a pull request into a channel
 
 Status: Done in #8 (D-042). The "later" part came in #14 (D-046): the author's browser posts the
-card by itself into the channel of each project that links the repository. The card is a field
+card by itself into the channel of each project that links the repository. #17 replaced that with
+cards the server writes from the GitHub App's webhooks (D-050). The card is a field
 inside an ordinary message rather than a kind of its own, because it should count as unread,
 preview and push exactly like a message. Found in a review of the GitHub connector on 2026-11-01.
 

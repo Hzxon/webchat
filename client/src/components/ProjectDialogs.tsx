@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { LIMITS, type ProjectRepoDTO } from '../../../shared/types';
+import { LIMITS, type ProjectReposDTO } from '../../../shared/types';
 import { api } from '../api';
 import { addGroupMembers, addProjectMembers, createChannel, openConversation } from '../chat';
-import { actions, useAppState } from '../store';
+import { useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
 import { GithubIcon, HashIcon } from './icons';
@@ -99,18 +99,22 @@ export function NewChannelDialog({ projectId, onClose }: { projectId: number; on
   );
 }
 
+/** The repositories dialog leaves the app for these, and GitHub sends the browser back to it. */
+const installOnGithub = (projectId: number) => location.assign(`/api/github/app/install?project=${projectId}`);
+const chooseOnGithub = (projectId: number) => location.assign(`/api/github/app/link?project=${projectId}`);
+
 /**
- * The GitHub repositories a project links. A member's new pull request in one is shared into the
- * linked channel by that member's own WebChat (D-046). Everyone sees the list; the owner changes it.
+ * The GitHub repositories a project links. GitHub tells WebChat about the pull requests in them,
+ * and the server posts each one into the linked channel as a card (D-050). Everyone sees the list.
+ * The owner links a repository by installing the WebChat GitHub App on it, then picking it here.
  */
 export function ProjectReposDialog({ projectId, onClose }: { projectId: number; onClose: () => void }) {
   const project = useAppState((s) => s.projects[projectId]);
   const conversations = useAppState((s) => s.conversations);
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
-  const github = useAppState((s) => s.github);
-  const [repos, setRepos] = useState<ProjectRepoDTO[] | null>(null);
-  const [repo, setRepo] = useState('');
+  const [view, setView] = useState<ProjectReposDTO | null>(null);
+  const [repoId, setRepoId] = useState(0);
   const [picked, setPicked] = useState(0);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -121,27 +125,23 @@ export function ProjectReposDialog({ projectId, onClose }: { projectId: number; 
     [conversations, projectId],
   );
   const channelId = picked || channels[0]?.id || 0;
+  const choices = view?.choices ?? [];
+  const choiceId = choices.some((c) => c.repoId === repoId) ? repoId : (choices[0]?.repoId ?? 0);
 
   useEffect(() => {
-    api.projectRepos(projectId).then(setRepos, (err: Error) => setError(err.message));
+    api.projectRepos(projectId).then(setView, (err: Error) => setError(err.message));
   }, [projectId]);
 
-  async function run(work: () => Promise<ProjectRepoDTO[]>): Promise<boolean> {
+  async function run(work: () => Promise<ProjectReposDTO>) {
     setBusy(true);
     setError('');
     try {
-      setRepos(await work());
-      return true;
+      setView(await work());
     } catch (err) {
       setError((err as Error).message);
-      return false;
     } finally {
       setBusy(false);
     }
-  }
-
-  async function link() {
-    if (await run(() => api.linkRepo(projectId, repo, channelId))) setRepo('');
   }
 
   if (!project) return null;
@@ -150,30 +150,17 @@ export function ProjectReposDialog({ projectId, onClose }: { projectId: number; 
   return (
     <Dialog title={`Repositories in ${project.name}`} onClose={onClose}>
       <p className="dialog-intro">
-        When someone here opens a pull request in a linked repository, their WebChat shares it into the channel as a card
-        that names the reviewers. Drafts wait until they are ready for review.
+        When someone opens a pull request in a linked repository, WebChat posts it into the channel as a card. It posts
+        again when the pull request is ready for review, merged or closed. GitHub sends these, so nobody has to connect
+        GitHub.
       </p>
       <p className="dialog-intro">
-        This works for people who connected GitHub. Everyone in the project sees each shared title, even without access
-        to the repository.
+        Everyone in the project sees each card, even without access to the repository. The server writes the cards, so
+        they are not end-to-end encrypted.
       </p>
-      {github?.configured && !github.account && (
-        <button
-          className="button-secondary"
-          onClick={() => {
-            onClose();
-            actions.setGithubOpen(true);
-          }}
-        >
-          Connect GitHub to share yours
-        </button>
-      )}
-      {github?.account && !github.account.autoShare && (
-        <p className="dialog-note">You turned off sharing your pull requests in the Pull requests pane.</p>
-      )}
       <ul className="people-list">
-        {repos?.map((linked) => (
-          <li key={linked.repo} className="member">
+        {view?.repos.map((linked) => (
+          <li key={linked.repoId} className="member">
             <span className="share-mark">
               <GithubIcon width={18} height={18} />
             </span>
@@ -184,7 +171,7 @@ export function ProjectReposDialog({ projectId, onClose }: { projectId: number; 
             {isOwner && (
               <button
                 className="member-remove"
-                onClick={() => void run(() => api.unlinkRepo(projectId, linked.repo))}
+                onClick={() => void run(() => api.unlinkRepo(projectId, linked.repoId))}
                 disabled={busy}
                 aria-label={`Unlink ${linked.repo}`}
               >
@@ -193,23 +180,40 @@ export function ProjectReposDialog({ projectId, onClose }: { projectId: number; 
             )}
           </li>
         ))}
-        {repos?.length === 0 && <li className="people-empty">No repositories linked yet.</li>}
-        {!repos && !error && <li className="people-empty">Loading…</li>}
+        {view?.repos.length === 0 && <li className="people-empty">No repositories linked yet.</li>}
+        {!view && !error && <li className="people-empty">Loading…</li>}
       </ul>
-      {isOwner ? (
+      {!isOwner ? (
+        <>
+          {error && <p className="form-error">{error}</p>}
+          <p className="dialog-intro">
+            Only {users[project.ownerId]?.displayName ?? 'its owner'} can link or unlink repositories.
+          </p>
+        </>
+      ) : view && !view.configured ? (
+        <p className="dialog-note">
+          The server owner has not set up the WebChat GitHub App yet, so repositories cannot be linked.
+        </p>
+      ) : choices.length > 0 ? (
         <form
           className="dialog-form"
           onSubmit={(e) => {
             e.preventDefault();
-            if (repo.trim() && channelId) void link();
+            if (choiceId && channelId) void run(() => api.linkRepo(projectId, { repoId: choiceId, conversationId: channelId }));
           }}
         >
           <label className="field">
             Repository
-            <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/name, or its GitHub link" />
+            <select className="field-input" value={choiceId} onChange={(e) => setRepoId(Number(e.target.value))}>
+              {choices.map((c) => (
+                <option key={c.repoId} value={c.repoId}>
+                  {c.repo}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="field">
-            Share into
+            Post into
             <select className="field-input" value={channelId} onChange={(e) => setPicked(Number(e.target.value))}>
               {channels.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -219,17 +223,29 @@ export function ProjectReposDialog({ projectId, onClose }: { projectId: number; 
             </select>
           </label>
           {error && <p className="form-error">{error}</p>}
-          <button className="button-primary" type="submit" disabled={busy || !repo.trim() || !channelId}>
+          <button className="button-primary" type="submit" disabled={busy || !choiceId || !channelId}>
             Link repository
+          </button>
+          <button className="button-secondary" type="button" onClick={() => installOnGithub(projectId)}>
+            Add another repository on GitHub
           </button>
         </form>
       ) : (
-        <>
-          {error && <p className="form-error">{error}</p>}
-          <p className="dialog-intro">
-            Only {users[project.ownerId]?.displayName ?? 'its owner'} can link or unlink repositories.
-          </p>
-        </>
+        view && (
+          <div className="dialog-form">
+            <p className="dialog-intro">
+              First install the WebChat app on the repository on GitHub. Only someone who can manage the repository can
+              install it.
+            </p>
+            {error && <p className="form-error">{error}</p>}
+            <button className="button-primary" onClick={() => installOnGithub(projectId)}>
+              Install on GitHub
+            </button>
+            <button className="button-secondary" onClick={() => chooseOnGithub(projectId)}>
+              Already installed? Choose a repository
+            </button>
+          </div>
+        )
       )}
     </Dialog>
   );
