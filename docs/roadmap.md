@@ -346,6 +346,15 @@ requests for the record. Nothing here is a candidate for what to do next.
 | R-003: Add people to groups, who read the history (D-043) | #10 |
 | R-002: New keys when someone leaves or is removed, leaving, handing over (D-044, D-045) | #13 |
 | New pull requests shared into linked projects; cards name the reviewers (D-046) | #14 |
+| K-20: Drafts and unsent messages survive a closed tab (D-051) | #19 |
+
+### K-20: Closing the tab lost drafts and messages not sent
+
+Status: Fixed in #19 (D-051). Found while testing a closed browser on 2026-11-01, with K-21.
+
+A draft lived only in the message box, and a message still sending or not sent lived only in the
+page. Closing or reloading the tab, or opening another chat, dropped them without a warning. The
+person they were for never got them.
 
 ### R-002: Rotate keys on removal, and let people leave
 
