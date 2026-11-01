@@ -7,7 +7,12 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
 
   useEffect(() => {
     const dialog = ref.current;
-    if (dialog && !dialog.open) dialog.showModal();
+    if (!dialog || dialog.open) return;
+    dialog.showModal();
+    // A field marked autoFocus gets no focus: React calls focus() on it when it mounts, while the
+    // dialog is still closed and nothing in it can take focus. showModal() then focuses the first
+    // focusable element, the close button. So the first field in the body takes the focus instead.
+    dialog.querySelector<HTMLElement>('.dialog-body input, .dialog-body textarea, .dialog-body select')?.focus();
   }, []);
 
   return (

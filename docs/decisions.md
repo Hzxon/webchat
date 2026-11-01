@@ -132,6 +132,24 @@ these headers from `vercel.json`, and a self-hosted server sends the same ones f
 Cost: third-party scripts, fonts, analytics or CDNs need a change to the policy. Change
 `vercel.json` and `server/app.ts` together.
 
+### D-040: Open tabs reload when the build changes
+
+Accepted 2026-11-01 in #6.
+
+Every `/api` response carries an `X-WebChat-Build` header that names the running build. The page
+remembers the first value it sees and reloads when a later response carries another, as soon as
+nobody is typing in it. On Vercel the name is the deployment id. Elsewhere it is `WEBCHAT_BUILD`,
+or a hash of the built `index.html`, whose script tags change with every client build. Without a
+built page, as in tests and in development, no header is sent and tabs never reload.
+
+Why: a tab from before a deploy keeps its old code until it reloads. Old tabs showed each reaction
+as a message they could not decrypt after #2 (K-1), and every later format change would do the
+same. A check-in is the only channel to a tab (D-004), so the header rides on it.
+
+Cost: a deploy reloads every open tab once, which drops scroll positions. A self-hosted server that
+restarts with the same build does not reload tabs, because the hash comes from the page, not from
+the start time.
+
 ## Data and platform
 
 ### D-010: Migrations only grow at the end
@@ -181,8 +199,8 @@ by surprise. `tsconfig.json` spells out `typeRoots`, because Vercel compiles `ap
 temporary tsconfig in another folder that extends this one. `allowScripts` in `package.json` denies
 the install scripts of esbuild and fsevents, which nothing needs.
 
-Cost: moving to a new major Node release is a deliberate change to `engines`. The README still asks
-for Node 22.13 or later to run locally; roadmap item K-3.
+Cost: moving to a new major Node release is a deliberate change to `engines`, and the README's
+requirement moves with it. Local development runs on the same Node 26 as Vercel (K-3).
 
 ## End-to-end encryption
 

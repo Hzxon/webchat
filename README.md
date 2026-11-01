@@ -49,6 +49,8 @@ allowance in about a week.
   and active in the last 2 minutes. While you are, only that browser gets the push, so your phone
   stays quiet at the desk. Once you look away or close the tab, every device you enabled gets it.
 - **Urgent** always alerts. An open tab rings until you dismiss it, even with message sounds off.
+- **After a deploy, open tabs reload** on their next check-in, so a page from before it does not
+  show new kinds of data as errors. A tab where you are typing waits until you leave the field.
 
 ## End-to-end encryption
 
@@ -104,8 +106,8 @@ What it does not protect against:
 
 ## Run it locally
 
-Requires Node.js 22.13 or later. No database setup is needed: without `DATABASE_URL`, the server
-uses an embedded Postgres (PGlite) stored in `data/pglite`.
+Requires Node.js 26, the version `engines` in `package.json` pins. No database setup is needed:
+without `DATABASE_URL`, the server uses an embedded Postgres (PGlite) stored in `data/pglite`.
 
 ```bash
 npm install

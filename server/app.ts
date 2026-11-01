@@ -1,9 +1,11 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { attachDatabasePool } from '@vercel/functions';
 import express from 'express';
 import { createApiRouter } from './api.js';
 import { randomBytes, toBase64Url } from '../shared/e2ee.js';
+import { BUILD_HEADER } from '../shared/types.js';
 import { randomInviteCode } from './auth.js';
 import type { Config } from './config.js';
 import { openDb } from './db.js';
@@ -43,10 +45,23 @@ async function connect(config: Config): Promise<Sql> {
   return sql;
 }
 
+/**
+ * Names the build for the tabs. Without a name from the configuration, the built page stands in:
+ * its script tags carry the bundle hashes, so it changes with every client build and with
+ * nothing else. Null with no built page, as in tests and in development without a build.
+ */
+function buildId(config: Config): string | null {
+  if (config.build) return config.build;
+  const indexPath = config.clientDir && path.join(config.clientDir, 'index.html');
+  if (!indexPath || !fs.existsSync(indexPath)) return null;
+  return crypto.createHash('sha256').update(fs.readFileSync(indexPath)).digest('base64url').slice(0, 16);
+}
+
 /** Builds the Express app. It does not listen: server/index.ts does locally, and Vercel does in production. */
 export async function createApp(config: Config): Promise<WebChatApp> {
   const sql = await connect(config);
   const db = await openDb(sql);
+  const build = buildId(config);
 
   const inviteCode = config.inviteCode ?? (await db.claimMeta('invite_code', randomInviteCode()));
   // Mixed into every password key derivation, so keys from one deployment are useless on another.
@@ -64,6 +79,12 @@ export async function createApp(config: Config): Promise<WebChatApp> {
     res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
     next();
   });
+  if (build) {
+    app.use('/api', (_req, res, next) => {
+      res.setHeader(BUILD_HEADER, build);
+      next();
+    });
+  }
   // Room for a group's wrapped chat keys and the longest encrypted message.
   app.use('/api', express.json({ limit: '64kb' }), createApiRouter({ db, push, github, config, inviteCode, kdfSalt }));
 

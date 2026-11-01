@@ -235,11 +235,17 @@ repositories, or only for the ones members share by hand?
 
 ### K-1: Old tabs show reactions as messages they cannot decrypt
 
+Status: Fixed in #6 (D-040).
+
 A tab that still runs the app from before #2 shows each reaction as "could not be decrypted" until
 it reloads. A version check that reloads tabs after a deploy would fix this one and future format
 changes.
 
 ### K-2: Dialogs open with the focus on the close button
+
+Status: Fixed in #6. The cause was close: React calls `focus()` on the field while the dialog is
+still closed, so nothing happens, and `showModal()` then focuses the close button. `Dialog` now
+focuses the first field in its body after `showModal()`.
 
 Fields marked `autoFocus` inside a dialog do not get the focus, so typing goes nowhere until the
 user clicks the field. This was seen in the New channel dialog on 2026-11-01. The likely cause, not
@@ -249,11 +255,15 @@ close button.
 
 ### K-3: The README and package.json disagree about Node
 
+Status: Fixed in #6. Local development runs on Node 26, as `engines` pins (D-013).
+
 The README asks for Node 22.13 or later to run WebChat locally. The `engines` field in
 `package.json` pins Node 26.x (D-013). Decide which versions local development supports, and make
 both say the same.
 
 ### K-4: A group's member names change order
+
+Status: Fixed in #6. The members query orders by join time, which also confirmed the cause.
 
 A group's header lists its members in the order the server returns them, and that order changed
 during testing on 2026-11-01: "You, Bob, Carol" became "Bob, You" after a removal and new messages.
@@ -312,3 +322,4 @@ before changing D-032.
 | GitHub pull requests | #1 |
 | Projects with channels, replies and reactions | #2 |
 | Owners remove members and delete projects and groups | #4 |
+| Known issues K-1 to K-4: reload after deploy, dialog focus, Node version, member order | #6 |

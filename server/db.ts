@@ -401,7 +401,8 @@ export async function openDb(sql: Sql) {
         `SELECT mm.conversation_id, mm.user_id, mm.last_delivered_id, mm.last_read_id
          FROM webchat.members mm
          WHERE mm.conversation_id IN (
-           SELECT conversation_id FROM webchat.members WHERE user_id = $1 AND ($2::int IS NULL OR conversation_id = $2))`,
+           SELECT conversation_id FROM webchat.members WHERE user_id = $1 AND ($2::int IS NULL OR conversation_id = $2))
+         ORDER BY mm.joined_at, mm.user_id`,
         [userId, onlyId],
       ),
       sql.query<MessageRow>(

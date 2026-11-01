@@ -343,6 +343,9 @@ export type WorkerToPageMessage =
   | { type: 'push'; payload: PushPayload }
   | { type: 'open-conversation'; conversationId: number };
 
+/** Response header that names the server's build. A tab reloads when the value changes. */
+export const BUILD_HEADER = 'x-webchat-build';
+
 export const LIMITS = {
   messageLength: 4000,
   /** Characters of the quoted message a reply carries. */
