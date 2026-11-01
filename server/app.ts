@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { attachDatabasePool } from '@vercel/functions';
-import express from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import { createApiRouter } from './api.js';
 import { randomBytes, toBase64Url } from '../shared/e2ee.js';
 import { BUILD_HEADER } from '../shared/types.js';
@@ -85,8 +85,21 @@ export async function createApp(config: Config): Promise<WebChatApp> {
       next();
     });
   }
-  // Room for a group's wrapped chat keys and the longest encrypted message.
-  app.use('/api', express.json({ limit: '64kb' }), createApiRouter({ db, push, github, config, inviteCode, kdfSalt }));
+  // Room for a project's wrapped channel keys and the longest encrypted message (D-011).
+  app.use('/api', express.json({ limit: '256kb' }), createApiRouter({ db, push, github, config, inviteCode, kdfSalt }));
+  // The body parser runs before the API router, so its errors never reach the router's handler.
+  // Answer them as JSON too, which the page can show, and without Express's stack-trace page.
+  app.use('/api', (error: { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {
+    const status = error.status ?? 500;
+    if (status >= 500) config.logger.error('API error', error);
+    const message =
+      error.type === 'entity.too.large'
+        ? 'This change is too large to send at once.'
+        : status < 500
+          ? 'The request could not be read.'
+          : 'Something went wrong.';
+    res.status(status).json({ error: message });
+  });
 
   const clientDir = config.clientDir;
   if (clientDir && fs.existsSync(path.join(clientDir, 'index.html'))) {

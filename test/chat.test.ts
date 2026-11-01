@@ -338,6 +338,18 @@ describe('chat server', () => {
     assert.equal((await stranger.request('POST', '/sync', {})).status, 401);
   });
 
+  test('a body too large or not JSON gets a JSON error, not an HTML page', async () => {
+    const post = (body: string) =>
+      fetch(`${baseUrl}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+    const big = await post(JSON.stringify({ pad: 'x'.repeat(300_000) }));
+    assert.equal(big.status, 413);
+    assert.match(big.headers.get('content-type') ?? '', /json/);
+    assert.equal(((await big.json()) as { error: string }).error, 'This change is too large to send at once.');
+    const broken = await post('{');
+    assert.equal(broken.status, 400);
+    assert.match(broken.headers.get('content-type') ?? '', /json/);
+  });
+
   test('push endpoints outside known push services are refused', async () => {
     const res = await bob.request('POST', '/push/subscribe', makeSubscription('http://169.254.169.254/latest').json);
     assert.equal(res.status, 400);
@@ -487,6 +499,14 @@ describe('chat server', () => {
     assert.ok(aliceSync.changed);
     const bobState = aliceSync.conversations.find((c) => c.id === directChat.id)!.members.find((m) => m.userId === bob.id)!;
     assert.equal(bobState.lastDeliveredId, latest.id);
+  });
+
+  test('a delivered pointer stops at the newest message, so a client cannot break check-ins', async () => {
+    const res = await bob.request('POST', '/delivered', { conversationId: directChat.id, messageId: 2_147_483_647 });
+    assert.equal(res.status, 204);
+    for (const client of [alice, bob]) assert.equal((await client.request('GET', '/bootstrap')).status, 200);
+    const bobState = (await viewOf(alice, directChat.id)).members.find((m) => m.userId === bob.id)!;
+    assert.ok(bobState.lastDeliveredId < 2_147_483_647);
   });
 
   test('group messages reach every member, each with their own copy of the key', async () => {
@@ -899,6 +919,48 @@ describe('chat server', () => {
     assert.equal(((await stale.json()) as { code: string }).code, 'account_changed');
     assert.equal((await asBob({ 'x-webchat-user': String(bob.id) })).status, 200);
     assert.equal((await asBob({})).status, 200, 'requests without the header still work');
+  });
+
+  test('a check-in that cannot carry every new message says so, and the next one brings the rest', async () => {
+    await bob.bootstrap();
+    await instance.sql.query(
+      `INSERT INTO webchat.messages (conversation_id, sender_id, body, urgent, created_at, kind)
+       SELECT $1, $2, '', false, $3, 'message' FROM generate_series(1, 501)`,
+      [directChat.id, alice.id, Date.now()],
+    );
+    const [{ newest }] = (await instance.sql.query<{ newest: number }>(
+      'SELECT MAX(id) AS newest FROM webchat.messages WHERE conversation_id = $1',
+      [directChat.id],
+    )) as [{ newest: number }];
+    await instance.sql.query('UPDATE webchat.conversations SET last_message_id = $2, last_event_id = $2 WHERE id = $1', [
+      directChat.id,
+      newest,
+    ]);
+    const first = await bob.sync(false);
+    assert.ok(first.changed);
+    assert.equal(first.messages.length, 500);
+    assert.equal(first.more, true);
+    assert.ok(!first.messages.some((m) => m.id === newest));
+    const second = await bob.sync(false);
+    assert.ok(second.changed);
+    assert.equal(second.more, false);
+    assert.ok(second.messages.some((m) => m.id === newest));
+  });
+
+  test('someone no longer in a project cannot add people to it', async () => {
+    const db = await openDb(instance.sql);
+    const now = Date.now();
+    const [{ id: projectId }] = (await instance.sql.query<{ id: number }>(
+      `INSERT INTO webchat.projects (name, created_by, created_at) VALUES ('Left behind', $1, $2) RETURNING id`,
+      [alice.id, now],
+    )) as [{ id: number }];
+    await instance.sql.query('INSERT INTO webchat.project_members (project_id, user_id, joined_at) VALUES ($1, $2, $3)', [
+      projectId,
+      alice.id,
+      now,
+    ]);
+    // Carol passed the route's membership check before the owner removed her; the lock catches it.
+    assert.equal(await db.addProjectMembers(projectId, carol.id, [bob.id], []), 'not_member');
   });
 
   test('logout ends the session', async () => {

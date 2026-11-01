@@ -48,9 +48,12 @@ allowance in about a week.
 - **Who gets the push.** Each check-in says whether you are looking at the tab: visible, focused,
   and active in the last 2 minutes. While you are, only that browser gets the push, so your phone
   stays quiet at the desk. Once you look away or close the tab, every device you enabled gets it.
+  Safari gets no push while you look, except urgent ones, because it turns push off for a site
+  whose pushes show nothing. Its tab checks in every 3 seconds instead.
 - **Urgent** always alerts. An open tab rings until you dismiss it, even with message sounds off.
 - **After a deploy, open tabs reload** on their next check-in, so a page from before it does not
-  show new kinds of data as errors. A tab where you are typing waits until you leave the field.
+  show new kinds of data as errors. A tab waits while you type in it, while it holds a draft or a
+  message not sent yet, and while an urgent alert waits for you.
 
 ## End-to-end encryption
 
@@ -100,6 +103,8 @@ What it does not protect against:
 - **People removed from a project or group keep the keys they had.** Keys never rotate, so someone
   removed could still read later messages if they got them another way, for example from a copy of
   the database. The server stops sending them anything.
+- **Someone who writes to the database can add unencrypted messages** under any member's name.
+  They show as "Not encrypted", in the chat and in every preview, and never alert.
 - **Accounts from before encryption** upgrade once: on the next visit the app asks for the password,
   and that one request sends it to the server so it can be checked against the old hash. Messages
   from before stay readable and are marked "Not encrypted".

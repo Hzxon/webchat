@@ -37,7 +37,7 @@ Constraints:
 - Status, assignee, due date and priority may be visible to the server. If they are, list them in
   the README and in D-020.
 - Every task change must change the sync fingerprint, or pages will not see it (D-021).
-- Schema changes go in migration 5 (D-010).
+- Schema changes go in migration 6 (D-010).
 
 Done when: typecheck, tests and build pass. Tests prove that the database holds no task text in
 plain and that only project members can read or change tasks. The board has been tried in a browser
@@ -287,6 +287,91 @@ An organization that restricts OAuth Apps hides its pull requests until an owner
 the pane say nothing. GitHub's GraphQL answer carries the error next to the data (`graphql` in
 `server/github.ts` drops it). Show it in the pane, and say in the connect card that an organization
 may need to approve the app. Not yet seen on a real organization.
+
+### K-7: A sync answer whose body breaks off sets the cursor to NaN
+
+Found in a review of main on 2026-11-01, with K-8 to K-19.
+
+`request` in `client/src/api.ts` turns a 2xx response whose body fails to parse into `{}` and
+returns it as success. `syncNow` then sets the cursor to NaN, which stays NaN, and every check-in
+asks from 0. A user with more than 500 messages then stops getting new ones until a reload. Treat a
+body that fails to parse on a 2xx as an error.
+
+### K-8: The ciphertext length shows the message length and some reactions
+
+Envelopes are not padded, so the server sees the exact length of every message. For the same
+message, a ❤️ reaction is longer than the other five quick reactions, and taking a reaction back is
+shorter. The README says the server cannot see which emoji. Pad envelopes to a few fixed sizes, or
+correct the README and D-020.
+
+### K-9: Retrying a send can store the message twice
+
+`retryMessage` sends with a new client id, and the server does not check client ids. When a send
+commits but its answer is lost, a retry stores a second copy, and an urgent one alerts twice. Keep
+the client id on retry and make (sender, client id) unique.
+
+### K-10: `sslmode=disable` is ignored
+
+`connectPostgres` in `server/sql.ts` turns TLS on for every host except three loopback names and
+deletes `sslmode`. A self-hosted Postgres without TLS on another host, such as `db` in Docker
+Compose, cannot be reached, and the server stops at start. Only an undocumented `?ssl=0` works.
+
+### K-11: The New channel dialog can make names the server refuses
+
+`toChannelName` in `client/src/components/ProjectDialogs.tsx` trims hyphens before it cuts the name
+to 40 characters and keeps capitals with no lowercase form, such as ℂ. The server then answers 400.
+Keep one rule in `shared/` for both sides.
+
+### K-12: A push subscription with malformed keys breaks pushes for its owner
+
+`generateRequestDetails` in `server/push.ts` throws before the `try` for keys of the wrong size, so
+the row is never deleted. Every later push to that user fails, `/api/push/test` answers 500, and a
+GitHub poll stops after its first alert with a false "Could not reach GitHub". It needs a
+hand-made subscription. Check the key sizes on subscribe, and delete the row when sending throws.
+
+### K-13: The first key of a group from before encryption races with a removal
+
+`POST /conversations/:id/key` reads the members without the group's lock. A removal at the same
+moment can leave a copy for the person removed, or make the removed person the owner of a group
+nobody can then open. It needs a group from before encryption with no key yet.
+
+### K-14: Sign-ins from one address share a small rate limit
+
+Register, login, upgrade and key routes share 20 requests per 15 minutes per IP address, and
+successes count. A class that signs up together behind one campus address locks itself out for 15
+minutes. Count only failures, or raise the limit for successes. Not seen on a real deployment.
+
+### K-15: A late sync answer can close a chat just created
+
+`applySync` drops every chat missing from an answer. An answer built before a new chat committed,
+but applied after it opened, closes the chat with "It was deleted, or you were removed." The next
+check-in brings it back. Ignore answers older than a local change, for example with a generation
+number.
+
+### K-16: A reaction push can replace a message notification
+
+A reaction push uses the chat's notification tag. When the server still thinks the user is looking,
+for example after a laptop slept before its check-in went out, the service worker shows "Bob reacted
+to a message" over the chat's message notification. D-030 says reactions notify nobody. Not seen on
+a real device.
+
+### K-17: An open page keeps a push endpoint the service worker replaced
+
+The service worker's `pushsubscriptionchange` handler subscribes again but does not tell open pages.
+They keep reporting the old endpoint, so pushes for the user while they look go to a dead endpoint,
+and messages show up to 15 seconds late until a reload. Mostly Firefox fires this event.
+
+### K-18: A session that expires leaves push on for that browser
+
+When a session ends with a 401, the page drops the keys but not the push subscription. Whoever uses
+that browser next sees the old account's notification titles, such as sender and chat names, until
+the subscription is removed. Only "Sign out" removes it.
+
+### K-19: The push test for plain text cannot fail
+
+The test "pushes carry no plain text" in `test/chat.test.ts` looks for `urgent, `, which the message
+`Call me back, it is urgent` does not contain. Only its separate check of `payload.body` guards rule
+7. Search the payload for the whole message instead.
 
 ## Open questions
 

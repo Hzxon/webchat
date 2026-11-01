@@ -188,6 +188,13 @@ UPDATE webchat.conversations c
 SET created_by = (SELECT MIN(k.wrapped_by) FROM webchat.conversation_keys k WHERE k.conversation_id = c.id)
 WHERE c.type = 'group';
 `,
+  // 5: delivered pointers never past a chat's newest event.
+  `
+-- POST /api/delivered once stored any id a client sent. Pull back the pointers it pushed too far.
+UPDATE webchat.members m SET last_delivered_id = c.last_event_id
+FROM webchat.conversations c
+WHERE c.id = m.conversation_id AND m.last_delivered_id > c.last_event_id;
+`,
 ];
 
 const statements = (sql: string) =>
@@ -202,6 +209,8 @@ const ONLINE_WINDOW_MS = 60_000;
 export const ATTENTION_TTL_MS = 45_000;
 /** Sync re-sends recent messages too, in case a slow insert committed after a newer one. */
 const SYNC_OVERLAP_MS = 15_000;
+/** Most messages one check-in returns. A check-in that leaves some behind says so (`more`). */
+const SYNC_PAGE_SIZE = 500;
 
 export interface UserRow {
   id: number;
@@ -296,7 +305,7 @@ export interface SharedChannelKey {
 }
 
 /** Why a project change was refused: its members or channels changed since the client looked. */
-export type ProjectChangeRefusal = 'stale' | 'name_taken' | 'already_member';
+export type ProjectChangeRefusal = 'stale' | 'name_taken' | 'already_member' | 'not_member';
 
 export interface PushSubscriptionRow {
   endpoint: string;
@@ -760,6 +769,9 @@ export async function openDb(sql: Sql) {
       const now = Date.now();
       return sql.transaction(async (tx) => {
         const memberIds = await lockProject(tx, projectId);
+        // The route checked this before the lock. Check again under it: every copy below names the
+        // adder as its wrapper, and pages refuse a copy that a non-member made (D-039).
+        if (!memberIds.includes(addedBy)) return 'not_member';
         if (userIds.some((id) => memberIds.includes(id))) return 'already_member';
         const channels = await tx.query<{ id: number; key_id: string | null; last_message_id: number }>(
           'SELECT id, key_id, last_message_id FROM webchat.conversations WHERE project_id = $1',
@@ -958,12 +970,17 @@ export async function openDb(sql: Sql) {
       return markRead(sql, conversationId, userId, Math.min(messageId, newest?.last_message_id ?? 0));
     },
 
-    /** Marks messages from others as delivered to this user, per chat, up to the given ids. */
+    /**
+     * Marks messages from others as delivered to this user, per chat, up to the given ids but never
+     * past the chat's newest event. The service worker sends these ids, so a client could send any.
+     */
     async markDelivered(userId: number, upTo: Map<number, number>) {
       for (const [conversationId, messageId] of upTo) {
         await sql.query(
-          `UPDATE webchat.members SET last_delivered_id = $1
-           WHERE conversation_id = $2 AND user_id = $3 AND last_delivered_id < $1`,
+          `UPDATE webchat.members m SET last_delivered_id = LEAST($1, c.last_event_id)
+           FROM webchat.conversations c
+           WHERE c.id = m.conversation_id AND m.conversation_id = $2 AND m.user_id = $3
+             AND m.last_delivered_id < LEAST($1, c.last_event_id)`,
           [messageId, conversationId, userId],
         );
       }
@@ -1004,7 +1021,8 @@ export async function openDb(sql: Sql) {
              (SELECT COUNT(*)::int FROM webchat.conversations
                WHERE id IN (SELECT * FROM mine) AND key_id IS NOT NULL) AS keyed,
              (SELECT COUNT(*)::int FROM webchat.users WHERE dh_public IS NOT NULL) AS "withKeys",
-             (SELECT COALESCE(SUM(last_read_id + last_delivered_id), 0) FROM webchat.members
+             -- BIGINT, so two INTEGER pointers near the top of their range cannot overflow the sum.
+             (SELECT COALESCE(SUM(last_read_id::bigint + last_delivered_id), 0) FROM webchat.members
                WHERE conversation_id IN (SELECT * FROM mine)) AS pointers,
              (SELECT COUNT(*)::int FROM mine) AS chats,
              -- Join times rather than a count, so one person leaving and another joining between
@@ -1021,17 +1039,22 @@ export async function openDb(sql: Sql) {
         : '';
     },
 
-    /** Messages in the user's chats after the cursor, plus recent ones as an overlap. */
+    /**
+     * Messages in the user's chats after the cursor, plus recent ones as an overlap, at most
+     * SYNC_PAGE_SIZE. Rows after the cursor come first, so a busy overlap never crowds them out.
+     */
     messagesSince: async (userId: number, cursor: number) =>
       (
         await sql.query<MessageRow>(
           `SELECT msg.* FROM webchat.messages msg
            JOIN webchat.members m ON m.conversation_id = msg.conversation_id AND m.user_id = $1
            WHERE msg.id > $2::bigint OR msg.created_at > $3
-           ORDER BY msg.id LIMIT 500`,
+           ORDER BY msg.id > $2::bigint DESC, msg.id LIMIT ${SYNC_PAGE_SIZE}`,
           [userId, cursor, Date.now() - SYNC_OVERLAP_MS],
         )
-      ).map(toMessageDTO),
+      )
+        .sort((a, b) => a.id - b.id)
+        .map(toMessageDTO),
 
     latestMessageId: async (userId: number) =>
       (

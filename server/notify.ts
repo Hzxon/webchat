@@ -1,4 +1,4 @@
-import type { ConversationDTO, MessageDTO, ProjectDTO, PushPayload } from '../shared/types.js';
+import { showsEveryPush, type ConversationDTO, type MessageDTO, type ProjectDTO, type PushPayload } from '../shared/types.js';
 import type { Config } from './config.js';
 import { isAttentive, type Db, type UserRow } from './db.js';
 import type { Push } from './push.js';
@@ -91,7 +91,11 @@ export async function notifyNewMessage(db: Db, push: Push, config: Config, messa
         if (!recipient || !conversation) return;
         const payload = await payloadFor(db, recipientId, message, conversation, sender);
         if (isAttentive(recipient)) {
-          if (recipient.attentive_endpoint) await push.sendToUser(recipientId, payload, recipient.attentive_endpoint);
+          const endpoint = recipient.attentive_endpoint;
+          // Safari would count this push as silent and revoke the subscription (D-042). Its tab
+          // checks in every few seconds instead, as a tab without push does. Urgent ones still go:
+          // the service worker shows those as notifications.
+          if (endpoint && (message.urgent || !showsEveryPush(endpoint))) await push.sendToUser(recipientId, payload, endpoint);
           return;
         }
         if (message.kind === 'message') await push.sendToUser(recipientId, payload);

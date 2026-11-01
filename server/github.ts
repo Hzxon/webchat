@@ -7,15 +7,16 @@
 // of the database alone cannot use it.
 import crypto from 'node:crypto';
 import { describeGithubEvent } from '../shared/github.js';
-import type {
-  GithubDTO,
-  GithubEventDTO,
-  GithubEventKind,
-  PullChecks,
-  PullListsDTO,
-  PullRequestDTO,
-  PullReview,
-  PushPayload,
+import {
+  showsEveryPush,
+  type GithubDTO,
+  type GithubEventDTO,
+  type GithubEventKind,
+  type PullChecks,
+  type PullListsDTO,
+  type PullRequestDTO,
+  type PullReview,
+  type PushPayload,
 } from '../shared/types.js';
 import { safeEqual } from './auth.js';
 import type { Config } from './config.js';
@@ -304,7 +305,8 @@ export function createGithub(db: Db, push: Push, config: Config) {
     const user = await db.getUser(userId);
     if (!user) return;
     const looking = isAttentive(user);
-    if (looking && !user.attentive_endpoint) return;
+    // Safari counts a push that shows nothing as silent and revokes the subscription (D-042).
+    if (looking && (!user.attentive_endpoint || showsEveryPush(user.attentive_endpoint))) return;
     for (const event of events.slice(-MAX_PUSHES_PER_POLL)) {
       const { title, body } = describeGithubEvent(event);
       const payload: PushPayload = {

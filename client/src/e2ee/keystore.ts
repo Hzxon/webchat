@@ -64,6 +64,14 @@ export const keystore = {
   getPins: () => get<Record<number, string>>('pins'),
   setPins: (pins: Record<number, string>) => set('pins', pins),
 
-  /** Removes every key from this device, as on sign-out. */
-  clear: () => run<undefined>('readwrite', (s) => s.clear()),
+  /**
+   * Removes the account's keys from this device, as on sign-out or when an account signs in. The
+   * pins stay: they hold only other people's public key fingerprints, and keeping them is what lets
+   * a later sign-in notice keys that changed in between (D-018).
+   */
+  clearKeys: () =>
+    run<undefined>('readwrite', (s) => {
+      s.delete(IDBKeyRange.upperBound('pins', true));
+      return s.delete(IDBKeyRange.lowerBound('pins', true));
+    }),
 };
