@@ -10,7 +10,8 @@ it costs. Read the entries for the area you work on before you change how someth
 - Take the next free number. Numbers never change and are never reused.
 - Say the decision first, then why it was made, then what it costs. Name the commit or pull request.
 - Never delete an entry. When a decision replaces an older one, change the old entry's status line
-  to "Superseded by D-0xx" and say in the new entry what it replaces.
+  to "Superseded by D-0xx", say in the new entry what it replaces, and move the old entry under
+  Superseded at the end of this file. An entry replaced only in part stays where it is.
 - An entry is Accepted once the change that makes it is on main. A decision agreed but not built yet
   is Proposed.
 
@@ -512,17 +513,6 @@ Channel names use lowercase letters and digits in any script, joined by single h
 characters, and are unique within their project. The page turns what people type into that form,
 so "Slides & Design" becomes `slides-design`. Every project starts with `#general`.
 
-### D-028: No leaving or removal before key rotation
-
-Superseded by D-039. Accepted 2026-11-01 in #2.
-
-Nobody can leave a project or be removed from one yet. A removed member would still hold every
-channel key, so removal without key rotation would only stop the server from sending them new
-messages. Groups also cannot take new members after they are created; projects can.
-
-Cost: a mistaken add cannot be undone in the app (roadmap R-002), and a teammate who joins late
-needs a new group (roadmap R-003).
-
 ### D-039: Owners remove people and delete, before key rotation
 
 Partly superseded by D-044 and D-045: removal now gives each chat a new key, and people can leave.
@@ -785,3 +775,19 @@ known issues and open questions. Each pull request updates them along with the c
 
 Cost: these documents are only as good as their upkeep. A pull request that changes a decision
 without updating this file misleads the next agent.
+
+## Superseded
+
+Decisions that no longer hold. They keep their numbers and reasons for the record. Read the entry
+that replaced each one instead.
+
+### D-028: No leaving or removal before key rotation
+
+Superseded by D-039. Accepted 2026-11-01 in #2.
+
+Nobody can leave a project or be removed from one yet. A removed member would still hold every
+channel key, so removal without key rotation would only stop the server from sending them new
+messages. Groups also cannot take new members after they are created; projects can.
+
+Cost: a mistaken add cannot be undone in the app (roadmap R-002), and a teammate who joins late
+needs a new group (roadmap R-003).
