@@ -22,7 +22,7 @@ import {
 import { showUnreadInTab, sound } from './alerts';
 import { announceAccountChange, api, ApiError, sendAwayBeacon, setTabUser } from './api';
 import { attention } from './attention';
-import { holdReloadWhile } from './build';
+import { holdReloadWhile, setReloadTarget } from './build';
 import { EncryptionUnavailableError, keyring, type ChatConversation, type ChatMessage, type KeyLookup } from './e2ee/keyring';
 import { refreshGithub, startGithub } from './github';
 import { forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
@@ -220,6 +220,12 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
     holdReloadWhile(() => {
       const state = store.get();
       return state.urgent.length > 0 || Object.keys(state.pending).length > 0;
+    }),
+    // After a deploy, the reload opens the same chat or pane again, as a notification click would.
+    setReloadTarget(() => {
+      const state = store.get();
+      if (state.githubOpen) return '/?github=open';
+      return state.activeId === null ? '/' : `/?chat=${state.activeId}`;
     }),
     attention.subscribe((attentive) => {
       // Tell the server right away, so pushes switch between this tab and the phone.
