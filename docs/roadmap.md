@@ -295,6 +295,16 @@ The test "pushes carry no plain text" in `test/chat.test.ts` looks for `urgent, 
 `Call me back, it is urgent` does not contain. Only its separate check of `payload.body` guards rule
 7. Search the payload for the whole message instead.
 
+### K-21: An urgent message from while every tab was closed does not ring
+
+Found while testing a closed browser on 2026-11-01.
+
+A page alerts only for messages that arrive after it loads (D-049). An urgent message sent while
+every tab was closed shows only its URGENT tag in the chat list when the page opens again. If its
+push reached the device, the notification stays until it is tapped. Without push, for example with
+notifications blocked, nothing ever rings, though D-023 says urgent messages ring until the user
+acknowledges them. Decide whether an unread urgent message should ring once when a page opens.
+
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
