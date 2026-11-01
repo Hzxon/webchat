@@ -32,6 +32,7 @@ import {
   type ConfigDTO,
   type CreateProjectResponse,
   type EnvelopeDTO,
+  type GithubDTO,
   type LoginResponse,
   type KeyLinkInput,
   type MessageDTO,
@@ -843,11 +844,17 @@ export function createApiRouter({ db, push, github, githubApp, config, inviteCod
   const githubCallbackUrl = (req: Request) =>
     config.githubCallbackUrl ?? `${req.protocol}://${req.get('host')}/api/github/callback`;
 
+  /** The pane's account and pull requests, and whether projects can link repositories here. */
+  const githubView = async (userId: number): Promise<GithubDTO> => ({
+    ...(await github.view(userId)),
+    appConfigured: githubApp.configured,
+  });
+
   /** The linked GitHub account and its pull requests, fetched again first when the last poll is old. */
   router.get('/github', requireAuth, async (req, res) => {
     const me = currentUser(res);
     await github.refresh(me.id, queryOf(req).get('refresh') === '1');
-    res.json(await github.view(me.id));
+    res.json(await githubView(me.id));
   });
 
   /**
@@ -899,13 +906,13 @@ export function createApiRouter({ db, push, github, githubApp, config, inviteCod
     const notify = (req.body as { notify?: unknown } | undefined)?.notify;
     if (typeof notify !== 'boolean') throw new HttpError(400, 'notify must be true or false.');
     await github.setNotify(me.id, notify);
-    res.json(await github.view(me.id));
+    res.json(await githubView(me.id));
   });
 
   router.delete('/github', requireAuth, async (_req, res) => {
     const me = currentUser(res);
     await github.disconnect(me.id);
-    res.json(await github.view(me.id));
+    res.json(await githubView(me.id));
   });
 
   /**

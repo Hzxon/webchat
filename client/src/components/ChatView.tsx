@@ -390,10 +390,11 @@ function PullCard({ pull, event }: { pull: PullCardDTO; event?: [Tone, string] }
   );
 }
 
+/** The same tones as the pane's activity list. */
 const EVENT_TAGS: Record<Exclude<PullEvent, 'opened'>, [Tone, string]> = {
   ready: ['ok', 'Ready for review'],
-  reopened: ['info', 'Reopened'],
-  merged: ['info', 'Merged'],
+  reopened: ['muted', 'Reopened'],
+  merged: ['ok', 'Merged'],
   closed: ['muted', 'Closed'],
 };
 

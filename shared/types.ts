@@ -456,6 +456,8 @@ export interface GithubAccountDTO {
 export interface GithubDTO {
   /** False until the server owner sets GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET. */
   configured: boolean;
+  /** False until the server owner sets up the GitHub App that projects link repositories through. */
+  appConfigured: boolean;
   /** Null while no GitHub account is connected. */
   account: GithubAccountDTO | null;
   pulls: PullListsDTO | null;

@@ -379,6 +379,7 @@ describe('GitHub connector', () => {
 
     const { data } = await request<GithubDTO>('GET', '/github');
     assert.deepEqual(data.account, { login: 'octo', name: 'Octo Cat', notify: true });
+    assert.equal(data.appConfigured, true, 'projects can link repositories, so the page shows the button');
     assert.deepEqual(
       data.pulls!.authored.map((p) => [p.number, p.review, p.checks]),
       [

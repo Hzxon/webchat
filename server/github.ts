@@ -400,7 +400,7 @@ export function createGithub(db: Db, push: Push, config: Config) {
       return due.length;
     },
 
-    async view(userId: number): Promise<GithubDTO> {
+    async view(userId: number): Promise<Omit<GithubDTO, 'appConfigured'>> {
       const account = configured ? await db.githubAccount(userId) : undefined;
       if (!account) {
         return { configured, account: null, pulls: null, events: [], fetchedAt: null, error: null, reconnect: false };

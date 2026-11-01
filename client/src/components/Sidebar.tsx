@@ -187,8 +187,8 @@ function ProjectSection(props: {
   const { project, channels, onNewChannel, onAddPeople, onMembers, onRepos } = props;
   const activeId = useAppState((s) => s.activeId);
   const urgent = useAppState((s) => s.urgent);
-  // Linking a repository only does something where the GitHub connector is set up.
-  const github = useAppState((s) => s.github?.configured ?? false);
+  // Linking a repository only does something where the GitHub App is set up.
+  const github = useAppState((s) => s.github?.appConfigured ?? false);
   const people = project.memberIds.length;
 
   return (
