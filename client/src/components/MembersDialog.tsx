@@ -4,7 +4,7 @@ import { useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
 
-/** Whose members to show: a project's or a group's. */
+/** Whose members to show or add to: a project's or a group's. */
 export type MembersTarget = { kind: 'project'; projectId: number } | { kind: 'group'; conversationId: number };
 
 /**
@@ -51,7 +51,7 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
     const after =
       target.kind === 'project'
         ? 'They leave every channel and stop getting its messages. You can add them again later.'
-        : 'They stop getting its messages. People cannot be added to a group, so they cannot come back.';
+        : 'They stop getting its messages. You can add them again later.';
     if (!confirm(`Remove ${person.name} from ${name}? ${after}`)) return;
     void run(() =>
       target.kind === 'project' ? removeProjectMember(target.projectId, person.id) : removeGroupMember(target.conversationId, person.id),

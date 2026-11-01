@@ -13,7 +13,7 @@ import {
 import type { Config } from './config.js';
 import { keyBackupOf, toUserDTO, type Db, type ProjectChangeRefusal, type SharedChannelKey, type UserRow } from './db.js';
 import { GithubError, type Github } from './github.js';
-import { notifyAddedToProject, notifyNewMessage } from './notify.js';
+import { notifyAddedToGroup, notifyAddedToProject, notifyNewMessage } from './notify.js';
 import type { Push, PushSubscriptionInput } from './push.js';
 import {
   LIMITS,
@@ -453,6 +453,26 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     await requireGroupOwner(conversationId, me.id);
     await db.deleteConversation(conversationId);
     res.status(204).end();
+  });
+
+  /** Adds people to a group. The member adding them shares its key, so they can read the history. */
+  router.post('/conversations/:id/members', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const conversationId = positiveInt(req.params.id, 'Chat id');
+    await requireMember(conversationId, me.id);
+    if ((await db.getConversation(conversationId))?.type !== 'group') throw new HttpError(400, 'Only a group can take new people.');
+    const added = userIds(req.body?.userIds, 'userIds', me.id);
+    if (added.length === 0) throw new HttpError(400, 'Pick at least one person.');
+    if (added.length > LIMITS.addMembersAtOnce) throw new HttpError(400, 'Too many people at once.');
+    await requireKeys(added);
+    // Whether the group has a key, and so whether one must come, is checked while the group is locked.
+    const key = req.body?.key == null ? null : chatKey(req.body.key, added);
+    const result = await db.addGroupMembers(conversationId, me.id, added, key);
+    if (result === 'already_member') throw new HttpError(409, 'Someone you picked is already in this group.', 'already_member');
+    if (result !== true) throw new HttpError(409, 'The group changed while you were editing. Try again.', 'stale_group');
+    const group = (await db.conversationFor(me.id, conversationId))!;
+    inBackground(notifyAddedToGroup(push, config, group, me, added));
+    res.json(group);
   });
 
   /** Removes someone from a group. The owner's browser sends its key wrapped again for the people who stay. */

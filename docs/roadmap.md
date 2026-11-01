@@ -75,18 +75,6 @@ Members can leave, and an owner can hand over.
 Open question: when someone joins after a rotation, do they get the old keys too, so they can read
 the history (D-026)?
 
-### R-003: Add people to groups
-
-Status: Planned.
-
-Why: a group cannot take new members after it is created (D-039), so a late teammate needs a new
-group, and a person removed by mistake cannot come back.
-
-Scope: reuse the project mechanism. A member's browser wraps the group's key for the newcomer
-(D-026).
-
-Open question: do newcomers to a group read its history, as they do in projects?
-
 ### R-005: Photos and files
 
 Status: Planned.
@@ -234,6 +222,16 @@ token, or a GitHub App installation on the organization (Q-3).
 Open question: should a project's channel get a card (R-013) for every pull request in its
 repositories, or only for the ones members share by hand?
 
+### R-017: Notes in a chat when people join or are removed
+
+Status: Idea. Found while building R-003 on 2026-11-01.
+
+Any member can add someone to a project or group, and the newcomer reads the whole history (D-026,
+D-043). The other members see it only in the member count and the member list. WhatsApp shows
+"Alice added Carol" in the chat, and Slack shows "Carol joined #general". A note in the message
+list would tell everyone who can read along. The server already knows when each member joined, so
+the notes would show it nothing new. They should not count as unread.
+
 ## Known issues
 
 ### K-1: Old tabs show reactions as messages they cannot decrypt
@@ -327,3 +325,4 @@ before changing D-032.
 | Owners remove members and delete projects and groups | #4 |
 | Known issues K-1 to K-4: reload after deploy, dialog focus, Node version, member order | #6 |
 | Share a pull request into a chat as a card | #8 |
+| R-003: Add people to groups, who read the history (D-043) | #10 |

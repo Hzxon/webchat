@@ -50,7 +50,7 @@ function sendBlockedReason(conversation: ChatConversation, state: Pick<State, 'm
 
 interface ChatViewProps {
   conversation: ChatConversation;
-  onAddPeople: (projectId: number) => void;
+  onAddPeople: (target: MembersTarget) => void;
   onMembers: (target: MembersTarget) => void;
 }
 
@@ -101,14 +101,14 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
         </div>
         <div className="header-end">
           {membersOf && (
-            <button className="icon-button" onClick={() => onMembers(membersOf)} title="Members" aria-label="Members">
-              <UsersIcon />
-            </button>
-          )}
-          {isChannel && project && (
-            <button className="icon-button" onClick={() => onAddPeople(project.id)} title="Add people" aria-label="Add people">
-              <UserPlusIcon />
-            </button>
+            <>
+              <button className="icon-button" onClick={() => onMembers(membersOf)} title="Members" aria-label="Members">
+                <UsersIcon />
+              </button>
+              <button className="icon-button" onClick={() => onAddPeople(membersOf)} title="Add people" aria-label="Add people">
+                <UserPlusIcon />
+              </button>
+            </>
           )}
           <button
             className="icon-button"
