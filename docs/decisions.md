@@ -555,7 +555,25 @@ calls `GET /api/github/poll` with `CRON_SECRET`, because Vercel Hobby cron jobs 
 Cost: alerts arrive up to a few minutes after the change. Each list shows at most 30 pull requests,
 and only from github.com.
 
-## Engineering process
+### D-042: A shared pull request is a message with a card inside
+
+Accepted 2026-11-01 in #8.
+
+The share button on a pull request sends an ordinary message of kind "message" whose encrypted
+content carries a `pull` field: repository, number, title, URL and the state at that moment, as
+`PullCardDTO`. The text of the same message says the same in words, so an older page, a push
+notification and the chat list show something without knowing the card. The page shows the card
+instead of the text. When reading content, the page rebuilds the link from the repository and
+number and drops a card whose link differs, so a card can only lead to github.com.
+
+Why: R-013 planned a new signed kind like reactions (D-030). A kind exists so the server can treat
+rows differently, and reactions needed that: no unread count, no preview, no push. A shared pull
+request should count, preview and push exactly like a message, so a field inside the envelope is
+enough, and the server changes not at all. It sees one more message and nothing about pull
+requests. The signature covers the envelope, so the card cannot be altered either (D-016).
+
+Cost: the card shows the state at the time of sharing and does not update. The text of a shared
+pull request is a stock sentence that the user does not write.
 
 ### D-035: Pull requests, squash merges and plain commit messages
 

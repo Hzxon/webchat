@@ -31,8 +31,8 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
 - Unread count in the tab title, favicon, and the app badge of an installed app.
 - Invite-code sign-up, so only people you give the code to can join.
 - **GitHub pull requests**: connect your GitHub account to see the pull requests waiting for your
-  review and how your own are doing, with alerts when they change. See
-  [GitHub pull requests](#github-pull-requests).
+  review and how your own are doing, with alerts when they change, and share one into a chat as a
+  card. See [GitHub pull requests](#github-pull-requests).
 
 ## How messages and notifications travel
 
@@ -188,6 +188,10 @@ Each person can connect their own GitHub account. A **Pull requests** entry at t
 list then shows the open pull requests waiting for their review (asked of them or one of their
 teams), their own open pull requests with checks, review decision, merge conflicts, size and
 comments, and recent activity.
+
+The share button on a pull request sends it into a chat or channel as a card: the title, the
+repository and number, and how it stood at that moment, with a link to GitHub. The card is
+encrypted like any message, so the server does not learn which pull request was shared.
 
 WebChat alerts you the same way as a message when someone asks for your review, approves or asks
 for changes on your pull request, comments on it, its checks fail or pass again, it gets merge

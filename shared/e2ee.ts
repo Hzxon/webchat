@@ -10,7 +10,16 @@
 //   metadata, so no one, including other members, can alter it or send as someone else.
 // - New member of a project: an existing member opens their own copy of each channel key and
 //   wraps it for the newcomer, who can then read the channel's history.
-import { LIMITS, type EnvelopeDTO, type MessageKind, type PublicKeysDTO, type SealedBackupDTO } from './types.js';
+import {
+  LIMITS,
+  type EnvelopeDTO,
+  type MessageKind,
+  type PublicKeysDTO,
+  type PullCardDTO,
+  type PullChecks,
+  type PullReview,
+  type SealedBackupDTO,
+} from './types.js';
 
 /** PBKDF2 rounds: OWASP's 2023 figure for PBKDF2-HMAC-SHA256. Changing it changes every derived key. */
 export const KDF_ITERATIONS = 600_000;
@@ -272,6 +281,8 @@ export interface MessageContent {
   replyTo?: QuotedMessage;
   /** For kind "reaction": the message and the emoji. An empty emoji takes the reaction back. */
   reaction?: { messageId: number; emoji: string };
+  /** A shared pull request. The text holds the same in words, for pages and devices without the card. */
+  pull?: PullCardDTO;
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -311,9 +322,38 @@ export class TamperedMessageError extends Error {
 
 const isId = (value: unknown): value is number => Number.isInteger(value) && (value as number) > 0;
 
+const REPO = /^[\w.-]+\/[\w.-]+$/;
+const REVIEWS = new Set<PullReview>(['approved', 'changes_requested', 'review_required']);
+const CHECKS = new Set<PullChecks>(['success', 'failure', 'pending']);
+
+/**
+ * A shared pull request, if it has the right shape. The link is rebuilt from the repository and
+ * number, so a card can only ever lead to that pull request on github.com.
+ */
+function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | undefined {
+  if (!raw || typeof raw.repo !== 'string' || !REPO.test(raw.repo) || !isId(raw.number) || typeof raw.title !== 'string') return;
+  const url = `https://github.com/${raw.repo}/pull/${raw.number}`;
+  if (raw.url !== url) return;
+  return {
+    repo: raw.repo,
+    number: raw.number,
+    title: raw.title.slice(0, LIMITS.pullTitleLength),
+    url,
+    draft: raw.draft === true,
+    review: REVIEWS.has(raw.review as PullReview) ? (raw.review as PullReview) : null,
+    checks: CHECKS.has(raw.checks as PullChecks) ? (raw.checks as PullChecks) : null,
+    conflicts: raw.conflicts === true,
+  };
+}
+
 /** Keeps the parts of decrypted content that have the right shape. The sender signed it, so it is not tampered. */
 function readContent(value: unknown): MessageContent {
-  const raw = value as { text?: unknown; replyTo?: Partial<QuotedMessage>; reaction?: { messageId?: unknown; emoji?: unknown } } | null;
+  const raw = value as {
+    text?: unknown;
+    replyTo?: Partial<QuotedMessage>;
+    reaction?: { messageId?: unknown; emoji?: unknown };
+    pull?: Partial<PullCardDTO>;
+  } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
   const quote = raw.replyTo;
@@ -324,6 +364,8 @@ function readContent(value: unknown): MessageContent {
   if (reaction && isId(reaction.messageId) && typeof reaction.emoji === 'string' && reaction.emoji.length <= EMOJI_LENGTH) {
     content.reaction = { messageId: reaction.messageId, emoji: reaction.emoji };
   }
+  const pull = readPull(raw.pull);
+  if (pull) content.pull = pull;
   return content;
 }
 

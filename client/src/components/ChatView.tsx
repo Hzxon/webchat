@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import type { QuotedMessage } from '../../../shared/e2ee';
-import { LIMITS } from '../../../shared/types';
+import { LIMITS, type PullCardDTO } from '../../../shared/types';
 import { loadOlder, quoteOf, react, retryMessage, sendMessage } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { actions, chatTitle, otherMemberId, useAppState, type MessageReactions, type State } from '../store';
@@ -14,6 +14,7 @@ import {
   CloseIcon,
   LockIcon,
   LockOpenIcon,
+  PullRequestIcon,
   ReplyIcon,
   SendIcon,
   SmilePlusIcon,
@@ -22,6 +23,7 @@ import {
   UsersIcon,
 } from './icons';
 import type { MembersTarget } from './MembersDialog';
+import { PullTags } from './PullTags';
 import { receiptState } from './receipts';
 import { SecurityCodeDialog } from './SecurityCodeDialog';
 
@@ -278,6 +280,8 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                     <span className="bubble-text bubble-failed">
                       <LockIcon width={13} height={13} /> This message could not be decrypted. It may have been altered.
                     </span>
+                  ) : message.pull ? (
+                    <PullCard pull={message.pull} />
                   ) : (
                     <span className="bubble-text">{linkify(message.text)}</span>
                   )}
@@ -354,6 +358,22 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
  * The message a reply answers. A loaded original passed its sender's signature check, so it wins
  * over the copy inside the reply, which only the person replying wrote.
  */
+/** A shared pull request, as it stood when it was shared. A click opens it on GitHub. */
+function PullCard({ pull }: { pull: PullCardDTO }) {
+  return (
+    <a className="pull-card" href={pull.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+      <span className="pull-card-head">
+        <PullRequestIcon width={14} height={14} />
+        {pull.repo}#{pull.number}
+      </span>
+      <span className="pull-title">{pull.title}</span>
+      <span className="pull-tags">
+        <PullTags pull={pull} />
+      </span>
+    </a>
+  );
+}
+
 function Quote({ quote, original, onJump }: { quote: QuotedMessage; original?: ChatMessage; onJump?: () => void }) {
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);

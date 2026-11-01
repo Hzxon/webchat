@@ -6,8 +6,16 @@
 //
 // Everything the server sends is decrypted on the way in, and every message is encrypted on the
 // way out (see e2ee/keyring.ts). The store only ever holds readable text.
-import type { QuotedMessage } from '../../shared/e2ee';
-import { LIMITS, type ConversationDTO, type SyncResponse, type UserDTO, type WorkerToPageMessage } from '../../shared/types';
+import type { MessageContent, QuotedMessage } from '../../shared/e2ee';
+import {
+  LIMITS,
+  type ConversationDTO,
+  type PullCardDTO,
+  type PullRequestDTO,
+  type SyncResponse,
+  type UserDTO,
+  type WorkerToPageMessage,
+} from '../../shared/types';
 import { showUnreadInTab, sound } from './alerts';
 import { announceAccountChange, api, ApiError, sendAwayBeacon, setTabUser } from './api';
 import { attention } from './attention';
@@ -213,9 +221,12 @@ export async function refreshPushState() {
   return state;
 }
 
-/** The text to show for a message in a toast or notification. */
-export const previewText = (message: ChatMessage) =>
-  message.security === 'failed' ? 'Encrypted message. Open the chat to read it.' : message.text;
+/** The text to show for a message in a toast, a notification or the chat list. */
+export function previewText(message: ChatMessage): string {
+  if (message.security === 'failed') return 'Encrypted message. Open the chat to read it.';
+  if (message.pull) return `Pull request: ${message.pull.title}`;
+  return message.text;
+}
 
 function onIncoming(message: ChatMessage) {
   const state = store.get();
@@ -387,11 +398,37 @@ export const quoteOf = (message: ChatMessage): QuotedMessage => ({
   text: message.text.slice(0, LIMITS.quoteLength),
 });
 
-export async function sendMessage(conversationId: number, body: string, urgent: boolean, replyTo: QuotedMessage | null = null) {
-  const me = store.get().me;
+export function sendMessage(conversationId: number, body: string, urgent: boolean, replyTo: QuotedMessage | null = null) {
   const text = body.trim();
-  if (!me || !text) return;
+  if (!text) return Promise.resolve();
+  return sendContent(conversationId, replyTo ? { text, replyTo } : { text }, urgent);
+}
+
+/**
+ * Sends a pull request into a chat as a card. The text says the same in words, so an older page,
+ * a notification and the chat list have something to show. The server sees an ordinary message.
+ */
+export function sharePull(conversationId: number, pull: PullRequestDTO) {
+  const card: PullCardDTO = {
+    repo: pull.repo,
+    number: pull.number,
+    title: pull.title,
+    url: pull.url,
+    draft: pull.draft,
+    review: pull.review,
+    checks: pull.checks,
+    conflicts: pull.conflicts,
+  };
+  const text = `Pull request ${card.repo}#${card.number}: ${card.title}\n${card.url}`;
+  return sendContent(conversationId, { text, pull: card }, false);
+}
+
+/** Encrypts and sends one message, showing it as sending until the server has it. */
+async function sendContent(conversationId: number, content: MessageContent, urgent: boolean) {
+  const me = store.get().me;
+  if (!me) return;
   const clientId = newClientId();
+  const opened = { text: content.text, replyTo: content.replyTo ?? null, reaction: null, pull: content.pull ?? null };
   actions.addSending({
     id: -Date.now(),
     conversationId,
@@ -402,19 +439,16 @@ export async function sendMessage(conversationId: number, body: string, urgent: 
     urgent,
     createdAt: Date.now(),
     clientId,
-    text,
-    replyTo,
-    reaction: null,
+    ...opened,
     security: 'encrypted',
   });
   try {
     const { key, keyId } = await ensureChatKey(conversationId);
-    const content = replyTo ? { text, replyTo } : { text };
     const envelope = await keyring.seal(key, keyId, { conversationId, urgent, clientId, kind: 'message' }, content);
     const message = await api.sendMessage(conversationId, { envelope, urgent, clientId, kind: 'message' });
     seen.add(message.id);
     keyring.rememberContent(message.id, content);
-    actions.addMessage({ ...message, text, replyTo, reaction: null, security: 'encrypted' }, false);
+    actions.addMessage({ ...message, ...opened, security: 'encrypted' }, false);
     actions.setPending(clientId, null);
     // Check back soon, so "delivered" shows up without waiting for the regular timer.
     schedule(2500);
@@ -430,7 +464,10 @@ export async function sendMessage(conversationId: number, body: string, urgent: 
 export function retryMessage(message: ChatMessage) {
   actions.dropSending(message.conversationId, message.clientId!);
   actions.setPending(message.clientId!, null);
-  void sendMessage(message.conversationId, message.text, message.urgent, message.replyTo);
+  const content: MessageContent = { text: message.text };
+  if (message.replyTo) content.replyTo = message.replyTo;
+  if (message.pull) content.pull = message.pull;
+  void sendContent(message.conversationId, content, message.urgent);
 }
 
 /** Puts an emoji on a message, or takes it back when it is already this user's reaction there. */
