@@ -192,6 +192,7 @@ describe('GitHub connector', () => {
       githubApiUrl: github.url,
       githubPollSeconds: 0,
       cronSecret: CRON_SECRET,
+      build: undefined,
       logger: silent,
     };
     instance = await createApp(config);

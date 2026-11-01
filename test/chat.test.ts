@@ -270,6 +270,7 @@ describe('chat server', () => {
       githubApiUrl: 'https://api.github.com',
       githubPollSeconds: 0,
       cronSecret: undefined,
+      build: 'test-build',
       logger: silent,
     };
     instance = await createApp(config);
@@ -285,6 +286,11 @@ describe('chat server', () => {
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     await instance?.close();
     await pushService?.close();
+  });
+
+  test('every API response names the build, so old tabs can reload after a deploy', async () => {
+    const res = await fetch(`${baseUrl}/api/config`);
+    assert.equal(res.headers.get('x-webchat-build'), 'test-build');
   });
 
   test('registration needs the invite code and account keys, and never a password', async () => {

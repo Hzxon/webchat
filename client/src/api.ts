@@ -20,6 +20,7 @@ import type {
   SyncResponse,
   UserDTO,
 } from '../../shared/types';
+import { noteBuild } from './build';
 
 export class ApiError extends Error {
   status: number;
@@ -58,6 +59,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   } catch {
     throw new ApiError(0, 'Cannot reach the server. Check your connection.');
   }
+  noteBuild(res);
   if (res.status === 204) return undefined as T;
   const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
   if (data.code === 'account_changed') {
