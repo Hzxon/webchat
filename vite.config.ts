@@ -6,7 +6,7 @@ const root = resolve(import.meta.dirname, 'client');
 const apiServer = `http://localhost:${process.env.PORT ?? 3000}`;
 
 /**
- * The browsers the build must run in, for the page's JavaScript and CSS (D-051). Vite's default
+ * The browsers the build must run in, for the page's JavaScript and CSS (D-052). Vite's default
  * starts at Safari 16.4, and Lightning CSS then writes `max-width` media queries as `width<=` ranges,
  * which Safari before 16.4 ignores: iPhones on older iOS got the desktop layout. The floor is iOS 15.4,
  * the first that has `<dialog>` and `Array.prototype.at`.

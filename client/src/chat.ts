@@ -24,6 +24,7 @@ import { announceAccountChange, api, ApiError, sendAwayBeacon, setTabUser } from
 import { attention } from './attention';
 import { holdReloadWhile, setReloadTarget } from './build';
 import { EncryptionUnavailableError, keyring, type ChatConversation, type ChatMessage, type KeyLookup } from './e2ee/keyring';
+import { keystore, type StoredUnsent } from './e2ee/keystore';
 import { refreshGithub, startGithub } from './github';
 import { forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
 import { actions, chatTitle, senderName, store } from './store';
@@ -32,6 +33,11 @@ const newClientId = () =>
   typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 const tabId = newClientId();
+// While a tab keeps unsent messages, it holds a lock named after it. Each unsent message names its
+// tab, so a tab that opens later takes over only those of tabs that have closed (D-051).
+const TAB_LOCK = 'webchat-tab:';
+/** Ends the lock this tab holds, or null while it holds none. */
+let releaseTabLock: (() => void) | null = null;
 let running = false;
 let meId = 0;
 let cursor = 0;
@@ -40,6 +46,8 @@ let pushActiveHere = false;
 let pushEndpoint: string | null = null;
 /** Messages already handled, so the overlap that sync re-sends never alerts twice. */
 const seen = new Set<number>();
+/** Client ids of the messages this tab keeps on the device until the server has them (D-051). */
+const unsent = new Set<string>();
 /**
  * Messages up to this id were in the chats when the page loaded, so they never alert. `seen` starts
  * empty on every load, and sync re-sends the last few seconds of messages as an overlap.
@@ -141,6 +149,8 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
   const before = store.get();
   actions.applySync(result.users, result.projects, conversations, messages);
   for (const message of fresh) if (shouldAlert(message, byId.get(message.conversationId)!)) onIncoming(message);
+  // The server has these after all, for example from a tab that closed before it heard back.
+  for (const message of messages) if (message.senderId === meId && message.clientId) forgetUnsent(message.clientId);
 
   // Its owner deleted the open chat or removed this user from it. The chat closes, so say why. A
   // toast shows one line of text, so the title names the chat and the text stays short for phones.
@@ -216,7 +226,8 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
     () => window.removeEventListener('pagehide', onAway),
     () => window.removeEventListener('online', syncNow),
     store.subscribe(syncAlerts),
-    // A reload after a deploy would lose these: they live only in this page (D-040).
+    warnWhileSending(),
+    // A reload after a deploy waits while an alert rings or a message is not sent yet (D-040).
     holdReloadWhile(() => {
       const state = store.get();
       return state.urgent.length > 0 || Object.keys(state.pending).length > 0;
@@ -252,11 +263,95 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
 
   // A notification click on a closed app opens /?chat=<id>.
   const requested = Number(new URLSearchParams(location.search).get('chat'));
+  let opening = Promise.resolve();
   if (requested && store.get().conversations[requested]) {
     history.replaceState(null, '', '/');
-    void openConversation(requested);
+    opening = openConversation(requested);
   }
+  // After the chat above, so the two never load the same history at once.
+  void opening.catch(() => undefined).then(() => restoreUnsent(run));
   return { status: 'ready' };
+}
+
+/**
+ * Asks before the tab closes or reloads while a message is still on its way. The message would come
+ * back as not sent (D-051), but the person it is for would wait until this device opens WebChat again.
+ */
+function warnWhileSending(): () => void {
+  const onBeforeUnload = (event: BeforeUnloadEvent) => {
+    event.preventDefault();
+    // For older browsers, such as Chrome before 119.
+    event.returnValue = true;
+  };
+  // Listening only while needed: some browsers keep a page that listens out of the back/forward cache.
+  let listening = false;
+  const unsubscribe = store.subscribe(() => {
+    const sending = Object.values(store.get().pending).includes('sending');
+    if (sending === listening) return;
+    listening = sending;
+    if (sending) window.addEventListener('beforeunload', onBeforeUnload);
+    else window.removeEventListener('beforeunload', onBeforeUnload);
+  });
+  return () => {
+    unsubscribe();
+    window.removeEventListener('beforeunload', onBeforeUnload);
+  };
+}
+
+/** Ids of the tabs open on this device now, from the locks they hold. */
+async function openTabs(): Promise<Set<string>> {
+  const held = (await navigator.locks?.query().catch(() => undefined))?.held ?? [];
+  return new Set(held.flatMap((lock) => (lock.name?.startsWith(TAB_LOCK) ? [lock.name.slice(TAB_LOCK.length)] : [])));
+}
+
+/**
+ * Brings back the messages that tabs now closed never heard the server confirm (D-051). Each shows
+ * in its chat as not sent, unless the chat's history shows that the server has it after all.
+ */
+async function restoreUnsent(run: number) {
+  const [entries, open] = await Promise.all([keystore.getUnsent().catch((): StoredUnsent[] => []), openTabs()]);
+  const byChat = new Map<number, StoredUnsent[]>();
+  for (const entry of entries) {
+    if (entry.userId !== meId || (entry.tabId !== tabId && open.has(entry.tabId))) continue;
+    // The chat is gone, or this user is no longer in it.
+    if (!store.get().conversations[entry.conversationId]) {
+      keystore.deleteUnsent(entry.clientId).catch(() => undefined);
+      continue;
+    }
+    byChat.set(entry.conversationId, [...(byChat.get(entry.conversationId) ?? []), entry]);
+  }
+  for (const [conversationId, list] of byChat) {
+    if (!store.get().messages[conversationId]) {
+      // A failure leaves an empty list, as when a chat opens, and "Show earlier messages" tries again.
+      await loadOlder(conversationId).catch(() => actions.setHistory(conversationId, [], false));
+    }
+    const conversation = store.get().conversations[conversationId];
+    if (run !== generation || !conversation) return;
+    const settled = new Set(store.get().messages[conversationId]?.map((m) => m.clientId));
+    const left = list.filter((entry) => !settled.has(entry.clientId));
+    for (const entry of list) if (settled.has(entry.clientId)) keystore.deleteUnsent(entry.clientId).catch(() => undefined);
+    for (const entry of left) {
+      rememberUnsent({ ...entry, tabId });
+      actions.addSending(unsentMessage(entry));
+      actions.setPending(entry.clientId, 'failed');
+    }
+    if (left.length > 0) {
+      const body = left.length === 1 ? 'A message you wrote was not sent.' : `${left.length} messages you wrote were not sent.`;
+      actions.addToast({ conversationId, title: chatTitle(conversation), body });
+    }
+  }
+}
+
+/** The draft this device keeps for a chat, or an empty string (D-051). */
+export async function loadDraft(conversationId: number): Promise<string> {
+  const draft = await keystore.getDraft(conversationId).catch(() => undefined);
+  return draft?.userId === meId ? draft.text : '';
+}
+
+/** Keeps what a chat's message box holds, so closing the tab or opening another chat loses nothing. */
+export function saveDraft(conversationId: number, text: string) {
+  const write = text.trim() ? keystore.setDraft(conversationId, { userId: meId, text }) : keystore.deleteDraft(conversationId);
+  write.catch(() => undefined);
 }
 
 export async function refreshPushState() {
@@ -560,30 +655,72 @@ export function sharePull(conversationId: number, pull: PullRequestDTO) {
   return sendContent(conversationId, { text: lines.join('\n'), pull: card }, false);
 }
 
-/** Encrypts and sends one message, showing it as sending until the server has it. */
-async function sendContent(conversationId: number, content: MessageContent, urgent: boolean) {
-  const me = store.get().me;
-  if (!me) return;
-  const clientId = newClientId();
-  const opened = { text: content.text, replyTo: content.replyTo ?? null, reaction: null, pull: content.pull ?? null, github: null };
-  actions.addSending({
-    id: -Date.now(),
-    conversationId,
-    senderId: me.id,
+/** How a message the server has not confirmed shows in its chat, while it sends and after it failed. */
+function unsentMessage(entry: StoredUnsent): ChatMessage {
+  return {
+    id: -entry.createdAt,
+    conversationId: entry.conversationId,
+    senderId: entry.userId,
     kind: 'message',
     body: '',
     envelope: null,
-    urgent,
-    createdAt: Date.now(),
-    clientId,
-    ...opened,
+    urgent: entry.urgent,
+    createdAt: entry.createdAt,
+    clientId: entry.clientId,
+    text: entry.content.text,
+    replyTo: entry.content.replyTo ?? null,
+    reaction: null,
+    pull: entry.content.pull ?? null,
+    github: null,
     security: 'encrypted',
+  };
+}
+
+// Writes go to the device in the order they are made, so a quick confirmation cannot be overtaken.
+function rememberUnsent(entry: StoredUnsent) {
+  unsent.add(entry.clientId);
+  holdTabLock();
+  keystore.setUnsent(entry).catch(() => undefined);
+}
+
+function forgetUnsent(clientId: string) {
+  if (!unsent.delete(clientId)) return;
+  keystore.deleteUnsent(clientId).catch(() => undefined);
+  if (unsent.size === 0) dropTabLock();
+}
+
+// Held only while needed: some browsers keep a page that holds a lock out of the back/forward cache.
+function holdTabLock() {
+  if (releaseTabLock || !navigator.locks) return;
+  const held = new Promise<void>((resolve) => {
+    releaseTabLock = resolve;
   });
+  navigator.locks.request(`${TAB_LOCK}${tabId}`, () => held).catch(() => undefined);
+}
+
+function dropTabLock() {
+  releaseTabLock?.();
+  releaseTabLock = null;
+}
+
+/**
+ * Encrypts and sends one message, showing it as sending until the server has it. Until then it
+ * also stays on the device, so closing or reloading the tab does not lose it (D-051).
+ */
+async function sendContent(conversationId: number, content: MessageContent, urgent: boolean) {
+  const me = store.get().me;
+  if (!me) return;
+  const entry: StoredUnsent = { userId: me.id, tabId, conversationId, clientId: newClientId(), urgent, createdAt: Date.now(), content };
+  const { clientId } = entry;
+  const sending = unsentMessage(entry);
+  actions.addSending(sending);
+  rememberUnsent(entry);
   try {
     const message = await sealAndSend(conversationId, { urgent, clientId, kind: 'message' }, content);
     seen.add(message.id);
-    actions.addMessage({ ...message, ...opened, security: 'encrypted' }, false);
+    actions.addMessage({ ...sending, ...message }, false);
     actions.setPending(clientId, null);
+    forgetUnsent(clientId);
     // Check back soon, so "delivered" shows up without waiting for the regular timer.
     schedule(2500);
   } catch (error) {
@@ -594,9 +731,15 @@ async function sendContent(conversationId: number, content: MessageContent, urge
   }
 }
 
-export function retryMessage(message: ChatMessage) {
+/** Takes a message that was not sent out of its chat and off this device, which keeps it until then. */
+export function discardMessage(message: ChatMessage) {
   actions.dropSending(message.conversationId, message.clientId!);
   actions.setPending(message.clientId!, null);
+  forgetUnsent(message.clientId!);
+}
+
+export function retryMessage(message: ChatMessage) {
+  discardMessage(message);
   const content: MessageContent = { text: message.text };
   if (message.replyTo) content.replyTo = message.replyTo;
   if (message.pull) content.pull = message.pull;
@@ -803,6 +946,8 @@ function teardown() {
   clearTimeout(timer);
   for (const cleanup of cleanups.splice(0)) cleanup();
   seen.clear();
+  unsent.clear();
+  dropTabLock();
   pagedTo.clear();
   cursor = 0;
   alertFloor = 0;
