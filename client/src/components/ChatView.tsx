@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import type { QuotedMessage } from '../../../shared/e2ee';
 import { LIMITS, type PullCardDTO } from '../../../shared/types';
+import { holdReloadWhile } from '../build';
 import { loadOlder, quoteOf, react, retryMessage, sendMessage } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { actions, chatTitle, otherMemberId, useAppState, type MessageReactions, type State } from '../store';
@@ -152,6 +153,8 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
   const messages = useAppState((s) => s.messages[conversation.id] ?? EMPTY);
   const reactions = useAppState((s) => s.reactions[conversation.id] ?? NO_REACTIONS);
   const complete = useAppState((s) => s.historyComplete[conversation.id] ?? false);
+  // No list yet means the first page is still loading.
+  const loaded = useAppState((s) => s.messages[conversation.id] !== undefined);
   const pending = useAppState((s) => s.pending);
   const scroller = useRef<HTMLDivElement>(null);
   const restoreFrom = useRef<number | null>(null);
@@ -232,7 +235,7 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
           ? 'Messages are end-to-end encrypted. No one outside this chat, not even the server, can read them.'
           : 'Messages you send here will be end-to-end encrypted. Earlier ones were sent before encryption.'}
       </button>
-      {!complete && messages.length > 0 && (
+      {loaded && !complete && (
         <button className="load-older" onClick={() => void showOlder()} disabled={loadingOlder}>
           {loadingOlder ? 'Loading…' : 'Show earlier messages'}
         </button>
@@ -475,6 +478,13 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
   const [text, setText] = useState('');
   const [urgent, setUrgent] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
+  const draft = useRef('');
+
+  // The draft lives only here, so a reload after a deploy waits until it is sent or cleared.
+  useEffect(() => {
+    draft.current = text;
+  }, [text]);
+  useEffect(() => holdReloadWhile(() => draft.current.trim() !== ''), []);
 
   useEffect(() => {
     setText('');

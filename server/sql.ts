@@ -36,6 +36,10 @@ export function connectPostgres({ connectionString, caCert }: PostgresOptions): 
     max: 3,
     idleTimeoutMillis: 10_000,
   });
+  // A pooled connection that dies while idle (a database restart, a pooler recycling it, a network
+  // reset) is reported here. Without a listener, Node treats it as uncaught and stops the process.
+  // The pool drops that connection and opens a new one for the next query.
+  pool.on('error', (error) => console.error('Idle database connection closed', error));
 
   return {
     pool,

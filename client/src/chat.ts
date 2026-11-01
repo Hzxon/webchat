@@ -9,6 +9,7 @@
 import type { MessageContent, QuotedMessage } from '../../shared/e2ee';
 import {
   LIMITS,
+  showsEveryPush,
   type ConversationDTO,
   type PullCardDTO,
   type PullRequestDTO,
@@ -21,6 +22,7 @@ import {
 import { showUnreadInTab, sound } from './alerts';
 import { announceAccountChange, api, ApiError, sendAwayBeacon, setTabUser } from './api';
 import { attention } from './attention';
+import { holdReloadWhile } from './build';
 import { EncryptionUnavailableError, keyring, type ChatConversation, type ChatMessage, type KeyLookup } from './e2ee/keyring';
 import { refreshGithub, startGithub } from './github';
 import { forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
@@ -38,6 +40,18 @@ let pushActiveHere = false;
 let pushEndpoint: string | null = null;
 /** Messages already handled, so the overlap that sync re-sends never alerts twice. */
 const seen = new Set<number>();
+/**
+ * Messages up to this id were in the chats when the page loaded, so they never alert. `seen` starts
+ * empty on every load, and sync re-sends the last few seconds of messages as an overlap.
+ */
+let alertFloor = 0;
+/** Check-ins in a row that the server answered with `more`. */
+let catchUpRounds = 0;
+const MAX_CATCH_UP_ROUNDS = 10;
+/** How far back each chat's history has been paged, by row id. Reaction rows count too. */
+const pagedTo = new Map<number, number>();
+/** Pages in a row that may bring only reactions before loadOlder stops and waits for a click. */
+const MAX_REACTION_PAGES = 10;
 let onSignedOut: () => void = () => undefined;
 const cleanups: Array<() => void> = [];
 // Bumped on every start, so an older start that is still loading knows to stop.
@@ -56,7 +70,8 @@ const openConversations = (list: ConversationDTO[], keysOf: KeyLookup): Promise<
 
 /** How long to wait before the next check-in. */
 function syncInterval(): number {
-  if (attention.isAttentive()) return pushActiveHere ? 15_000 : 3_000;
+  // Safari gets no push while the user looks (D-047), so its tab checks in as often as one without push.
+  if (attention.isAttentive()) return pushActiveHere && !showsEveryPush(pushEndpoint) ? 15_000 : 3_000;
   return pushActiveHere ? 60_000 : 10_000;
 }
 
@@ -86,6 +101,13 @@ export async function syncNow(): Promise<void> {
     if (result.changed) await applyChanges(result);
     stamp = result.stamp;
     cursor = Math.max(cursor, result.cursor);
+    // The server holds more than one answer carries: fetch the rest now, for a few rounds at most.
+    if (result.changed && result.more && catchUpRounds < MAX_CATCH_UP_ROUNDS) {
+      catchUpRounds++;
+      again = true;
+    } else {
+      catchUpRounds = 0;
+    }
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       void endSession();
@@ -118,15 +140,7 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
   for (const m of fresh) seen.add(m.id);
   const before = store.get();
   actions.applySync(result.users, result.projects, conversations, messages);
-  // A chat this user was just added to sends its history after their cursor. Messages up to their
-  // read pointer came before they joined, or were read on another device, so they never alert.
-  const readUpTo = (conversationId: number) =>
-    byId.get(conversationId)?.members.find((m) => m.userId === meId)?.lastReadId ?? 0;
-  for (const message of fresh) {
-    if (message.senderId !== meId && message.kind === 'message' && message.id > readUpTo(message.conversationId)) {
-      onIncoming(message);
-    }
-  }
+  for (const message of fresh) if (shouldAlert(message, byId.get(message.conversationId)!)) onIncoming(message);
 
   // Its owner deleted the open chat or removed this user from it. The chat closes, so say why. A
   // toast shows one line of text, so the title names the chat and the text stays short for phones.
@@ -140,6 +154,18 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
   for (const c of conversations) if (c.keyId && c.needsNewKey) replaceChatKey(c.id).catch(() => undefined);
 }
 
+/**
+ * Only a message that is new to this user alerts. Not one from before the page loaded, which sync
+ * re-sends as its overlap; not one their read pointer already covers, such as a project's history
+ * when they join (D-026); and not one without encryption. The server has refused those since
+ * encryption came, so a new one can only come from someone writing to the database (D-019).
+ */
+function shouldAlert(message: ChatMessage, conversation: ChatConversation): boolean {
+  if (message.senderId === meId || message.kind !== 'message' || message.security === 'plain') return false;
+  const readUpTo = conversation.members.find((m) => m.userId === meId)?.lastReadId ?? 0;
+  return message.id > alertFloor && message.id > readUpTo;
+}
+
 /** Fetches everything again, for when this device missed a change such as a new chat key. */
 async function reloadAll() {
   const data = await api.bootstrap();
@@ -151,6 +177,7 @@ async function reloadAll() {
     projects: data.projects,
     conversations: data.conversations,
     messages: [],
+    more: false,
   });
 }
 
@@ -177,6 +204,7 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
 
   actions.bootstrap({ me: data.me, users: data.users, projects: data.projects, conversations });
   cursor = data.cursor;
+  alertFloor = data.cursor;
   stamp = data.stamp;
   running = true;
 
@@ -187,6 +215,11 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
     () => window.removeEventListener('pagehide', onAway),
     () => window.removeEventListener('online', syncNow),
     store.subscribe(syncAlerts),
+    // A reload after a deploy would lose these: they live only in this page (D-040).
+    holdReloadWhile(() => {
+      const state = store.get();
+      return state.urgent.length > 0 || Object.keys(state.pending).length > 0;
+    }),
     attention.subscribe((attentive) => {
       // Tell the server right away, so pushes switch between this tab and the phone.
       void syncNow();
@@ -230,6 +263,7 @@ export async function refreshPushState() {
 /** The text to show for a message in a toast, a notification or the chat list. */
 export function previewText(message: ChatMessage): string {
   if (message.security === 'failed') return 'Encrypted message. Open the chat to read it.';
+  if (message.security === 'plain') return `Not encrypted: ${message.text}`;
   if (message.pull) return `Pull request: ${message.pull.title}`;
   return message.text;
 }
@@ -286,7 +320,8 @@ export function markRead(conversationId: number) {
   const conversation = state.conversations[conversationId];
   const newest = conversation?.lastMessage;
   const meId = state.me?.id;
-  if (!conversation || !newest || meId === undefined) return;
+  // Never mark read what the chat does not show: its history failed to load, or is still loading.
+  if (!conversation || !newest || meId === undefined || !state.messages[conversationId]) return;
   actions.clearUrgent(conversationId, newest.id);
   const mine = conversation.members.find((m) => m.userId === meId);
   if (conversation.unread === 0 && mine && mine.lastReadId >= newest.id) return;
@@ -301,23 +336,47 @@ export function markRead(conversationId: number) {
 }
 
 export async function openConversation(conversationId: number) {
+  // A notification can name a chat this page has not synced yet, or one that is gone.
+  if (!store.get().conversations[conversationId]) await reloadAll().catch(() => undefined);
   const conversation = store.get().conversations[conversationId];
-  if (conversation) actions.setTab(conversation.type === 'channel' ? 'projects' : 'chats');
+  if (!conversation) {
+    actions.addToast({ conversationId: null, title: 'Chat not available', body: 'It was deleted, or you were removed.' });
+    return;
+  }
+  actions.setTab(conversation.type === 'channel' ? 'projects' : 'chats');
   actions.setActive(conversationId);
-  if (!store.get().messages[conversationId]) await loadOlder(conversationId);
+  if (!store.get().messages[conversationId]) {
+    try {
+      await loadOlder(conversationId);
+    } catch {
+      // An empty list still takes new messages, and "Show earlier messages" tries again.
+      actions.setHistory(conversationId, [], false);
+      actions.addToast({ conversationId: null, title: chatTitle(conversation), body: 'Could not load the messages. Try again.' });
+    }
+  }
   if (attention.isAttentive()) markRead(conversationId);
 }
 
+/**
+ * Loads the page of history before what the chat shows. A page counts reaction rows, which the
+ * list leaves out, so it pages from the oldest row fetched and keeps going while pages bring no
+ * message. Otherwise a run of reactions would return the same page on every click.
+ */
 export async function loadOlder(conversationId: number) {
-  const state = store.get();
-  const conversation = state.conversations[conversationId];
-  if (!conversation || state.historyComplete[conversationId]) return;
-  const oldest = state.messages[conversationId]?.find((m) => m.id > 0);
-  const raw = await api.messages(conversationId, oldest?.id);
-  const keysOf = currentLookup();
-  const page = await Promise.all(raw.map((m) => keyring.open(m, conversation, keysOf)));
-  for (const m of page) seen.add(m.id);
-  actions.setHistory(conversationId, page, page.length < LIMITS.pageSize);
+  const conversation = store.get().conversations[conversationId];
+  if (!conversation || store.get().historyComplete[conversationId]) return;
+  if (!store.get().messages[conversationId]) pagedTo.delete(conversationId);
+  for (let pages = 0; pages < MAX_REACTION_PAGES; pages++) {
+    const before = pagedTo.get(conversationId) ?? store.get().messages[conversationId]?.find((m) => m.id > 0)?.id;
+    const raw: MessageDTO[] = await api.messages(conversationId, before);
+    if (raw.length > 0) pagedTo.set(conversationId, raw[0]!.id);
+    const keysOf = currentLookup();
+    const page = await Promise.all(raw.map((m) => keyring.open(m, conversation, keysOf)));
+    for (const m of page) seen.add(m.id);
+    const complete = raw.length < LIMITS.pageSize;
+    actions.setHistory(conversationId, page, complete);
+    if (complete || page.some((m) => m.kind !== 'reaction')) return;
+  }
 }
 
 /** Adds a chat the server just returned, keeping the key this device created for it. */
@@ -447,7 +506,10 @@ async function sealAndSend(
   const { key, keyId } = await ensureChatKey(conversationId);
   const envelope = await keyring.seal(key, keyId, { conversationId, ...meta }, content);
   try {
-    return await api.sendMessage(conversationId, { envelope, ...meta, auto });
+    const message = await api.sendMessage(conversationId, { envelope, ...meta, auto });
+    // This device knows what it sent, so it never needs to decrypt it.
+    keyring.rememberContent(message.id, { conversationId, senderId: meId, ...meta }, envelope, content);
+    return message;
   } catch (error) {
     if (retried || !(error instanceof ApiError && (error.code === 'stale_key' || error.code === 'needs_new_key'))) throw error;
     await reloadAll();
@@ -528,7 +590,6 @@ async function sendContent(conversationId: number, content: MessageContent, urge
   try {
     const message = await sealAndSend(conversationId, { urgent, clientId, kind: 'message' }, content, auto);
     seen.add(message.id);
-    keyring.rememberContent(message.id, content);
     actions.addMessage({ ...message, ...opened, security: 'encrypted' }, false);
     actions.setPending(clientId, null);
     // Check back soon, so "delivered" shows up without waiting for the regular timer.
@@ -563,7 +624,6 @@ export async function react(message: ChatMessage, emoji: string) {
     const content = { text: '', reaction: { messageId: message.id, emoji: next } };
     const event = await sealAndSend(conversationId, { urgent: false, clientId: newClientId(), kind: 'reaction' }, content);
     seen.add(event.id);
-    keyring.rememberContent(event.id, content);
     actions.setMyReaction(conversationId, message.id, me.id, { eventId: event.id, emoji: next });
   } catch (error) {
     actions.setMyReaction(conversationId, message.id, me.id, previous);
@@ -751,7 +811,10 @@ function teardown() {
   clearTimeout(timer);
   for (const cleanup of cleanups.splice(0)) cleanup();
   seen.clear();
+  pagedTo.clear();
   cursor = 0;
+  alertFloor = 0;
+  catchUpRounds = 0;
   stamp = '';
   sound.stopRinging();
   showUnreadInTab(0, null);

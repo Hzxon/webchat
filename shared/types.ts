@@ -198,6 +198,8 @@ export type SyncResponse =
       conversations: ConversationDTO[];
       /** Messages after the request cursor, plus a short overlap the client de-duplicates. */
       messages: MessageDTO[];
+      /** True when newer messages exist than this answer carries. The client checks in again at once. */
+      more: boolean;
     };
 
 export interface SendMessageInput {
@@ -449,6 +451,21 @@ export type WorkerToPageMessage =
 /** Response header that names the server's build. A tab reloads when the value changes. */
 export const BUILD_HEADER = 'x-webchat-build';
 
+/**
+ * True for Apple's push service, which Safari and web apps on iPhone and iPad use. WebKit revokes a
+ * subscription after a few pushes that show no notification, so such an endpoint never gets a push
+ * that only wakes an open tab (D-047).
+ */
+export function showsEveryPush(endpoint: string | null): boolean {
+  if (!endpoint) return false;
+  try {
+    const host = new URL(endpoint).hostname;
+    return host === 'push.apple.com' || host.endsWith('.push.apple.com');
+  } catch {
+    return false;
+  }
+}
+
 export const LIMITS = {
   messageLength: 4000,
   /** Characters of the quoted message a reply carries. */
@@ -458,7 +475,7 @@ export const LIMITS = {
   groupTitleLength: 60,
   projectNameLength: 60,
   channelNameLength: 40,
-  /** People added to a project or group at once. Each needs every channel key, and requests stop at 64 KB. */
+  /** People added to a project or group at once. Each needs every channel key, and requests stop at 256 KB. */
   addMembersAtOnce: 20,
   displayNameLength: 40,
   /** GitHub's own limit for a pull request title. */

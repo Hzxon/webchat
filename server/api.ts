@@ -223,9 +223,12 @@ function currentUser(res: Response): UserRow {
  */
 const queryOf = (req: Request) => new URL(req.originalUrl, 'http://localhost').searchParams;
 
-/** Keeps a serverless function alive until background work (like sending pushes) finishes. */
-function inBackground(work: Promise<unknown>) {
-  waitUntil(work);
+/**
+ * Keeps a serverless function alive until background work (like sending pushes) finishes. Off
+ * Vercel, waitUntil ignores the promise, so an unhandled failure here would stop the Node process.
+ */
+function inBackground(work: Promise<unknown>, logger: Config['logger']) {
+  waitUntil(work.catch((error: unknown) => logger.error('Background work failed', error)));
 }
 
 interface ApiDeps {
@@ -352,7 +355,7 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     const valid = await verifyPassword(authKey, user?.password_hash ?? (await dummyPasswordHash()));
     if (!user || !valid) throw new HttpError(401, 'Wrong username or password.');
     await startSession(req, res, user);
-    inBackground(db.purgeExpired());
+    inBackground(db.purgeExpired(), config.logger);
     const body: LoginResponse = { user: toUserDTO(user), backup: keyBackupOf(user) };
     res.json(body);
   });
@@ -406,12 +409,14 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
 
   router.get('/bootstrap', requireAuth, async (_req, res) => {
     const me = currentUser(res);
-    const [users, projects, conversations, cursor, stamp] = await Promise.all([
+    // The fingerprint first: a change that lands while the rest loads then makes the first
+    // check-in answer "changed" instead of being counted as seen without being sent.
+    const stamp = await db.stamp(me.id);
+    const [users, projects, conversations, cursor] = await Promise.all([
       db.listUsers(),
       db.projectsFor(me.id),
       db.conversationsFor(me.id),
       db.latestMessageId(me.id),
-      db.stamp(me.id),
     ]);
     const now = Date.now();
     const body: BootstrapDTO = {
@@ -452,11 +457,17 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
       // Marking messages delivered changes the fingerprint, so read it again.
       db.stamp(me.id),
     ]);
+    const newCursor = messages.reduce((max, m) => Math.max(max, m.id), cursor);
+    // Each read above sees its own moment. A message that committed after messagesSince, or past
+    // its page limit, is already counted in newStamp. Returning that stamp would make every later
+    // check-in answer "unchanged" without the message, so send no stamp and ask for another round.
+    const more = (await db.latestMessageId(me.id)) > newCursor;
     const now = Date.now();
     const body: SyncResponse = {
       changed: true,
-      stamp: newStamp,
-      cursor: messages.reduce((max, m) => Math.max(max, m.id), cursor),
+      stamp: more ? '' : newStamp,
+      more,
+      cursor: newCursor,
       users: users.filter((u) => u.id !== me.id).map((u) => toUserDTO(u, now)),
       projects,
       conversations,
@@ -523,7 +534,7 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     if (result === 'already_member') throw new HttpError(409, 'Someone you picked is already in this group.', 'already_member');
     if (result !== true) throw new HttpError(409, 'The group changed while you were editing. Try again.', 'stale_group');
     const group = (await db.conversationFor(me.id, conversationId))!;
-    inBackground(notifyAddedToGroup(push, config, group, me, added));
+    inBackground(notifyAddedToGroup(push, config, group, me, added), config.logger);
     res.json(group);
   });
 
@@ -593,7 +604,7 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     const key = chatKey(req.body?.key, allIds);
     const { projectId, channelId } = await db.createProject(name, me.id, allIds, key);
     const project = (await db.projectFor(me.id, projectId))!;
-    if (memberIds.length > 0) inBackground(notifyAddedToProject(push, config, project, channelId, me, memberIds));
+    if (memberIds.length > 0) inBackground(notifyAddedToProject(push, config, project, channelId, me, memberIds), config.logger);
     const body: CreateProjectResponse = { project, channel: (await db.conversationFor(me.id, channelId))! };
     res.status(201).json(body);
   });
@@ -625,10 +636,12 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     });
     const result = await db.addProjectMembers(projectId, me.id, added, channelKeys);
     if (result !== true) throw projectRefusal(result);
-    const project = (await db.projectFor(me.id, projectId))!;
+    // The adder can be removed again the moment the change commits.
+    const project = await db.projectFor(me.id, projectId);
+    if (!project) throw new HttpError(403, 'You are no longer in this project.', 'not_member');
     // #general is the project's first channel.
     const general = channelKeys.length > 0 ? Math.min(...channelKeys.map((k) => k.conversationId)) : null;
-    inBackground(notifyAddedToProject(push, config, project, general, me, added));
+    inBackground(notifyAddedToProject(push, config, project, general, me, added), config.logger);
     res.json(project);
   });
 
@@ -763,7 +776,7 @@ export function createApiRouter({ db, push, github, config, inviteCode, kdfSalt 
     const senderRead = req.body?.auto !== true;
     const message = await db.insertMessage(conversationId, me.id, kind, sealed, urgent, clientId, senderRead);
     // Answer the sender first; pushes go out after, while the function stays alive.
-    inBackground(notifyNewMessage(db, push, config, message, me));
+    inBackground(notifyNewMessage(db, push, config, message, me), config.logger);
     res.status(201).json(message);
   });
 

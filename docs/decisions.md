@@ -146,9 +146,16 @@ Why: a tab from before a deploy keeps its old code until it reloads. Old tabs sh
 as a message they could not decrypt after #2 (K-1), and every later format change would do the
 same. A check-in is the only channel to a tab (D-004), so the header rides on it.
 
-Cost: a deploy reloads every open tab once, which drops scroll positions. A self-hosted server that
-restarts with the same build does not reload tabs, because the hash comes from the page, not from
-the start time.
+A review on 2026-11-01 found that focus alone lost things that live only in the page: a hidden tab
+reloaded with a draft in it, and a tab ringing an urgent alert reloaded at once, because the alert's
+button has the focus. Now the reload also waits while the composer holds a draft, a message is
+still sending or failed to send, or an urgent alert waits to be dismissed (`holdReloadWhile` in
+`client/src/build.ts`).
+
+Cost: a deploy reloads every open tab once, which drops scroll positions. A tab with a failed
+message or an alert nobody dismisses keeps the old build until they are dealt with. A self-hosted
+server that restarts with the same build does not reload tabs, because the hash comes from the page,
+not from the start time.
 
 ### D-041: Only main deploys from Git
 
@@ -176,7 +183,9 @@ Accepted 2026-11-01 in 10ba6d8. The rule about numbers comes from #2.
 `MIGRATIONS`. Each entry runs once, in order, in a transaction that holds an advisory lock, because
 several serverless instances can start at once. `webchat.meta` records how many have run. So far:
 1 is end-to-end encryption, 2 is the GitHub connector, 3 is projects with replies and reactions, 4
-is group owners (#4), and 5 is key rotation, leaving and handing over (#13).
+is group owners (#4), 5 is key rotation, leaving and handing over (#13), 6 is sharing new pull
+requests into projects (#14), and 7 pulls back delivered pointers that went past a chat's newest
+event (D-022).
 
 Two branches once both added a migration 2. The projects migration became 3 when its branch merged,
 because a database that had already run the connector's migration 2 would have skipped it. When two
@@ -186,16 +195,19 @@ Cost: a mistake in a migration on main is fixed with a new migration, never by e
 
 ### D-011: Limits live in one place
 
-Accepted 2026-11-01 in 74d53ff, extended in 10ba6d8, #2, #4, #10 and #13.
+Accepted 2026-11-01 in 74d53ff, extended in 10ba6d8, #2, #4, #10 and #13, and after a review of
+main on 2026-11-01.
 
 `LIMITS` in `shared/types.ts` holds the sizes that the server enforces and the page respects: 4,000
 characters per message, 160 per quote, 24,000 per ciphertext, the lengths of names, 50 messages per
 history page, and 20 people added to a project or group at once. Express accepts JSON bodies of up
-to 64 KB (`server/app.ts`), raised from 16 KB for encryption in 10ba6d8. That caps batch requests:
-adding 20 people to a project sends every channel's key wrapped for each of them. Removing someone
-sends a new key for every channel, wrapped for each person who stays, with the old key inside
-(D-044). A copy takes about 110 bytes, so a project nears the cap at about 20 people with 30
-channels.
+to 256 KB (`server/app.ts`), raised from 16 KB for encryption in 10ba6d8 and from 64 KB after a
+review found that removing one person from a project of 20 people and 30 channels did not fit. That
+caps batch requests: adding 20 people to a project sends every channel's key wrapped for each of
+them. Removing someone sends a new key for every channel, wrapped for each person who stays, with
+the old key inside (D-044). A copy takes about 110 bytes, so 256 KB holds about 2,300 copies, for
+example 40 people with 58 channels. A body over the limit, or one that is not JSON, gets a JSON
+error the page can show.
 
 Cost: raising a limit can need a larger body limit too. Check both.
 
@@ -261,6 +273,10 @@ server changed and shows it as "could not be decrypted".
 The kind is in the header only for new kinds, so messages signed before kinds existed still verify.
 A new field that the server stores and the page acts on must join the header the same way.
 
+The page keeps the text of messages it has decrypted, so it does not decrypt them again on every
+check-in. It keeps them with the signed fields and the signature they were checked against, and
+checks a message again when the server sends it with any of them changed.
+
 Cost: the server cannot correct a signed field. It must refuse a bad value instead of changing it.
 For example, it refuses an urgent reaction rather than clearing the urgent flag.
 
@@ -285,6 +301,10 @@ Each device remembers the keys it first saw for each person and warns when they 
 user checks them, the page refuses to wrap a new chat key for that person. Two people can compare a
 60-digit security code: matching codes mean nobody swapped keys between them.
 
+These pins stay on the device when someone signs out or signs in, so a swap made while nobody was
+signed in still shows a warning. They hold only fingerprints of other people's public keys. Until a
+review on 2026-11-01, every sign-in erased them along with the account's keys.
+
 Cost: a device trusts the first keys it sees for a person without proof.
 
 ### D-019: Accounts and chats from before encryption upgrade once
@@ -296,6 +316,10 @@ password, which the server checks against the old hash before storing the hash o
 key. That request is the only one that ever carries a password. Old messages stay readable and show
 "Not encrypted". A chat from before encryption gets its key from the first member who sends a
 message, and the first key set wins.
+
+The server refuses messages without encryption, so a new one can only come from someone who writes
+to the database. Such a message never alerts, and every preview of it, in toasts, notifications and
+the chat list, starts with "Not encrypted:".
 
 ### D-020: Known limits of the encryption
 
@@ -316,6 +340,8 @@ WebChat accepts these limits and lists them in the README:
   after someone leaves (D-044).
 - People who leave or are removed keep the keys they had, so they could read the messages from
   before if they got them another way, for example from a copy of the database (D-044).
+- Someone who writes to the database can add messages without encryption under any member's name.
+  They show as "Not encrypted" and never alert (D-019).
 
 Cost: a feature that shows the server something new must add it to this list and to the README.
 
@@ -381,6 +407,11 @@ pointer count as delivered or read. Check-ins move the delivered pointer, and op
 the read pointer. The service worker reports delivery when a push arrives, so the sender sees
 "delivered" even while every tab of the recipient is closed.
 
+A pointer never moves past the chat's newest event, whatever id a client sends. Before a review on
+2026-11-01 the delivered route stored any id, and one near the top of the INTEGER range overflowed
+the sum in the sync fingerprint (D-021), which stopped every member of the chat from loading.
+Migration 7 pulls back pointers that went too far, and the fingerprint adds pointers as BIGINT.
+
 ### D-023: Urgent messages ring until acknowledged
 
 Accepted 2026-11-01 in 74d53ff.
@@ -389,6 +420,51 @@ The sender marks a message urgent with the bell next to the message box, and the
 signed (D-016). The recipient's open tab shows a full-screen alert and rings until they dismiss it,
 even with message sounds off. The push waits up to 3 days for an offline device instead of 1, and
 the notification stays until the user acts on it. Reactions cannot be urgent (D-016, D-030).
+
+### D-047: Safari gets no silent pushes
+
+Accepted 2026-11-01 after a review of main.
+
+WebKit, which runs Safari and every web app on iPhone and iPad, revokes a push subscription after a
+few pushes that show no notification. The service worker shows nothing for a push that arrives
+while the user looks at the app (D-007), so an iPhone used with the app open lost its push after
+three messages, urgent alerts included. Now the server sends no push to a Safari endpoint while it
+knows the user is looking, except urgent ones, which always show. That tab checks in every 3
+seconds instead, like a tab without push. If a push reaches Safari while a tab is focused anyway,
+the service worker shows it. `showsEveryPush` in `shared/types.ts` tells Safari endpoints apart by
+Apple's push host.
+
+Cost: an open Safari tab checks in more often, and a message can take up to 3 seconds to show
+there.
+
+### D-048: A check-in says when it left messages behind
+
+Accepted 2026-11-01 after a review of main.
+
+A check-in returns at most 500 messages, those after the cursor first, and its queries each see
+their own moment. A message could therefore be counted in the fingerprint it returned without being
+in the answer: one past the 500th, or one that committed while the answer was being built. Then
+every later check-in answered "unchanged" without it. Now the server compares the newest message id
+with the answer's cursor. When messages are missing, it answers `more: true` with an empty
+fingerprint, and the page checks in again at once, up to 10 rounds in a row. `GET /api/bootstrap`
+reads the fingerprint before anything else, so a change during the load makes the first check-in
+answer "changed".
+
+Cost: catching up after a long sleep takes several full check-ins in a row.
+
+### D-049: Only messages new to the user alert
+
+Accepted 2026-11-01 after a review of main.
+
+A check-in re-sends the last 15 seconds of messages, and a person added to a project gets its
+history (D-026). The page used to alert for every message it had not handled since it loaded, so
+both rang again: a reload replayed recent alerts, and joining a project played a sound for every
+old message and rang its old urgent ones. Now a message alerts only when its id is above both the
+cursor the page loaded with and the user's own read pointer in that chat, and it is encrypted
+(D-019).
+
+Cost: a message that commits more than a moment after a newer one while the page loads shows up
+without an alert.
 
 ## Projects and channels
 
@@ -558,8 +634,10 @@ six quick emoji.
 the list, and do not replace its preview. They notify nobody: their push only wakes a tab the
 recipient is looking at.
 
-Cost: reactions count toward the 50 rows of a history page. A tab still running the app from before
-reactions shows them as messages it cannot decrypt until it reloads (roadmap K-1).
+Cost: reactions count toward the 50 rows of a history page. So the page pages from the oldest row it
+fetched, not the oldest message it shows, and keeps going while pages bring only reactions. A tab
+still running the app from before reactions shows them as messages it cannot decrypt until it
+reloads (roadmap K-1).
 
 ### D-031: Project invites notify even while the app is open
 

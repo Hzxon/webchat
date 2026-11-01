@@ -2,7 +2,7 @@
 // Pushed messages arrive encrypted; it decrypts them here, on the device, with the keys the page
 // left in IndexedDB. vite.sw.config.ts bundles it into one plain script at /sw.js.
 import { decryptContent } from '../../shared/e2ee';
-import type { ConfigDTO, PushPayload, WorkerToPageMessage } from '../../shared/types';
+import { showsEveryPush, type ConfigDTO, type PushPayload, type WorkerToPageMessage } from '../../shared/types';
 import { keystore } from './e2ee/keystore';
 
 declare const self: ServiceWorkerGlobalScope;
@@ -32,6 +32,11 @@ async function windowClients(): Promise<readonly WindowClient[]> {
 
 function post(client: Client, message: WorkerToPageMessage) {
   client.postMessage(message);
+}
+
+async function showsEveryPushHere(): Promise<boolean> {
+  const subscription = await self.registration.pushManager.getSubscription().catch(() => null);
+  return showsEveryPush(subscription?.endpoint ?? null);
 }
 
 function preview(text: string, length = 180): string {
@@ -101,8 +106,11 @@ self.addEventListener('push', (event) => {
       // show the message at once. A focused tab shows it already, so only urgent ones also go to the system.
       const someoneLooking = clients.some((c) => c.focused && c.visibilityState === 'visible');
       // Being added to a project or group is rare, and the page has no alert of its own for it.
+      // Safari revokes a subscription after a few pushes that show nothing, so there every push
+      // shows (D-047); the server already avoids sending those while it knows the user is looking.
       const invite = payload.kind === 'project' || payload.kind === 'group';
-      if (someoneLooking && !payload.urgent && payload.kind !== 'test' && !invite) return;
+      const quiet = someoneLooking && !payload.urgent && payload.kind !== 'test' && !invite;
+      if (quiet && !(await showsEveryPushHere())) return;
 
       if (payload.unreadTotal !== null && 'setAppBadge' in self.navigator) {
         await self.navigator.setAppBadge(payload.unreadTotal).catch(() => undefined);

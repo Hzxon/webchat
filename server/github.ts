@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import { describeGithubEvent } from '../shared/github.js';
 import {
   LIMITS,
+  showsEveryPush,
   type GithubDTO,
   type GithubEventDTO,
   type GithubEventKind,
@@ -323,7 +324,8 @@ export function createGithub(db: Db, push: Push, config: Config) {
     const user = await db.getUser(userId);
     if (!user) return;
     const looking = isAttentive(user);
-    if (looking && !user.attentive_endpoint) return;
+    // Safari counts a push that shows nothing as silent and revokes the subscription (D-047).
+    if (looking && (!user.attentive_endpoint || showsEveryPush(user.attentive_endpoint))) return;
     for (const event of events.slice(-MAX_PUSHES_PER_POLL)) {
       const { title, body } = describeGithubEvent(event);
       const payload: PushPayload = {

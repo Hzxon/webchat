@@ -60,7 +60,17 @@ export class EncryptionUnavailableError extends Error {}
 
 let me: { id: number; identity: Identity } | null = null;
 const chatKeys = new Map<string, Promise<CryptoKey>>();
-const opened = new Map<number, Opened>();
+/** Content already decrypted, by message id, with the signed fields it was checked against. */
+const opened = new Map<number, { content: Opened; signed: string }>();
+
+type SignedMeta = Pick<MessageDTO, 'conversationId' | 'senderId' | 'urgent' | 'kind' | 'clientId'>;
+
+/**
+ * What a message's signature covers, plus the signature itself. The server can send a message
+ * again with other values in these fields; then the cached content must not be shown under them.
+ */
+const signedFields = (meta: SignedMeta, envelope: EnvelopeDTO) =>
+  JSON.stringify([meta.conversationId, meta.senderId, meta.urgent, meta.kind, meta.clientId ?? '', envelope.kid, envelope.sig]);
 
 const openedFrom = (content: MessageContent): Opened => ({
   text: content.text,
@@ -99,7 +109,7 @@ export const keyring = {
   /** Keeps freshly opened or created account keys on this device. */
   async adopt(userId: number, secrets: IdentitySecrets) {
     const identity = await importIdentity(secrets);
-    await keystore.clear();
+    await keystore.clearKeys();
     await keystore.setIdentity({ userId, identity });
     me = { id: userId, identity };
     pins = null;
@@ -107,13 +117,13 @@ export const keyring = {
 
   createSecrets: () => createIdentity(),
 
-  /** Drops every key from memory and from this device. */
+  /** Drops every key from memory and from this device. The pins of other people's keys stay. */
   async forget() {
     me = null;
     pins = null;
     chatKeys.clear();
     opened.clear();
-    await keystore.clear().catch(() => undefined);
+    await keystore.clearKeys().catch(() => undefined);
   },
 
   /**
@@ -276,19 +286,20 @@ export const keyring = {
   },
 
   /** Remembers what a message this device just sent says, so it never needs decrypting. */
-  rememberContent(messageId: number, content: MessageContent) {
-    opened.set(messageId, openedFrom(content));
+  rememberContent(messageId: number, meta: SignedMeta, envelope: EnvelopeDTO, content: MessageContent) {
+    opened.set(messageId, { content: openedFrom(content), signed: signedFields(meta, envelope) });
   },
 
   /** Decrypts a message and checks its signature. Never throws: failures come back as "failed". */
   async open(message: MessageDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup): Promise<ChatMessage> {
     if (!message.envelope) return { ...message, text: message.body, replyTo: null, reaction: null, pull: null, security: 'plain' };
+    const signed = signedFields(message, message.envelope);
     const known = opened.get(message.id);
-    if (known) return { ...message, ...known };
+    if (known?.signed === signed) return { ...message, ...known.content };
     try {
       const result = openedFrom(await decrypt(message, message.envelope, conversation, keysOf));
       if ((message.kind === 'reaction') !== (result.reaction !== null)) throw new Error('Reaction without its emoji.');
-      if (message.id > 0) opened.set(message.id, result);
+      if (message.id > 0) opened.set(message.id, { content: result, signed });
       return { ...message, ...result };
     } catch {
       return { ...message, text: '', replyTo: null, reaction: null, pull: null, security: 'failed' };
