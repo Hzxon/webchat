@@ -206,6 +206,17 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
     stickToBottom.current = true;
   }, [conversation.id]);
 
+  // The list gets shorter when the keyboard opens or the composer grows. Keep the newest message in view.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottom.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   async function showOlder() {
     const el = scroller.current;
     if (!el) return;

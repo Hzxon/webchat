@@ -14,6 +14,7 @@ import { AddPeopleDialog, NewChannelDialog, ProjectReposDialog } from './compone
 import { Sidebar } from './components/Sidebar';
 import { UnlockScreen } from './components/UnlockScreen';
 import { BellRingIcon } from './components/icons';
+import { fitToVisualViewport } from './viewport';
 
 type Phase = 'loading' | 'signed-out' | 'locked' | 'signed-in' | 'error';
 
@@ -79,6 +80,8 @@ function ChatLayout() {
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const addPeople = (target: MembersTarget) => setDialog({ kind: 'add-people', target });
   const showMembers = (target: MembersTarget) => setDialog({ kind: 'members', target });
+
+  useEffect(fitToVisualViewport, []);
 
   return (
     <div className={`layout ${activeId !== null || githubOpen ? 'has-active' : ''}`}>
