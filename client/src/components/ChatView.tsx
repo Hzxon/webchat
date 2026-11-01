@@ -538,7 +538,8 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
     let current = true;
     setText('');
     setUrgent(false);
-    input.current?.focus();
+    // On a phone the keyboard would cover half of a chat just opened, so it waits for a tap.
+    if (!touchOnly()) input.current?.focus();
     void loadDraft(conversationId).then((saved) => {
       if (current && saved) setText((typed) => typed || saved);
     });
