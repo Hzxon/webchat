@@ -76,7 +76,7 @@ decision behind each rule explains why it exists.
    D-021.
 5. A chat key goes to exactly the chat's members. The server checks this under a lock: the
    project's for channels, and the group's when someone is added to it or removed from it. See
-   D-015, D-025, D-039 and D-042.
+   D-015, D-025, D-039 and D-043.
 6. Read query strings with the WHATWG URL API, never with `req.query`. See D-012.
 7. A push payload is at most 3,000 bytes and never holds the plain text of encrypted content. See
    D-017.

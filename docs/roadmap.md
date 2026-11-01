@@ -224,7 +224,7 @@ repositories, or only for the ones members share by hand?
 Status: Idea. Found while building R-003 on 2026-11-01.
 
 Any member can add someone to a project or group, and the newcomer reads the whole history (D-026,
-D-042). The other members see it only in the member count and the member list. WhatsApp shows
+D-043). The other members see it only in the member count and the member list. WhatsApp shows
 "Alice added Carol" in the chat, and Slack shows "Carol joined #general". A note in the message
 list would tell everyone who can read along. The server already knows when each member joined, so
 the notes would show it nothing new. They should not count as unread.
@@ -321,4 +321,4 @@ before changing D-032.
 | Projects with channels, replies and reactions | #2 |
 | Owners remove members and delete projects and groups | #4 |
 | Known issues K-1 to K-4: reload after deploy, dialog focus, Node version, member order | #6 |
-| R-003: Add people to groups, who read the history (D-042) | #8 |
+| R-003: Add people to groups, who read the history (D-043) | #10 |

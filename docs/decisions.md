@@ -186,7 +186,7 @@ Cost: a mistake in a migration on main is fixed with a new migration, never by e
 
 ### D-011: Limits live in one place
 
-Accepted 2026-11-01 in 74d53ff, extended in 10ba6d8, #2, #4 and #8.
+Accepted 2026-11-01 in 74d53ff, extended in 10ba6d8, #2, #4 and #10.
 
 `LIMITS` in `shared/types.ts` holds the sizes that the server enforces and the page respects: 4,000
 characters per message, 160 per quote, 24,000 per ciphertext, the lengths of names, 50 messages per
@@ -236,13 +236,13 @@ server can still see.
 
 ### D-015: One key per chat, wrapped for each member
 
-Accepted 2026-11-01 in 10ba6d8, extended in #4 and #8.
+Accepted 2026-11-01 in 10ba6d8, extended in #4 and #10.
 
 Each chat has a random AES-256-GCM key. The member who creates it wraps a copy for every member with
 a key from ECDH between the two of them, so a wrapped copy proves who made it. The page accepts a
 copy only when the person who wrapped it is a member of the chat. The server checks that a new key
 comes wrapped exactly once for every member. When someone joins, the member adding them wraps their
-own copy for the newcomer (D-026, D-042). When someone is removed, the person removing them wraps
+own copy for the newcomer (D-026, D-043). When someone is removed, the person removing them wraps
 every copy again, so each copy left was made by a current member (D-039).
 
 Cost: a chat keeps one key for its lifetime, so people removed from it keep that key (D-039, roadmap
@@ -298,7 +298,7 @@ message, and the first key set wins.
 
 ### D-020: Known limits of the encryption
 
-Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4 and #8.
+Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4 and #10.
 
 WebChat accepts these limits and lists them in the README:
 
@@ -380,8 +380,8 @@ Accepted 2026-11-01 in #2.
 When a member adds someone, that member's browser opens its own copy of each channel key and wraps
 it for the newcomer. Keys never rotate, so the newcomer can read every earlier message, as when
 joining a Slack channel. Their read pointers start at the newest message, so the history does not
-count as unread. Being added sends a notification (D-031). Groups work the same way since #8
-(D-042).
+count as unread. Being added sends a notification (D-031). Groups work the same way since #10
+(D-043).
 
 Cost: only a member whose browser can open every channel key can add people. The server records who
 added whom.
@@ -425,16 +425,16 @@ out of date. The page then reloads and tries once more (D-025).
 Nobody can remove themselves, so nobody can leave. A person who leaves could not wrap the copies the
 others need. Being removed sends no notification. A page that has the chat open closes it and says
 why. Groups could not take new members at first, so someone removed from a group could not come
-back. Since #8, any member can add them again (D-042).
+back. Since #10, any member can add them again (D-043).
 
 Cost: people removed keep the keys they had. They could read later messages if they got them some
 other way, for example from a copy of the database. The server stops sending them anything. Only a
 browser that can open every key in the project or group can remove someone, and the request carries
 every key wrapped for everyone who stays (D-011).
 
-### D-042: Any group member adds people, and they read the history
+### D-043: Any group member adds people, and they read the history
 
-Accepted 2026-11-01 in #8. It answers the open question of roadmap item R-003.
+Accepted 2026-11-01 in #10. It answers the open question of roadmap item R-003.
 
 Groups take new members the way projects do (D-026). Any member can add up to 20 people at once
 with the Add people button in the group's header. That member's browser opens its own copy of the
@@ -503,13 +503,13 @@ reactions shows them as messages it cannot decrypt until it reloads (roadmap K-1
 
 ### D-031: Project invites notify even while the app is open
 
-Accepted 2026-11-01 in #2, extended in #8.
+Accepted 2026-11-01 in #2, extended in #10.
 
 Being added to a project sends a push to every device of the person added, saying who added them.
 The service worker shows it even while the app is open and focused, because being added is rare and
 the page has no alert of its own for it. Project names are not encrypted, so the server can write
-this text itself. Since #8, being added to a group sends the same kind of push, which opens the
-group (D-042).
+this text itself. Since #10, being added to a group sends the same kind of push, which opens the
+group (D-043).
 
 ## GitHub connector
 
