@@ -159,6 +159,10 @@ Vercel serves `dist/client` as static files and runs `api/index.ts` (the Express
 function for every `/api/*` request. The tables live in their own `webchat` schema, which
 Supabase's auto-generated REST API does not expose.
 
+Only `main` deploys from Git. Other branches get no preview, because a preview cannot connect
+GitHub, since the OAuth App has one callback URL, and would run a branch's new migration on the
+shared database. To try a branch on a real phone, deploy it by hand with `npx vercel deploy`.
+
 Share the address and the invite code with your friends, or send a link that fills in the code:
 `https://your-app.vercel.app/?invite=YOUR_CODE`.
 

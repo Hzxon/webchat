@@ -150,6 +150,22 @@ Cost: a deploy reloads every open tab once, which drops scroll positions. A self
 restarts with the same build does not reload tabs, because the hash comes from the page, not from
 the start time.
 
+### D-041: Only main deploys from Git
+
+Accepted 2026-11-01 in #7.
+
+`git.deploymentEnabled` in `vercel.json` turns off automatic deployments for every branch but
+`main`. Vercel for GitHub otherwise built a preview for every push and a production deployment for
+every merge, two builds per pull request, from Hobby build minutes and the daily deployment cap.
+
+Why: a preview of this app is not useful. The GitHub connector cannot connect on a preview URL,
+because the OAuth App has one callback URL (D-032). The server runs pending migrations at start
+(D-010), so a preview that shares the production database would apply a branch's new migration
+before the pull request merges. Changes people see are checked locally instead (D-037).
+
+Cost: no preview URL on pull requests. Trying a branch on a real phone, where push needs HTTPS,
+takes a deployment by hand with `vercel deploy`, which the setting does not stop.
+
 ## Data and platform
 
 ### D-010: Migrations only grow at the end
