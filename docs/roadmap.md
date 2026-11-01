@@ -305,6 +305,25 @@ push reached the device, the notification stays until it is tapped. Without push
 notifications blocked, nothing ever rings, though D-023 says urgent messages ring until the user
 acknowledges them. Decide whether an unread urgent message should ring once when a page opens.
 
+### K-22: The keyboard on iPhone may push the chat header off screen
+
+Suspected while fixing the phone layout in #20. Not yet checked on a device.
+
+Safari on iPhone does not shrink the page when the keyboard opens. It scrolls the page up until the
+focused field shows, so the chat header can leave the screen while you type. The layout fills the
+page with `height: 100%` and never learns the keyboard's height. Size `.layout` to
+`visualViewport.height` while a field has focus, and try it on an iPhone.
+
+### K-23: The Home Screen banner promises notifications on iOS before 16.4
+
+Found while fixing the phone layout in #20.
+
+Web Push reached Home Screen apps in iOS 16.4. On iOS 15.4 to 16.3, the banner in
+`client/src/components/Sidebar.tsx` still says to add the site to the Home Screen to get
+notifications, which never works there. `needsInstall` in `client/src/push.ts` checks only for
+iPhone or iPad. Read the iOS version from the user agent, and before 16.4 say that notifications
+need iOS 16.4.
+
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
