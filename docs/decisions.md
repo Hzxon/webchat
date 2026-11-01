@@ -135,11 +135,13 @@ Cost: third-party scripts, fonts, analytics or CDNs need a change to the policy.
 
 ### D-040: Open tabs reload when the build changes
 
-Accepted 2026-11-01 in #6.
+Accepted 2026-11-01 in #6, changed in #18.
 
 Every `/api` response carries an `X-WebChat-Build` header that names the running build. The page
-remembers the first value it sees and reloads when a later response carries another, as soon as
-nobody is typing in it. On Vercel the name is the deployment id. Elsewhere it is `WEBCHAT_BUILD`,
+remembers the first value it sees and reloads when a later response carries another, once the tab
+is hidden or nobody has pressed a key, clicked, touched or scrolled in it for 30 seconds. The
+reload opens the chat or Pull requests pane that was open, through the `/?chat=` link that a
+notification click uses. On Vercel the name is the deployment id. Elsewhere it is `WEBCHAT_BUILD`,
 or a hash of the built `index.html`, whose script tags change with every client build. Without a
 built page, as in tests and in development, no header is sent and tabs never reload.
 
@@ -153,7 +155,13 @@ button has the focus. Now the reload also waits while the composer holds a draft
 still sending or failed to send, or an urgent alert waits to be dismissed (`holdReloadWhile` in
 `client/src/build.ts`).
 
-Cost: a deploy reloads every open tab once, which drops scroll positions. A tab with a failed
+The owner reported on 2026-11-01 that any click with a chat open sent them to the Chats tab. The
+reload then waited only for the focus to leave an input, and the composer holds the focus while a
+chat is open, so the next click anywhere reloaded the page, swallowed the click, and started over
+on the Chats tab. Now no click fires it, and the user lands where they were (#18).
+
+Cost: a deploy reloads every open tab once, which drops scroll positions and any open dialog. A tab
+in use keeps the old build until it goes quiet for 30 seconds or is hidden. A tab with a failed
 message or an alert nobody dismisses keeps the old build until they are dealt with. A self-hosted
 server that restarts with the same build does not reload tabs, because the hash comes from the page,
 not from the start time.
