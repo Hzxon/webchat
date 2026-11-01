@@ -325,6 +325,14 @@ const isId = (value: unknown): value is number => Number.isInteger(value) && (va
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 const REVIEWS = new Set<PullReview>(['approved', 'changes_requested', 'review_required']);
 const CHECKS = new Set<PullChecks>(['success', 'failure', 'pending']);
+/** A GitHub login, or a team as "org/team". */
+const PERSON = /^[^\s/]{1,100}(\/[^\s/]{1,100})?$/;
+
+/** Reviewers or assignees, if they are a list. A card without one keeps it absent: it is not known, not empty. */
+function readPeople(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return;
+  return raw.filter((p): p is string => typeof p === 'string' && PERSON.test(p)).slice(0, LIMITS.pullPeople);
+}
 
 /**
  * A shared pull request, if it has the right shape. The link is rebuilt from the repository and
@@ -334,7 +342,7 @@ function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | undefine
   if (!raw || typeof raw.repo !== 'string' || !REPO.test(raw.repo) || !isId(raw.number) || typeof raw.title !== 'string') return;
   const url = `https://github.com/${raw.repo}/pull/${raw.number}`;
   if (raw.url !== url) return;
-  return {
+  const card: PullCardDTO = {
     repo: raw.repo,
     number: raw.number,
     title: raw.title.slice(0, LIMITS.pullTitleLength),
@@ -344,6 +352,12 @@ function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | undefine
     checks: CHECKS.has(raw.checks as PullChecks) ? (raw.checks as PullChecks) : null,
     conflicts: raw.conflicts === true,
   };
+  const reviewers = readPeople(raw.reviewers);
+  if (reviewers) card.reviewers = reviewers;
+  const assignees = readPeople(raw.assignees);
+  if (assignees) card.assignees = assignees;
+  if (raw.auto === true) card.auto = true;
+  return card;
 }
 
 /** Keeps the parts of decrypted content that have the right shape. The sender signed it, so it is not tampered. */

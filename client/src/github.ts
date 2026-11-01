@@ -1,15 +1,18 @@
-// Keeps the pull requests pane fresh and alerts about pull request changes the server found.
+// Keeps the pull requests pane fresh, alerts about pull request changes the server found, and
+// shares the user's new pull requests into the projects that link their repository.
 //
 // The server polls GitHub at most once a minute per account, however many tabs ask, and records
 // each change as an event. Open tabs ask every minute while visible and every few minutes in the
 // background. A GitHub push makes them ask at once.
 import { describeGithubEvent } from '../../shared/github';
-import type { GithubDTO, GithubEventDTO } from '../../shared/types';
+import type { GithubDTO, GithubEventDTO, PullRequestDTO } from '../../shared/types';
 import { sound } from './alerts';
 import { api, ApiError } from './api';
 import { attention } from './attention';
 import { showLocalNotification } from './push';
 import { actions, store } from './store';
+
+type SharePull = (conversationId: number, pull: PullRequestDTO) => Promise<void>;
 
 let running = false;
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -18,6 +21,9 @@ let loadedAt = 0;
 /** Newest event already handled. Null until the first load, so events from before never alert. */
 let lastEventId: number | null = null;
 let pushActiveHere: () => boolean = () => false;
+let sharePull: SharePull = () => Promise.resolve();
+/** Shares this tab is posting now, so a refresh that lands meanwhile leaves them alone. */
+const posting = new Set<number>();
 
 const interval = () => (document.visibilityState === 'visible' ? 60_000 : 180_000);
 
@@ -37,6 +43,7 @@ export function refreshGithub(manual = false): Promise<void> {
       loadedAt = Date.now();
       actions.setGithub(github);
       announce(github);
+      void shareWaiting(github);
       // Nothing to watch without a connected account; connecting reloads the page anyway.
       if (!github.account || github.reconnect) next = 0;
       // Just connected: the first poll is still running on another request.
@@ -72,6 +79,30 @@ function alertAbout(event: GithubEventDTO) {
   }
 }
 
+/**
+ * Posts the user's new pull requests into the channels of the projects that link their repository
+ * (D-043). The server only says which ones wait: this browser encrypts and signs each card, like a
+ * card shared by hand. The claim comes first, so only one of the user's tabs posts it.
+ */
+async function shareWaiting(github: GithubDTO) {
+  for (const share of github.shares) {
+    const chat = store.get().conversations[share.conversationId];
+    // A channel this tab has not loaded yet is offered again on the next refresh.
+    if (!chat || posting.has(share.id)) continue;
+    posting.add(share.id);
+    try {
+      await api.claimPullShare(share.id);
+      await sharePull(share.conversationId, share.pull);
+      actions.addToast({ conversationId: chat.id, title: `Shared to #${chat.title ?? 'channel'}`, body: share.pull.title });
+    } catch (error) {
+      // 409: another tab claimed it first, or the user left the channel.
+      if (!(error instanceof ApiError && error.status === 409)) console.warn('Could not share a pull request', error);
+    } finally {
+      posting.delete(share.id);
+    }
+  }
+}
+
 const RETURN_TOASTS: Record<string, { title: string; body: string }> = {
   connected: { title: 'GitHub connected', body: 'Your pull requests are loading.' },
   denied: { title: 'GitHub not connected', body: 'The sign-in on GitHub was cancelled.' },
@@ -88,12 +119,16 @@ function handleReturn() {
   if (toast) actions.addToast({ conversationId: null, ...toast });
 }
 
-/** Starts loading pull requests for the signed-in account. Returns the function that stops it. */
-export function startGithub(isPushActiveHere: () => boolean): () => void {
+/**
+ * Starts loading pull requests for the signed-in account. share posts a card into a chat; it comes
+ * from the chat module, which imports this one. Returns the function that stops it.
+ */
+export function startGithub(isPushActiveHere: () => boolean, share: SharePull): () => void {
   running = true;
   lastEventId = null;
   loadedAt = 0;
   pushActiveHere = isPushActiveHere;
+  sharePull = share;
   handleReturn();
   void refreshGithub();
 
@@ -121,4 +156,8 @@ export async function disconnectGithub() {
 
 export async function setGithubNotify(notify: boolean) {
   actions.setGithub(await api.setGithubNotify(notify));
+}
+
+export async function setGithubAutoShare(autoShare: boolean) {
+  actions.setGithub(await api.setGithubAutoShare(autoShare));
 }

@@ -194,7 +194,7 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
   void syncPushSubscription()
     .then(refreshPushState)
     .then(() => syncNow());
-  cleanups.push(startGithub(() => pushActiveHere));
+  cleanups.push(startGithub(() => pushActiveHere, autoSharePull));
 
   // A notification click on a closed app opens /?chat=<id>.
   const requested = Number(new URLSearchParams(location.search).get('chat'));
@@ -399,8 +399,9 @@ export function sendMessage(conversationId: number, body: string, urgent: boolea
 /**
  * Sends a pull request into a chat as a card. The text says the same in words, so an older page,
  * a notification and the chat list have something to show. The server sees an ordinary message.
+ * auto marks a card this page posted on its own for a project that links the repository (D-043).
  */
-export function sharePull(conversationId: number, pull: PullRequestDTO) {
+export function sharePull(conversationId: number, pull: PullRequestDTO, auto = false) {
   const card: PullCardDTO = {
     repo: pull.repo,
     number: pull.number,
@@ -411,12 +412,30 @@ export function sharePull(conversationId: number, pull: PullRequestDTO) {
     checks: pull.checks,
     conflicts: pull.conflicts,
   };
-  const text = `Pull request ${card.repo}#${card.number}: ${card.title}\n${card.url}`;
-  return sendContent(conversationId, { text, pull: card }, false);
+  if (pull.reviewers) card.reviewers = pull.reviewers.slice(0, LIMITS.pullPeople);
+  if (pull.assignees) card.assignees = pull.assignees.slice(0, LIMITS.pullPeople);
+  if (auto) card.auto = true;
+  const lines = [`Pull request ${card.repo}#${card.number}: ${card.title}`];
+  if (card.reviewers?.length) lines.push(`Reviewers: ${card.reviewers.map((name) => `@${name}`).join(', ')}`);
+  lines.push(card.url);
+  return sendContent(conversationId, { text: lines.join('\n'), pull: card }, false, auto);
 }
 
-/** Encrypts and sends one message, showing it as sending until the server has it. */
-async function sendContent(conversationId: number, content: MessageContent, urgent: boolean) {
+/**
+ * Posts a card the page shares on its own (D-043), without opening the chat. A message being sent
+ * joins the chat's loaded history, so that is loaded first, as opening the chat would. If loading
+ * fails the card still goes: losing it would be worse than a short history.
+ */
+async function autoSharePull(conversationId: number, pull: PullRequestDTO) {
+  if (!store.get().messages[conversationId]) await loadOlder(conversationId).catch(() => undefined);
+  await sharePull(conversationId, pull, true);
+}
+
+/**
+ * Encrypts and sends one message, showing it as sending until the server has it. auto says the
+ * page sent it on its own, so the server leaves the chat unread for the sender.
+ */
+async function sendContent(conversationId: number, content: MessageContent, urgent: boolean, auto = false) {
   const me = store.get().me;
   if (!me) return;
   const clientId = newClientId();
@@ -437,7 +456,7 @@ async function sendContent(conversationId: number, content: MessageContent, urge
   try {
     const { key, keyId } = await ensureChatKey(conversationId);
     const envelope = await keyring.seal(key, keyId, { conversationId, urgent, clientId, kind: 'message' }, content);
-    const message = await api.sendMessage(conversationId, { envelope, urgent, clientId, kind: 'message' });
+    const message = await api.sendMessage(conversationId, { envelope, urgent, clientId, kind: 'message', auto });
     seen.add(message.id);
     keyring.rememberContent(message.id, content);
     actions.addMessage({ ...message, ...opened, security: 'encrypted' }, false);

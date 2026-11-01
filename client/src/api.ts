@@ -12,6 +12,7 @@ import type {
   LoginResponse,
   MessageDTO,
   ProjectDTO,
+  ProjectRepoDTO,
   RegisterInput,
   RemoveGroupMemberInput,
   RemoveProjectMemberInput,
@@ -95,6 +96,11 @@ export const api = {
   removeProjectMember: (projectId: number, userId: number, input: RemoveProjectMemberInput) =>
     request<ProjectDTO>('DELETE', `/projects/${projectId}/members/${userId}`, input),
   deleteProject: (projectId: number) => request<void>('DELETE', `/projects/${projectId}`),
+  projectRepos: (projectId: number) => request<ProjectRepoDTO[]>('GET', `/projects/${projectId}/repos`),
+  linkRepo: (projectId: number, repo: string, conversationId: number) =>
+    request<ProjectRepoDTO[]>('POST', `/projects/${projectId}/repos`, { repo, conversationId }),
+  // The repository's "owner/name" fills both path segments; its characters need no escaping.
+  unlinkRepo: (projectId: number, repo: string) => request<ProjectRepoDTO[]>('DELETE', `/projects/${projectId}/repos/${repo}`),
   setChatKey: (conversationId: number, key: ChatKeyInput) =>
     request<ConversationDTO>('POST', `/conversations/${conversationId}/key`, key),
   sync: (input: SyncRequest) => request<SyncResponse>('POST', '/sync', input),
@@ -109,6 +115,8 @@ export const api = {
   testPush: () => request<{ sent: number; failed: number }>('POST', '/push/test'),
   github: (refresh = false) => request<GithubDTO>('GET', `/github${refresh ? '?refresh=1' : ''}`),
   setGithubNotify: (notify: boolean) => request<GithubDTO>('PATCH', '/github', { notify }),
+  setGithubAutoShare: (autoShare: boolean) => request<GithubDTO>('PATCH', '/github', { autoShare }),
+  claimPullShare: (shareId: number) => request<void>('POST', `/github/shares/${shareId}/claim`),
   disconnectGithub: () => request<GithubDTO>('DELETE', '/github'),
 };
 

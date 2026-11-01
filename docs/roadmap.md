@@ -102,10 +102,10 @@ allows connections only to the site itself, so it must also allow the storage se
 
 ### R-013: Share a pull request into a channel
 
-Status: Done in #8 (D-042), without the "later" part: the author's browser does not post cards by
-itself yet. The card is a field inside an ordinary message rather than a kind of its own, because
-it should count as unread, preview and push exactly like a message. Found in a review of the GitHub
-connector on 2026-11-01.
+Status: Done in #8 (D-042). The "later" part came in #14 (D-046): the author's browser posts the
+card by itself into the channel of each project that links the repository. The card is a field
+inside an ordinary message rather than a kind of its own, because it should count as unread,
+preview and push exactly like a message. Found in a review of the GitHub connector on 2026-11-01.
 
 Why: the pull requests pane is personal (D-033). Nothing about a pull request reaches a project
 channel, so a team learns that one was opened or merged only when its author types it. The
@@ -220,7 +220,9 @@ Calls need WebRTC and TURN servers, which cost money (D-003).
 
 ### R-016: Link a project to repositories
 
-Status: Idea. Depends on Q-3 for a shared read.
+Status: Started in #14 (D-046). A project links repositories, and members' new pull requests in
+them go to a channel by themselves. Still to do: the Projects tab list, which depends on Q-3 for a
+shared read, and reviewers shown by their WebChat names instead of GitHub logins.
 
 Why: the pane lists one person's pull requests across every repository, with no grouping. A team
 wants to see every open pull request of its repositories, by any member, next to its channels. Only
@@ -231,8 +233,9 @@ Scope: a project names one or more repositories. The Projects tab shows their op
 grouped by repository. Reading them needs a token that sees the repository: one member's OAuth
 token, or a GitHub App installation on the organization (Q-3).
 
-Open question: should a project's channel get a card (R-013) for every pull request in its
-repositories, or only for the ones members share by hand?
+Settled in D-046: a member's own new pull requests go to the channel by themselves; anyone else's
+goes by hand. Everyone in the project sees a shared title, even without access to the repository,
+so the list here would show the same to the whole project.
 
 ## Known issues
 
@@ -327,3 +330,4 @@ before changing D-032.
 | Owners remove members and delete projects and groups | #4 |
 | Known issues K-1 to K-4: reload after deploy, dialog focus, Node version, member order | #6 |
 | Share a pull request into a chat as a card | #8 |
+| New pull requests shared into linked projects; cards name the reviewers (D-046) | #14 |
