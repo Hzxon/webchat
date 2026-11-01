@@ -11,14 +11,15 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
 - **End-to-end encryption**: messages are encrypted and signed in the browser. The server, Supabase
   and Vercel only ever store and relay ciphertext. Friends can compare a security code to confirm
   nobody is in between.
-- One-to-one and group chats, with history and online / last-active status. The person who makes a
-  group can remove people from it, or delete it for everyone.
+- One-to-one and group chats, with history and online / last-active status. Any member can add
+  people to a group later, and newcomers can read the earlier messages too. Anyone can leave a
+  group. Its owner, who made it or was handed it, can remove people or delete it for everyone.
 - **Projects with channels**, for a team that works together, such as a class project. A project
   starts with #general, and any member can add channels such as #slides or #research. Everyone in a
   project is in all of its channels. Any member can add more people later, and newcomers can read
-  the earlier messages too. The person who made the project can remove people from it, or delete it
-  with every channel and message for everyone. Channels have their own Projects tab, with unread
-  counts per channel.
+  the earlier messages too. Any member can leave. The project's owner can remove people, hand the
+  project to another member, or delete it with every channel and message for everyone. An owner
+  hands it over before leaving. Channels have their own Projects tab, with unread counts per channel.
 - **Replies and reactions.** Reply to a message to quote it above yours, and tap the quote to jump
   to the original. React with one of six emoji; tap a reaction again to take it back.
 - Sent, delivered, and read ticks.
@@ -30,8 +31,9 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
 - Unread count in the tab title, favicon, and the app badge of an installed app.
 - Invite-code sign-up, so only people you give the code to can join.
 - **GitHub pull requests**: connect your GitHub account to see the pull requests waiting for your
-  review and how your own are doing, with alerts when they change. See
-  [GitHub pull requests](#github-pull-requests).
+  review and how your own are doing, with alerts when they change, and share one into a chat as a
+  card that names its reviewers. A project can link its repositories, so members' new pull requests
+  show up in a channel by themselves. See [GitHub pull requests](#github-pull-requests).
 
 ## How messages and notifications travel
 
@@ -74,13 +76,15 @@ All of it runs in the browser with Web Crypto ([shared/e2ee.ts](shared/e2ee.ts))
   short quote of it. A reaction carries its emoji and the message it is for. The server sees neither.
   When the original of a quote is loaded, the app shows the original, whose signature it checked,
   instead of the quote the replier wrote.
-- **Adding someone to a project.** The member who adds them opens their own copy of each channel
-  key in the browser and wraps it for the newcomer. The server checks that every channel's key is
-  included, so nobody joins with a channel they cannot read.
-- **Removing someone.** Only the person who made the project or group can. Their browser wraps each
-  chat key again for everyone who stays, and the server checks that every key comes for exactly
-  them. Every copy left was then made by a current member, which each browser checks before it
-  opens a key. The keys themselves stay the same; see below.
+- **Adding someone to a project or group.** The member who adds them opens their own copy of each
+  chat key in the browser and wraps it for the newcomer. The server checks that every key is
+  included, so nobody joins a chat they cannot read.
+- **A new key when someone leaves or is removed.** The chat gets a new key, wrapped for everyone
+  who stays and never for the person who left, so they cannot read what is sent next. The old key
+  travels inside the new one, so members, and anyone added later, still read the whole history.
+  When the owner removes someone, the owner's browser makes the new keys in the same step. When
+  someone leaves, the chat takes no new messages until the browser of a member who stays makes the
+  new key, which an open tab does on its next check-in.
 - **Notifications still show the text.** The push carries the encrypted message, and the service
   worker decrypts it on the device. A message too long for a push shows "New message".
 - **Security codes.** The lock button in a chat shows a 60-digit code per person. If it matches on
@@ -94,15 +98,17 @@ What it does not protect against:
   sends, so encryption protects you from anyone who reads the database or the hosts, not from a
   malicious operator who changes the app itself.
 - **Metadata stays visible to the server:** who talks to whom and when, group, project and
-  channel names, who is in which project and who added them, who made each project and group,
-  display names, whether a message is urgent, and that someone reacted (not with which emoji, or to
-  which message).
+  channel names, who is in which project or group and who added them, who owns each project and
+  group, who left, when a chat got a new key, display names, whether a message is urgent, and that
+  someone reacted (not with which emoji, or to which message).
+- **Which GitHub repositories a project links**, and which of its members' pull requests went into
+  which channel by themselves. The cards themselves are encrypted like any message.
 - **Who gets a new channel's key comes from the server.** A new channel's key is wrapped for
   everyone the server lists as a project member. The New channel dialog names them, so check that
-  list.
-- **People removed from a project or group keep the keys they had.** Keys never rotate, so someone
-  removed could still read later messages if they got them another way, for example from a copy of
-  the database. The server stops sending them anything.
+  list. The same goes for the new key a chat gets after someone leaves.
+- **People who leave keep the keys they had.** Someone who left or was removed could still read the
+  messages from before, if they got them another way, for example from a copy of the database.
+  Everything sent after they left uses a new key they never get.
 - **Someone who writes to the database can add unencrypted messages** under any member's name.
   They show as "Not encrypted", in the chat and in every preview, and never alert.
 - **Accounts from before encryption** upgrade once: on the next visit the app asks for the password,
@@ -193,6 +199,19 @@ list then shows the open pull requests waiting for their review (asked of them o
 teams), their own open pull requests with checks, review decision, merge conflicts, size and
 comments, and recent activity.
 
+The share button on a pull request sends it into a chat or channel as a card: the title, the
+repository and number, how it stood at that moment, who still has to review it and who it is
+assigned to, with a link to GitHub. A reviewer who sees their own GitHub login there reads "you".
+The card is encrypted like any message, so the server does not learn which pull request was shared.
+
+A project's owner can link its GitHub repositories with the GitHub button on the project. When a
+member opens a pull request in a linked repository, their WebChat shares it into the channel the
+owner picked, #general by default, as the same card. A draft waits until it is ready for review.
+This works for members who connected GitHub, and the card goes out when their WebChat next checks
+GitHub: within a minute while a tab is open, or the next time they open it. Each person can turn it
+off for their own pull requests in the pane. Everyone in the project sees each shared title, even
+without access to the repository.
+
 WebChat alerts you the same way as a message when someone asks for your review, approves or asks
 for changes on your pull request, comments on it, its checks fail or pass again, it gets merge
 conflicts, or it is merged or closed. Clicking the alert opens the pull request on GitHub. The
@@ -278,16 +297,20 @@ npm test
 
 The integration test runs the app on a random port with an in-memory PGlite database and drives it
 over HTTP, with every client doing real encryption. It checks that the database and pushes hold no
-plain text, that a message the server alters is rejected, the one-time upgrade of old accounts,
-chat keys, receipts, access control, and which browsers get a push while the recipient is looking,
-looking away, or has closed the tab. For projects it checks that channel keys must cover exactly
-the members, that a person added later reads the earlier messages, and that replies and reactions
-stay encrypted and reactions never count as unread. Only the owner of a project or group can remove
-people or delete it; a removal must wrap every key again for exactly the people who stay, the
-person removed loses access at once, and someone whose copy they had wrapped can still open it. The crypto tests cover wrong passwords, swapped
-keys, tampering, forged senders, sharing a chat key with a newcomer, and security codes. The GitHub
-tests run against a fake GitHub: the sign-in's state and PKCE checks, the encrypted token, which
-changes become alerts, the scheduler secret, a revoked token, and disconnecting.
+plain text, that a message the server alters is rejected, the one-time upgrade of old accounts, chat
+keys, receipts, access control, and which browsers get a push while the recipient is looking,
+looking away, or has closed the tab. For projects it checks that channel keys must cover exactly the
+members, that a person added later reads the earlier messages, and that replies and reactions stay
+encrypted and reactions never count as unread. Any member of a group can add people, whose copy of
+the key must come for exactly them, and who then read the earlier messages. Only the owner of a
+project or group can remove people, delete it or hand it over. Removing or leaving gives each chat a
+new key for exactly the people who stay: the person who left cannot decrypt anything sent after, the
+others and anyone added later read the history through the old key inside the new one, and nothing
+is sent until the new key exists. The crypto tests cover wrong passwords, swapped keys, tampering,
+forged senders, sharing a chat key with a newcomer, the old key inside a new one, and security
+codes. The GitHub tests run against a fake GitHub: the sign-in's state and PKCE checks, the
+encrypted token, which changes become alerts, the scheduler secret, a revoked token, and
+disconnecting.
 
 `npm run typecheck` checks the server, client, service worker, and tooling separately, since each
 has its own environment.
@@ -313,12 +336,13 @@ Before you change the code, read [AGENTS.md](AGENTS.md). It links to
 - Text only: no voice or video calls, photos, or files yet. No typing indicator.
 - With push turned off on a device, new messages show up on its next check-in (up to 3 seconds
   while you are looking, longer in the background).
-- No key rotation: a chat keeps one key for its lifetime, so people removed from it keep that key.
-  People can join a project later, but not a group. Only the person who made a project or group can
-  remove people or delete it. Nobody can leave on their own, and the owner cannot hand it over.
+- People can join a project or group later. Only the owner of a project or group can remove people
+  or delete it, and an owner hands it over before leaving.
+- After someone leaves, a chat takes no new messages until a member who stays has its new key. An
+  open tab of any member makes it within seconds.
 - Reactions never notify anyone. They show up at once in a chat that is open, and otherwise on the
   next check-in.
-- Adding someone to a project needs a member whose browser can open every channel key. Up to 20
-  people can be added at a time.
+- Adding someone to a project or group needs a member whose browser can open every key in it. Up
+  to 20 people can be added at a time.
 - Pull requests show at most 30 per list, and only from github.com, not GitHub Enterprise Server.
   Changes show up on the next check, up to a few minutes later, not the moment they happen.

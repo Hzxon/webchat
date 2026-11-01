@@ -7,9 +7,11 @@ import {
   importChatKey,
   importIdentity,
   keyFingerprint,
+  linkChatKey,
   newChatKeyBytes,
   newKeyId,
   openChatKeyBytes,
+  openKeyLink,
   unwrapChatKey,
   wrapChatKey,
   type Identity,
@@ -24,6 +26,8 @@ import type {
   MessageDTO,
   MessageKind,
   PublicKeysDTO,
+  PullCardDTO,
+  RotatedKeyInput,
   UserDTO,
   WrappedKeyInput,
 } from '../../../shared/types';
@@ -36,6 +40,8 @@ interface Opened {
   replyTo: QuotedMessage | null;
   /** Set on every readable message of kind "reaction". */
   reaction: { messageId: number; emoji: string } | null;
+  /** A shared pull request, shown as a card instead of the text. */
+  pull: PullCardDTO | null;
   /** "plain" for messages from before encryption; "failed" if decryption or the signature check failed. */
   security: 'encrypted' | 'plain' | 'failed';
 }
@@ -70,6 +76,7 @@ const openedFrom = (content: MessageContent): Opened => ({
   text: content.text,
   replyTo: content.replyTo ?? null,
   reaction: content.reaction ?? null,
+  pull: content.pull ?? null,
   security: 'encrypted',
 });
 
@@ -152,9 +159,11 @@ export const keyring = {
   },
 
   /** Opens this user's copy of a chat key, after checking that a member of the chat created it. */
-  chatKey(conversation: Pick<ConversationDTO, 'id' | 'keyId' | 'myKey' | 'members'>, keysOf: KeyLookup) {
+  chatKey(conversation: Pick<ConversationDTO, 'id' | 'keyId' | 'myKey' | 'members' | 'keyLinks'>, keysOf: KeyLookup) {
     const { id, keyId, myKey } = conversation;
     if (!keyId || !myKey || !me) return null;
+    // A key that a newer one replaced never encrypts again, even if the server names it current.
+    if (conversation.keyLinks.some((link) => link.previousKeyId === keyId)) return null;
     const name = chatKeyName(id, keyId);
     let pending = chatKeys.get(name);
     if (!pending) {
@@ -174,6 +183,37 @@ export const keyring = {
       pending.catch(() => chatKeys.delete(name));
     }
     return pending;
+  },
+
+  /**
+   * Opens the key a message names: the chat's current key, or an earlier one, which the key that
+   * replaced it holds inside (see ConversationDTO.keyLinks).
+   */
+  keyFor(conversation: Pick<ConversationDTO, 'id' | 'keyId' | 'myKey' | 'members' | 'keyLinks'>, keyId: string, keysOf: KeyLookup) {
+    const { id, keyLinks } = conversation;
+    // Each step goes from a key to the one before it, so a chain the server looped stops here.
+    const open = (wanted: string, steps: number): Promise<CryptoKey> | null => {
+      if (wanted === conversation.keyId) return keyring.chatKey(conversation, keysOf);
+      const link = keyLinks.find((l) => l.previousKeyId === wanted);
+      if (!link || steps > keyLinks.length) return null;
+      const name = chatKeyName(id, wanted);
+      let pending = chatKeys.get(name);
+      if (!pending) {
+        pending = (async () => {
+          const stored = await keystore.getChatKey(id, wanted).catch(() => undefined);
+          if (stored) return stored;
+          const newer = await open(link.keyId, steps + 1);
+          if (!newer) throw new Error('The chat key that replaced this one is not available.');
+          const key = await openKeyLink(newer, link.keyId, id, link, wanted);
+          await keystore.setChatKey(id, wanted, key).catch(() => undefined);
+          return key;
+        })();
+        chatKeys.set(name, pending);
+        pending.catch(() => chatKeys.delete(name));
+      }
+      return pending;
+    };
+    return open(keyId, 0);
   },
 
   /** Makes a new chat key and wraps it for every member. Refuses members without keys or with changed keys. */
@@ -208,6 +248,28 @@ export const keyring = {
     return Promise.all(recipients.map(async (r) => ({ userId: r.id, ...(await wrapChatKey(raw, me!, { id: r.id, dh: r.keys!.dh }, keyId)) })));
   },
 
+  /**
+   * Makes a new key to replace a chat's current one, wrapped for the given members, with the current
+   * key inside it so they can still read the messages from before.
+   */
+  async rotateChatKey(
+    conversation: Pick<ConversationDTO, 'id' | 'keyId' | 'myKey'>,
+    keysOf: KeyLookup,
+    members: Array<{ id: number; name: string; keys: PublicKeysDTO | null }>,
+    changed: Set<number>,
+  ): Promise<{ input: RotatedKeyInput; key: CryptoKey }> {
+    const { id, keyId, myKey } = conversation;
+    const wrapperKeys = myKey ? keysOf(myKey.wrappedBy) : null;
+    if (!keyId || !myKey || !wrapperKeys) throw new EncryptionUnavailableError('This device cannot open the chat key. Reload the page.');
+    // Unlike chatKey, the wrapper need not be a member still: after someone leaves, they may have
+    // wrapped this copy. The old key only goes inside the new one, to read old messages, and never
+    // encrypts anything again.
+    const previous = await openChatKeyBytes(myKey, me!, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
+    const { input, key } = await keyring.createChatKey(members, changed);
+    const link = await linkChatKey(key, input.keyId, id, previous, keyId);
+    return { input: { ...input, link: { previousKeyId: keyId, ...link } }, key };
+  },
+
   /** Keeps a chat key this device created, once the server has assigned the chat its id. */
   async remember(conversationId: number, keyId: string, key: CryptoKey) {
     chatKeys.set(chatKeyName(conversationId, keyId), Promise.resolve(key));
@@ -230,7 +292,7 @@ export const keyring = {
 
   /** Decrypts a message and checks its signature. Never throws: failures come back as "failed". */
   async open(message: MessageDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup): Promise<ChatMessage> {
-    if (!message.envelope) return { ...message, text: message.body, replyTo: null, reaction: null, security: 'plain' };
+    if (!message.envelope) return { ...message, text: message.body, replyTo: null, reaction: null, pull: null, security: 'plain' };
     const signed = signedFields(message, message.envelope);
     const known = opened.get(message.id);
     if (known?.signed === signed) return { ...message, ...known.content };
@@ -240,14 +302,13 @@ export const keyring = {
       if (message.id > 0) opened.set(message.id, { content: result, signed });
       return { ...message, ...result };
     } catch {
-      return { ...message, text: '', replyTo: null, reaction: null, security: 'failed' };
+      return { ...message, text: '', replyTo: null, reaction: null, pull: null, security: 'failed' };
     }
   },
 };
 
 async function decrypt(message: MessageDTO, envelope: EnvelopeDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup) {
-  if (envelope.kid !== conversation.keyId) throw new Error('Encrypted with a key this chat does not use.');
-  const key = await keyring.chatKey(conversation, keysOf);
+  const key = await keyring.keyFor(conversation, envelope.kid, keysOf);
   const senderKeys = keysOf(message.senderId);
   if (!key || !senderKeys) throw new Error('Missing keys.');
   const { conversationId, senderId, urgent, clientId, kind } = message;

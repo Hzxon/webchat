@@ -1,7 +1,7 @@
 // Service worker: turns Web Push messages into system notifications, even when no tab is open.
 // Pushed messages arrive encrypted; it decrypts them here, on the device, with the keys the page
 // left in IndexedDB. vite.sw.config.ts bundles it into one plain script at /sw.js.
-import { decryptMessage } from '../../shared/e2ee';
+import { decryptContent } from '../../shared/e2ee';
 import { showsEveryPush, type ConfigDTO, type PushPayload, type WorkerToPageMessage } from '../../shared/types';
 import { keystore } from './e2ee/keystore';
 
@@ -58,8 +58,8 @@ async function notificationBody(payload: PushPayload): Promise<string> {
     const [key, directory] = await Promise.all([keystore.getChatKey(conversationId, envelope.kid), keystore.getDirectory()]);
     const senderKeys = directory?.[senderId];
     if (!key || !senderKeys) throw new Error('Keys are not on this device yet.');
-    const text = await decryptMessage(key, senderKeys.sign, { conversationId, senderId, urgent: payload.urgent, clientId }, envelope);
-    return payload.bodyPrefix + preview(text);
+    const content = await decryptContent(key, senderKeys.sign, { conversationId, senderId, urgent: payload.urgent, clientId }, envelope);
+    return payload.bodyPrefix + preview(content.pull ? `Pull request: ${content.pull.title}` : content.text);
   } catch {
     return payload.bodyPrefix + (payload.urgent ? 'Urgent message. Open the chat to read it.' : 'New encrypted message');
   }
@@ -105,10 +105,11 @@ self.addEventListener('push', (event) => {
       // While the user is looking at the app, the server pushes only to that browser so the page can
       // show the message at once. A focused tab shows it already, so only urgent ones also go to the system.
       const someoneLooking = clients.some((c) => c.focused && c.visibilityState === 'visible');
-      // Being added to a project is rare, and the page has no alert of its own for it. Safari
-      // revokes a subscription after a few pushes that show nothing, so there every push shows
-      // (D-042); the server already avoids sending those while it knows the user is looking.
-      const quiet = someoneLooking && !payload.urgent && payload.kind !== 'test' && payload.kind !== 'project';
+      // Being added to a project or group is rare, and the page has no alert of its own for it.
+      // Safari revokes a subscription after a few pushes that show nothing, so there every push
+      // shows (D-047); the server already avoids sending those while it knows the user is looking.
+      const invite = payload.kind === 'project' || payload.kind === 'group';
+      const quiet = someoneLooking && !payload.urgent && payload.kind !== 'test' && !invite;
       if (quiet && !(await showsEveryPushHere())) return;
 
       if (payload.unreadTotal !== null && 'setAppBadge' in self.navigator) {

@@ -1,17 +1,22 @@
-import type {
-  AccountKeysInput,
-  ConversationDTO,
-  ConversationType,
-  EnvelopeDTO,
-  GithubEventDTO,
-  GithubEventKind,
-  MemberState,
-  MessageDTO,
-  MessageKind,
-  ProjectDTO,
-  SealedBackupDTO,
-  UserDTO,
-  WrappedKeyInput,
+import {
+  LIMITS,
+  type AccountKeysInput,
+  type ConversationDTO,
+  type ConversationType,
+  type EnvelopeDTO,
+  type GithubEventDTO,
+  type GithubEventKind,
+  type KeyLinkDTO,
+  type MemberState,
+  type MessageDTO,
+  type MessageKind,
+  type ProjectDTO,
+  type ProjectRepoDTO,
+  type RotatedChannelKeyInput,
+  type RotatedKeyInput,
+  type SealedBackupDTO,
+  type UserDTO,
+  type WrappedKeyInput,
 } from '../shared/types.js';
 import type { Querier, Sql } from './sql.js';
 
@@ -188,7 +193,49 @@ UPDATE webchat.conversations c
 SET created_by = (SELECT MIN(k.wrapped_by) FROM webchat.conversation_keys k WHERE k.conversation_id = c.id)
 WHERE c.type = 'group';
 `,
-  // 5: delivered pointers never past a chat's newest event.
+  // 5: key rotation, leaving, and handing projects and groups over.
+  `
+-- A chat's earlier keys, each encrypted with the key that replaced it. Whoever holds the current
+-- key opens the earlier ones in turn and reads the whole history. From here on, projects.created_by
+-- and conversations.created_by name the owner, who can hand it to another member.
+CREATE TABLE IF NOT EXISTS webchat.key_links (
+  conversation_id INTEGER NOT NULL REFERENCES webchat.conversations(id) ON DELETE CASCADE,
+  key_id          TEXT NOT NULL,
+  previous_key_id TEXT NOT NULL,
+  iv              TEXT NOT NULL,
+  wrapped         TEXT NOT NULL,
+  created_at      BIGINT NOT NULL,
+  PRIMARY KEY (conversation_id, key_id)
+);
+-- Someone who holds the current key left. Messages wait until a member who stays replaces it.
+ALTER TABLE webchat.conversations ADD COLUMN IF NOT EXISTS needs_new_key BOOLEAN NOT NULL DEFAULT false;
+`,
+  // 6: sharing new pull requests into the channel of a project that links their repository.
+  `
+CREATE TABLE IF NOT EXISTS webchat.project_repos (
+  project_id      INTEGER NOT NULL REFERENCES webchat.projects(id) ON DELETE CASCADE,
+  -- "owner/name" in lower case, because GitHub ignores case in repository names.
+  repo            TEXT NOT NULL,
+  conversation_id INTEGER NOT NULL REFERENCES webchat.conversations(id) ON DELETE CASCADE,
+  added_by        INTEGER REFERENCES webchat.users(id),
+  added_at        BIGINT NOT NULL,
+  PRIMARY KEY (project_id, repo)
+);
+-- A pull request waiting for its author's page to share it into a channel, and afterwards the
+-- record that it was, so it never goes there twice. Only GitHub's node id is kept here.
+CREATE TABLE IF NOT EXISTS webchat.pull_shares (
+  id              INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES webchat.conversations(id) ON DELETE CASCADE,
+  user_id         INTEGER NOT NULL REFERENCES webchat.users(id) ON DELETE CASCADE,
+  pull_id         TEXT NOT NULL,
+  created_at      BIGINT NOT NULL,
+  claimed_at      BIGINT,
+  UNIQUE (conversation_id, pull_id)
+);
+CREATE INDEX IF NOT EXISTS pull_shares_by_user ON webchat.pull_shares (user_id);
+ALTER TABLE webchat.github_accounts ADD COLUMN IF NOT EXISTS auto_share BOOLEAN NOT NULL DEFAULT true;
+`,
+  // 7: delivered pointers never past a chat's newest event.
   `
 -- POST /api/delivered once stored any id a client sent. Pull back the pointers it pushed too far.
 UPDATE webchat.members m SET last_delivered_id = c.last_event_id
@@ -237,9 +284,18 @@ interface ConversationRow {
   updated_at: number;
   unread: number;
   key_id: string | null;
+  needs_new_key: boolean;
   my_wrapped_by: number | null;
   my_iv: string | null;
   my_wrapped: string | null;
+}
+
+interface KeyLinkRow {
+  conversation_id: number;
+  key_id: string;
+  previous_key_id: string;
+  iv: string;
+  wrapped: string;
 }
 
 interface MemberRow {
@@ -268,6 +324,7 @@ export interface GithubAccountRow {
   name: string | null;
   token: string;
   notify: boolean;
+  auto_share: boolean;
   pulls: string | null;
   fetched_at: number | null;
   polled_at: number;
@@ -290,6 +347,19 @@ interface GithubEventRow {
 /** Each account keeps this many of its newest pull request events. */
 const GITHUB_EVENTS_KEPT = 50;
 
+interface ProjectRepoRow {
+  repo: string;
+  conversation_id: number;
+  added_by: number | null;
+  added_at: number;
+}
+
+export interface PullShareRow {
+  id: number;
+  conversation_id: number;
+  pull_id: string;
+}
+
 export interface ProjectRow {
   id: number;
   name: string;
@@ -304,8 +374,14 @@ export interface SharedChannelKey {
   wrappedKeys: WrappedKeyInput[];
 }
 
-/** Why a project change was refused: its members or channels changed since the client looked. */
-export type ProjectChangeRefusal = 'stale' | 'name_taken' | 'already_member' | 'not_member';
+/**
+ * Why a project change was refused: its members or channels changed since the client looked, or
+ * the owner tried to leave without handing the project over.
+ */
+export type ProjectChangeRefusal = 'stale' | 'name_taken' | 'already_member' | 'owner';
+
+/** Why leaving a group was refused. A group without an owner cannot lose its last member either. */
+export type LeaveRefusal = 'stale' | 'owner' | 'last_member';
 
 export interface PushSubscriptionRow {
   endpoint: string;
@@ -356,6 +432,13 @@ function toGithubEventDTO(row: GithubEventRow): GithubEventDTO {
   };
 }
 
+const toProjectRepoDTO = (row: ProjectRepoRow): ProjectRepoDTO => ({
+  repo: row.repo,
+  conversationId: row.conversation_id,
+  addedBy: row.added_by,
+  addedAt: row.added_at,
+});
+
 export const keyBackupOf = (row: UserRow) =>
   row.key_backup ? (JSON.parse(row.key_backup) as SealedBackupDTO) : null;
 
@@ -393,9 +476,9 @@ export async function openDb(sql: Sql) {
   });
 
   async function conversations(userId: number, onlyId: number | null): Promise<ConversationDTO[]> {
-    const [rows, members, lastMessages] = await Promise.all([
+    const [rows, members, lastMessages, links] = await Promise.all([
       sql.query<ConversationRow>(
-        `SELECT c.id, c.type, c.title, c.project_id, c.created_by, c.updated_at, c.key_id,
+        `SELECT c.id, c.type, c.title, c.project_id, c.created_by, c.updated_at, c.key_id, c.needs_new_key,
            k.wrapped_by AS my_wrapped_by, k.iv AS my_iv, k.wrapped AS my_wrapped,
            (SELECT COUNT(*)::int FROM webchat.messages x
              WHERE x.conversation_id = c.id AND x.id > m.last_read_id AND x.sender_id <> m.user_id
@@ -421,6 +504,13 @@ export async function openDb(sql: Sql) {
          WHERE m.user_id = $1 AND ($2::int IS NULL OR c.id = $2)`,
         [userId, onlyId],
       ),
+      sql.query<KeyLinkRow>(
+        `SELECT l.conversation_id, l.key_id, l.previous_key_id, l.iv, l.wrapped FROM webchat.key_links l
+         WHERE l.conversation_id IN (
+           SELECT conversation_id FROM webchat.members WHERE user_id = $1 AND ($2::int IS NULL OR conversation_id = $2))
+         ORDER BY l.created_at`,
+        [userId, onlyId],
+      ),
     ]);
     const membersByChat = new Map<number, MemberState[]>();
     for (const row of members) {
@@ -428,13 +518,19 @@ export async function openDb(sql: Sql) {
       list.push(toMemberState(row));
       membersByChat.set(row.conversation_id, list);
     }
+    const linksByChat = new Map<number, KeyLinkDTO[]>();
+    for (const row of links) {
+      const list = linksByChat.get(row.conversation_id) ?? [];
+      list.push({ keyId: row.key_id, previousKeyId: row.previous_key_id, iv: row.iv, data: row.wrapped });
+      linksByChat.set(row.conversation_id, list);
+    }
     const lastByChat = new Map(lastMessages.map((row) => [row.conversation_id, toMessageDTO(row)]));
     return rows.map((row) => ({
       id: row.id,
       type: row.type,
       title: row.title,
       projectId: row.project_id,
-      createdBy: row.created_by,
+      ownerId: row.created_by,
       members: membersByChat.get(row.id) ?? [],
       lastMessage: lastByChat.get(row.id) ?? null,
       unread: row.unread,
@@ -444,6 +540,8 @@ export async function openDb(sql: Sql) {
         row.my_wrapped_by !== null && row.my_iv && row.my_wrapped
           ? { wrappedBy: row.my_wrapped_by, iv: row.my_iv, data: row.my_wrapped }
           : null,
+      keyLinks: linksByChat.get(row.id) ?? [],
+      needsNewKey: row.needs_new_key,
     }));
   }
 
@@ -491,7 +589,7 @@ export async function openDb(sql: Sql) {
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
-      createdBy: row.created_by,
+      ownerId: row.created_by,
       createdAt: row.created_at,
       memberIds: membersOf.get(row.id) ?? [],
     }));
@@ -525,12 +623,72 @@ export async function openDb(sql: Sql) {
     return created.id;
   }
 
-  /** Locks a project for a change to its members or channels, and returns its members. */
+  /** Locks a project for a change to its members, owner or channels, and returns who is in it and who owns it. */
   async function lockProject(q: Querier, projectId: number) {
-    await q.query('SELECT id FROM webchat.projects WHERE id = $1 FOR UPDATE', [projectId]);
-    return (
+    const project = await one(
+      q.query<{ created_by: number }>('SELECT created_by FROM webchat.projects WHERE id = $1 FOR UPDATE', [projectId]),
+    );
+    const memberIds = (
       await q.query<{ user_id: number }>('SELECT user_id FROM webchat.project_members WHERE project_id = $1', [projectId])
     ).map((row) => row.user_id);
+    return { ownerId: project?.created_by ?? null, memberIds };
+  }
+
+  const chatMembers = async (q: Querier, conversationId: number) =>
+    (
+      await q.query<{ user_id: number }>('SELECT user_id FROM webchat.members WHERE conversation_id = $1', [conversationId])
+    ).map((row) => row.user_id);
+
+  const projectChannels = (q: Querier, projectId: number) =>
+    q.query<{ id: number; key_id: string | null }>('SELECT id, key_id FROM webchat.conversations WHERE project_id = $1', [
+      projectId,
+    ]);
+
+  /**
+   * Whether a new key may replace a chat's current one: it names the current key as the one it
+   * replaces, is wrapped for exactly these people, and has an id the chat never used, so the chain
+   * of earlier keys has one way back.
+   */
+  async function canReplace(
+    q: Querier,
+    chat: { id: number; key_id: string | null },
+    key: RotatedKeyInput | undefined,
+    memberIds: number[],
+  ) {
+    if (!key || chat.key_id === null || key.link.previousKeyId !== chat.key_id || key.keyId === chat.key_id) return false;
+    if (!sameIds(memberIds, key.wrappedKeys.map((k) => k.userId))) return false;
+    const used = await q.query('SELECT 1 FROM webchat.key_links WHERE conversation_id = $1 AND previous_key_id = $2', [
+      chat.id,
+      key.keyId,
+    ]);
+    return used.length === 0;
+  }
+
+  /** Puts a new key in place of a chat's current one: a copy for every member, and the old key inside it. */
+  async function replaceKey(q: Querier, conversationId: number, wrappedBy: number, key: RotatedKeyInput) {
+    await q.query('DELETE FROM webchat.conversation_keys WHERE conversation_id = $1', [conversationId]);
+    await insertWrappedKeys(q, conversationId, wrappedBy, key.wrappedKeys);
+    await q.query(
+      `INSERT INTO webchat.key_links (conversation_id, key_id, previous_key_id, iv, wrapped, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [conversationId, key.keyId, key.link.previousKeyId, key.link.iv, key.link.data, Date.now()],
+    );
+    await q.query('UPDATE webchat.conversations SET key_id = $2, needs_new_key = false WHERE id = $1', [
+      conversationId,
+      key.keyId,
+    ]);
+  }
+
+  /**
+   * Takes someone out of a chat at their own request. They hold its key and cannot make a new one
+   * for the others, so the chat waits for a member who stays to replace it.
+   */
+  async function leaveChat(q: Querier, conversationId: number, userId: number) {
+    await q.query('DELETE FROM webchat.members WHERE conversation_id = $1 AND user_id = $2', [conversationId, userId]);
+    await q.query('DELETE FROM webchat.conversation_keys WHERE conversation_id = $1 AND user_id = $2', [conversationId, userId]);
+    await q.query('UPDATE webchat.conversations SET needs_new_key = true WHERE id = $1 AND key_id IS NOT NULL', [
+      conversationId,
+    ]);
   }
 
   return {
@@ -706,12 +864,14 @@ export async function openDb(sql: Sql) {
         return true;
       });
     },
-    conversationKeyId: async (conversationId: number) =>
-      (
-        await one(
-          sql.query<{ key_id: string | null }>('SELECT key_id FROM webchat.conversations WHERE id = $1', [conversationId]),
-        )
-      )?.key_id ?? null,
+    /** A chat's current key id, and whether someone who holds that key left. */
+    conversationKey: async (conversationId: number) =>
+      (await one(
+        sql.query<{ key_id: string | null; needs_new_key: boolean }>(
+          'SELECT key_id, needs_new_key FROM webchat.conversations WHERE id = $1',
+          [conversationId],
+        ),
+      )) ?? { key_id: null, needs_new_key: false },
     /** Creates a project with its members and its #general channel, keyed for every member. */
     createProject(
       name: string,
@@ -749,7 +909,7 @@ export async function openDb(sql: Sql) {
       key: { keyId: string; wrappedKeys: WrappedKeyInput[] },
     ): Promise<number | ProjectChangeRefusal> {
       return sql.transaction(async (tx) => {
-        const memberIds = await lockProject(tx, projectId);
+        const { memberIds } = await lockProject(tx, projectId);
         if (!sameIds(memberIds, key.wrappedKeys.map((k) => k.userId))) return 'stale';
         return (await insertChannel(tx, projectId, title, memberIds, { ...key, wrappedBy: createdBy })) ?? 'name_taken';
       });
@@ -768,10 +928,9 @@ export async function openDb(sql: Sql) {
     ): Promise<true | ProjectChangeRefusal> {
       const now = Date.now();
       return sql.transaction(async (tx) => {
-        const memberIds = await lockProject(tx, projectId);
-        // The route checked this before the lock. Check again under it: every copy below names the
-        // adder as its wrapper, and pages refuse a copy that a non-member made (D-039).
-        if (!memberIds.includes(addedBy)) return 'not_member';
+        const { memberIds } = await lockProject(tx, projectId);
+        // Removed meanwhile: the copies they wrapped would come from someone outside the project.
+        if (!memberIds.includes(addedBy)) return 'stale';
         if (userIds.some((id) => memberIds.includes(id))) return 'already_member';
         const channels = await tx.query<{ id: number; key_id: string | null; last_message_id: number }>(
           'SELECT id, key_id, last_message_id FROM webchat.conversations WHERE project_id = $1',
@@ -799,37 +958,55 @@ export async function openDb(sql: Sql) {
     },
 
     /**
-     * Removes someone from a project and from every channel in it. Each channel's key must come
-     * wrapped again, by the member removing them, for exactly the people who stay, so no copy left
-     * was made by the person removed. Stale when that person is gone already.
+     * Removes someone from a project and from every channel in it. Each channel gets a new key from
+     * the member removing them, wrapped for exactly the people who stay, so the person removed
+     * cannot read what is sent next. Stale when that person is gone already, or a key changed.
      */
     removeProjectMember(
       projectId: number,
       removedBy: number,
       userId: number,
-      channelKeys: SharedChannelKey[],
+      channelKeys: RotatedChannelKeyInput[],
     ): Promise<true | ProjectChangeRefusal> {
       return sql.transaction(async (tx) => {
-        const memberIds = await lockProject(tx, projectId);
+        const { memberIds } = await lockProject(tx, projectId);
         const staying = memberIds.filter((id) => id !== userId);
         if (staying.length === memberIds.length) return 'stale';
-        const channels = await tx.query<{ id: number; key_id: string | null }>(
-          'SELECT id, key_id FROM webchat.conversations WHERE project_id = $1',
-          [projectId],
-        );
+        const channels = await projectChannels(tx, projectId);
         const keyFor = new Map(channelKeys.map((k) => [k.conversationId, k]));
-        const covered = (channel: { id: number; key_id: string | null }) => {
-          const key = keyFor.get(channel.id);
-          return key !== undefined && key.keyId === channel.key_id && sameIds(staying, key.wrappedKeys.map((k) => k.userId));
-        };
-        if (channels.length !== keyFor.size || !channels.every(covered)) return 'stale';
+        if (channels.length !== keyFor.size) return 'stale';
+        for (const channel of channels) if (!(await canReplace(tx, channel, keyFor.get(channel.id), staying))) return 'stale';
 
         await tx.query('DELETE FROM webchat.project_members WHERE project_id = $1 AND user_id = $2', [projectId, userId]);
         for (const channel of channels) {
           await tx.query('DELETE FROM webchat.members WHERE conversation_id = $1 AND user_id = $2', [channel.id, userId]);
-          await tx.query('DELETE FROM webchat.conversation_keys WHERE conversation_id = $1', [channel.id]);
-          await insertWrappedKeys(tx, channel.id, removedBy, keyFor.get(channel.id)!.wrappedKeys);
+          await replaceKey(tx, channel.id, removedBy, keyFor.get(channel.id)!);
         }
+        return true;
+      });
+    },
+
+    /**
+     * Takes someone out of a project and every channel in it, at their own request. The owner must
+     * hand it over first, so a project always has an owner among its members.
+     */
+    leaveProject(projectId: number, userId: number): Promise<true | ProjectChangeRefusal> {
+      return sql.transaction(async (tx) => {
+        const { ownerId, memberIds } = await lockProject(tx, projectId);
+        if (!memberIds.includes(userId)) return 'stale';
+        if (ownerId === userId) return 'owner';
+        await tx.query('DELETE FROM webchat.project_members WHERE project_id = $1 AND user_id = $2', [projectId, userId]);
+        for (const channel of await projectChannels(tx, projectId)) await leaveChat(tx, channel.id, userId);
+        return true;
+      });
+    },
+
+    /** Makes another member the owner. False unless the caller still owns the project and the other person is in it. */
+    handOverProject(projectId: number, ownerId: number, newOwnerId: number): Promise<boolean> {
+      return sql.transaction(async (tx) => {
+        const project = await lockProject(tx, projectId);
+        if (project.ownerId !== ownerId || !project.memberIds.includes(newOwnerId)) return false;
+        await tx.query('UPDATE webchat.projects SET created_by = $2 WHERE id = $1', [projectId, newOwnerId]);
         return true;
       });
     },
@@ -851,6 +1028,46 @@ export async function openDb(sql: Sql) {
         ])
       ).length > 0,
 
+    projectRepos: async (projectId: number) =>
+      (
+        await sql.query<ProjectRepoRow>(
+          'SELECT repo, conversation_id, added_by, added_at FROM webchat.project_repos WHERE project_id = $1 ORDER BY repo',
+          [projectId],
+        )
+      ).map(toProjectRepoDTO),
+
+    /**
+     * Links a repository to a project, or moves its link to another channel. Refused when the
+     * channel is not one of the project's, or the project links as many repositories as it may.
+     */
+    linkProjectRepo(projectId: number, repo: string, conversationId: number, addedBy: number) {
+      return sql.transaction(async (tx): Promise<true | 'no_channel' | 'too_many'> => {
+        await lockProject(tx, projectId);
+        const channel = await tx.query('SELECT 1 FROM webchat.conversations WHERE id = $1 AND project_id = $2', [
+          conversationId,
+          projectId,
+        ]);
+        if (channel.length === 0) return 'no_channel';
+        const others = await one(
+          tx.query<{ count: number }>(
+            'SELECT COUNT(*)::int AS count FROM webchat.project_repos WHERE project_id = $1 AND repo <> $2',
+            [projectId, repo],
+          ),
+        );
+        if ((others?.count ?? 0) >= LIMITS.reposPerProject) return 'too_many';
+        await tx.query(
+          `INSERT INTO webchat.project_repos (project_id, repo, conversation_id, added_by, added_at)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (project_id, repo) DO UPDATE SET conversation_id = EXCLUDED.conversation_id`,
+          [projectId, repo, conversationId, addedBy, Date.now()],
+        );
+        return true;
+      });
+    },
+    unlinkProjectRepo: async (projectId: number, repo: string) => {
+      await sql.query('DELETE FROM webchat.project_repos WHERE project_id = $1 AND repo = $2', [projectId, repo]);
+    },
+
     conversationsFor: (userId: number) => conversations(userId, null),
     conversationFor: async (userId: number, conversationId: number) => (await conversations(userId, conversationId))[0],
     getConversation: (conversationId: number) =>
@@ -862,34 +1079,136 @@ export async function openDb(sql: Sql) {
       ),
 
     /**
-     * Removes someone from a group. Its key, if it has one, must come wrapped again, by the member
-     * removing them, for exactly the people who stay. Returns false when the group changed since
-     * the client looked, such as that person being gone already.
+     * Adds people to a group. Its key, if it has one, must come wrapped for them by the member
+     * adding them, so they can read its history. Their read pointers start at the newest message,
+     * so that history does not count as unread. Stale when the key changed since the client looked,
+     * or the member adding them was removed meanwhile.
      */
-    removeGroupMember(
+    addGroupMembers(
       conversationId: number,
-      removedBy: number,
-      userId: number,
+      addedBy: number,
+      userIds: number[],
       key: { keyId: string; wrappedKeys: WrappedKeyInput[] } | null,
-    ): Promise<boolean> {
+    ): Promise<true | 'stale' | 'already_member'> {
+      const now = Date.now();
       return sql.transaction(async (tx) => {
         const chat = await one(
-          tx.query<{ key_id: string | null }>('SELECT key_id FROM webchat.conversations WHERE id = $1 FOR UPDATE', [
-            conversationId,
-          ]),
+          tx.query<{ key_id: string | null; last_message_id: number }>(
+            'SELECT key_id, last_message_id FROM webchat.conversations WHERE id = $1 FOR UPDATE',
+            [conversationId],
+          ),
         );
         const memberIds = (
           await tx.query<{ user_id: number }>('SELECT user_id FROM webchat.members WHERE conversation_id = $1', [
             conversationId,
           ])
         ).map((row) => row.user_id);
+        if (!chat || !memberIds.includes(addedBy) || chat.key_id !== (key?.keyId ?? null)) return 'stale';
+        if (userIds.some((id) => memberIds.includes(id))) return 'already_member';
+
+        for (const userId of userIds) {
+          await tx.query(
+            `INSERT INTO webchat.members (conversation_id, user_id, joined_at, last_delivered_id, last_read_id)
+             VALUES ($1, $2, $3, $4, $4)`,
+            [conversationId, userId, now, chat.last_message_id],
+          );
+        }
+        if (key) await insertWrappedKeys(tx, conversationId, addedBy, key.wrappedKeys);
+        return true;
+      });
+    },
+
+    /**
+     * Removes someone from a group. A group with a key gets a new one from the member removing
+     * them, wrapped for exactly the people who stay. Returns false when the group changed since the
+     * client looked, such as that person being gone already.
+     */
+    removeGroupMember(
+      conversationId: number,
+      removedBy: number,
+      userId: number,
+      key: RotatedKeyInput | null,
+    ): Promise<boolean> {
+      return sql.transaction(async (tx) => {
+        const chat = await one(
+          tx.query<{ id: number; key_id: string | null }>(
+            'SELECT id, key_id FROM webchat.conversations WHERE id = $1 FOR UPDATE',
+            [conversationId],
+          ),
+        );
+        const memberIds = await chatMembers(tx, conversationId);
         const staying = memberIds.filter((id) => id !== userId);
-        if (!chat || staying.length === memberIds.length || chat.key_id !== (key?.keyId ?? null)) return false;
-        if (key && !sameIds(staying, key.wrappedKeys.map((k) => k.userId))) return false;
+        if (!chat || staying.length === memberIds.length) return false;
+        // A group from before encryption has no key to replace.
+        if (chat.key_id === null ? key !== null : !(await canReplace(tx, chat, key ?? undefined, staying))) return false;
 
         await tx.query('DELETE FROM webchat.members WHERE conversation_id = $1 AND user_id = $2', [conversationId, userId]);
-        await tx.query('DELETE FROM webchat.conversation_keys WHERE conversation_id = $1', [conversationId]);
-        if (key) await insertWrappedKeys(tx, conversationId, removedBy, key.wrappedKeys);
+        if (key) await replaceKey(tx, conversationId, removedBy, key);
+        return true;
+      });
+    },
+
+    /** Takes someone out of a group at their own request. The owner must hand it over first. */
+    leaveGroup(conversationId: number, userId: number): Promise<true | LeaveRefusal> {
+      return sql.transaction(async (tx) => {
+        const chat = await one(
+          tx.query<{ type: ConversationType; created_by: number | null }>(
+            'SELECT type, created_by FROM webchat.conversations WHERE id = $1 FOR UPDATE',
+            [conversationId],
+          ),
+        );
+        const memberIds = await chatMembers(tx, conversationId);
+        if (chat?.type !== 'group' || !memberIds.includes(userId)) return 'stale';
+        if (chat.created_by === userId) return 'owner';
+        if (memberIds.length === 1) return 'last_member';
+        await leaveChat(tx, conversationId, userId);
+        return true;
+      });
+    },
+
+    /**
+     * Makes another member the group's owner. False unless the caller still owns it, or it has no
+     * owner yet, and the other person is in it.
+     */
+    handOverGroup(conversationId: number, ownerId: number, newOwnerId: number): Promise<boolean> {
+      return sql.transaction(async (tx) => {
+        const chat = await one(
+          tx.query<{ type: ConversationType; created_by: number | null }>(
+            'SELECT type, created_by FROM webchat.conversations WHERE id = $1 FOR UPDATE',
+            [conversationId],
+          ),
+        );
+        const owns = chat?.type === 'group' && (chat.created_by === null || chat.created_by === ownerId);
+        if (!owns || !(await chatMembers(tx, conversationId)).includes(newOwnerId)) return false;
+        await tx.query('UPDATE webchat.conversations SET created_by = $2 WHERE id = $1', [conversationId, newOwnerId]);
+        return true;
+      });
+    },
+
+    /**
+     * Replaces the key of a chat that someone left with a new key from a member who stays. False
+     * when the chat needs no new key, or its members or key changed since the client looked.
+     */
+    replaceConversationKey(conversationId: number, replacedBy: number, key: RotatedKeyInput): Promise<boolean> {
+      return sql.transaction(async (tx) => {
+        const projectId =
+          (
+            await one(
+              tx.query<{ project_id: number | null }>('SELECT project_id FROM webchat.conversations WHERE id = $1', [
+                conversationId,
+              ]),
+            )
+          )?.project_id ?? null;
+        // A channel's members are its project's, so lock the project first, as every change to them does.
+        if (projectId !== null) await lockProject(tx, projectId);
+        const chat = await one(
+          tx.query<{ id: number; key_id: string | null; needs_new_key: boolean }>(
+            'SELECT id, key_id, needs_new_key FROM webchat.conversations WHERE id = $1 FOR UPDATE',
+            [conversationId],
+          ),
+        );
+        if (!chat?.needs_new_key || !(await canReplace(tx, chat, key, await chatMembers(tx, conversationId)))) return false;
+        await replaceKey(tx, conversationId, replacedBy, key);
         return true;
       });
     },
@@ -898,12 +1217,7 @@ export async function openDb(sql: Sql) {
     deleteConversation: async (conversationId: number) => {
       await sql.query('DELETE FROM webchat.conversations WHERE id = $1', [conversationId]);
     },
-    memberIds: async (conversationId: number) =>
-      (
-        await sql.query<{ user_id: number }>('SELECT user_id FROM webchat.members WHERE conversation_id = $1', [
-          conversationId,
-        ])
-      ).map((row) => row.user_id),
+    memberIds: (conversationId: number) => chatMembers(sql, conversationId),
     isMember: async (conversationId: number, userId: number) =>
       (
         await sql.query('SELECT 1 FROM webchat.members WHERE conversation_id = $1 AND user_id = $2', [
@@ -913,8 +1227,9 @@ export async function openDb(sql: Sql) {
       ).length > 0,
 
     /**
-     * Stores an encrypted message, moves the chat to the top, and marks it read for its sender. A
-     * reaction only bumps the chat's newest event, so it neither reorders chats nor counts as unread.
+     * Stores an encrypted message, moves the chat to the top, and marks it read for its sender,
+     * unless their page sent it on its own. A reaction only bumps the chat's newest event, so it
+     * neither reorders chats nor counts as unread.
      */
     insertMessage(
       conversationId: number,
@@ -923,6 +1238,7 @@ export async function openDb(sql: Sql) {
       envelope: EnvelopeDTO,
       urgent: boolean,
       clientId: string,
+      senderRead = true,
     ) {
       return sql.transaction(async (tx) => {
         const now = Date.now();
@@ -940,7 +1256,7 @@ export async function openDb(sql: Sql) {
              WHERE id = $3`,
             [row.id, now, conversationId],
           );
-          await markRead(tx, conversationId, senderId, row.id);
+          if (senderRead) await markRead(tx, conversationId, senderId, row.id);
         } else {
           await tx.query('UPDATE webchat.conversations SET last_event_id = GREATEST(last_event_id, $1) WHERE id = $2', [
             row.id,
@@ -1001,7 +1317,8 @@ export async function openDb(sql: Sql) {
     /**
      * One cheap query that changes whenever anything this user sees changes: a new message or
      * reaction, a read or delivered pointer, a new or deleted chat, channel or project, someone
-     * joining or leaving one of them, a new person, or someone coming online or going offline.
+     * joining or leaving one of them, a new key, a new owner, a new person, or someone coming online
+     * or going offline.
      */
     async stamp(userId: number): Promise<string> {
       const row = await one(
@@ -1011,6 +1328,8 @@ export async function openDb(sql: Sql) {
           chats: number;
           seats: number;
           keyed: number;
+          rekeyed: number;
+          owners: string;
           people: number;
           withKeys: number;
           online: string | null;
@@ -1029,13 +1348,24 @@ export async function openDb(sql: Sql) {
              -- two check-ins still changes it.
              (SELECT COALESCE(SUM(joined_at), 0)::bigint FROM webchat.members
                WHERE conversation_id IN (SELECT * FROM mine)) AS seats,
+             -- Links are only ever added, one per new key, so their times change with every rotation.
+             (SELECT COALESCE(SUM(created_at), 0)::bigint FROM webchat.key_links
+               WHERE conversation_id IN (SELECT * FROM mine)) AS rekeyed,
+             -- A hash of who owns each project and group, so a handover always shows, even two at once.
+             (SELECT md5(COALESCE(string_agg(pair, ',' ORDER BY pair), '')) FROM (
+               SELECT 'c' || id || ':' || created_by AS pair FROM webchat.conversations
+                 WHERE id IN (SELECT * FROM mine) AND created_by IS NOT NULL
+               UNION ALL
+               SELECT 'p' || p.id || ':' || p.created_by FROM webchat.projects p
+                 JOIN webchat.project_members pm ON pm.project_id = p.id WHERE pm.user_id = $1
+             ) owned) AS owners,
              (SELECT COUNT(*)::int FROM webchat.users) AS people,
              (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE last_active_at > $2) AS online`,
           [userId, Date.now() - ONLINE_WINDOW_MS],
         ),
       );
       return row
-        ? `${row.messages}.${row.pointers}.${row.chats}.${row.seats}.${row.keyed}.${row.people}.${row.withKeys}.${row.online ?? ''}`
+        ? `${row.messages}.${row.pointers}.${row.chats}.${row.seats}.${row.keyed}.${row.rekeyed}.${row.owners}.${row.people}.${row.withKeys}.${row.online ?? ''}`
         : '';
     },
 
@@ -1097,6 +1427,7 @@ export async function openDb(sql: Sql) {
         );
         if (previous && previous.github_id !== account.githubId) {
           await tx.query('DELETE FROM webchat.github_events WHERE user_id = $1', [userId]);
+          await tx.query('DELETE FROM webchat.pull_shares WHERE user_id = $1 AND claimed_at IS NULL', [userId]);
         }
         await tx.query(
           `INSERT INTO webchat.github_accounts (user_id, github_id, login, name, token, created_at)
@@ -1113,11 +1444,18 @@ export async function openDb(sql: Sql) {
     deleteGithubAccount: (userId: number) =>
       sql.transaction(async (tx) => {
         await tx.query('DELETE FROM webchat.github_events WHERE user_id = $1', [userId]);
+        await tx.query('DELETE FROM webchat.pull_shares WHERE user_id = $1 AND claimed_at IS NULL', [userId]);
         await tx.query('DELETE FROM webchat.github_accounts WHERE user_id = $1', [userId]);
       }),
     setGithubNotify: async (userId: number, notify: boolean) => {
       await sql.query('UPDATE webchat.github_accounts SET notify = $2 WHERE user_id = $1', [userId, notify]);
     },
+    /** Turning sharing off also forgets the pull requests that were waiting to be shared. */
+    setGithubAutoShare: (userId: number, autoShare: boolean) =>
+      sql.transaction(async (tx) => {
+        await tx.query('UPDATE webchat.github_accounts SET auto_share = $2 WHERE user_id = $1', [userId, autoShare]);
+        if (!autoShare) await tx.query('DELETE FROM webchat.pull_shares WHERE user_id = $1 AND claimed_at IS NULL', [userId]);
+      }),
     /**
      * Claims an account for one poll, unless it was polled less than minIntervalMs ago or GitHub
      * revoked its token. Returns undefined when there is nothing to do.
@@ -1182,5 +1520,51 @@ export async function openDb(sql: Sql) {
           GITHUB_EVENTS_KEPT,
         ])
       ).map(toGithubEventDTO),
+
+    /**
+     * Queues the user's pull requests for the channels of the projects that link their repository
+     * and have the user as a member. One already queued or shared there is left alone.
+     */
+    async addPullShares(userId: number, pulls: Array<{ id: string; repo: string }>) {
+      const now = Date.now();
+      for (const pull of pulls) {
+        await sql.query(
+          `INSERT INTO webchat.pull_shares (conversation_id, user_id, pull_id, created_at)
+           SELECT r.conversation_id, $1, $2, $3 FROM webchat.project_repos r
+           JOIN webchat.project_members pm ON pm.project_id = r.project_id AND pm.user_id = $1
+           WHERE r.repo = lower($4)
+           ON CONFLICT (conversation_id, pull_id) DO NOTHING`,
+          [userId, pull.id, now, pull.repo],
+        );
+      }
+    },
+    /** Queued shares in chats the user is still in, oldest first. */
+    pendingPullShares: (userId: number) =>
+      sql.query<PullShareRow>(
+        `SELECT s.id, s.conversation_id, s.pull_id FROM webchat.pull_shares s
+         JOIN webchat.members m ON m.conversation_id = s.conversation_id AND m.user_id = s.user_id
+         WHERE s.user_id = $1 AND s.claimed_at IS NULL ORDER BY s.id`,
+        [userId],
+      ),
+    /** Claims a queued share for the tab that posts it. However many tabs try, one wins. */
+    claimPullShare: async (shareId: number, userId: number) =>
+      (
+        await sql.query(
+          `UPDATE webchat.pull_shares s SET claimed_at = $3
+           WHERE s.id = $1 AND s.user_id = $2 AND s.claimed_at IS NULL
+             AND EXISTS (SELECT 1 FROM webchat.members m WHERE m.conversation_id = s.conversation_id AND m.user_id = $2)
+           RETURNING s.id`,
+          [shareId, userId, Date.now()],
+        )
+      ).length > 0,
+    /** Forgets queued shares of pull requests that were merged or closed before the author's page posted them. */
+    async dropPullShares(userId: number, pullIds: string[]) {
+      for (const pullId of pullIds) {
+        await sql.query('DELETE FROM webchat.pull_shares WHERE user_id = $1 AND pull_id = $2 AND claimed_at IS NULL', [
+          userId,
+          pullId,
+        ]);
+      }
+    },
   };
 }

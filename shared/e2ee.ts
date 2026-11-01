@@ -10,7 +10,19 @@
 //   metadata, so no one, including other members, can alter it or send as someone else.
 // - New member of a project: an existing member opens their own copy of each channel key and
 //   wraps it for the newcomer, who can then read the channel's history.
-import { LIMITS, type EnvelopeDTO, type MessageKind, type PublicKeysDTO, type SealedBackupDTO } from './types.js';
+// - Rotation: when someone leaves or is removed, a member who stays makes a new chat key, wraps it
+//   for everyone who stays, and encrypts the old key with the new one. Whoever holds the new key
+//   opens every earlier key in turn; the person who left never gets the new one.
+import {
+  LIMITS,
+  type EnvelopeDTO,
+  type MessageKind,
+  type PublicKeysDTO,
+  type PullCardDTO,
+  type PullChecks,
+  type PullReview,
+  type SealedBackupDTO,
+} from './types.js';
 
 /** PBKDF2 rounds: OWASP's 2023 figure for PBKDF2-HMAC-SHA256. Changing it changes every derived key. */
 export const KDF_ITERATIONS = 600_000;
@@ -246,6 +258,44 @@ export async function unwrapChatKey(
   return importChatKey(await openChatKeyBytes(wrapped, me, wrapper, keyId));
 }
 
+// A link is bound to its chat and to both key ids, so the server cannot move it to another chat
+// or splice the chain in a different order.
+const linkData = (conversationId: number, keyId: string, previousKeyId: string) =>
+  utf8(`webchat/key-link/v1|conv:${conversationId}|kid:${keyId}|prev:${previousKeyId}`);
+
+/** Encrypts a chat's current key with the new key that replaces it. */
+export async function linkChatKey(
+  newKey: CryptoKey,
+  keyId: string,
+  conversationId: number,
+  previous: Uint8Array<ArrayBuffer>,
+  previousKeyId: string,
+): Promise<WrappedKey> {
+  const iv = randomBytes(12);
+  const data = await subtle().encrypt(
+    { name: 'AES-GCM', iv, additionalData: linkData(conversationId, keyId, previousKeyId) },
+    newKey,
+    previous,
+  );
+  return { iv: toBase64Url(iv), data: toBase64Url(data) };
+}
+
+/** Opens the key that keyId replaced. Throws if the link was changed, or belongs to another chat or key. */
+export async function openKeyLink(
+  newKey: CryptoKey,
+  keyId: string,
+  conversationId: number,
+  link: WrappedKey,
+  previousKeyId: string,
+): Promise<CryptoKey> {
+  const raw = await subtle().decrypt(
+    { name: 'AES-GCM', iv: fromBase64Url(link.iv), additionalData: linkData(conversationId, keyId, previousKeyId) },
+    newKey,
+    fromBase64Url(link.data),
+  );
+  return importChatKey(new Uint8Array(raw));
+}
+
 // ---------------------------------------------------------------------------------------------
 // Messages
 
@@ -272,6 +322,8 @@ export interface MessageContent {
   replyTo?: QuotedMessage;
   /** For kind "reaction": the message and the emoji. An empty emoji takes the reaction back. */
   reaction?: { messageId: number; emoji: string };
+  /** A shared pull request. The text holds the same in words, for pages and devices without the card. */
+  pull?: PullCardDTO;
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -311,9 +363,52 @@ export class TamperedMessageError extends Error {
 
 const isId = (value: unknown): value is number => Number.isInteger(value) && (value as number) > 0;
 
+const REPO = /^[\w.-]+\/[\w.-]+$/;
+const REVIEWS = new Set<PullReview>(['approved', 'changes_requested', 'review_required']);
+const CHECKS = new Set<PullChecks>(['success', 'failure', 'pending']);
+/** A GitHub login, or a team as "org/team". */
+const PERSON = /^[^\s/]{1,100}(\/[^\s/]{1,100})?$/;
+
+/** Reviewers or assignees, if they are a list. A card without one keeps it absent: it is not known, not empty. */
+function readPeople(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return;
+  return raw.filter((p): p is string => typeof p === 'string' && PERSON.test(p)).slice(0, LIMITS.pullPeople);
+}
+
+/**
+ * A shared pull request, if it has the right shape. The link is rebuilt from the repository and
+ * number, so a card can only ever lead to that pull request on github.com.
+ */
+function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | undefined {
+  if (!raw || typeof raw.repo !== 'string' || !REPO.test(raw.repo) || !isId(raw.number) || typeof raw.title !== 'string') return;
+  const url = `https://github.com/${raw.repo}/pull/${raw.number}`;
+  if (raw.url !== url) return;
+  const card: PullCardDTO = {
+    repo: raw.repo,
+    number: raw.number,
+    title: raw.title.slice(0, LIMITS.pullTitleLength),
+    url,
+    draft: raw.draft === true,
+    review: REVIEWS.has(raw.review as PullReview) ? (raw.review as PullReview) : null,
+    checks: CHECKS.has(raw.checks as PullChecks) ? (raw.checks as PullChecks) : null,
+    conflicts: raw.conflicts === true,
+  };
+  const reviewers = readPeople(raw.reviewers);
+  if (reviewers) card.reviewers = reviewers;
+  const assignees = readPeople(raw.assignees);
+  if (assignees) card.assignees = assignees;
+  if (raw.auto === true) card.auto = true;
+  return card;
+}
+
 /** Keeps the parts of decrypted content that have the right shape. The sender signed it, so it is not tampered. */
 function readContent(value: unknown): MessageContent {
-  const raw = value as { text?: unknown; replyTo?: Partial<QuotedMessage>; reaction?: { messageId?: unknown; emoji?: unknown } } | null;
+  const raw = value as {
+    text?: unknown;
+    replyTo?: Partial<QuotedMessage>;
+    reaction?: { messageId?: unknown; emoji?: unknown };
+    pull?: Partial<PullCardDTO>;
+  } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
   const quote = raw.replyTo;
@@ -324,6 +419,8 @@ function readContent(value: unknown): MessageContent {
   if (reaction && isId(reaction.messageId) && typeof reaction.emoji === 'string' && reaction.emoji.length <= EMOJI_LENGTH) {
     content.reaction = { messageId: reaction.messageId, emoji: reaction.emoji };
   }
+  const pull = readPull(raw.pull);
+  if (pull) content.pull = pull;
   return content;
 }
 

@@ -65,6 +65,18 @@ export interface WrappedKeyDTO {
   data: string;
 }
 
+/**
+ * A chat's earlier key, encrypted with the key that replaced it. Whoever holds the current key opens
+ * the earlier ones in turn, so the whole history stays readable after a rotation.
+ */
+export interface KeyLinkDTO {
+  /** The key that replaced it, and encrypts it. */
+  keyId: string;
+  previousKeyId: string;
+  iv: string;
+  data: string;
+}
+
 export interface ConversationDTO {
   id: number;
   type: ConversationType;
@@ -73,10 +85,11 @@ export interface ConversationDTO {
   /** The project a channel belongs to; null for other chats. */
   projectId: number | null;
   /**
-   * The person who made a group, the only one who can remove people from it or delete it. Null for
-   * other chats, and for a group from before encryption that has no key yet, which any member can manage.
+   * The owner of a group: the person who made it, or the member they handed it to. Only the owner
+   * can remove people from it or delete it. Null for other chats, and for a group from before
+   * encryption that has no key yet, which any member can manage.
    */
-  createdBy: number | null;
+  ownerId: number | null;
   members: MemberState[];
   /** Newest message of kind "message". Reactions never replace it. */
   lastMessage: MessageDTO | null;
@@ -87,13 +100,21 @@ export interface ConversationDTO {
   keyId: string | null;
   /** The chat key wrapped for the user this DTO was built for. */
   myKey: WrappedKeyDTO | null;
+  /** Every key the chat used before keyId, oldest first. */
+  keyLinks: KeyLinkDTO[];
+  /**
+   * Someone who holds the current key left. The server takes no messages until a member who stays
+   * replaces the key, which their browser does on its next check-in or before it sends.
+   */
+  needsNewKey: boolean;
 }
 
 /** A project: a team with its own channels. Every project member is a member of every channel in it. */
 export interface ProjectDTO {
   id: number;
   name: string;
-  createdBy: number;
+  /** The person who made it, or the member they handed it to. Only they can remove people or delete it. */
+  ownerId: number;
   createdAt: number;
   /** In the order they joined. */
   memberIds: number[];
@@ -187,6 +208,11 @@ export interface SendMessageInput {
   clientId: string;
   /** Defaults to "message". */
   kind?: MessageKind;
+  /**
+   * The page sent it on its own, such as a pull request card (D-046). The sender has not read the
+   * chat, so their read pointer stays where it was.
+   */
+  auto?: boolean;
 }
 
 /** A new project, with the key of its first channel, #general, wrapped for every member. */
@@ -222,23 +248,50 @@ export interface AddProjectMembersInput {
   channelKeys: SharedChannelKeyInput[];
 }
 
-/**
- * Every channel key of a project, wrapped again for exactly the people who stay, so no copy left
- * was made by the person being removed.
- */
-export interface RemoveProjectMemberInput {
-  channelKeys: SharedChannelKeyInput[];
+/** A chat's current key, encrypted with the key that replaces it. */
+export interface KeyLinkInput {
+  previousKeyId: string;
+  iv: string;
+  data: string;
 }
 
-/** The group's key wrapped again for exactly the people who stay. Null for a group without a key. */
-export interface RemoveGroupMemberInput {
+/** A new key that replaces a chat's current one, wrapped for every member, with the current key inside. */
+export interface RotatedKeyInput extends ChatKeyInput {
+  link: KeyLinkInput;
+}
+
+export interface RotatedChannelKeyInput extends RotatedKeyInput {
+  conversationId: number;
+}
+
+/**
+ * A new key for every channel of a project, wrapped for exactly the people who stay, so the person
+ * being removed cannot read what is sent next.
+ */
+export interface RemoveProjectMemberInput {
+  channelKeys: RotatedChannelKeyInput[];
+}
+
+/** People to add to a group, with its existing key wrapped for each of them. Null for a group without a key. */
+export interface AddGroupMembersInput {
+  userIds: number[];
   key: ChatKeyInput | null;
+}
+
+/** The group's new key, wrapped for exactly the people who stay. Null for a group without a key. */
+export interface RemoveGroupMemberInput {
+  key: RotatedKeyInput | null;
+}
+
+/** The member who becomes the owner of a project or group. */
+export interface NewOwnerInput {
+  userId: number;
 }
 
 /** JSON body of every Web Push message. The service worker turns it into a notification. */
 export interface PushPayload {
-  /** "reaction" only wakes a tab the user is looking at; "project" says someone added them to one. */
-  kind: 'message' | 'reaction' | 'project' | 'github' | 'test';
+  /** "reaction" only wakes a tab the user is looking at; "project" and "group" say someone added them to one. */
+  kind: 'message' | 'reaction' | 'project' | 'group' | 'github' | 'test';
   title: string;
   /** Text for messages the server can read (tests, old plain messages). Empty for encrypted ones. */
   body: string;
@@ -284,6 +337,52 @@ export interface PullRequestDTO {
   additions: number;
   deletions: number;
   updatedAt: number;
+  /**
+   * Who still has to review: GitHub logins, and teams as "org/team". GitHub drops a person from
+   * the list once they review. Absent in lists stored before WebChat read it.
+   */
+  reviewers?: string[];
+  /** GitHub logins of the people assigned. Absent in lists stored before WebChat read it. */
+  assignees?: string[];
+}
+
+/**
+ * A pull request shared into a chat: a snapshot of how it stood when it was shared. It travels
+ * inside the message's envelope, so the server never sees which pull request was shared.
+ */
+export interface PullCardDTO {
+  /** "owner/name". */
+  repo: string;
+  number: number;
+  title: string;
+  /** Always the pull request's page on github.com; the page checks that before it shows a card. */
+  url: string;
+  draft: boolean;
+  review: PullReview;
+  checks: PullChecks;
+  conflicts: boolean;
+  /** As in PullRequestDTO. Absent on cards from before cards named reviewers, which then show none. */
+  reviewers?: string[];
+  assignees?: string[];
+  /** The author's page shared it on its own, because a project links the repository (D-046). */
+  auto?: true;
+}
+
+/** A new pull request of the user's that waits for their page to share it into a channel (D-046). */
+export interface PullShareDTO {
+  id: number;
+  conversationId: number;
+  /** How the pull request stands now, from the user's latest poll. */
+  pull: PullRequestDTO;
+}
+
+/** A repository linked to a project: new pull requests that members open in it go to the channel. */
+export interface ProjectRepoDTO {
+  /** "owner/name" in lower case. */
+  repo: string;
+  conversationId: number;
+  addedBy: number | null;
+  addedAt: number;
 }
 
 export interface PullListsDTO {
@@ -322,6 +421,8 @@ export interface GithubAccountDTO {
   name: string | null;
   /** Push alerts for pull request changes. */
   notify: boolean;
+  /** Share the user's new pull requests into the projects that link their repository. */
+  autoShare: boolean;
 }
 
 export interface GithubDTO {
@@ -330,6 +431,8 @@ export interface GithubDTO {
   /** Null while no GitHub account is connected. */
   account: GithubAccountDTO | null;
   pulls: PullListsDTO | null;
+  /** The user's new pull requests that linked projects wait for. The page claims each one, then posts it. */
+  shares: PullShareDTO[];
   /** Newest first. */
   events: GithubEventDTO[];
   /** When the pull requests were last fetched from GitHub. */
@@ -351,7 +454,7 @@ export const BUILD_HEADER = 'x-webchat-build';
 /**
  * True for Apple's push service, which Safari and web apps on iPhone and iPad use. WebKit revokes a
  * subscription after a few pushes that show no notification, so such an endpoint never gets a push
- * that only wakes an open tab (D-042).
+ * that only wakes an open tab (D-047).
  */
 export function showsEveryPush(endpoint: string | null): boolean {
   if (!endpoint) return false;
@@ -372,8 +475,14 @@ export const LIMITS = {
   groupTitleLength: 60,
   projectNameLength: 60,
   channelNameLength: 40,
-  /** People added to a project at once. Each needs every channel key, and requests stop at 256 KB. */
+  /** People added to a project or group at once. Each needs every channel key, and requests stop at 256 KB. */
   addMembersAtOnce: 20,
   displayNameLength: 40,
+  /** GitHub's own limit for a pull request title. */
+  pullTitleLength: 256,
+  /** Reviewers, and assignees, that the poll reads and a card names. */
+  pullPeople: 10,
+  /** Repositories one project links. Each new pull request in them becomes a message. */
+  reposPerProject: 10,
   pageSize: 50,
 } as const;

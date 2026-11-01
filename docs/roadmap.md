@@ -11,8 +11,10 @@ the items under "Next". The decisions these items build on are in [decisions.md]
 - Each item says why it matters, what it covers, and when it is done. Write open questions under
   the item they belong to.
 - Status values: Next, Planned, Idea, Blocked, In progress, Done, and Dropped.
-- When you start an item, set it to "In progress" and name your branch. When it reaches main, move
-  it to "Done" with its pull request number, and record its decisions in `decisions.md`.
+- When you start an item, set it to "In progress" and name your branch. When it reaches main, set it
+  to "Done" with its pull request number, move its whole entry to the Done section at the end, add a
+  row to the table there, and record its decisions in `decisions.md`. A fixed known issue moves the
+  same way. The sections above Done then hold only what is still open.
 - When you drop an item, keep it, set it to "Dropped", and say why.
 
 ## Next
@@ -37,7 +39,7 @@ Constraints:
 - Status, assignee, due date and priority may be visible to the server. If they are, list them in
   the README and in D-020.
 - Every task change must change the sync fingerprint, or pages will not see it (D-021).
-- Schema changes go in migration 6 (D-010).
+- Schema changes go in migration 8 (D-010).
 
 Done when: typecheck, tests and build pass. Tests prove that the database holds no task text in
 plain and that only project members can read or change tasks. The board has been tried in a browser
@@ -52,41 +54,6 @@ Open questions:
 
 ## Planned
 
-### R-002: Rotate keys on removal, and let people leave
-
-Status: Planned. Owners can remove people since #4, without rotation (D-039).
-
-Why: people removed from a project or group keep its keys (D-039). Nobody can leave on their own,
-and an owner cannot hand a project or group to someone else.
-
-Scope:
-
-- On removal, every chat in the project or group gets a new key, wrapped for the people who stay.
-  Pages keep the old keys to read old messages, so a chat can have more than one key id. The signed
-  header already names the key id (D-016).
-- Leaving. A page accepts a copy of a key only from a current member (D-015), and a person who
-  leaves cannot wrap copies for the others. Someone who stays has to make new copies, so leaving may
-  wait for another member's browser.
-- Handing a project or group to another member, so that its owner can leave too.
-
-Done when: a removed member cannot decrypt anything sent after the removal, and a test proves it.
-Members can leave, and an owner can hand over.
-
-Open question: when someone joins after a rotation, do they get the old keys too, so they can read
-the history (D-026)?
-
-### R-003: Add people to groups
-
-Status: Planned.
-
-Why: a group cannot take new members after it is created (D-039), so a late teammate needs a new
-group, and a person removed by mistake cannot come back.
-
-Scope: reuse the project mechanism. A member's browser wraps the group's key for the newcomer
-(D-026).
-
-Open question: do newcomers to a group read its history, as they do in projects?
-
 ### R-005: Photos and files
 
 Status: Planned.
@@ -99,28 +66,6 @@ message carries the file's address and key inside its envelope.
 Constraints: Vercel Functions accept request bodies of at most 4.5 MB, so files go from the browser
 straight to a storage service, such as Vercel Blob with private access. The Content Security Policy
 allows connections only to the site itself, so it must also allow the storage service (D-009).
-
-### R-013: Share a pull request into a channel
-
-Status: Planned. Found in a review of the GitHub connector on 2026-11-01.
-
-Why: the pull requests pane is personal (D-033). Nothing about a pull request reaches a project
-channel, so a team learns that one was opened or merged only when its author types it. The
-discussion and the pull request stay in different apps, which is what WebChat set out to fix.
-
-Scope:
-
-- A "Share" button on a pull request in the pane sends a message to a chosen chat or channel.
-- The message is a new signed kind, like reactions (D-016, D-030). It carries the repository, the
-  number, the title, the URL and the status at that moment: checks, review decision, conflicts,
-  draft, merged or closed.
-- The page renders it as a card with the status tags of the pane, and a click opens GitHub.
-- Later: the author's browser can post a card by itself to a channel they pick when one of their
-  own pull requests opens or is merged. The server sees nothing new, because the browser encrypts
-  the card like any message.
-
-Done when: a card sent from the pane shows in the channel for every member, with the server holding
-only ciphertext, and a test proves it.
 
 ### R-014: Cards for pasted pull request links
 
@@ -217,7 +162,9 @@ Calls need WebRTC and TURN servers, which cost money (D-003).
 
 ### R-016: Link a project to repositories
 
-Status: Idea. Depends on Q-3 for a shared read.
+Status: Started in #14 (D-046). A project links repositories, and members' new pull requests in
+them go to a channel by themselves. Still to do: the Projects tab list, which depends on Q-3 for a
+shared read, and reviewers shown by their WebChat names instead of GitHub logins.
 
 Why: the pane lists one person's pull requests across every repository, with no grouping. A team
 wants to see every open pull request of its repositories, by any member, next to its channels. Only
@@ -228,48 +175,21 @@ Scope: a project names one or more repositories. The Projects tab shows their op
 grouped by repository. Reading them needs a token that sees the repository: one member's OAuth
 token, or a GitHub App installation on the organization (Q-3).
 
-Open question: should a project's channel get a card (R-013) for every pull request in its
-repositories, or only for the ones members share by hand?
+Settled in D-046: a member's own new pull requests go to the channel by themselves; anyone else's
+goes by hand. Everyone in the project sees a shared title, even without access to the repository,
+so the list here would show the same to the whole project.
+
+### R-017: Notes in a chat when people join or are removed
+
+Status: Idea. Found while building R-003 on 2026-11-01.
+
+Any member can add someone to a project or group, and the newcomer reads the whole history (D-026,
+D-043). The other members see it only in the member count and the member list. WhatsApp shows
+"Alice added Carol" in the chat, and Slack shows "Carol joined #general". A note in the message
+list would tell everyone who can read along. The server already knows when each member joined, so
+the notes would show it nothing new. They should not count as unread.
 
 ## Known issues
-
-### K-1: Old tabs show reactions as messages they cannot decrypt
-
-Status: Fixed in #6 (D-040).
-
-A tab that still runs the app from before #2 shows each reaction as "could not be decrypted" until
-it reloads. A version check that reloads tabs after a deploy would fix this one and future format
-changes.
-
-### K-2: Dialogs open with the focus on the close button
-
-Status: Fixed in #6. The cause was close: React calls `focus()` on the field while the dialog is
-still closed, so nothing happens, and `showModal()` then focuses the close button. `Dialog` now
-focuses the first field in its body after `showModal()`.
-
-Fields marked `autoFocus` inside a dialog do not get the focus, so typing goes nowhere until the
-user clicks the field. This was seen in the New channel dialog on 2026-11-01. The likely cause, not
-yet confirmed: `Dialog` in `client/src/components/Dialog.tsx` calls `showModal()` after React has
-focused the field, and `showModal()` moves the focus to the dialog's first focusable element, its
-close button.
-
-### K-3: The README and package.json disagree about Node
-
-Status: Fixed in #6. Local development runs on Node 26, as `engines` pins (D-013).
-
-The README asks for Node 22.13 or later to run WebChat locally. The `engines` field in
-`package.json` pins Node 26.x (D-013). Decide which versions local development supports, and make
-both say the same.
-
-### K-4: A group's member names change order
-
-Status: Fixed in #6. The members query orders by join time, which also confirmed the cause.
-
-A group's header lists its members in the order the server returns them, and that order changed
-during testing on 2026-11-01: "You, Bob, Carol" became "Bob, You" after a removal and new messages.
-The likely cause, not yet confirmed: the members query in `conversations()` in `server/db.ts` has no
-`ORDER BY`, so Postgres returns the rows in storage order, which an update changes. Ordering the
-members, for example by when they joined, would keep the names still.
 
 ### K-5: The connect card promises alerts with every tab closed
 
@@ -399,6 +319,9 @@ before changing D-032.
 
 ## Done
 
+Finished work. The table is the index; the entries below it keep their numbers, reasons and pull
+requests for the record. Nothing here is a candidate for what to do next.
+
 | Work | Where |
 | --- | --- |
 | Chat with push notifications and urgent alerts | 74d53ff |
@@ -408,3 +331,93 @@ before changing D-032.
 | Projects with channels, replies and reactions | #2 |
 | Owners remove members and delete projects and groups | #4 |
 | Known issues K-1 to K-4: reload after deploy, dialog focus, Node version, member order | #6 |
+| Share a pull request into a chat as a card | #8 |
+| R-003: Add people to groups, who read the history (D-043) | #10 |
+| R-002: New keys when someone leaves or is removed, leaving, handing over (D-044, D-045) | #13 |
+| New pull requests shared into linked projects; cards name the reviewers (D-046) | #14 |
+
+### R-002: Rotate keys on removal, and let people leave
+
+Status: Done in #13 (D-044, D-045). Owners could remove people since #4, without rotation (D-039).
+
+Why: people removed from a project or group keep its keys (D-039). Nobody can leave on their own,
+and an owner cannot hand a project or group to someone else.
+
+Scope:
+
+- On removal, every chat in the project or group gets a new key, wrapped for the people who stay.
+  Pages keep the old keys to read old messages, so a chat can have more than one key id. The signed
+  header already names the key id (D-016).
+- Leaving. A page accepts a copy of a key only from a current member (D-015), and a person who
+  leaves cannot wrap copies for the others. Someone who stays has to make new copies, so leaving may
+  wait for another member's browser.
+- Handing a project or group to another member, so that its owner can leave too.
+
+Done when: a removed member cannot decrypt anything sent after the removal, and a test proves it.
+Members can leave, and an owner can hand over.
+
+Answered: someone who joins after a rotation reads the whole history. Each new key holds the one it
+replaced, so the current key opens every earlier one (D-044).
+
+### R-013: Share a pull request into a channel
+
+Status: Done in #8 (D-042). The "later" part came in #14 (D-046): the author's browser posts the
+card by itself into the channel of each project that links the repository. The card is a field
+inside an ordinary message rather than a kind of its own, because it should count as unread,
+preview and push exactly like a message. Found in a review of the GitHub connector on 2026-11-01.
+
+Why: the pull requests pane is personal (D-033). Nothing about a pull request reaches a project
+channel, so a team learns that one was opened or merged only when its author types it. The
+discussion and the pull request stay in different apps, which is what WebChat set out to fix.
+
+Scope:
+
+- A "Share" button on a pull request in the pane sends a message to a chosen chat or channel.
+- The message is a new signed kind, like reactions (D-016, D-030). It carries the repository, the
+  number, the title, the URL and the status at that moment: checks, review decision, conflicts,
+  draft, merged or closed.
+- The page renders it as a card with the status tags of the pane, and a click opens GitHub.
+- Later: the author's browser can post a card by itself to a channel they pick when one of their
+  own pull requests opens or is merged. The server sees nothing new, because the browser encrypts
+  the card like any message.
+
+Done when: a card sent from the pane shows in the channel for every member, with the server holding
+only ciphertext, and a test proves it.
+
+### K-4: A group's member names change order
+
+Status: Fixed in #6. The members query orders by join time, which also confirmed the cause.
+
+A group's header lists its members in the order the server returns them, and that order changed
+during testing on 2026-11-01: "You, Bob, Carol" became "Bob, You" after a removal and new messages.
+The likely cause, not yet confirmed: the members query in `conversations()` in `server/db.ts` has no
+`ORDER BY`, so Postgres returns the rows in storage order, which an update changes. Ordering the
+members, for example by when they joined, would keep the names still.
+
+### K-3: The README and package.json disagree about Node
+
+Status: Fixed in #6. Local development runs on Node 26, as `engines` pins (D-013).
+
+The README asks for Node 22.13 or later to run WebChat locally. The `engines` field in
+`package.json` pins Node 26.x (D-013). Decide which versions local development supports, and make
+both say the same.
+
+### K-2: Dialogs open with the focus on the close button
+
+Status: Fixed in #6. The cause was close: React calls `focus()` on the field while the dialog is
+still closed, so nothing happens, and `showModal()` then focuses the close button. `Dialog` now
+focuses the first field in its body after `showModal()`.
+
+Fields marked `autoFocus` inside a dialog do not get the focus, so typing goes nowhere until the
+user clicks the field. This was seen in the New channel dialog on 2026-11-01. The likely cause, not
+yet confirmed: `Dialog` in `client/src/components/Dialog.tsx` calls `showModal()` after React has
+focused the field, and `showModal()` moves the focus to the dialog's first focusable element, its
+close button.
+
+### K-1: Old tabs show reactions as messages they cannot decrypt
+
+Status: Fixed in #6 (D-040).
+
+A tab that still runs the app from before #2 shows each reaction as "could not be decrypted" until
+it reloads. A version check that reloads tabs after a deploy would fix this one and future format
+changes.

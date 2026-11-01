@@ -73,6 +73,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
   color: inherit;
@@ -1429,18 +1430,44 @@ button.quote:hover {
   font-size: 13px;
 }
 
+.member-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.member-hand-over,
 .member-remove {
   flex: none;
   padding: 6px 10px;
   border: 0;
   border-radius: var(--radius);
   background: transparent;
-  color: var(--danger);
   font-weight: 600;
+}
+
+.member-hand-over {
+  color: var(--accent-strong);
+}
+
+.member-hand-over:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.member-remove {
+  color: var(--danger);
 }
 
 .member-remove:hover:not(:disabled) {
   background: var(--danger-soft);
+}
+
+/* Side by side, two actions leave a phone almost no room for the name, so they stack there. */
+@media (max-width: 480px) {
+  .member-actions {
+    flex-direction: column;
+    align-items: flex-end;
+  }
 }
 
 /* Urgent alert */
@@ -1863,6 +1890,75 @@ button.quote:hover {
   padding: 12px 14px;
   color: inherit;
   text-decoration: none;
+}
+
+.pull-row {
+  display: flex;
+  align-items: flex-start;
+}
+
+.pull-row .pull {
+  flex: 1;
+  min-width: 0;
+}
+
+.pull-share {
+  flex: none;
+  margin: 8px 6px 0 0;
+}
+
+.share-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+/* A pull request shared into a chat. */
+.pull-card {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  margin: 2px 0 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--quote-bg);
+  color: var(--text);
+  font-size: 13.5px;
+  text-decoration: none;
+}
+
+.pull-card:hover {
+  background: var(--quote-hover);
+}
+
+.pull-card-head {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* Who still has to review a shared pull request, and who it is assigned to. */
+.pull-people {
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.pull-people-label {
+  font-weight: 600;
+}
+
+.pull-you {
+  color: var(--accent-strong);
 }
 
 .pull:hover,

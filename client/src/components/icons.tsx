@@ -140,6 +140,14 @@ export const ReplyIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const ShareIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7" />
+    <path d="m16 6-4-4-4 4" />
+    <path d="M12 2v13" />
+  </Icon>
+);
+
 export const SmilePlusIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M22 11v1a10 10 0 1 1-9-10" />
