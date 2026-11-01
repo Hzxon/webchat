@@ -102,7 +102,10 @@ allows connections only to the site itself, so it must also allow the storage se
 
 ### R-013: Share a pull request into a channel
 
-Status: Planned. Found in a review of the GitHub connector on 2026-11-01.
+Status: Done in #8 (D-042), without the "later" part: the author's browser does not post cards by
+itself yet. The card is a field inside an ordinary message rather than a kind of its own, because
+it should count as unread, preview and push exactly like a message. Found in a review of the GitHub
+connector on 2026-11-01.
 
 Why: the pull requests pane is personal (D-033). Nothing about a pull request reaches a project
 channel, so a team learns that one was opened or merged only when its author types it. The
@@ -323,3 +326,4 @@ before changing D-032.
 | Projects with channels, replies and reactions | #2 |
 | Owners remove members and delete projects and groups | #4 |
 | Known issues K-1 to K-4: reload after deploy, dialog focus, Node version, member order | #6 |
+| Share a pull request into a chat as a card | #8 |

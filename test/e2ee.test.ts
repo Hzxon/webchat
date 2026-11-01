@@ -134,6 +134,30 @@ describe('end-to-end encryption', () => {
     assert.equal(opened.replyTo!.text.length, 160, 'a quote is cut to its limit');
   });
 
+  test('a shared pull request travels inside the envelope, and a card that points elsewhere is dropped', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const keyId = newKeyId();
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'p1' };
+    const pull = {
+      repo: 'acme/app',
+      number: 7,
+      title: 'Add login page',
+      url: 'https://github.com/acme/app/pull/7',
+      draft: false,
+      review: 'approved' as const,
+      checks: 'failure' as const,
+      conflicts: true,
+    };
+    const content = { text: 'Pull request acme/app#7: Add login page', pull };
+    const envelope = await encryptMessage(key, keyId, alice.identity.signPrivate, meta, content);
+    assert.deepEqual(await decryptContent(key, alice.identity.publicKeys.sign, meta, envelope), content);
+
+    const elsewhere = { ...content, pull: { ...pull, url: 'https://evil.example/acme/app/pull/7' } };
+    const opened = await decryptContent(key, alice.identity.publicKeys.sign, meta, await encryptMessage(key, keyId, alice.identity.signPrivate, meta, elsewhere));
+    assert.equal(opened.pull, undefined, 'the text stays, the card goes');
+    assert.equal(opened.text, content.text);
+  });
+
   test('the creator can wrap the chat key for their own other devices', async () => {
     const raw = newChatKeyBytes();
     const keyId = newKeyId();

@@ -1,20 +1,12 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { describeGithubEvent } from '../../../shared/github';
-import type {
-  GithubAccountDTO,
-  GithubDTO,
-  GithubEventDTO,
-  GithubEventKind,
-  PullChecks,
-  PullRequestDTO,
-  PullReview,
-} from '../../../shared/types';
+import type { GithubAccountDTO, GithubDTO, GithubEventDTO, GithubEventKind, PullRequestDTO } from '../../../shared/types';
 import { connectGithub, disconnectGithub, refreshGithub, setGithubNotify } from '../github';
 import { actions, useAppState } from '../store';
 import { formatAgo } from './format';
-import { AlertIcon, BackIcon, BellIcon, CommentIcon, GithubIcon, PullRequestIcon, RefreshIcon } from './icons';
-
-type Tone = 'ok' | 'danger' | 'warn' | 'info' | 'muted';
+import { AlertIcon, BackIcon, BellIcon, CommentIcon, GithubIcon, PullRequestIcon, RefreshIcon, ShareIcon } from './icons';
+import { PullTags, type Tone } from './PullTags';
+import { SharePullDialog } from './SharePullDialog';
 
 /** The pull requests pane: takes the place of a chat, with a back button on phones. */
 export function GithubView() {
@@ -175,25 +167,10 @@ function PullSection({
   );
 }
 
-const Tag = ({ tone, children }: { tone: Tone; children: ReactNode }) => <span className={`tag tag-${tone}`}>{children}</span>;
-
-const CHECKS: Record<NonNullable<PullChecks>, [Tone, string]> = {
-  success: ['ok', 'Checks passed'],
-  failure: ['danger', 'Checks failed'],
-  pending: ['warn', 'Checks running'],
-};
-
-const REVIEWS: Record<NonNullable<PullReview>, [Tone, string]> = {
-  approved: ['ok', 'Approved'],
-  changes_requested: ['danger', 'Changes requested'],
-  review_required: ['muted', 'Review required'],
-};
-
 function PullItem({ pull, showAuthor }: { pull: PullRequestDTO; showAuthor: boolean }) {
-  const checks = pull.checks && CHECKS[pull.checks];
-  const review = pull.review && REVIEWS[pull.review];
+  const [sharing, setSharing] = useState(false);
   return (
-    <li>
+    <li className="pull-row">
       <a className="pull" href={pull.url} target="_blank" rel="noopener noreferrer">
         <span className={`pull-icon ${pull.draft ? 'is-draft' : ''}`}>
           <PullRequestIcon width={18} height={18} />
@@ -205,10 +182,7 @@ function PullItem({ pull, showAuthor }: { pull: PullRequestDTO; showAuthor: bool
             {showAuthor && pull.author ? ` · ${pull.author}` : ''} · {formatAgo(pull.updatedAt)}
           </span>
           <span className="pull-tags">
-            {pull.draft && <Tag tone="muted">Draft</Tag>}
-            {checks && <Tag tone={checks[0]}>{checks[1]}</Tag>}
-            {review && <Tag tone={review[0]}>{review[1]}</Tag>}
-            {pull.conflicts && <Tag tone="danger">Conflicts</Tag>}
+            <PullTags pull={pull} />
             <span className="pull-size" aria-label={`${pull.additions} lines added, ${pull.deletions} removed`}>
               <span className="pull-add">+{pull.additions}</span> <span className="pull-del">−{pull.deletions}</span>
             </span>
@@ -221,6 +195,10 @@ function PullItem({ pull, showAuthor }: { pull: PullRequestDTO; showAuthor: bool
           </span>
         </span>
       </a>
+      <button className="icon-button pull-share" onClick={() => setSharing(true)} title="Share to a chat" aria-label="Share to a chat">
+        <ShareIcon width={18} height={18} />
+      </button>
+      {sharing && <SharePullDialog pull={pull} onClose={() => setSharing(false)} />}
     </li>
   );
 }
