@@ -898,6 +898,43 @@ known issues and open questions. Each pull request updates them along with the c
 Cost: these documents are only as good as their upkeep. A pull request that changes a decision
 without updating this file misleads the next agent.
 
+### D-055: Versions follow Semantic Versioning and stay at 0.y.z for now
+
+Accepted 2026-11-02 in #25.
+
+WebChat follows Semantic Versioning 2.0.0. While it is in early development, the major version
+stays 0, and any release may change anything. The first release is 0.1.0, as the SemVer FAQ
+suggests.
+
+A version speaks to the people who run WebChat. What they rely on across an upgrade: the settings
+and deploy steps in the README, the Node version `engines` pins (D-013), the data already stored,
+which the migrations upgrade in place (D-010), and tabs that still run the previous build. A change
+is breaking when the person who runs WebChat must act during the upgrade, such as setting a new
+variable, or when stored data or open tabs stop working.
+
+The type in a pull request title sets the next version, because the squash merge makes the title
+the commit subject on main (D-035):
+
+- `fix` bumps the patch, as in 0.1.0 to 0.1.1.
+- `feat` bumps the minor, as in 0.1.0 to 0.2.0.
+- A breaking change, marked with `!` after the type or a `BREAKING CHANGE:` footer, also bumps the
+  minor while the version is below 1.0.0. `bump-minor-pre-major` in `release-please-config.json`
+  does this.
+- Other types, such as `docs`, `ci` and `chore`, make no release on their own.
+
+Release Please runs on every push to main, from `.github/workflows/release-please.yml`. It keeps one
+release pull request open, which updates `package.json`, `package-lock.json` and `CHANGELOG.md`.
+Merging it tags that commit as `v0.y.z` and publishes a GitHub release. Nobody edits the version or
+the changelog by hand, so parallel pull requests never conflict over them. Reaching 1.0.0 is the
+owner's call (Q-4). A commit with `Release-As: 1.0.0` in its body makes the release pull request
+propose that version.
+
+Cost: a title with the wrong type gives the wrong version and changelog line. To fix one before the
+release, add a `BEGIN_COMMIT_OVERRIDE` section to the merged pull request's body. The Vercel
+deployment runs main, so it is usually ahead of the latest version. Release Please opens its pull
+request with the workflow's `GITHUB_TOKEN`, so the repository setting "Allow GitHub Actions to
+create and approve pull requests" must be on, and that pull request starts no other workflow.
+
 ## Superseded
 
 Decisions that no longer hold. They keep their numbers and reasons for the record. Read the entry

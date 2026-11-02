@@ -348,6 +348,12 @@ requests only. Cost: the app only sees repositories it is installed on, so the p
 nothing from the others, such as a course repository whose organization never installed it. The
 owner decided on 2026-11-01 to keep the OAuth App for the pane.
 
+### Q-4: When does WebChat reach 1.0.0?
+
+WebChat stays at 0.y.z while it is in early development (D-055). Version 1.0.0 would promise that
+no upgrade within 1.x needs a step from the person who runs it. Decide what must hold first, for
+example the task board (R-001) and an upgrade path that people who self-host can trust.
+
 ## Done
 
 Finished work. The table is the index; the entries below it keep their numbers, reasons and pull

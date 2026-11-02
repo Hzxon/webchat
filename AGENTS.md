@@ -61,6 +61,7 @@ keeps its own cookies and keys.
 | `client/src/sw.ts` | The service worker. It decrypts pushed messages and shows notifications. |
 | `client/src/components/` | The React views. |
 | `test/` | Integration tests that drive the real app over HTTP, and crypto tests. |
+| `.github/workflows/release-please.yml` | Release Please: the release pull request, the tags and `CHANGELOG.md`. |
 
 ## Rules that must hold
 
@@ -102,6 +103,10 @@ decision behind each rule explains why it exists.
   the first word after the type, uses the imperative and has no final period. The body explains what
   changed and why, wrapped at 72 characters. Never add AI attribution, such as a `Co-Authored-By`
   line for an AI or a "Generated with" line.
+- WebChat follows Semantic Versioning and stays at 0.y.z for now. The type in the pull request title
+  sets the next version: `fix` bumps the patch and `feat` the minor. A breaking change, marked with
+  `!` after the type, also bumps the minor until 1.0.0. Never edit the version or `CHANGELOG.md` by
+  hand. Release Please does both. See D-055.
 - Before you open a pull request, run `npm run typecheck`, `npm test` and `npm run build`. For a
   change people can see, also try it in a browser with two accounts, at desktop width and at 375
   pixels, in light and dark mode.

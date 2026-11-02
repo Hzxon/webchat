@@ -370,6 +370,15 @@ each person. It compares the answer with the last one and records what changed.
 PGlite or any Postgres in `DATABASE_URL`. Put it behind HTTPS (for example Caddy) and set
 `TRUST_PROXY=1`. See [.env.example](.env.example) for every setting.
 
+## Versions
+
+WebChat follows [Semantic Versioning](https://semver.org). It is in early development, so every
+version starts with 0, and any release may change how it runs. Each release has a tag such as
+`v0.1.0` and a GitHub release, and `CHANGELOG.md` lists what it changed. Before you upgrade a server
+you host yourself, read the breaking changes of each release you skip. They say what you must
+change, such as a new setting. A Vercel deployment of main runs the newest code, which can be ahead
+of the latest release.
+
 ## Tests
 
 ```bash
@@ -408,6 +417,7 @@ shared/   Types and the end-to-end encryption code shared by server, client, and
 test/     Integration tests (node:test)
 scripts/  Icon generator (npm run icons)
 docs/     Decisions and roadmap, the source of truth for anyone changing the code
+.github/  The Release Please workflow, which versions and tags releases
 ```
 
 Before you change the code, read [AGENTS.md](AGENTS.md). It links to
