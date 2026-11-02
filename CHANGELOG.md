@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/Hzxon/webchat/compare/v0.1.0...v0.1.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **client:** Reject a 2xx answer that breaks off ([#27](https://github.com/Hzxon/webchat/issues/27)) ([c75767b](https://github.com/Hzxon/webchat/commit/c75767b7ae2d3383632529af2e46d3dcdf60c90a))
+* **github:** Alert with every tab closed ([#29](https://github.com/Hzxon/webchat/issues/29)) ([2f455b1](https://github.com/Hzxon/webchat/commit/2f455b12e53d77571d16cc433bae9687843b013d))
+
 ## 0.1.0 (2026-11-02)
 
 
