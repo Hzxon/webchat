@@ -210,15 +210,6 @@ the pane say nothing. GitHub's GraphQL answer carries the error next to the data
 `server/github.ts` drops it). Show it in the pane, and say in the connect card that an organization
 may need to approve the app. Not yet seen on a real organization.
 
-### K-7: A sync answer whose body breaks off sets the cursor to NaN
-
-Found in a review of main on 2026-11-01, with K-8 to K-19.
-
-`request` in `client/src/api.ts` turns a 2xx response whose body fails to parse into `{}` and
-returns it as success. `syncNow` then sets the cursor to NaN, which stays NaN, and every check-in
-asks from 0. A user with more than 500 messages then stops getting new ones until a reload. Treat a
-body that fails to parse on a 2xx as an error.
-
 ### K-8: The ciphertext length shows the message length and some reactions
 
 Envelopes are not padded, so the server sees the exact length of every message. For the same
@@ -376,6 +367,18 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-22: The chat header stays in view over the iPhone keyboard (D-053) | #21 |
 | K-25: The page no longer slides as the iPhone keyboard opens (D-053) | #22 |
 | R-018: Alerts on iPhones without Web Push, through the Bark app (D-054) | #23 |
+| K-7: A sync answer that breaks off no longer poisons the cursor (D-056) | #27 |
+### K-7: A sync answer whose body breaks off sets the cursor to NaN
+
+Status: Fixed in #27 (D-056). Reproduced in Chromium on 2026-11-02 by cutting one sync answer in
+half: the check-ins after it sent `cursor: null` before the fix, and the real cursor after it.
+Found in a review of main on 2026-11-01, with K-8 to K-19.
+
+`request` in `client/src/api.ts` turns a 2xx response whose body fails to parse into `{}` and
+returns it as success. `syncNow` then sets the cursor to NaN, which stays NaN, and every check-in
+asks from 0. A user with more than 500 messages then stops getting new ones until a reload. Treat a
+body that fails to parse on a 2xx as an error.
+
 ### K-25: The page slid as the iPhone keyboard opened
 
 Status: Fixed in #22 (D-053). Seen by the owner on iOS 15.8 after #21, in a screen recording. The
