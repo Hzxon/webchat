@@ -62,13 +62,22 @@ export function GithubView() {
           )}
         </div>
       )}
+      {account?.notify && !github?.reconnect && !github?.alertsWhileClosed && (
+        <div className="banner" role="status">
+          <BellIcon width={18} height={18} />
+          <span>
+            Pull request alerts arrive only while a WebChat tab is open. The person who runs this WebChat can turn on
+            alerts with every tab closed: the README explains how.
+          </span>
+        </div>
+      )}
       <div className="github-body">
         {!github ? (
           <p className="github-empty">Loading…</p>
         ) : !github.configured ? (
           <NotConfigured />
         ) : !account ? (
-          <ConnectCard />
+          <ConnectCard alertsWhileClosed={github.alertsWhileClosed} />
         ) : (
           <Connected github={github} account={account} />
         )}
@@ -92,7 +101,8 @@ function NotConfigured() {
   );
 }
 
-function ConnectCard() {
+/** Promises alerts with every tab closed only while a timer or a scheduler is polling (K-5). */
+function ConnectCard({ alertsWhileClosed }: { alertsWhileClosed: boolean }) {
   return (
     <div className="github-card">
       <span className="github-card-icon">
@@ -101,7 +111,10 @@ function ConnectCard() {
       <h2>Follow your pull requests</h2>
       <p>
         Connect your GitHub account to see the pull requests waiting for your review, and how your own are doing: checks,
-        reviews, comments, and conflicts. WebChat alerts you when they change, even with this tab closed.
+        reviews, comments, and conflicts.{' '}
+        {alertsWhileClosed
+          ? 'WebChat alerts you when they change, even with this tab closed.'
+          : 'WebChat alerts you when they change while any of its tabs is open.'}
       </p>
       <button className="button-primary github-connect" onClick={connectGithub}>
         <GithubIcon width={18} height={18} />

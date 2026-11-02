@@ -72,6 +72,7 @@ export async function createApp(config: Config): Promise<WebChatApp> {
   const bark = createBark(db, config);
   const push = await createPush(db, config, bark);
   const github = createGithub(db, push, config);
+  await github.schedulePolls();
   const githubApp = createGithubApp(db, config);
   const app = express();
   app.set('trust proxy', config.trustProxy);

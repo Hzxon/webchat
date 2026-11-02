@@ -325,8 +325,13 @@ each person. It compares the answer with the last one and records what changed.
   to 3 minutes.
 - **A self-hosted server** (`npm start`) also checks every connected account on its own every 2
   minutes (`GITHUB_POLL_SECONDS`), so alerts arrive with every tab closed.
-- **On Vercel**, functions stop between requests, and Hobby cron jobs run only once a day. For alerts
-  with every tab closed, set `CRON_SECRET` and have a scheduler call `GET /api/github/poll` with
+- **On Vercel with Supabase**, functions stop between requests, and Hobby cron jobs run only once a
+  day. So the database keeps the clock. When the server starts, it enables Supabase's `pg_cron` and
+  `pg_net` extensions and adds a Supabase Cron job, `webchat-github-poll`, that calls
+  `GET /api/github/poll` every 2 minutes. There is nothing to set up. To stop it, deactivate the job
+  on Supabase's Cron page: WebChat leaves a deactivated job alone.
+- **With another Postgres on Vercel**, or if Supabase refuses the extensions (the server log says
+  why), set `CRON_SECRET` and have a scheduler call `GET /api/github/poll` with
   `Authorization: Bearer <CRON_SECRET>` every few minutes. For example, a GitHub Actions workflow in
   any of your repositories, with the secret saved as `WEBCHAT_CRON_SECRET`:
 
@@ -344,6 +349,9 @@ each person. It compares the answer with the last one and records what changed.
   GitHub runs scheduled workflows at most every 5 minutes and can delay them when busy. On a Vercel
   plan with frequent cron jobs, add `"crons": [{ "path": "/api/github/poll", "schedule": "*/5 * * * *" }]`
   to [vercel.json](vercel.json) instead. Vercel sends `CRON_SECRET` by itself.
+
+When nothing has polled on a schedule for 10 minutes, the pane says that alerts arrive only while a
+WebChat tab is open.
 
 ### What it can access
 

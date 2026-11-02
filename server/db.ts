@@ -404,6 +404,17 @@ interface GithubEventRow {
 /** Each account keeps this many of its newest pull request events. */
 const GITHUB_EVENTS_KEPT = 50;
 
+/** The Supabase Cron job that calls GET /api/github/poll on Vercel, where nothing runs between requests. */
+const GITHUB_POLL_JOB = 'webchat-github-poll';
+/** The same pace as the self-hosted timer's default. */
+const GITHUB_POLL_SCHEDULE = '*/2 * * * *';
+/** The meta row with the bearer token the job sends. The job reads it on every run, so it is stored once. */
+const GITHUB_POLL_SECRET = 'github_poll_secret';
+/** The meta row with the time pollAll last started, from a timer or a scheduler. */
+const GITHUB_SCHEDULED_AT = 'github_scheduled_at';
+
+const sqlLiteral = (value: string) => `'${value.replace(/'/g, "''")}'`;
+
 interface ProjectRepoRow {
   repo_id: number;
   repo: string;
@@ -1707,6 +1718,58 @@ export async function openDb(sql: Sql) {
           [Date.now() - minIntervalMs],
         )
       ).map((row) => row.user_id),
+    /** Records that pollAll started, so the pane can tell whether alerts arrive with every tab closed. */
+    markGithubScheduledPoll: async () => {
+      await sql.query(
+        'INSERT INTO webchat.meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+        [GITHUB_SCHEDULED_AT, String(Date.now())],
+      );
+    },
+    /** When pollAll last started, or 0 if it never has. */
+    githubScheduledPollAt: async () =>
+      Number(
+        (await one(sql.query<{ value: string }>('SELECT value FROM webchat.meta WHERE key = $1', [GITHUB_SCHEDULED_AT])))
+          ?.value ?? 0,
+      ),
+    githubPollSecret: async () =>
+      (await one(sql.query<{ value: string }>('SELECT value FROM webchat.meta WHERE key = $1', [GITHUB_POLL_SECRET])))
+        ?.value ?? null,
+    /**
+     * Makes the database call url every 2 minutes with the poll secret, through Supabase Cron:
+     * pg_cron keeps the clock and pg_net sends the request. A job that already matches is left
+     * alone, even one the owner deactivated, so every server start can call this cheaply. Throws
+     * where the extensions are missing or the role may not enable them. Returns true when it
+     * scheduled the job.
+     */
+    scheduleGithubPolls: (url: string, newSecret: string) =>
+      sql.transaction(async (tx) => {
+        // Instances that start at the same moment would race to create the extensions.
+        await tx.query('SELECT pg_advisory_xact_lock(7349202)');
+        await tx.query('INSERT INTO webchat.meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING', [
+          GITHUB_POLL_SECRET,
+          newSecret,
+        ]);
+        // Reading the secret on every run keeps it out of the job's text, which Supabase's Cron page shows.
+        const command =
+          `SELECT net.http_get(url := ${sqlLiteral(url)}, headers := jsonb_build_object('authorization', ` +
+          `'Bearer ' || (SELECT value FROM webchat.meta WHERE key = ${sqlLiteral(GITHUB_POLL_SECRET)})), ` +
+          // pg_net gives up after 2 seconds by default; a poll of every due account takes longer.
+          'timeout_milliseconds := 25000)';
+        const installed = await tx.query("SELECT 1 FROM pg_extension WHERE extname IN ('pg_cron', 'pg_net')");
+        if (installed.length === 2) {
+          const job = await one(
+            tx.query<{ schedule: string; command: string }>('SELECT schedule, command FROM cron.job WHERE jobname = $1', [
+              GITHUB_POLL_JOB,
+            ]),
+          );
+          if (job?.schedule === GITHUB_POLL_SCHEDULE && job.command === command) return false;
+        }
+        await tx.query('CREATE EXTENSION IF NOT EXISTS pg_cron');
+        // Supabase keeps extensions in their own schema. pg_net's functions still live in "net".
+        await tx.query('CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions');
+        await tx.query('SELECT cron.schedule($1, $2, $3)', [GITHUB_POLL_JOB, GITHUB_POLL_SCHEDULE, command]);
+        return true;
+      }),
     saveGithubPulls: async (userId: number, login: string, pulls: string) => {
       await sql.query(
         'UPDATE webchat.github_accounts SET login = $2, pulls = $3, fetched_at = $4, error = NULL WHERE user_id = $1',

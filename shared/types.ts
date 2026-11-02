@@ -491,6 +491,11 @@ export interface GithubDTO {
   error: string | null;
   /** True when GitHub refused the token: the user must connect again. */
   reconnect: boolean;
+  /**
+   * True while a timer or a scheduler has polled in the last 10 minutes, so alerts arrive with
+   * every tab closed. False means they arrive only while a WebChat tab is open.
+   */
+  alertsWhileClosed: boolean;
 }
 
 /** Messages the service worker posts to open pages. */

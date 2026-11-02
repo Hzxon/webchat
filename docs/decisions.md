@@ -803,9 +803,42 @@ reviews, comments from others, failed or fixed checks, conflicts, merges and clo
 One poll pushes at most three of them: the three most important. Polls start from open tabs, from a
 timer on a self-hosted server (`GITHUB_POLL_SECONDS`, 120 by default), and from any scheduler that
 calls `GET /api/github/poll` with `CRON_SECRET`, because Vercel Hobby cron jobs run only once a day.
+On Vercel, the database is that scheduler (D-057).
 
 Cost: alerts arrive up to a few minutes after the change. Each list shows at most 30 pull requests,
 and only from github.com.
+
+### D-057: On Vercel, the database calls the GitHub poll every 2 minutes
+
+Accepted 2026-11-02 in #29.
+
+Vercel Hobby runs a cron job at most once a day, and refuses to deploy one that runs more often. So
+on Vercel nothing polled GitHub while every tab was closed, and the connect card still promised
+alerts (K-5). The database now keeps the clock. When the server starts on Vercel, it makes sure a
+Supabase Cron job named `webchat-github-poll` exists. Every 2 minutes, pg_cron runs it, and pg_net
+calls `GET /api/github/poll` with a bearer secret that the server generated and keeps in
+`webchat.meta`. The job reads the secret on every run, so the secret is not in the job's text. The
+server enables pg_cron and pg_net itself, which Supabase allows its `postgres` role. A job that
+already matches is left alone, even one the owner deactivated. So every start checks it cheaply,
+and a deleted job comes back.
+
+Every `pollAll` run records when it started. The pane promises alerts with every tab closed only
+while the last run is less than 10 minutes old: five missed runs of the 2-minute clock. Otherwise
+the connect card says alerts need an open tab, and the connected pane shows a banner. A tab's own
+poll does not count, because it stops when the tab closes. A self-hosted server polls once at
+start, so a fresh one does not show the banner before its timer first runs.
+
+Why: alerts with every tab closed are why the server holds the token (D-033), and they must stay
+free (D-003). The database is already part of the free setup, can run a job every minute, and needs
+no account or secret from the owner. GitHub Actions schedules run at most every 5 minutes, are late
+when GitHub is busy, and stop after 60 days without activity in a public repository.
+
+Cost: the server changes the owner's database: it enables two extensions and adds a job. The job
+adds up to 720 function calls a day, about 2% of Hobby's monthly million. With another Postgres, or
+where the role may not enable the extensions, the server logs why and the pane says so; a scheduler
+with `CRON_SECRET` still works. Anyone who can read the database can start polls with the secret,
+which poll an account at most once a minute anyway. A paused Supabase project stops the clock along
+with everything else.
 
 ### D-042: A shared pull request is a message with a card inside
 
