@@ -364,9 +364,10 @@ requests for the record. Nothing here is a candidate for what to do next.
 
 ### K-5: The connect card promised alerts with every tab closed
 
-Status: Fixed in #29 (D-057). On 2026-11-02 the production database offered pg_cron 1.6.4 and
-pg_net 0.20.4, and let WebChat's role enable them. The job first runs on production after the
-merge, which deploys it.
+Status: Fixed in #29 (D-057). On 2026-11-02, a dry run on the production database ran the setup
+through the pooler as WebChat's role: it enabled pg_cron 1.6.4 and pg_net 0.20.4, scheduled the
+job, and queued its request, then rolled back. The job first runs after the merge, which deploys
+it.
 
 The connect card in `client/src/components/GithubView.tsx` said WebChat alerts "even with this tab
 closed". On Vercel Hobby that held only after the owner set `CRON_SECRET` and a scheduler called
