@@ -540,6 +540,21 @@ Safari before 15.4, can show the same unsent message in two tabs. A message that
 as its tab closed shows as not sent if newer messages push it off the chat's first page, and a retry
 then sends it twice.
 
+### D-056: A 2xx answer whose body does not parse is a failed request
+
+Accepted 2026-11-02 in #27.
+
+Every route answers with JSON, or with 204 and no body. `request` in `client/src/api.ts` treats a
+2xx answer whose body fails to parse as a failed request and throws an `ApiError` that carries the
+status. Before, it returned `{}` as success. The sync loop read a cursor of NaN from that, which no
+later `Math.max` repairs, so every check-in asked from 0, and a user with more than 500 messages
+stopped getting new ones until a reload (K-7). On a failed status the body still falls back to `{}`,
+so the default error message stands.
+
+Cost: a route that answers 2xx without a JSON body must use 204, or every call to it fails. A send
+whose answer breaks off now shows as not sent, like one whose connection dropped, although the
+server stored it. A retry stores it again until K-9 is fixed.
+
 ## Projects and channels
 
 ### D-054: iPhones without Web Push get alerts through the Bark app
