@@ -972,16 +972,36 @@ the commit subject on main (D-035):
 
 Release Please runs on every push to main, from `.github/workflows/release-please.yml`. It keeps one
 release pull request open, which updates `package.json`, `package-lock.json` and `CHANGELOG.md`.
-Merging it tags that commit as `v0.y.z` and publishes a GitHub release. Nobody edits the version or
-the changelog by hand, so parallel pull requests never conflict over them. Reaching 1.0.0 is the
-owner's call (Q-4). A commit with `Release-As: 1.0.0` in its body makes the release pull request
-propose that version.
+Merging it tags that commit as `v0.y.z` and publishes a GitHub release. Vercel does not build that
+commit (D-058). Nobody edits the version or the changelog by hand, so parallel pull requests never
+conflict over them. Reaching 1.0.0 is the owner's call (Q-4). A commit with `Release-As: 1.0.0` in
+its body makes the release pull request propose that version.
 
 Cost: a title with the wrong type gives the wrong version and changelog line. To fix one before the
 release, add a `BEGIN_COMMIT_OVERRIDE` section to the merged pull request's body. The Vercel
 deployment runs main, so it is usually ahead of the latest version. Release Please opens its pull
 request with the workflow's `GITHUB_TOKEN`, so the repository setting "Allow GitHub Actions to
 create and approve pull requests" must be on, and that pull request starts no other workflow.
+
+### D-058: Vercel skips the build of a release commit
+
+Accepted 2026-11-02 in #30.
+
+Vercel builds every push to main (D-041). A release commit from Release Please changes only
+`package.json`, `package-lock.json` and `CHANGELOG.md`, and nothing at runtime reads them. Its build
+shipped the same app again, from Hobby build minutes. `scripts/ignore-build.sh`, the Ignored Build
+Step in `vercel.json`, skips a commit whose message starts with `chore(main): Release `.
+
+The release pull request still waits for the owner. It collects every `feat` and `fix` since the
+last release, so the owner merges it when a set of changes is worth a version. A workflow step that
+merged it after every push was tried in #30 and set aside. Every `feat` would have bumped the minor
+at once. A wrong type in a title would have shipped before `BEGIN_COMMIT_OVERRIDE` could fix it. And
+the workflow needed a second Release Please run to tag, because a push made with `GITHUB_TOKEN`
+starts no workflow run.
+
+Cost: Vercel still clones the repository and records a canceled deployment for each release commit.
+A commit on main whose message starts like a release commit never deploys, so only Release Please
+may use that title.
 
 ## Superseded
 
