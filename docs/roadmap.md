@@ -195,6 +195,9 @@ the notes would show it nothing new. They should not count as unread.
 
 ### K-5: The connect card promises alerts with every tab closed
 
+Status: In progress in `claude/issue-k5-resolution-plan-46da27`. Supabase Cron will call the poll,
+and the pane will say when nothing has polled for 10 minutes.
+
 The connect card in `client/src/components/GithubView.tsx` says WebChat alerts "even with this tab
 closed". On Vercel Hobby that holds only after the owner sets `CRON_SECRET` and a scheduler calls
 `GET /api/github/poll` (D-034). Without one, nothing polls while every tab is closed, and nobody is
