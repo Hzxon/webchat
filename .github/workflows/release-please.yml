@@ -1,5 +1,5 @@
 # Turns the pull request titles merged into main into versions, the changelog
-# and tags, and merges its own release pull request. See D-055 and D-057.
+# and tags. See D-055 in docs/decisions.md.
 name: release-please
 
 on:
@@ -12,11 +12,6 @@ permissions:
   issues: write
   pull-requests: write
 
-# Two pushes close together must not both merge or tag the same release.
-concurrency:
-  group: release-please
-  cancel-in-progress: false
-
 jobs:
   release-please:
     runs-on: ubuntu-latest
@@ -24,30 +19,3 @@ jobs:
       # Pinned to a commit, because a moved tag would run other code with
       # write access to the repository.
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
-
-      # Main deploys on every push, so each release matches what runs. The
-      # label finds the pull request even when this run left it unchanged.
-      # GitHub may still be working out whether a pull request it just
-      # updated can merge, so a failed merge is tried again.
-      - id: merge
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          number=$(gh pr list --base main --state open --label 'autorelease: pending' \
-            --json number --jq '.[0].number // empty')
-          if [ -z "$number" ]; then exit 0; fi
-          title=$(gh pr view "$number" --json title --jq .title)
-          for try in 1 2 3 4 5; do
-            if gh pr merge "$number" --squash --subject "$title (#$number)"; then
-              echo "merged=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            sleep 10
-          done
-          exit 1
-
-      # A push made with the workflow's own token starts no workflow run, so
-      # this job tags the release it just merged.
-      - if: steps.merge.outputs.merged == 'true'
-        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
