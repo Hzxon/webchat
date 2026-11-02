@@ -193,14 +193,6 @@ the notes would show it nothing new. They should not count as unread.
 
 ## Known issues
 
-### K-5: The connect card promises alerts with every tab closed
-
-The connect card in `client/src/components/GithubView.tsx` says WebChat alerts "even with this tab
-closed". On Vercel Hobby that holds only after the owner sets `CRON_SECRET` and a scheduler calls
-`GET /api/github/poll` (D-034). Without one, nothing polls while every tab is closed, and nobody is
-told. The server could record when `pollAll` last ran and show a banner in the pane when no
-scheduler has called in for 10 minutes.
-
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 
 Course repositories usually live in an instructor's organization, such as a GitHub Classroom one.
@@ -368,6 +360,20 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-25: The page no longer slides as the iPhone keyboard opens (D-053) | #22 |
 | R-018: Alerts on iPhones without Web Push, through the Bark app (D-054) | #23 |
 | K-7: A sync answer that breaks off no longer poisons the cursor (D-056) | #27 |
+| K-5: GitHub alerts arrive with every tab closed, through Supabase Cron (D-057) | #29 |
+
+### K-5: The connect card promised alerts with every tab closed
+
+Status: Fixed in #29 (D-057). On 2026-11-02, a dry run on the production database ran the setup
+through the pooler as WebChat's role: it enabled pg_cron 1.6.4 and pg_net 0.20.4, scheduled the
+job, and queued its request, then rolled back. The job first runs after the merge, which deploys
+it.
+
+The connect card in `client/src/components/GithubView.tsx` said WebChat alerts "even with this tab
+closed". On Vercel Hobby that held only after the owner set `CRON_SECRET` and a scheduler called
+`GET /api/github/poll` (D-034). Production had neither, so nothing polled while every tab was
+closed, and nobody was told.
+
 ### K-7: A sync answer whose body breaks off sets the cursor to NaN
 
 Status: Fixed in #27 (D-056). Reproduced in Chromium on 2026-11-02 by cutting one sync answer in

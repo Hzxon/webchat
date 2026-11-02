@@ -226,6 +226,7 @@ describe('GitHub connector', () => {
   let pushService: Awaited<ReturnType<typeof startFakePushService>>;
   let cookie = '';
   let userId = 0;
+  let config: Config;
 
   async function request<T>(method: string, path: string, init: { body?: unknown; headers?: Record<string, string> } = {}) {
     const res = await fetch(`${baseUrl}/api${path}`, {
@@ -286,7 +287,7 @@ describe('GitHub connector', () => {
     github = await startFakeGithub();
     pushService = await startFakePushService();
     const silent = { info() {}, warn() {}, error() {} };
-    const config: Config = {
+    config = {
       port: 0,
       host: '127.0.0.1',
       databaseUrl: undefined,
@@ -316,6 +317,7 @@ describe('GitHub connector', () => {
       githubApiUrl: github.url,
       githubPollSeconds: 0,
       cronSecret: CRON_SECRET,
+      githubPollUrl: undefined,
       build: undefined,
       logger: silent,
     };
@@ -709,6 +711,60 @@ describe('GitHub connector', () => {
     // Polled a moment ago, so nothing is due.
     const again = await request<{ polled: number }>('GET', '/github/poll', { headers: { cookie: '', authorization: `Bearer ${CRON_SECRET}` } });
     assert.deepEqual(again.data, { polled: 0 });
+  });
+
+  test('the pane promises alerts with every tab closed only while a scheduler polls (K-5)', async () => {
+    const closedTabAlerts = async (as = cookie) =>
+      (await request<GithubDTO>('GET', '/github', { headers: { cookie: as } })).data.alertsWhileClosed;
+    await instance.sql.query("DELETE FROM webchat.meta WHERE key = 'github_scheduled_at'");
+    assert.equal(await closedTabAlerts(), false, 'nothing has ever polled on a schedule');
+
+    // A tab's own poll stops when the tab closes, so it does not count.
+    const searches = github.state.searches.length;
+    await pollDue();
+    await request('GET', '/github?refresh=1');
+    assert.ok(github.state.searches.length > searches, 'the tab did poll GitHub');
+    assert.equal(await closedTabAlerts(), false);
+    await request('GET', '/github/poll', { headers: { cookie: '', authorization: 'Bearer wrong' } });
+    assert.equal(await closedTabAlerts(), false, 'a refused call is not a scheduler');
+
+    await request('GET', '/github/poll', { headers: { cookie: '', authorization: `Bearer ${CRON_SECRET}` } });
+    assert.equal(await closedTabAlerts(), true);
+    const { cookie: stranger } = await addUser('gwen', 'Gwen');
+    assert.equal(await closedTabAlerts(stranger), true, 'the connect card sees it too');
+
+    await instance.sql.query("UPDATE webchat.meta SET value = $1 WHERE key = 'github_scheduled_at'", [String(Date.now() - 11 * 60_000)]);
+    assert.equal(await closedTabAlerts(), false, 'a scheduler that stopped 11 minutes ago no longer counts');
+    assert.equal(await closedTabAlerts(stranger), false);
+  });
+
+  test('the scheduler endpoint also accepts the secret of the database’s own job', async () => {
+    await instance.sql.query(
+      "INSERT INTO webchat.meta (key, value) VALUES ('github_poll_secret', 'job-secret') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+    );
+    try {
+      const job = (authorization: string) => request('GET', '/github/poll', { headers: { cookie: '', authorization } });
+      assert.equal((await job('Bearer job-secret')).status, 200);
+      assert.equal((await job('Bearer job-secre')).status, 401);
+      assert.equal((await job('job-secret')).status, 401);
+    } finally {
+      await instance.sql.query("DELETE FROM webchat.meta WHERE key = 'github_poll_secret'");
+    }
+  });
+
+  test('without pg_cron the app still starts, keeps no job secret, and logs why', async () => {
+    const warnings: string[] = [];
+    const other = await createApp({
+      ...config,
+      githubPollUrl: 'https://webchat.example/api/github/poll',
+      logger: { ...config.logger, warn: (message) => warnings.push(message) },
+    });
+    try {
+      assert.match(warnings.join('\n'), /Could not schedule GitHub polls in the database/);
+      assert.deepEqual(await other.sql.query("SELECT key FROM webchat.meta WHERE key = 'github_poll_secret'"), []);
+    } finally {
+      await other.close();
+    }
   });
 
   test('when GitHub refuses the token, the user is asked to connect again and polling stops', async () => {

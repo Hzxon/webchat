@@ -1015,11 +1015,12 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
   });
 
   /**
-   * Polls every connected account that is due. Vercel Cron, or any scheduler, calls it with
-   * "Authorization: Bearer <CRON_SECRET>", so alerts arrive while every tab is closed.
+   * Polls every connected account that is due, so alerts arrive while every tab is closed. The
+   * database's Supabase Cron job calls it with its own secret, and any other scheduler with
+   * "Authorization: Bearer <CRON_SECRET>".
    */
   router.get('/github/poll', async (req, res) => {
-    if (!config.cronSecret || !safeEqual(req.get('authorization') ?? '', `Bearer ${config.cronSecret}`)) {
+    if (!(await github.isScheduler(req.get('authorization') ?? ''))) {
       throw new HttpError(401, 'Send the CRON_SECRET as a bearer token.');
     }
     res.json({ polled: await github.pollAll() });

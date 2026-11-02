@@ -364,6 +364,7 @@ describe('chat server', () => {
       githubApiUrl: 'https://api.github.com',
       githubPollSeconds: 0,
       cronSecret: undefined,
+      githubPollUrl: undefined,
       build: 'test-build',
       logger: silent,
     };

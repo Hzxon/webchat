@@ -53,6 +53,11 @@ const IMPORTANCE: GithubEventKind[] = [
 ];
 /** Accounts polled at the same time by a scheduled run. */
 const POLL_CONCURRENCY = 4;
+/**
+ * Alerts reach a phone with every tab closed only while a timer or a scheduler runs pollAll. After
+ * this long without a run, five missed runs of a 2-minute clock, the pane says alerts need an open tab.
+ */
+const SCHEDULED_POLL_STALE_MS = 10 * 60_000;
 const REST_API_VERSION = '2022-11-28';
 
 /** A failure to show the user. revoked means GitHub refused the token, so they must connect again. */
@@ -391,6 +396,8 @@ export function createGithub(db: Db, push: Push, config: Config) {
     /** Polls every account that is due. Runs on the server's timer or when a scheduler calls in. */
     async pollAll(): Promise<number> {
       if (!configured) return 0;
+      // Before polling, so a run that times out still counts: the clock that started it works.
+      await db.markGithubScheduledPoll();
       const due = await db.githubAccountsDue(SCHEDULED_POLL_INTERVAL_MS);
       const queue = [...due];
       const worker = async () => {
@@ -400,10 +407,45 @@ export function createGithub(db: Db, push: Push, config: Config) {
       return due.length;
     },
 
+    /**
+     * On Vercel nothing runs between requests, and Hobby cron jobs run once a day, so the database
+     * keeps the clock: a Supabase Cron job calls GET /api/github/poll every 2 minutes. Every server
+     * start checks the job, so a deleted one comes back. Without pg_cron and pg_net this logs why,
+     * and the pane says alerts need an open tab.
+     */
+    async schedulePolls(): Promise<void> {
+      if (!configured || !config.githubPollUrl) return;
+      try {
+        const secret = crypto.randomBytes(32).toString('base64url');
+        if (await db.scheduleGithubPolls(config.githubPollUrl, secret)) {
+          config.logger.info(`Supabase Cron now calls ${config.githubPollUrl} every 2 minutes.`);
+        }
+      } catch (error) {
+        config.logger.warn(`Could not schedule GitHub polls in the database, so alerts need an open tab: ${String(error)}`);
+      }
+    },
+
+    /** Whether a call to GET /api/github/poll carries CRON_SECRET or the secret of the database's own job. */
+    async isScheduler(authorization: string): Promise<boolean> {
+      if (config.cronSecret && safeEqual(authorization, `Bearer ${config.cronSecret}`)) return true;
+      const secret = configured ? await db.githubPollSecret() : null;
+      return secret !== null && safeEqual(authorization, `Bearer ${secret}`);
+    },
+
     async view(userId: number): Promise<Omit<GithubDTO, 'appConfigured'>> {
       const account = configured ? await db.githubAccount(userId) : undefined;
+      const alertsWhileClosed = configured && (await db.githubScheduledPollAt()) > Date.now() - SCHEDULED_POLL_STALE_MS;
       if (!account) {
-        return { configured, account: null, pulls: null, events: [], fetchedAt: null, error: null, reconnect: false };
+        return {
+          configured,
+          account: null,
+          pulls: null,
+          events: [],
+          fetchedAt: null,
+          error: null,
+          reconnect: false,
+          alertsWhileClosed,
+        };
       }
       return {
         configured,
@@ -413,6 +455,7 @@ export function createGithub(db: Db, push: Push, config: Config) {
         fetchedAt: account.fetched_at,
         error: account.error,
         reconnect: account.revoked,
+        alertsWhileClosed,
       };
     },
 

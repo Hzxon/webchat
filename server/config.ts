@@ -61,6 +61,11 @@ export interface Config {
   /** Bearer token that GET /api/github/poll requires, so a scheduler can trigger checks. */
   cronSecret: string | undefined;
   /**
+   * The address of GET /api/github/poll that the database's own scheduler calls. Set on Vercel
+   * only: nothing runs there between requests, and a long-running server has its own timer.
+   */
+  githubPollUrl: string | undefined;
+  /**
    * Names the running build. Every API response carries it, and a tab reloads when it changes, so a
    * page from before a deploy does not show new data as errors. When unset, the built page is hashed.
    */
@@ -120,6 +125,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // Serverless instances stop between requests, so on Vercel a scheduler calls /api/github/poll instead.
     githubPollSeconds: onVercel ? 0 : Number(env.GITHUB_POLL_SECONDS ?? 120),
     cronSecret: env.CRON_SECRET || undefined,
+    githubPollUrl:
+      onVercel && env.VERCEL_PROJECT_PRODUCTION_URL
+        ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL}/api/github/poll`
+        : undefined,
     // Vercel names each deployment. Elsewhere, WEBCHAT_BUILD can name it, or the built page is hashed.
     build: env.VERCEL_DEPLOYMENT_ID || env.VERCEL_GIT_COMMIT_SHA || env.WEBCHAT_BUILD || undefined,
     logger: consoleLogger,

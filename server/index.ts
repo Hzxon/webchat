@@ -16,6 +16,8 @@ config.logger.info(`Invite code for new accounts: ${inviteCode}`);
 // A long-running server checks GitHub on its own, so pull request alerts arrive with every tab closed.
 if (githubConfigured && config.githubPollSeconds > 0) {
   const poll = () => pollGithub().catch((error: unknown) => config.logger.error('GitHub poll failed', error));
+  // At once as well, or a fresh server would tell the pane for its first interval that nothing polls.
+  void poll();
   setInterval(poll, config.githubPollSeconds * 1000).unref();
 }
 
