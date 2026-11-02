@@ -7,6 +7,7 @@
       "main": true
     }
   },
+  "ignoreCommand": "sh scripts/ignore-build.sh",
   "buildCommand": "npm run build:client",
   "outputDirectory": "dist/client",
   "regions": [

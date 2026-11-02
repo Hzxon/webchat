@@ -61,7 +61,7 @@ keeps its own cookies and keys.
 | `client/src/sw.ts` | The service worker. It decrypts pushed messages and shows notifications. |
 | `client/src/components/` | The React views. |
 | `test/` | Integration tests that drive the real app over HTTP, and crypto tests. |
-| `.github/workflows/release-please.yml` | Release Please: the release pull request, the tags and `CHANGELOG.md`. |
+| `.github/workflows/release-please.yml` | Release Please: the release pull request, which merges itself, the tags and `CHANGELOG.md`. |
 
 ## Rules that must hold
 

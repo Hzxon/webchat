@@ -415,7 +415,7 @@ server/   Express API, Postgres queries, Web Push sender, alerts through Bark
 client/   React app (Vite), the service worker (client/src/sw.ts), and the key store (client/src/e2ee)
 shared/   Types and the end-to-end encryption code shared by server, client, and service worker
 test/     Integration tests (node:test)
-scripts/  Icon generator (npm run icons)
+scripts/  Icon generator (npm run icons) and the Vercel build skip for release commits
 docs/     Decisions and roadmap, the source of truth for anyone changing the code
 .github/  The Release Please workflow, which versions and tags releases
 ```
