@@ -67,7 +67,15 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   noteBuild(res);
   if (res.status === 204) return undefined as T;
-  const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+  let data: { error?: string; code?: string };
+  try {
+    data = await res.json();
+  } catch {
+    // A 2xx whose body breaks off, for example when the connection drops mid-answer, must not pass
+    // as success: the sync loop would read its cursor as NaN and ask from 0 until a reload (K-7).
+    if (res.ok) throw new ApiError(res.status, 'The server answer broke off. Try again.');
+    data = {};
+  }
   if (data.code === 'account_changed') {
     // Another tab switched accounts. Start over as the account this browser is now signed in to.
     location.reload();
