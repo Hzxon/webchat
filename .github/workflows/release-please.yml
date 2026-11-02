@@ -1,0 +1,21 @@
+# Turns the pull request titles merged into main into versions, the changelog
+# and tags. See D-055 in docs/decisions.md.
+name: release-please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a commit, because a moved tag would run other code with
+      # write access to the repository.
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
