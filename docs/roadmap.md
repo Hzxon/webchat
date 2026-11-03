@@ -211,12 +211,6 @@ Register, login, upgrade and key routes share 20 requests per 15 minutes per IP 
 successes count. A class that signs up together behind one campus address locks itself out for 15
 minutes. Count only failures, or raise the limit for successes. Not seen on a real deployment.
 
-### K-17: An open page keeps a push endpoint the service worker replaced
-
-The service worker's `pushsubscriptionchange` handler subscribes again but does not tell open pages.
-They keep reporting the old endpoint, so pushes for the user while they look go to a dead endpoint,
-and messages show up to 15 seconds late until a reload. Mostly Firefox fires this event.
-
 ### K-21: An urgent message from while every tab was closed does not ring
 
 Found while testing a closed browser on 2026-11-01.
@@ -300,6 +294,19 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-10: `sslmode=disable` in `DATABASE_URL` turns TLS off | #46 |
 | K-18: An expired session ends the browser's push subscription (D-072) | #47 |
 | K-23: The banner says notifications need iOS 16.4 on older iPhones | #48 |
+| K-17: Open pages pick up a push subscription the service worker replaced | #49 |
+
+### K-17: An open page kept a push endpoint the service worker replaced
+
+Status: Fixed in #49. A node test runs the worker's `pushsubscriptionchange` handler with a fake
+global scope and checks that every open page is told. The page's side has not been tried in Firefox
+yet.
+
+The service worker's `pushsubscriptionchange` handler subscribed again but did not tell open pages.
+They kept reporting the old endpoint, so pushes for the user while they looked went to a dead
+endpoint, and messages showed up to 15 seconds late until a reload. Mostly Firefox fires this
+event. Now the worker posts `subscription-changed` to every open page, which saves the new
+subscription, reads its endpoint and checks in at once, as at start.
 
 ### K-23: The Home Screen banner promises notifications on iOS before 16.4
 

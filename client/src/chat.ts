@@ -271,6 +271,9 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
       if (event.data?.type === 'open-conversation') void openConversation(event.data.conversationId);
       // A push means something new: fetch it now instead of waiting for the timer.
       if (event.data?.type === 'push') void (event.data.payload.kind === 'github' ? refreshGithub() : syncNow());
+      // The same steps as at start. Saving the subscription again from here names this tab's
+      // account (D-008) and covers a save the worker could not finish.
+      if (event.data?.type === 'subscription-changed') void syncPushSubscription().then(refreshPushState).then(() => syncNow());
     };
     navigator.serviceWorker.addEventListener('message', onWorkerMessage);
     cleanups.push(() => navigator.serviceWorker.removeEventListener('message', onWorkerMessage));

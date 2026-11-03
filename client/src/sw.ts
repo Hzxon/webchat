@@ -169,6 +169,8 @@ self.addEventListener('pushsubscriptionchange', (rawEvent) => {
         userVisibleOnly: true,
         applicationServerKey: base64UrlToBytes(config.vapidPublicKey),
       });
+      // Open pages send their endpoint with each check-in, and the old one is dead now.
+      for (const client of await windowClients()) post(client, { type: 'subscription-changed' });
       await fetch('/api/push/subscribe', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
