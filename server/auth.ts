@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 
 export const SESSION_COOKIE = 'webchat_sid';
+/** Set on a browser that has had an account, so it cannot sign up for another (D-080). */
+export const DEVICE_COOKIE = 'webchat_device';
 
 const SCRYPT = { N: 16384, r: 8, p: 1, keyLength: 64 };
 

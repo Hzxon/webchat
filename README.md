@@ -32,7 +32,7 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
   alert, the page keeps ringing, and the tab title flashes until they open it. With the tab closed
   or the phone locked, the notification rings again every 15 seconds until they open the chat.
 - Unread count in the tab title, favicon, and the app badge of an installed app.
-- Invite-code sign-up, so only people you give the code to can join.
+- Invite-code sign-up, so only people you give the code to can join, with one account per device.
 - **GitHub pull requests**: connect your GitHub account to see the pull requests waiting for your
   review and how your own are doing, with alerts when they change, and share one into a chat as a
   card that names its reviewers. A project can link its repositories through the WebChat GitHub App,
@@ -465,3 +465,6 @@ Before you change the code, read [AGENTS.md](AGENTS.md). It links to
   to 20 people can be added at a time.
 - Pull requests show at most 30 per list, and only from github.com, not GitHub Enterprise Server.
   Changes show up on the next check, up to a few minutes later, not the moment they happen.
+- One account per device counts each browser as a device. A browser that has signed in to an
+  account cannot sign up for another for 400 days. A private window, another browser, or clearing
+  the site's data gets around it.

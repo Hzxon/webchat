@@ -218,6 +218,27 @@ student who types 20 wrong passwords locks out the rest of the class for up to 1
 first sign-in of an account from before encryption counts as a failure, because it answers
 "upgrade required".
 
+### D-080: A browser that has had an account cannot sign up for another
+
+Accepted 2026-11-03 in #71.
+
+Each device makes one account, and the browser counts as the device. Signing up, signing in and
+signing out set the `webchat_device` cookie. Sign-up refuses a browser that sends it, with "This
+device already has a WebChat account." Signing in to another account on the same device still
+works. The cookie holds only `1` and lasts 400 days, the most browsers allow. Each sign-in starts
+the 400 days again.
+
+Why: the owner wants one device, one account. A web page cannot read a hardware id. A limit per IP
+address would stop a class that signs up together behind one campus address, which D-068 protects.
+A browser fingerprint would make phones of the same model look like one device. A cookie without an
+id cannot tie a device to an account. Signing out sets it too, because browsers that were signed
+in before this change have no cookie yet.
+
+Cost: it is easy to get around. A private window, another browser, or clearing the site's data
+allows one more account. Someone who signs in on a friend's phone or a shared computer stops that
+browser from signing up for 400 days. Testing two accounts still needs two hosts, such as
+`alice.localhost` and `bob.localhost`.
+
 ## Data and platform
 
 ### D-010: Migrations only grow at the end

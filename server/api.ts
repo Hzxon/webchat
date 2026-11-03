@@ -1,6 +1,7 @@
 import { waitUntil } from '@vercel/functions';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import {
+  DEVICE_COOKIE,
   dummyPasswordHash,
   hashPassword,
   hashToken,
@@ -249,7 +250,17 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const { token, tokenHash } = newSessionToken();
     const maxAge = config.sessionDays * 24 * 3600_000;
     res.cookie(SESSION_COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: req.secure, maxAge, path: '/' });
+    markDevice(req, res);
     return db.createSession(tokenHash, user.id, Date.now() + maxAge);
+  }
+
+  /**
+   * The cookie holds no id, so the server learns nothing about the device. It lasts 400 days, the
+   * most browsers keep a cookie, and every sign-in starts that again.
+   */
+  function markDevice(req: Request, res: Response) {
+    const maxAge = 400 * 24 * 3600_000;
+    res.cookie(DEVICE_COOKIE, '1', { httpOnly: true, sameSite: 'lax', secure: req.secure, maxAge, path: '/' });
   }
 
   const authLimitKey = (req: Request) => `auth:${req.ip ?? 'unknown'}`;
@@ -346,6 +357,9 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
   });
 
   router.post('/auth/register', limitAuth, async (req, res) => {
+    if (parseCookies(req.headers.cookie)[DEVICE_COOKIE]) {
+      throw new HttpError(403, 'This device already has a WebChat account. Sign in to it instead.');
+    }
     const username = text(req.body?.username, 'Username', 3, 24);
     if (!USERNAME.test(username)) throw new HttpError(400, 'Username can use letters, numbers, dots and underscores.');
     const displayName = text(req.body?.displayName, 'Name', 1, LIMITS.displayNameLength);
@@ -422,9 +436,11 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     res.json(toUserDTO(updated));
   });
 
-  router.post('/auth/logout', requireAuth, async (_req, res) => {
+  router.post('/auth/logout', requireAuth, async (req, res) => {
     await db.deleteSession(res.locals.sessionHash!);
     res.clearCookie(SESSION_COOKIE, { path: '/' });
+    // A browser signed in from before D-080 has no device cookie yet.
+    markDevice(req, res);
     res.status(204).end();
   });
 
