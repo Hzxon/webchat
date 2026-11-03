@@ -983,8 +983,8 @@ pull requests are the only state every session can see, so the claim has to be t
 
 Cost: every pull request starts with an empty commit, which the squash merge drops. A claim depends
 on the item id appearing in the branch name and the pull request text, so the script insists on
-both. Numbers for decisions still race, which costs the loser a rename at merge time; a CI check
-that fails on a duplicate `D-0xx` heading would catch that earlier, and is not written yet.
+both. Numbers for decisions still race, which costs the loser a rename at merge time; the CI check
+in D-063 fails on a duplicate `D-0xx` heading and catches that earlier.
 
 ### D-036: Tests drive the real app
 
