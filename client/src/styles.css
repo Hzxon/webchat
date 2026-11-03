@@ -1293,6 +1293,8 @@ a {
 .dialog-header h2 {
   margin: 0;
   font-size: 19px;
+  /* A name has no spaces to break at, and the close button would be pushed out of the dialog. */
+  overflow-wrap: anywhere;
 }
 
 .dialog-intro,

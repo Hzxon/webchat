@@ -280,6 +280,18 @@ Found while fixing K-24 in #53 on 2026-11-03.
 
 #53 adds `client/src/queue.ts`, the per-chat send queue of D-075, and the map in AGENTS.md does not
 name it. Add a row once #53 is on main.
+
+### K-37: A long name in a dialog title widens the dialog past a phone screen
+
+Status: Fixed in #67.
+
+Found in the browser check of K-28 in #59 on 2026-11-03.
+
+`.dialog-header h2` in `client/src/styles.css` is shared by every dialog, and it cannot wrap a name
+without spaces. A project name can have 60 characters. The titles "New channel in …",
+"Repositories in …" and "Add people to …" carry such a name. At 375 pixels the dialog content
+grows past the dialog and pushes the close button out. `overflow-wrap: anywhere` on the title
+would fix it. #59 fixed the same overflow in the preview of the New channel dialog.
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
