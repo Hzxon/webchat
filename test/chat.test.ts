@@ -139,7 +139,7 @@ function makeSubscription(endpoint: string) {
   };
 }
 
-/** One person's browser: session cookie, account keys, and the chat keys it has opened. */
+/** One person's browser: its cookies, account keys, and the chat keys it has opened. */
 class Client {
   cookie = '';
   cursor = 0;
@@ -160,8 +160,12 @@ class Client {
       headers: { 'content-type': 'application/json', cookie: this.cookie },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    const setCookie = res.headers.get('set-cookie');
-    if (setCookie) this.cookie = setCookie.split(';')[0]!;
+    // Like a browser, a new cookie replaces the one of the same name and leaves the others.
+    for (const line of res.headers.getSetCookie()) {
+      const pair = line.split(';')[0]!;
+      const name = pair.slice(0, pair.indexOf('=') + 1);
+      this.cookie = [...this.cookie.split('; ').filter((c) => c && !c.startsWith(name)), pair].join('; ');
+    }
     const text = await res.text();
     return { status: res.status, data: (text ? JSON.parse(text) : undefined) as T };
   }
@@ -457,6 +461,27 @@ describe('chat server', () => {
       for (let i = 1; i <= 20; i++) assert.equal(await signIn(wrong), 401, `attempt ${i}`);
       assert.equal(await signIn(authKey), 429);
     });
+  });
+
+  test('a device that has had an account cannot sign up for another (D-080)', async () => {
+    const erinWith = (cookie: string) => Object.assign(new Client(baseUrl, 'erin'), { cookie });
+    const dana = new Client(baseUrl, 'dana');
+    assert.equal((await dana.register()).status, 201);
+    assert.equal((await dana.request('POST', '/auth/logout')).status, 204);
+    const refused = await erinWith(dana.cookie).register();
+    assert.equal(refused.status, 403);
+    assert.equal(refused.data.error, 'This device already has a WebChat account. Sign in to it instead.');
+
+    const laptop = new Client(baseUrl, 'bob');
+    assert.equal((await laptop.login()).status, 200);
+    assert.equal((await erinWith(laptop.cookie).register()).status, 403, 'signing in marks the device too');
+
+    // A browser signed in from before this rule has only the session cookie. Signing out marks it.
+    const oldSession = erinWith(laptop.cookie.split('; ').find((c) => c.startsWith('webchat_sid='))!);
+    assert.equal((await oldSession.request('POST', '/auth/logout')).status, 204);
+    assert.equal((await oldSession.register()).status, 403);
+
+    assert.equal((await erinWith('').register()).status, 201, 'another device can');
   });
 
   test('requests without a session are refused', async () => {
