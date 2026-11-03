@@ -359,7 +359,8 @@ signed in still shows a warning. They hold only fingerprints of other people's p
 review on 2026-11-01, every sign-in erased them along with the account's keys.
 
 Cost: a device trusts the first keys it sees for a person without proof. After someone's keys
-change for a real reason, their new messages stay unreadable until the user checks the code (K-26).
+change for a real reason, their new messages stay unreadable until the user checks the code. The
+page keeps what failed to open, and opens it again after the check, without a reload (K-26).
 
 ### D-019: Accounts and chats from before encryption upgrade once
 
@@ -598,6 +599,24 @@ Cost: the next sign-in in that browser subscribes again with a new endpoint, out
 browser that allows that only from a click needs notifications turned on again in the bell dialog.
 Each dead row costs one refused push before it is deleted.
 
+### D-069: A check-in answer older than a change on the page is dropped
+
+Accepted 2026-11-03 in #44.
+
+`client/src/store.ts` counts the changes the page makes to its chats and projects ahead of the
+server: a chat or project it adds, changes, leaves or deletes. A check-in notes the count when its
+request goes out. When the count moved before the answer is applied, `applySync` applies nothing,
+and the page checks in again at once with the same stamp and cursor. `reloadAll` fetches again the
+same way, because its callers go on with what it loads.
+
+Why: the server builds an answer from the chats as they were when the request arrived. An answer
+that left before a new chat committed, but came back after the page opened it, closed the chat
+with "It was deleted, or you were removed" until the next check-in (K-15). The same race brought
+back a chat the page had just left or deleted, and put back a project's old member list.
+
+Cost: every change on the page that overlaps a check-in costs one more check-in. A change that
+reaches the store some other way must go through the counted actions, or a late answer undoes it
+until the next check-in.
 ## Projects and channels
 
 ### D-054: iPhones without Web Push get alerts through the Bark app
@@ -795,6 +814,21 @@ Cost: reactions count toward the 50 rows of a history page. So the page pages fr
 fetched, not the oldest message it shows, and keeps going while pages bring only reactions. A tab
 still running the app from before reactions shows them as messages it cannot decrypt until it
 reloads (roadmap K-1).
+
+### D-070: The service worker never shows a reaction
+
+Accepted 2026-11-03 in #45.
+
+A reaction's push only wakes the page (D-030), so the server sends it only to the browser the user
+is looking at. The server can be wrong for up to 45 seconds (D-007), such as after a laptop slept
+before its check-in went out. The service worker then showed "Bob reacted to a message", and under
+the chat's tag it replaced the message notification. Now the service worker hands a reaction to the
+open pages and shows nothing, whoever is looking. A reaction push also has a tag of its own,
+`reaction-` and the chat id, so it can never replace a message notification.
+
+Cost: a reaction push that reaches a browser nobody looks at shows nothing, and browsers count such
+pushes. Chrome may show its own "updated in the background" notice, and Firefox counts it against
+the site's quota of pushes without a notification. Safari never gets these pushes (D-047).
 
 ### D-031: Project invites notify even while the app is open
 
