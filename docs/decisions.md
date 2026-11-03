@@ -965,6 +965,27 @@ or pull requests.
 Cost: a branch's own commits do not reach main, so the squash commit's message must stand on its
 own.
 
+### D-062: An item is claimed with a draft pull request before any code
+
+Accepted 2026-11-03 in #37.
+
+A session that picks a roadmap item claims it on GitHub before it reads or writes code: a branch
+named after the item, an empty commit, and a draft pull request whose title or body names the item.
+`scripts/claim.sh` does this in one command and refuses an item that an open pull request already
+names. Other sessions check the same list before they start. A draft that is abandoned is closed,
+so its item frees up. Decision and roadmap numbers stay sequential; a pull request that merges
+second renumbers its own entry when it resolves conflicts.
+
+Why: since #12, AGENTS.md said to open the draft "as soon as the branch exists", but every session
+read that as "once there is something to show". On 2026-11-03, #35 and #36 both fixed K-9: each session opened
+its draft at the end, three minutes apart, and the second one's work was thrown away. GitHub's open
+pull requests are the only state every session can see, so the claim has to be there, and first.
+
+Cost: every pull request starts with an empty commit, which the squash merge drops. A claim depends
+on the item id appearing in the branch name and the pull request text, so the script insists on
+both. Numbers for decisions still race, which costs the loser a rename at merge time; a CI check
+that fails on a duplicate `D-0xx` heading would catch that earlier, and is not written yet.
+
 ### D-036: Tests drive the real app
 
 Accepted 2026-11-01 in 74d53ff.

@@ -34,6 +34,7 @@ Vercel's Hobby plan with Supabase Postgres, or on any Node host with an embedded
 | `npm run typecheck` | Checks the server, client, service worker and tooling, each with its own tsconfig. |
 | `npm run build` | Typechecks, then builds the client, the service worker and the server. |
 | `npm start` | Runs the built app in one Node process. |
+| `scripts/claim.sh K-12 "<title>"` | Claims a roadmap item: refuses one an open pull request names, then opens your draft. |
 
 The server log prints the invite code. Set `INVITE_CODE` to choose one. To test with two accounts in
 one browser, open the app on two hosts, such as `alice.localhost` and `bob.localhost`. Each host
@@ -89,16 +90,36 @@ decision behind each rule explains why it exists.
 
 ## How to work here
 
-- Start from the latest main. Open a pull request. Main is squash-merged, and the squash commit's
-  subject is the pull request title followed by "(#N)".
-- Open the pull request as a draft as soon as the branch exists, and mark it ready at the end. The
-  draft reserves the number the docs cite, and shows other agents what is in flight, so two of them
-  do not pick the same roadmap item.
-- While you work, do not merge or rebase on main to stay ahead of other pull requests. Main moves
-  again before you merge, and the work repeats. Resolve conflicts once, when GitHub reports them
-  on your pull request: merge main, fix, push.
-- When two pull requests take the same decision or roadmap number, the one merged second renumbers
-  its own entry. Keep each pull request's edits to the docs small: one entry, one row.
+Several agents work on this repository at the same time, each in its own session, and each picks
+its own roadmap item. Nothing coordinates them except what is on GitHub, so the first thing a
+session does with an item is claim it there. On 2026-11-03 two sessions fixed K-9 at once, because
+both opened their pull request at the end (D-062).
+
+1. **Claim before you read code.** Fetch main and cut a branch from it whose name carries the item,
+   such as `claude/k12-bad-push-keys`. Run `scripts/claim.sh K-12 "<pull request title>"`. It
+   refuses when an open pull request names the item, warns about a remote branch that does, then
+   pushes an empty commit and opens a draft pull request that names the item. From that moment every
+   other session sees the item as taken in `gh pr list`. If the script refuses, pick another item.
+   Work that is not a roadmap item, such as a process change, claims the same way by hand: a draft
+   first, with a title and body that say what it covers.
+2. **Work on that branch.** Push to the same pull request as you go. Do not merge or rebase on main
+   to stay ahead of other pull requests: main moves again before you merge, and the work repeats.
+   Resolve conflicts once, when GitHub reports them on your pull request: merge main, fix, push.
+3. **Keep doc edits small**, so merges stay easy: one decision entry, one roadmap entry, one table
+   row. Take the next free number when you write the entry. When another pull request merges first
+   with the same decision or roadmap number, renumber your own entry during the merge in step 2.
+4. **Check before you mark ready.** Run `npm run typecheck`, `npm test` and `npm run build`. For a
+   change people can see, also try it in a browser with two accounts, at desktop width and at 375
+   pixels, in light and dark mode.
+5. **Show the owner and wait for their go.** Screenshots or a recording of a change people can see,
+   from the browser run above, or the diff of one they cannot. Then mark the pull request ready.
+   The owner merges. Main is squash-merged, and the squash commit's subject is the pull request
+   title followed by "(#N)".
+6. **Close what you abandon.** A draft you stop working on blocks its item for everyone else. Close
+   it and say why in a comment, so the next session can claim the item.
+
+Rules that hold throughout:
+
 - Write commit messages as Conventional Commits. The subject has at most 50 characters, capitalizes
   the first word after the type, uses the imperative and has no final period. The body explains what
   changed and why, wrapped at 72 characters. Never add AI attribution, such as a `Co-Authored-By`
@@ -107,12 +128,6 @@ decision behind each rule explains why it exists.
   sets the next version: `fix` bumps the patch and `feat` the minor. A breaking change, marked with
   `!` after the type, also bumps the minor until 1.0.0. Never edit the version or `CHANGELOG.md` by
   hand. Release Please does both. See D-055.
-- Before you open a pull request, run `npm run typecheck`, `npm test` and `npm run build`. For a
-  change people can see, also try it in a browser with two accounts, at desktop width and at 375
-  pixels, in light and dark mode.
-- Before you mark the pull request ready, show the owner the work and wait for their go: screenshots
-  or a recording of a change people can see, from the browser run above, or the diff of one they
-  cannot.
 - Write documentation in short, plain sentences with one idea each, like the README. Code comments
   explain why the code is the way it is, not what it does.
 
