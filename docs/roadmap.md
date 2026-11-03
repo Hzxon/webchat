@@ -346,6 +346,19 @@ such as `server/auth.ts`, `server/sql.ts`, `client/src/api.ts` and `shared/githu
 `client/src/e2ee/` row does not say that sign-up and sign-in live there. An agent that looks up
 where something lives finds nothing and has to search the tree.
 
+### K-39: A long message from someone else lets the chat slide sideways on a phone
+
+Status: Fixed in #70.
+
+Found by the owner on a phone on 2026-11-03.
+
+The React and Reply tools sit right of a bubble from someone else, and they stay in the layout
+while hidden. On a phone a bubble can take 85% of the list, which leaves too little room for the
+tools in a screen narrower than 420 pixels. They reached past the right edge of `.messages`, and
+the list slid sideways under a finger. At 375 pixels the list was 382 pixels wide. Now
+`.messages` hides what reaches past its sides. A mouse user in a window that narrow sees the tools
+of the widest bubbles cut at the edge.
+
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
