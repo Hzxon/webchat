@@ -282,6 +282,8 @@ header, or move the functions to a file of their own and add it to the map in AG
 
 ### K-35: The map of the code does not list `client/src/queue.ts`
 
+Status: Fixed in #58.
+
 Found while fixing K-24 in #53 on 2026-11-03.
 
 #53 adds `client/src/queue.ts`, the per-chat send queue of D-075, and the map in AGENTS.md does not
