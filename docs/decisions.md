@@ -380,7 +380,8 @@ signed in still shows a warning. They hold only fingerprints of other people's p
 review on 2026-11-01, every sign-in erased them along with the account's keys.
 
 Cost: a device trusts the first keys it sees for a person without proof. After someone's keys
-change for a real reason, their new messages stay unreadable until the user checks the code (K-26).
+change for a real reason, their new messages stay unreadable until the user checks the code. The
+page keeps what failed to open, and opens it again after the check, without a reload (K-26).
 
 ### D-019: Accounts and chats from before encryption upgrade once
 
@@ -603,6 +604,40 @@ and client id, and the server then stops at start. The page's retries never made
 two tabs sending the same stored message in a browser without Web Locks could (D-051). A repeat
 answers with the first copy's envelope, not the one just sent, which the page never needs to read.
 
+### D-072: An expired session ends the browser's push subscription
+
+Accepted 2026-11-03 in #47.
+
+When a check-in or the page's first load answers 401, the page ends this browser's push
+subscription, the way "Turn off on this device" does. Without a session the server cannot be asked
+to drop its row, so the row stays until the next push to it. The push service answers 410 Gone, and the server deletes the row. "Sign out"
+still drops the row on the server first and leaves the browser subscribed.
+
+Why: the server kept pushing the old account's messages to that browser, and a push names the
+sender and the chat in its title. Whoever used the browser next saw them (K-18).
+
+Cost: the next sign-in in that browser subscribes again with a new endpoint, outside a click. A
+browser that allows that only from a click needs notifications turned on again in the bell dialog.
+Each dead row costs one refused push before it is deleted.
+
+### D-069: A check-in answer older than a change on the page is dropped
+
+Accepted 2026-11-03 in #44.
+
+`client/src/store.ts` counts the changes the page makes to its chats and projects ahead of the
+server: a chat or project it adds, changes, leaves or deletes. A check-in notes the count when its
+request goes out. When the count moved before the answer is applied, `applySync` applies nothing,
+and the page checks in again at once with the same stamp and cursor. `reloadAll` fetches again the
+same way, because its callers go on with what it loads.
+
+Why: the server builds an answer from the chats as they were when the request arrived. An answer
+that left before a new chat committed, but came back after the page opened it, closed the chat
+with "It was deleted, or you were removed" until the next check-in (K-15). The same race brought
+back a chat the page had just left or deleted, and put back a project's old member list.
+
+Cost: every change on the page that overlaps a check-in costs one more check-in. A change that
+reaches the store some other way must go through the counted actions, or a late answer undoes it
+until the next check-in.
 ## Projects and channels
 
 ### D-054: iPhones without Web Push get alerts through the Bark app
@@ -684,6 +719,21 @@ Accepted 2026-11-01 in #2.
 Channel names use lowercase letters and digits in any script, joined by single hyphens, up to 40
 characters, and are unique within their project. The page turns what people type into that form,
 so "Slides & Design" becomes `slides-design`. Every project starts with `#general`.
+
+### D-065: One channel name rule for the page and the server
+
+Accepted 2026-11-03 in #51.
+
+`toChannelName` and `isChannelName` in `shared/types.ts` hold the rule of D-027 for both sides. The
+New channel dialog makes names with the first, and the server checks them with the second. The
+page applies NFKC first, so a capital with no lowercase form, such as ℂ, becomes a plain one. It
+cuts the name to the limit before it trims hyphens, and it counts UTF-16 units as the server does.
+
+Why: the dialog had its own copy of the rule, and the copies drifted. It trimmed before it cut, and
+kept capitals the server refuses, so some names it showed got a 400 (K-11).
+
+Cost: NFKC also folds other look-alikes, such as full-width letters and ligatures, so a few typed
+names change more than people expect. The dialog shows the result before it creates the channel.
 
 ### D-039: Owners remove people and delete, before key rotation
 
@@ -800,6 +850,21 @@ Cost: reactions count toward the 50 rows of a history page. So the page pages fr
 fetched, not the oldest message it shows, and keeps going while pages bring only reactions. A tab
 still running the app from before reactions shows them as messages it cannot decrypt until it
 reloads (roadmap K-1).
+
+### D-070: The service worker never shows a reaction
+
+Accepted 2026-11-03 in #45.
+
+A reaction's push only wakes the page (D-030), so the server sends it only to the browser the user
+is looking at. The server can be wrong for up to 45 seconds (D-007), such as after a laptop slept
+before its check-in went out. The service worker then showed "Bob reacted to a message", and under
+the chat's tag it replaced the message notification. Now the service worker hands a reaction to the
+open pages and shows nothing, whoever is looking. A reaction push also has a tag of its own,
+`reaction-` and the chat id, so it can never replace a message notification.
+
+Cost: a reaction push that reaches a browser nobody looks at shows nothing, and browsers count such
+pushes. Chrome may show its own "updated in the background" notice, and Firefox counts it against
+the site's quota of pushes without a notification. Safari never gets these pushes (D-047).
 
 ### D-031: Project invites notify even while the app is open
 

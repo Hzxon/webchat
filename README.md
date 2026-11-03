@@ -215,7 +215,7 @@ Share the address and the invite code with your friends, or send a link that fil
 - **iPhone and iPad**: open the site in Safari, tap Share, then **Add to Home Screen**. Open
   WebChat from the Home Screen, sign in, and turn on notifications there. Safari tabs on iOS cannot
   receive push.
-- **iPhone or iPad on iOS 15 or earlier**, which has no Web Push at all: install the free
+- **iPhone or iPad before iOS 16.4**, which has no Web Push at all: install the free
   [Bark](https://apps.apple.com/app/id1403753865) app. In WebChat, open the bell, press **Link
   Bark**, and copy the server URL it shows. In Bark, open the server list, add that URL, and
   allow notifications. Bark registers itself; the dialog then counts the phone, and alerts arrive

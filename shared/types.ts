@@ -507,7 +507,8 @@ export interface GithubDTO {
 /** Messages the service worker posts to open pages. */
 export type WorkerToPageMessage =
   | { type: 'push'; payload: PushPayload }
-  | { type: 'open-conversation'; conversationId: number };
+  | { type: 'open-conversation'; conversationId: number }
+  | { type: 'subscription-changed' };
 
 /** Response header that names the server's build. A tab reloads when the value changes. */
 export const BUILD_HEADER = 'x-webchat-build';
@@ -551,3 +552,20 @@ export const LIMITS = {
   reposPerProject: 10,
   pageSize: 50,
 } as const;
+
+/** Slack-style channel names (D-027): lowercase letters and digits in any script, joined by single hyphens. */
+const CHANNEL_NAME = /^[\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+(-[\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+)*$/u;
+
+export const isChannelName = (name: string) => name.length <= LIMITS.channelNameLength && CHANNEL_NAME.test(name);
+
+/** Turns what someone types into a channel name, such as "Slides & Design" into "slides-design". */
+export const toChannelName = (value: string) =>
+  value
+    // NFKC turns capitals with no lowercase form, such as ℂ, into plain ones that have it.
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+/gu, '-')
+    // The limit counts UTF-16 units, as the server does, so the cut can leave a hyphen or half a
+    // character at the end. Trimming after the cut drops both.
+    .slice(0, LIMITS.channelNameLength)
+    .replace(/^[^\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+|[^\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+$/gu, '');

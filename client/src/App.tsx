@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { UserDTO } from '../../shared/types';
 import { ApiError } from './api';
 import { signOut, startChat } from './chat';
+import { disablePushHere } from './push';
 import { actions, useAppState } from './store';
 import { Toasts, UrgentAlert } from './components/Alerts';
 import { AuthScreen } from './components/AuthScreen';
@@ -36,6 +37,8 @@ export function App() {
       })
       .catch((err: unknown) => {
         if (err instanceof ApiError && err.status === 401) {
+          // The session may have expired while the app was closed: end its push here, as syncNow does.
+          void disablePushHere();
           setPhase('signed-out');
         } else {
           setError((err as Error).message);
