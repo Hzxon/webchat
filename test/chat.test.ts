@@ -554,6 +554,33 @@ describe('chat server', () => {
     assert.equal(pushService.received.length, 0);
   });
 
+  test('a reaction only wakes the browser in use, and never under the tag of a message alert', async () => {
+    const laptop = makeSubscription(`http://${pushService.host}/bob-laptop`);
+    assert.equal((await bob.request('POST', '/push/subscribe', laptop.json)).status, 204);
+    await bob.sync(true, laptop.json.endpoint);
+
+    pushService.received.length = 0;
+    const sent = await alice.send(directChat.id, 'React to this');
+    const message = laptop.decrypt((await waitForPushes(pushService.received, 1))[0]!.body);
+
+    pushService.received.length = 0;
+    const wave = { text: '', reaction: { messageId: sent.data.id, emoji: '👋' } };
+    assert.equal((await alice.send(directChat.id, wave, false, 'reaction')).status, 201);
+    const [push] = await waitForPushes(pushService.received, 1);
+    await sleep(200);
+    assert.deepEqual(
+      pushService.received.map((p) => p.path),
+      ['/bob-laptop'],
+    );
+    const reaction = laptop.decrypt(push!.body);
+    assert.equal(reaction.kind, 'reaction', 'the service worker shows no notification for this kind');
+    assert.equal(reaction.messageId, null);
+    assert.equal(reaction.envelope, null);
+    // The server can think Bob is looking after his laptop slept, so the push can reach a browser
+    // nobody looks at. It must not replace the chat's message notification there.
+    assert.notEqual(reaction.tag, message.tag);
+  });
+
   test('pushes carry no plain text; the device decrypts the envelope inside', async () => {
     const phone = makeSubscription(`http://${pushService.host}/bob-phone-2`);
     assert.equal((await bob.request('POST', '/push/subscribe', phone.json)).status, 204);
@@ -1166,6 +1193,8 @@ describe('chat server', () => {
         'rejected', // the message the server altered in an earlier test
         'You there?',
         'Still there?',
+        'React to this',
+        '', // the reaction to it
         'Call me back, it is urgent',
         'Ping after you left',
         'Did my answer get lost?',

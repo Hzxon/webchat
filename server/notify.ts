@@ -44,7 +44,9 @@ async function payloadFor(
       body: `${sender?.display_name ?? 'Someone'} reacted to a message`,
       bodyPrefix: '',
       urgent: false,
-      tag: `chat-${conversation.id}`,
+      // The service worker shows no reaction (D-070); this tag only keeps one from replacing the
+      // chat's message notification if a browser ever shows it anyway.
+      tag: `reaction-${conversation.id}`,
       conversationId: conversation.id,
       messageId: null,
       senderId: sender?.id ?? null,

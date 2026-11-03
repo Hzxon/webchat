@@ -231,13 +231,6 @@ but applied after it opened, closes the chat with "It was deleted, or you were r
 check-in brings it back. Ignore answers older than a local change, for example with a generation
 number.
 
-### K-16: A reaction push can replace a message notification
-
-A reaction push uses the chat's notification tag. When the server still thinks the user is looking,
-for example after a laptop slept before its check-in went out, the service worker shows "Bob reacted
-to a message" over the chat's message notification. D-030 says reactions notify nobody. Not seen on
-a real device.
-
 ### K-17: An open page keeps a push endpoint the service worker replaced
 
 The service worker's `pushsubscriptionchange` handler subscribes again but does not tell open pages.
@@ -351,6 +344,18 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
 | K-9: A retried send is stored once (D-061) | #35 |
+| K-16: A reaction push no longer shows or replaces a message notification (D-070) | #45 |
+
+### K-16: A reaction push can replace a message notification
+
+Status: Fixed in #45 (D-070). An integration test checks that a reaction's push goes only to the
+browser in use, has the kind the service worker shows nothing for, and has a tag other than the
+chat's message tag. No test runs the service worker, and it was not tried on a real device.
+
+A reaction push uses the chat's notification tag. When the server still thinks the user is looking,
+for example after a laptop slept before its check-in went out, the service worker shows "Bob reacted
+to a message" over the chat's message notification. D-030 says reactions notify nobody. Not seen on
+a real device.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 
