@@ -217,12 +217,6 @@ The service worker's `pushsubscriptionchange` handler subscribes again but does 
 They keep reporting the old endpoint, so pushes for the user while they look go to a dead endpoint,
 and messages show up to 15 seconds late until a reload. Mostly Firefox fires this event.
 
-### K-18: A session that expires leaves push on for that browser
-
-When a session ends with a 401, the page drops the keys but not the push subscription. Whoever uses
-that browser next sees the old account's notification titles, such as sender and chat names, until
-the subscription is removed. Only "Sign out" removes it.
-
 ### K-21: An urgent message from while every tab was closed does not ring
 
 Found while testing a closed browser on 2026-11-01.
@@ -315,6 +309,17 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-15: A late sync answer no longer closes a chat just created (D-069) | #44 |
 | K-16: A reaction push no longer shows or replaces a message notification (D-070) | #45 |
 | K-10: `sslmode=disable` in `DATABASE_URL` turns TLS off | #46 |
+| K-18: An expired session ends the browser's push subscription (D-072) | #47 |
+
+### K-18: A session that expires leaves push on for that browser
+
+Status: Fixed in #47 (D-072). An integration test checks that the server deletes a subscription
+the push service answers 410 Gone. The page's side runs in the browser, which no test reaches, and
+is still to be tried by hand.
+
+When a session ends with a 401, the page drops the keys but not the push subscription. Whoever uses
+that browser next sees the old account's notification titles, such as sender and chat names, until
+the subscription is removed. Only "Sign out" removes it.
 
 ### K-10: `sslmode=disable` is ignored
 
