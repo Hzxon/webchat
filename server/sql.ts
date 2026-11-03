@@ -24,14 +24,16 @@ export interface PostgresOptions {
 
 export function connectPostgres({ connectionString, caCert }: PostgresOptions): Sql & { pool: pg.Pool } {
   const url = new URL(connectionString);
-  const local = ['localhost', '127.0.0.1', '::1'].includes(url.hostname);
+  // A self-hosted Postgres without TLS on another host, such as db in Docker Compose, opts out with
+  // sslmode=disable. Every other host gets TLS, whatever else sslmode says.
+  const plain = ['localhost', '127.0.0.1', '::1'].includes(url.hostname) || url.searchParams.get('sslmode') === 'disable';
   // node-postgres reads sslmode from the URL and would override the ssl object below.
   url.searchParams.delete('sslmode');
   const pool = new pg.Pool({
     connectionString: url.toString(),
     // Supabase's certificate chains to its own root CA. Without DATABASE_CA_CERT the connection is
     // still encrypted, but the server's identity is not checked.
-    ssl: local ? undefined : caCert ? { ca: caCert } : { rejectUnauthorized: false },
+    ssl: plain ? undefined : caCert ? { ca: caCert } : { rejectUnauthorized: false },
     // Serverless functions run many small instances; a few connections each is plenty.
     max: 3,
     idleTimeoutMillis: 10_000,

@@ -92,6 +92,9 @@ self.addEventListener('push', (event) => {
     (async () => {
       const clients = await windowClients();
       for (const client of clients) post(client, { type: 'push', payload });
+      // A reaction notifies nobody; its push only wakes the page (D-030). The server can still think
+      // the user is looking when nobody is, such as after a laptop slept, so check here (D-070).
+      if (payload.kind === 'reaction') return;
 
       // Lets the sender see "delivered" even while every tab here is closed.
       if (payload.conversationId !== null && payload.messageId !== null) {
@@ -166,6 +169,8 @@ self.addEventListener('pushsubscriptionchange', (rawEvent) => {
         userVisibleOnly: true,
         applicationServerKey: base64UrlToBytes(config.vapidPublicKey),
       });
+      // Open pages send their endpoint with each check-in, and the old one is dead now.
+      for (const client of await windowClients()) post(client, { type: 'subscription-changed' });
       await fetch('/api/push/subscribe', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

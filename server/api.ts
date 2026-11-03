@@ -26,6 +26,7 @@ import type { GithubApp } from './githubApp.js';
 import { notifyAddedToGroup, notifyAddedToProject, notifyNewMessage } from './notify.js';
 import type { Push, PushSubscriptionInput } from './push.js';
 import {
+  isChannelName,
   LIMITS,
   type AccountKeysInput,
   type BarkDTO,
@@ -162,12 +163,9 @@ function userIds(value: unknown, field: string, without: number): number[] {
   return [...new Set(raw.map((v) => positiveInt(v, field)))].filter((id) => id !== without);
 }
 
-/** Channel names follow Slack: lowercase letters and digits in any script, joined by single hyphens. */
-const CHANNEL_NAME = /^[\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+(-[\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+)*$/u;
-
 function channelName(value: unknown): string {
   const name = text(value, 'Channel name', 1, LIMITS.channelNameLength);
-  if (!CHANNEL_NAME.test(name)) throw new HttpError(400, 'Channel names use lowercase letters, numbers and single hyphens.');
+  if (!isChannelName(name)) throw new HttpError(400, 'Channel names use lowercase letters, numbers and single hyphens.');
   return name;
 }
 
@@ -254,8 +252,14 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     return db.createSession(tokenHash, user.id, Date.now() + maxAge);
   }
 
+  const authLimitKey = (req: Request) => `auth:${req.ip ?? 'unknown'}`;
+
+  /**
+   * Every attempt counts before it runs, so parallel guesses cannot all pass the check. A route
+   * gives the hit back once the attempt succeeds, so only failures use up the limit (D-068).
+   */
   async function limitAuth(req: Request, _res: Response, next: NextFunction) {
-    if (!(await db.takeRateLimit(`auth:${req.ip ?? 'unknown'}`, 20, 15 * 60_000))) {
+    if (!(await db.takeRateLimit(authLimitKey(req), 20, 15 * 60_000))) {
       throw new HttpError(429, 'Too many attempts. Try again in 15 minutes.');
     }
     next();
@@ -352,6 +356,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     }
     const user = await db.createUser(username, displayName, await hashPassword(authKey), keys);
     if (!user) throw new HttpError(409, 'That username is taken.');
+    await db.returnRateLimit(authLimitKey(req));
     await startSession(req, res, user);
     res.status(201).json(toUserDTO(user));
   });
@@ -366,6 +371,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     // Check a dummy hash for unknown users too, so response time does not reveal which usernames exist.
     const valid = await verifyPassword(authKey, user?.password_hash ?? (await dummyPasswordHash()));
     if (!user || !valid) throw new HttpError(401, 'Wrong username or password.');
+    await db.returnRateLimit(authLimitKey(req));
     await startSession(req, res, user);
     inBackground(db.purgeExpired(), config.logger);
     const body: LoginResponse = { user: toUserDTO(user), backup: keyBackupOf(user) };
@@ -385,6 +391,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     if (!user || user.auth_version !== 1 || !valid) throw new HttpError(401, 'Wrong username or password.');
     const upgraded = await db.upgradeAuth(user.id, await hashPassword(authKey));
     if (!upgraded) throw new HttpError(409, 'This account was already upgraded. Sign in again.');
+    await db.returnRateLimit(authLimitKey(req));
     await startSession(req, res, upgraded);
     const body: LoginResponse = { user: toUserDTO(upgraded), backup: null };
     res.json(body);
@@ -397,6 +404,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
       throw new HttpError(409, 'This account needs a one-time upgrade for encryption.', 'upgrade_required');
     }
     if (!(await verifyPassword(loginKey(req.body), me.password_hash))) throw new HttpError(403, 'Wrong password.');
+    await db.returnRateLimit(authLimitKey(req));
     const body: LoginResponse = { user: toUserDTO(me), backup: keyBackupOf(me) };
     res.json(body);
   });
@@ -410,6 +418,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     if (!(await verifyPassword(loginKey(req.body), me.password_hash))) throw new HttpError(403, 'Wrong password.');
     const updated = await db.setUserKeys(me.id, accountKeys(req.body?.keys));
     if (!updated) throw new HttpError(409, 'This account already has keys.');
+    await db.returnRateLimit(authLimitKey(req));
     res.json(toUserDTO(updated));
   });
 
@@ -761,9 +770,10 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const memberIds = await db.memberIds(conversationId);
     await requireKeys(memberIds);
     const key = chatKey(req.body, memberIds);
-    if (!(await db.setConversationKey(conversationId, key.keyId, me.id, key.wrappedKeys))) {
-      throw new HttpError(409, 'This chat already has a key.', 'has_key');
-    }
+    // The members can change before the key is stored, so they are checked again under the lock.
+    const result = await db.setConversationKey(conversationId, key.keyId, me.id, key.wrappedKeys);
+    if (result === 'has_key') throw new HttpError(409, 'This chat already has a key.', 'has_key');
+    if (result === 'stale') throw new HttpError(409, 'The group changed while you were editing. Try again.', 'stale_group');
     res.json(await db.conversationFor(me.id, conversationId));
   });
 
@@ -832,6 +842,10 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     }
     if (endpoint.length > 1000 || p256dh.length > 200 || auth.length > 100 || !push.isAllowedEndpoint(endpoint)) {
       throw new HttpError(400, 'This push service is not supported.');
+    }
+    // The sizes a browser's P-256 public key and auth secret have. web-push throws on others (K-12).
+    if (Buffer.from(p256dh, 'base64url').length !== 65 || Buffer.from(auth, 'base64url').length !== 16) {
+      throw new HttpError(400, 'Subscription keys are invalid.');
     }
     await db.savePushSubscription(me.id, endpoint, p256dh, auth);
     res.status(204).end();

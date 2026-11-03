@@ -1,5 +1,6 @@
 // Browser notification permission and the Web Push subscription for this device.
 import { api } from './api';
+import { iosVersion } from './ios';
 
 export type PermissionState = NotificationPermission | 'unsupported';
 
@@ -13,6 +14,8 @@ export interface PushState {
   endpoint: string | null;
   /** iPhone or iPad, not opened from the home screen: push needs "Add to Home Screen" first. */
   needsInstall: boolean;
+  /** iOS before 16.4, which has no Web Push even from the home screen. */
+  oldIos: boolean;
 }
 
 const isIos =
@@ -20,6 +23,7 @@ const isIos =
 const isStandalone =
   window.matchMedia('(display-mode: standalone)').matches ||
   (navigator as Navigator & { standalone?: boolean }).standalone === true;
+const oldIos = (iosVersion(navigator.userAgent) ?? Infinity) < 16.4;
 
 let registration: Promise<ServiceWorkerRegistration | null> | undefined;
 
@@ -54,7 +58,8 @@ export async function getPushState(): Promise<PushState> {
     pushSupported: pushSupported && reg !== null,
     subscribed: subscription !== null && permission === 'granted',
     endpoint: permission === 'granted' ? (subscription?.endpoint ?? null) : null,
-    needsInstall: isIos && !isStandalone,
+    needsInstall: isIos && !isStandalone && !oldIos,
+    oldIos,
   };
 }
 

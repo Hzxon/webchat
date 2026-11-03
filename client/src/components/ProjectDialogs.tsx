@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { LIMITS, type ProjectReposDTO } from '../../../shared/types';
+import { LIMITS, toChannelName, type ProjectReposDTO } from '../../../shared/types';
 import { api } from '../api';
 import { addGroupMembers, addProjectMembers, createChannel, openConversation } from '../chat';
 import { useAppState } from '../store';
@@ -7,14 +7,6 @@ import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
 import { GithubIcon, HashIcon } from './icons';
 import type { MembersTarget } from './MembersDialog';
-
-/** Slack-style channel name: lowercase, words joined by single hyphens, letters and digits in any script. */
-export const toChannelName = (value: string) =>
-  value
-    .toLowerCase()
-    .replace(/[^\p{L}\p{M}\p{N}]+/gu, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, LIMITS.channelNameLength);
 
 /** A project or group from the store, with its members' ids in the order they joined. */
 function useTarget(target: MembersTarget) {

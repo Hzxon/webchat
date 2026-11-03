@@ -65,16 +65,25 @@ export async function createPush(db: Db, config: Config, bark: Bark) {
       subscriptions.map(async (subscription) => {
         // web-push encrypts and signs the request; fetch sends it. web-push's own sender only
         // speaks HTTPS, which would rule out a local fake push service in tests.
-        const request = webpush.generateRequestDetails(
-          { endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } },
-          body,
-          {
-            // Urgent messages wait up to 3 days for an offline device; normal ones expire after 1 day.
-            TTL: payload.urgent ? 3 * 24 * 3600 : 24 * 3600,
-            // "high" asks the push service to wake the device now instead of batching for battery.
-            urgency: 'high',
-          },
-        );
+        let request: webpush.RequestDetails;
+        try {
+          request = webpush.generateRequestDetails(
+            { endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } },
+            body,
+            {
+              // Urgent messages wait up to 3 days for an offline device; normal ones expire after 1 day.
+              TTL: payload.urgent ? 3 * 24 * 3600 : 24 * 3600,
+              // "high" asks the push service to wake the device now instead of batching for battery.
+              urgency: 'high',
+            },
+          );
+        } catch (error) {
+          // Keys web-push cannot encrypt for fail the same way on every push, so the row is dead.
+          // A network error below keeps the row: the push service may answer next time.
+          config.logger.warn(`Push to user ${userId} dropped a subscription with bad keys: ${String(error)}`);
+          await db.deletePushSubscription(subscription.endpoint);
+          return false;
+        }
         try {
           const response = await fetch(request.endpoint, {
             method: request.method,
