@@ -529,7 +529,7 @@ the device's IndexedDB next to the account's keys. A draft comes back when its c
 after a closed tab, a reload, or a visit to another chat. A message that was sending or failed comes
 back in its chat as "Not sent", with a toast that names the chat, unless the chat's history shows
 that the server has it after all. The page never sends it again by itself; the user taps to retry,
-which sends it under the same client id (D-060). A Remove button next to "Tap to retry" drops it. While a message is
+which sends it under the same client id (D-061). A Remove button next to "Tap to retry" drops it. While a message is
 still sending, the tab asks before it closes or reloads. Signing out removes drafts and unsent
 messages with the keys.
 
@@ -545,7 +545,7 @@ Cost: drafts and unsent messages sit on the device unencrypted until they are se
 signs out, so anyone with the device's files can read them. A browser without Web Locks, such as
 Safari before 15.4, can show the same unsent message in two tabs. A message that reached the server
 as its tab closed shows as not sent if newer messages push it off the chat's first page, until a
-retry gets it back (D-060).
+retry gets it back (D-061).
 
 ### D-056: A 2xx answer whose body does not parse is a failed request
 
@@ -560,9 +560,9 @@ so the default error message stands.
 
 Cost: a route that answers 2xx without a JSON body must use 204, or every call to it fails. A send
 whose answer breaks off now shows as not sent, like one whose connection dropped, although the
-server stored it. A retry gets the stored message back (D-060).
+server stored it. A retry gets the stored message back (D-061).
 
-### D-060: A send repeated with its client id is stored once
+### D-061: A send repeated with its client id is stored once
 
 Accepted 2026-11-03 in #36.
 
@@ -925,6 +925,30 @@ Cost:
 - Migration 8 dropped the links made by typing a name under D-046.
 - Neither the pane nor the cards name a team asked to review. Reading a team needs `read:org` from
   the OAuth App, and a query that asked for one without it made GitHub refuse the whole poll.
+
+### D-060: The pane names an organization that hides its pull requests
+
+Accepted 2026-11-03 in #34.
+
+An organization that restricts OAuth Apps hides its pull requests from the token until one of its
+owners approves WebChat (D-033). GitHub still answers the poll with the other pull requests, and
+adds one FORBIDDEN error for each one it left out. The error's message names the organization;
+nothing else in the answer does. `graphql` in `server/github.ts` now returns those errors next to
+the data, and the poll keeps the organizations they name in the stored lists as
+`hiddenOrganizations`. The pane names them in a banner that links to GitHub's page on asking the
+owners for approval, and the connect card says an organization may need to approve the app.
+
+Why: course repositories often live in an instructor's organization, and GitHub turns the
+restriction on for new organizations. Without the banner the pane said "You have no open pull
+requests" to a student whose pull requests were all hidden, and nothing told them that only an
+owner could change that. Only the owner's approval can fix it, so the pane's job is to say so and
+to whom.
+
+Cost: the server recognizes the restriction by the text of GitHub's error message, which no
+schema fixes. If GitHub rewords it, the banner stops showing and the pull requests go silently
+missing again, as before. An organization that enforces SAML single sign-on hides its pull
+requests the same way, but its error names no organization, so the pane says nothing for it. The
+banner was built against GitHub's answer as reports describe it, not against a real organization.
 
 ## Engineering process
 

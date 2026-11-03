@@ -141,6 +141,30 @@ interface StatesResult {
   nodes: Array<{ id?: string; state?: 'OPEN' | 'CLOSED' | 'MERGED'; mergedBy?: { login: string } | null } | null>;
 }
 
+/** One entry of the errors GitHub's GraphQL API sends next to the data it could still answer. */
+interface GraphqlError {
+  type?: string;
+  message: string;
+}
+
+/**
+ * GitHub names an organization that restricts OAuth Apps in the error it adds for each of its
+ * pull requests it left out. Nothing else in the answer says they exist.
+ */
+const RESTRICTED_ORGANIZATION = /the `([^`]+)` organization has enabled OAuth App access restrictions/g;
+
+/**
+ * The organizations whose pull requests GitHub left out of an answer because they restrict OAuth
+ * Apps and no owner has approved WebChat yet (K-6). Each is named once, in the order found.
+ */
+export function hiddenOrganizations(errors: GraphqlError[]): string[] {
+  const names = new Set<string>();
+  for (const error of errors) {
+    for (const match of error.message.matchAll(RESTRICTED_ORGANIZATION)) names.add(match[1]!);
+  }
+  return [...names];
+}
+
 const REVIEW: Record<NonNullable<PullNode['reviewDecision']>, PullReview> = {
   APPROVED: 'approved',
   CHANGES_REQUESTED: 'changes_requested',
@@ -279,7 +303,12 @@ export function createGithub(db: Db, push: Push, config: Config) {
     return (await res.json()) as T;
   }
 
-  async function graphql<T>(token: string, query: string, variables: Record<string, unknown>): Promise<T> {
+  /**
+   * Answers with the data and the errors GitHub sent next to it. An organization that restricts
+   * OAuth Apps makes GitHub leave out its pull requests and add an error for each; the rest of the
+   * answer is still good, and the errors are the only sign of what is missing (K-6).
+   */
+  async function graphql<T>(token: string, query: string, variables: Record<string, unknown>) {
     const res = await fetch(`${config.githubApiUrl}/graphql`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': 'WebChat' },
@@ -288,28 +317,30 @@ export function createGithub(db: Db, push: Push, config: Config) {
     });
     if (res.status === 401) throw new GithubError('GitHub no longer accepts this connection. Connect GitHub again.', true);
     if (!res.ok) throw new GithubError(`GitHub answered ${res.status}. Trying again in a few minutes.`);
-    // An organization that blocks the app makes GitHub leave out its pull requests and add an
-    // error; the rest of the answer is still good.
-    const body = (await res.json()) as { data?: T | null; errors?: Array<{ message: string }> };
+    const body = (await res.json()) as { data?: T | null; errors?: GraphqlError[] };
     if (!body.data) throw new GithubError(body.errors?.[0]?.message ?? 'GitHub sent an empty answer.');
-    return body.data;
+    return { data: body.data, errors: body.errors ?? [] };
   }
 
   async function fetchPulls(token: string, login: string) {
     const scope = 'is:pr is:open archived:false sort:updated-desc';
-    const data = await graphql<PullsResult>(token, PULLS_QUERY, {
+    const { data, errors } = await graphql<PullsResult>(token, PULLS_QUERY, {
       reviewQuery: `${scope} review-requested:${login}`,
       authoredQuery: `${scope} author:${login}`,
       first: PULLS_PER_LIST,
     });
-    const pulls: PullListsDTO = { reviewRequested: toPulls(data.reviewRequested), authored: toPulls(data.authored) };
+    const pulls: PullListsDTO = {
+      reviewRequested: toPulls(data.reviewRequested),
+      authored: toPulls(data.authored),
+      hiddenOrganizations: hiddenOrganizations(errors),
+    };
     return { login: data.viewer.login, pulls };
   }
 
   /** Merged or closed events for the user's pull requests that left the open list. */
   async function endings(token: string, left: PullRequestDTO[]): Promise<NewGithubEvent[]> {
     if (left.length === 0) return [];
-    const data = await graphql<StatesResult>(token, STATES_QUERY, { ids: left.map((p) => p.id) });
+    const { data } = await graphql<StatesResult>(token, STATES_QUERY, { ids: left.map((p) => p.id) });
     const byId = new Map(left.map((p) => [p.id, p]));
     return data.nodes.flatMap((node) => {
       const pull = node?.id ? byId.get(node.id) : undefined;

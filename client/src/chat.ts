@@ -737,7 +737,7 @@ export function discardMessage(message: ChatMessage) {
   forgetUnsent(message.clientId!);
 }
 
-/** Sends a failed message again under the same client id, so the server stores it once (D-060). */
+/** Sends a failed message again under the same client id, so the server stores it once (D-061). */
 export function retryMessage(message: ChatMessage) {
   discardMessage(message);
   const content: MessageContent = { text: message.text };

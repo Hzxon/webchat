@@ -300,7 +300,7 @@ CREATE TABLE IF NOT EXISTS webchat.bark_devices (
 );
 CREATE INDEX IF NOT EXISTS bark_devices_by_user ON webchat.bark_devices (user_id);
 `,
-  // 10: a send retried after a lost answer is stored once (D-060).
+  // 10: a send retried after a lost answer is stored once (D-061).
   `
 CREATE UNIQUE INDEX IF NOT EXISTS messages_by_client_id ON webchat.messages (sender_id, client_id);
 `,
