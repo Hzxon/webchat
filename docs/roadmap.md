@@ -11,10 +11,12 @@ the items under "Next". The decisions these items build on are in [decisions.md]
 - Each item says why it matters, what it covers, and when it is done. Write open questions under
   the item they belong to.
 - Status values: Next, Planned, Idea, Blocked, In progress, Done, and Dropped.
-- When you start an item, set it to "In progress" and name your branch. When it reaches main, set it
-  to "Done" with its pull request number, move its whole entry to the Done section at the end, add a
-  row to the table there, and record its decisions in `decisions.md`. A fixed known issue moves the
-  same way. The sections above Done then hold only what is still open.
+- When you start an item, set it to "In progress" and name your branch. When it reaches main, the
+  pull request sets its status to "Done" or "Fixed" with the pull request number, in place, and
+  records its decisions in `decisions.md`. The entry stays where it is. A housekeeping pull request
+  moves the finished entries to the Done section at the end and adds their rows to the table there,
+  so that two fixes never edit the same lines (D-076). Until then the Done table lags, and
+  `grep -n '^Status: \(Done\|Fixed\)' docs/roadmap.md` lists what is finished.
 - When you drop an item, keep it, set it to "Dropped", and say why.
 
 ## Next

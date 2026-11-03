@@ -1262,27 +1262,22 @@ describe('chat server', () => {
     });
   });
 
+  // Its own group, sent by carol, so that other tests' sends to the direct chat do not have to be
+  // listed here, and alice's send limit (30 per 10 seconds) is left to them (D-076). Deleted at the
+  // end, so later tests see the groups they expect.
   test('message history pages backwards', async () => {
-    const page = await alice.request<MessageDTO[]>('GET', `/conversations/${directChat.id}/messages`);
+    const key = await carol.newChatKey([alice, bob, carol].map((c) => ({ id: c.id, keys: keysOf(c) })));
+    const paging = await carol.request<ConversationDTO>('POST', '/conversations/group', { title: 'Paging', memberIds: [alice.id, bob.id], key });
+    assert.equal(paging.status, 201);
+    carol.chatKeys.set(paging.data.id, { keyId: key.keyId, key: await importChatKey(key.raw) });
+    const texts = ['one', 'two', 'three', 'four', 'five'];
+    for (const text of texts) assert.equal((await carol.send(paging.data.id, text)).status, 201);
+    const page = await carol.request<MessageDTO[]>('GET', `/conversations/${paging.data.id}/messages`);
     assert.equal(page.status, 200);
-    const results = await Promise.allSettled(page.data.map((m) => alice.read(m, keysOf(alice))));
-    assert.deepEqual(
-      results.map((r) => (r.status === 'fulfilled' ? r.value : 'rejected')),
-      [
-        'Are you free to call? The code is 4417.',
-        'rejected', // the message the server altered in an earlier test
-        'You there?',
-        'Still there?',
-        'React to this',
-        '', // the reaction to it
-        'Call me back, it is urgent',
-        'Ping after you left',
-        'Anyone home?',
-        'Did my answer get lost?',
-      ],
-    );
-    const older = await alice.request<MessageDTO[]>('GET', `/conversations/${directChat.id}/messages?before=${page.data[2]!.id}`);
-    assert.equal(older.data.length, 2);
+    assert.deepEqual(await Promise.all(page.data.map((m) => carol.read(m, keysOf(carol)))), texts);
+    const older = await carol.request<MessageDTO[]>('GET', `/conversations/${paging.data.id}/messages?before=${page.data[2]!.id}`);
+    assert.deepEqual(await Promise.all(older.data.map((m) => carol.read(m, keysOf(carol)))), ['one', 'two']);
+    assert.equal((await carol.request('DELETE', `/conversations/${paging.data.id}`)).status, 204);
   });
 
   // Alerts for iPhones without Web Push, through the Bark app (R-018).

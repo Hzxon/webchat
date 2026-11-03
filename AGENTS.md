@@ -34,7 +34,7 @@ Vercel's Hobby plan with Supabase Postgres, or on any Node host with an embedded
 | `npm run typecheck` | Checks the server, client, service worker and tooling, each with its own tsconfig. |
 | `npm run build` | Typechecks, then builds the client, the service worker and the server. |
 | `npm start` | Runs the built app in one Node process. |
-| `scripts/claim.sh K-12 "<title>"` | Claims a roadmap item: refuses one an open pull request names, then opens your draft. |
+| `scripts/claim.sh K-12 "<title>" [D-077]` | Claims a roadmap item and, given one, reserves a decision number: refuses what an open pull request names, then opens your draft. |
 
 The server log prints the invite code. Set `INVITE_CODE` to choose one. To test with two accounts in
 one browser, open the app on two hosts, such as `alice.localhost` and `bob.localhost`. Each host
@@ -64,6 +64,7 @@ keeps its own cookies and keys.
 | `test/` | Integration tests that drive the real app over HTTP, and crypto tests. |
 | `.github/workflows/release-please.yml` | Release Please: the release pull request, the tags and `CHANGELOG.md`. |
 | `.github/workflows/doc-ids.yml` | Fails a pull request that repeats a decision or roadmap id. See D-063. |
+| `.github/workflows/ci.yml` | Runs typecheck, the tests and the build on pull requests, on main and in the merge queue. See D-076. |
 
 ## Rules that must hold
 
@@ -97,21 +98,26 @@ session does with an item is claim it there. On 2026-11-03 two sessions fixed K-
 both opened their pull request at the end (D-062).
 
 1. **Claim before you read code.** Fetch main and cut a branch from it whose name carries the item,
-   such as `claude/k12-bad-push-keys`. Run `scripts/claim.sh K-12 "<pull request title>"`. It
-   refuses when an open pull request names the item, warns about a remote branch that does, then
-   pushes an empty commit and opens a draft pull request that names the item. From that moment every
-   other session sees the item as taken in `gh pr list`. If the script refuses, pick another item.
+   such as `claude/k12-bad-push-keys`. Run `scripts/claim.sh K-12 "<pull request title>"`, with
+   the next free decision number as a third argument if the change will make a decision. It
+   refuses when an open pull request names the item or the number, warns about a remote branch that
+   names the item, then pushes an empty commit and opens a draft pull request that names both. From
+   that moment every other session sees them as taken in `gh pr list`. If the script refuses, pick
+   another item or number.
    Work that is not a roadmap item, such as a process change, claims the same way by hand: a draft
    first, with a title and body that say what it covers.
 2. **Work on that branch.** Push to the same pull request as you go. Do not merge or rebase on main
    to stay ahead of other pull requests: main moves again before you merge, and the work repeats.
    Resolve conflicts once, when GitHub reports them on your pull request: merge main, fix, push.
-3. **Keep doc edits small**, so merges stay easy: one decision entry, one roadmap entry, one table
-   row. Take the next free number when you write the entry. When another pull request merges first
-   with the same decision or roadmap number, renumber your own entry during the merge in step 2.
-4. **Check before you mark ready.** Run `npm run typecheck`, `npm test` and `npm run build`. For a
-   change people can see, also try it in a browser with two accounts, at desktop width and at 375
-   pixels, in light and dark mode.
+3. **Edit the docs in place**, so merges stay easy. Change your item's status line where it is;
+   never move the entry or add a table row, a housekeeping pull request does that (D-076). Add at
+   most one decision entry, at the end of its topic section, with the number you reserved in step 1.
+   Name scratch files outside the repository after the item, such as `k12-body.md`, because
+   sessions share the scratch directory.
+4. **Check before you mark ready.** Run `npm run typecheck`, `npm test` and `npm run build`. CI runs
+   the same three on the pull request, and again in the merge queue. For a change people can see,
+   also try it in a browser with two accounts, at desktop width and at 375 pixels, in light and dark
+   mode.
 5. **Show the owner and wait for their go.** Screenshots or a recording of a change people can see,
    from the browser run above, or the diff of one they cannot. Then mark the pull request ready.
    The owner merges. Main is squash-merged, and the squash commit's subject is the pull request
@@ -140,8 +146,8 @@ request as the change they describe.
 - When you make a decision, add it to `docs/decisions.md`. A decision is a new pattern, a trade-off,
   a limit, a dependency, or a rule. When it replaces an older decision, mark the old one as
   superseded and link the new one.
-- When you start, finish or set aside work, update its entry in `docs/roadmap.md`. When you find a
-  gap or a bug you are not fixing, add it there.
+- When you start, finish or set aside work, update its entry in `docs/roadmap.md` in place. When
+  you find a gap or a bug you are not fixing, add it there.
 - When you change a command, a path or a rule in this file, update this file.
 - When a document and the code disagree, the code is what runs. Fix the document, or record the bug
   in the roadmap.

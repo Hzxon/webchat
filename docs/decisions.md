@@ -7,7 +7,12 @@ it costs. Read the entries for the area you work on before you change how someth
 ## How to add or change an entry
 
 - Add a decision in the same pull request as the change that makes it.
-- Take the next free number. Numbers never change and are never reused.
+- Take the next free number, and reserve it when you claim, with
+  `scripts/claim.sh K-12 "<title>" D-077`, so that no other session takes it. Numbers never change
+  and are never reused.
+- Put a new entry at the end of its topic section, never at the end of the file. Git merges this
+  file with the union driver (`.gitattributes`, D-076), so two pull requests that each add an entry
+  at the same place merge without a conflict. The doc-ids check still fails a repeated number.
 - Say the decision first, then why it was made, then what it costs. Name the commit or pull request.
 - Never delete an entry. When a decision replaces an older one, change the old entry's status line
   to "Superseded by D-0xx", say in the new entry what it replaces, and move the old entry under
@@ -1223,6 +1228,33 @@ requests that take the same number both pass until one merges, and GitHub does n
 one's check again on its own. The second pull request has to be updated from main first, which
 runs the check. Mark the check required in the branch rules, with "Require branches to be up to
 date", or a red result will not stop the merge.
+
+### D-076: Fix pull requests edit the roadmap in place, and CI runs the checks
+
+Accepted 2026-11-03.
+
+A pull request that finishes a roadmap item changes only that item's status line, in place. It
+does not move the entry to Done or add a row to the Done table; a housekeeping pull request does
+both for every finished item at once. New decision entries go at the end of their topic section,
+and `.gitattributes` merges `docs/decisions.md` with git's union driver. `scripts/claim.sh` takes a
+decision number as a third argument and refuses one that an open pull request already reserves.
+`.github/workflows/ci.yml` runs typecheck, the tests and the build on every pull request, on main,
+and in the merge queue. (#55)
+
+Why: on 2026-11-03, thirteen fixes opened at once, and twelve of them conflicted with main before
+they could merge, eleven only in the docs. Each one appended a row at the same end of the Done
+table, added an entry at the same place in Done, and removed its own entry from Known issues next
+to where another had removed its own. Each merge took a merge of main, a resolve, a local test run
+and a wait for CI, because the only check on a pull request was doc-ids. A status line changed in
+place touches different lines for different items, so those merges go through clean. The union
+driver is safe for `decisions.md` because entries are never deleted. It is not used for the
+roadmap, where entries move: union would restore what one side removed.
+
+Cost: the Done section and its table lag behind until the next housekeeping pull request, so the
+status lines are the current index. The union driver can interleave two entries added at the same
+place in an odd order, which the next edit tidies. A merge queue is a repository setting, so the
+owner turns it on and requires the `checks` job; until then CI runs, but merges are not
+serialized.
 
 ## Superseded
 
