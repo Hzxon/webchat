@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, before, describe, test } from 'node:test';
+import { keyedQueue } from '../client/src/queue.ts';
 
 // The client module opens a BroadcastChannel when it loads. Node has that global too, and an open
 // channel would keep this process alive after the tests, so take it away before the module loads.
@@ -12,7 +13,11 @@ const clientApi = '../client/src/api.ts';
 type Answer = { status: number; body: string | null };
 
 describe('The request helper in client/src/api.ts', () => {
-  let api: { sync: (input: unknown) => Promise<unknown>; logout: () => Promise<void> };
+  let api: {
+    sync: (input: unknown) => Promise<unknown>;
+    logout: () => Promise<void>;
+    sendMessage: (conversationId: number, input: unknown) => Promise<unknown>;
+  };
   let ApiError: new (...args: never[]) => Error & { status: number };
   const originalFetch = globalThis.fetch;
 
@@ -58,5 +63,27 @@ describe('The request helper in client/src/api.ts', () => {
   test('a 204 has no body and resolves to nothing', async () => {
     answerWith({ status: 204, body: null });
     assert.equal(await api.logout(), undefined);
+  });
+
+  test('a send that never gets an answer fails after a minute, and the next send in its chat goes out (K-32)', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    // Like a connection that drops without a reset: no answer comes, and only an abort ends the request.
+    globalThis.fetch = (_input: unknown, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+    const enqueue = keyedQueue();
+    const stuck = enqueue(1, () => api.sendMessage(1, {}));
+    const next = enqueue(1, async () => 'next');
+    const turn = () => new Promise((resolve) => setImmediate(resolve));
+    await turn();
+    t.mock.timers.tick(60_000);
+    await turn();
+    const result = await Promise.race([Promise.allSettled([stuck, next]), turn().then(() => 'still waiting')]);
+    assert.notEqual(result, 'still waiting');
+    await assert.rejects(stuck, (error: unknown) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.status, 0);
+      return true;
+    });
+    assert.equal(await next, 'next');
   });
 });

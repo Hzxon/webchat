@@ -207,6 +207,8 @@ acknowledges them. Decide whether an unread urgent message should ring once when
 
 ### K-27: An IPv6 loopback address still gets TLS
 
+Status: Fixed in #63. A test in `test/sql.test.ts` checks that `[::1]` gets no TLS.
+
 Found while fixing K-10 in #46 on 2026-11-03.
 
 `connectPostgres` in `server/sql.ts` compares `url.hostname` with `::1`, but the WHATWG URL API
@@ -214,6 +216,9 @@ keeps the brackets, so the hostname is `[::1]` and never matches. A `DATABASE_UR
 loopback address gets TLS like a remote host. Compare with `[::1]`, or strip the brackets.
 
 ### K-28: The New channel dialog overflows at 375 pixels with a long name
+
+Status: Fixed in #59. A browser check at 375 pixels and at desktop width, in light and dark mode,
+measured no overflow with a name of 39 characters.
 
 Found in the browser check of K-11 in #51 on 2026-11-03.
 
@@ -224,6 +229,9 @@ the channel still works. `overflow-wrap: anywhere` on the preview would fix it.
 
 ### K-29: "Turn on notifications" shows on iOS before 16.4
 
+Status: Fixed in #57. A browser check with an iOS 15 user agent and no `Notification` shows the
+dialog without the button and with the Bark section; a normal browser still shows the button.
+
 Found in the browser check of K-23 in #48 on 2026-11-03.
 
 The bell dialog in `client/src/components/NotificationDialog.tsx` hides its main button only when
@@ -232,6 +240,9 @@ the permission is `denied`. On iOS before 16.4 there is no `Notification`, `enab
 when push is not supported, and leave the Bark section.
 
 ### K-30: A session found expired at load leaves the keys on the device
+
+Status: Fixed in #56. Tried in a browser: a load after the session row was deleted showed the
+sign-in screen with no keys left, and a load with the API unreachable or answering 503 kept them.
 
 Found while fixing K-18 in #47 on 2026-11-03.
 
@@ -242,6 +253,9 @@ this is the usual path. The account's keys then stay in IndexedDB for whoever us
 
 ### K-31: `sameIds` checks only its first list for duplicates
 
+Status: Fixed in #62. An integration test hands the database a key with two copies for one member
+and none for another, and checks that it is refused as stale.
+
 Found while fixing K-13 in #50 on 2026-11-03.
 
 `sameIds` in `server/db.ts` rejects a first list with repeated ids but not a second one, and it is
@@ -249,6 +263,9 @@ called with the wrapped-key list second. A key request with two copies for the s
 the check and reaches the insert. Not yet checked what the database does with the duplicate.
 
 ### K-32: A send that never ends blocks a chat's later sends
+
+Status: Fixed in #61 (D-077). A test queues a send behind one whose request never answers, and the
+second goes out after the timeout; it has not been tried in a browser on a dropped connection.
 
 Found while fixing K-24 in #53 on 2026-11-03. Listed as a cost in D-075.
 
@@ -259,6 +276,9 @@ timed-out send fail like any other so the queue moves on.
 
 ### K-33: The service worker never removes a replaced push endpoint
 
+Status: Fixed in #60. A node test runs the worker's handler with a fake old subscription, and an
+integration test checks that only its owner can delete an endpoint; no browser has fired the event.
+
 Found while fixing K-17 in #49 on 2026-11-03.
 
 The `pushsubscriptionchange` handler in `client/src/sw.ts` subscribes again but ignores the event's
@@ -268,6 +288,8 @@ the old endpoint when the event carries one.
 
 ### K-34: `shared/types.ts` says it holds only types
 
+Status: Fixed in #64. The header now says what the file holds and why.
+
 Found while fixing K-11 in #51 on 2026-11-03.
 
 The header of `shared/types.ts` says only type declarations live there, but the file also holds
@@ -276,10 +298,26 @@ header, or move the functions to a file of their own and add it to the map in AG
 
 ### K-35: The map of the code does not list `client/src/queue.ts`
 
+Status: Fixed in #58.
+
 Found while fixing K-24 in #53 on 2026-11-03.
 
 #53 adds `client/src/queue.ts`, the per-chat send queue of D-075, and the map in AGENTS.md does not
 name it. Add a row once #53 is on main.
+
+### K-36: Every deploy reloaded every open tab, even with the same page
+
+Status: Fixed in #66. Tests show that a deploy with the same page does not reload a tab, and that
+the Ignored Build Step skips a commit that changes only the docs, the tests, the CI or the scripts.
+
+Found by the owner on 2026-11-03, when 16 pull requests deployed in 40 minutes.
+
+A tab reloads when the build header changes (D-040). On Vercel the header is the deployment id,
+which every deploy changes. Of the 16 deploys from 21:10 to 21:49, 7 handed out the same page: 3
+changed only the docs, 1 only the tests and 3 only the server. Each one still reloaded every open
+tab, which drops scroll positions and open dialogs. Now a tab fetches the page again and reloads
+only when the page loads other bundle files. Vercel also skips the build of a commit that changes
+nothing the app runs (D-058). The 9 deploys that changed the page still reload every tab once each.
 
 ### K-37: A long name in a dialog title widens the dialog past a phone screen
 
@@ -292,6 +330,7 @@ without spaces. A project name can have 60 characters. The titles "New channel i
 "Repositories in …" and "Add people to …" carry such a name. At 375 pixels the dialog content
 grows past the dialog and pushes the close button out. `overflow-wrap: anywhere` on the title
 would fix it. #59 fixed the same overflow in the preview of the New channel dialog.
+
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
