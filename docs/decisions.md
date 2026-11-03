@@ -140,11 +140,13 @@ Cost: third-party scripts, fonts, analytics or CDNs need a change to the policy.
 
 ### D-040: Open tabs reload when the build changes
 
-Accepted 2026-11-01 in #6, changed in #18.
+Accepted 2026-11-01 in #6, changed in #18 and #66.
 
 Every `/api` response carries an `X-WebChat-Build` header that names the running build. The page
-remembers the first value it sees and reloads when a later response carries another, once the tab
-is hidden or nobody has pressed a key, clicked, touched or scrolled in it for 30 seconds. The
+remembers the first value it sees. When a later response carries another, the page fetches `/`
+again and compares the bundle files under `/assets/`, which Vite names after their contents. It
+reloads only when the new page loads a file that this one did not, once the tab is hidden or
+nobody has pressed a key, clicked, touched or scrolled in it for 30 seconds. The
 reload opens the chat or Pull requests pane that was open, through the `/?chat=` link that a
 notification click uses. On Vercel the name is the deployment id. Elsewhere it is `WEBCHAT_BUILD`,
 or a hash of the built `index.html`, whose script tags change with every client build. Without a
@@ -165,7 +167,15 @@ reload then waited only for the focus to leave an input, and the composer holds 
 chat is open, so the next click anywhere reloaded the page, swallowed the click, and started over
 on the Chats tab. Now no click fires it, and the user lands where they were (#18).
 
-Cost: a deploy reloads every open tab once, which drops scroll positions and any open dialog. A tab
+The owner reported on 2026-11-03 that tabs reloaded again and again. 16 pull requests deployed in
+40 minutes, and each new deployment id reloaded every tab. 7 of those deploys handed out the same
+page, because they changed only the docs, the tests or the server. Now a new build name only starts
+the check of the page, and a tab with the same page keeps the new name and stays. It asks the
+service worker to update instead, because the worker can change without the page (K-36).
+
+Cost: a deploy that changes the page reloads every open tab once, which drops scroll positions and
+any open dialog, so a burst of such deploys reloads tabs as often. Every deploy costs each tab one
+fetch of the page. A tab
 in use keeps the old build until it goes quiet for 30 seconds or is hidden. A tab with a failed
 message or an alert nobody dismisses keeps the old build until they are dealt with. A self-hosted
 server that restarts with the same build does not reload tabs, because the hash comes from the page,
@@ -1186,14 +1196,19 @@ deployment runs main, so it is usually ahead of the latest version. Release Plea
 request with the workflow's `GITHUB_TOKEN`, so the repository setting "Allow GitHub Actions to
 create and approve pull requests" must be on, and that pull request starts no other workflow.
 
-### D-058: Vercel skips the build of a release commit
+### D-058: Vercel skips builds that ship the same app
 
-Accepted 2026-11-02 in #30.
+Accepted 2026-11-02 in #30, changed in #66.
 
 Vercel builds every push to main (D-041). A release commit from Release Please changes only
 `package.json`, `package-lock.json` and `CHANGELOG.md`, and nothing at runtime reads them. Its build
 shipped the same app again, from Hobby build minutes. `scripts/ignore-build.sh`, the Ignored Build
 Step in `vercel.json`, skips a commit whose message starts with `chore(main): Release `.
+
+Since #66 it also skips a commit when nothing outside `docs/`, `test/`, `.github/`, `scripts/` and
+Markdown files changed since the last deployment, whose commit Vercel names in
+`VERCEL_GIT_PREVIOUS_SHA`. Such a deploy shipped the same app too, and made every open tab check the
+new build (K-36). When that commit is unknown or not in Vercel's shallow clone, the build runs.
 
 The release pull request still waits for the owner. It collects every `feat` and `fix` since the
 last release, so the owner merges it when a set of changes is worth a version. A workflow step that
@@ -1204,7 +1219,8 @@ starts no workflow run.
 
 Cost: Vercel still clones the repository and records a canceled deployment for each release commit.
 A commit on main whose message starts like a release commit never deploys, so only Release Please
-may use that title.
+may use that title. A commit that changes only the skipped paths never deploys either, so a file
+there that the app starts to read at runtime must move out of them first.
 
 ### D-059: Message content is padded to a few fixed sizes
 

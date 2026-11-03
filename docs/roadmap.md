@@ -304,6 +304,21 @@ Found while fixing K-24 in #53 on 2026-11-03.
 
 #53 adds `client/src/queue.ts`, the per-chat send queue of D-075, and the map in AGENTS.md does not
 name it. Add a row once #53 is on main.
+
+### K-36: Every deploy reloaded every open tab, even with the same page
+
+Status: Fixed in #66. Tests show that a deploy with the same page does not reload a tab, and that
+the Ignored Build Step skips a commit that changes only the docs, the tests, the CI or the scripts.
+
+Found by the owner on 2026-11-03, when 16 pull requests deployed in 40 minutes.
+
+A tab reloads when the build header changes (D-040). On Vercel the header is the deployment id,
+which every deploy changes. Of the 16 deploys from 21:10 to 21:49, 7 handed out the same page: 3
+changed only the docs, 1 only the tests and 3 only the server. Each one still reloaded every open
+tab, which drops scroll positions and open dialogs. Now a tab fetches the page again and reloads
+only when the page loads other bundle files. Vercel also skips the build of a commit that changes
+nothing the app runs (D-058). The 9 deploys that changed the page still reload every tab once each.
+
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
