@@ -193,12 +193,6 @@ the notes would show it nothing new. They should not count as unread.
 
 ## Known issues
 
-### K-10: `sslmode=disable` is ignored
-
-`connectPostgres` in `server/sql.ts` turns TLS on for every host except three loopback names and
-deletes `sslmode`. A self-hosted Postgres without TLS on another host, such as `db` in Docker
-Compose, cannot be reached, and the server stops at start. Only an undocumented `?ssl=0` works.
-
 ### K-11: The New channel dialog can make names the server refuses
 
 `toChannelName` in `client/src/components/ProjectDialogs.tsx` trims hyphens before it cuts the name
@@ -320,6 +314,17 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-12: A subscription with bad keys is refused or dropped, and no longer breaks pushes | #43 |
 | K-15: A late sync answer no longer closes a chat just created (D-069) | #44 |
 | K-16: A reaction push no longer shows or replaces a message notification (D-070) | #45 |
+| K-10: `sslmode=disable` in `DATABASE_URL` turns TLS off | #46 |
+
+### K-10: `sslmode=disable` is ignored
+
+Status: Fixed in #46. `sslmode=disable` in `DATABASE_URL` now turns TLS off for any host. Without
+it, a host that is not loopback still gets TLS. A test checks the options the pool gets; no Postgres
+without TLS was tried. `.env.example` names the option.
+
+`connectPostgres` in `server/sql.ts` turns TLS on for every host except three loopback names and
+deletes `sslmode`. A self-hosted Postgres without TLS on another host, such as `db` in Docker
+Compose, cannot be reached, and the server stops at start. Only an undocumented `?ssl=0` works.
 
 ### K-16: A reaction push can replace a message notification
 
