@@ -7,7 +7,8 @@
 // - Chat key: random AES-256-GCM key per chat. The creator wraps it for every member with a key
 //   from static ECDH between the two of them, so a wrapped key proves who made it.
 // - Message: AES-GCM with the chat key, then an ECDSA signature over the ciphertext and its
-//   metadata, so no one, including other members, can alter it or send as someone else.
+//   metadata, so no one, including other members, can alter it or send as someone else. The content
+//   is padded to one of a few fixed sizes first, so the ciphertext length does not give it away.
 // - New member of a project: an existing member opens their own copy of each channel key and
 //   wraps it for the newcomer, who can then read the channel's history.
 // - Rotation: when someone leaves or is removed, a member who stays makes a new chat key, wraps it
@@ -330,6 +331,37 @@ export interface MessageContent {
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
 const EMOJI_LENGTH = 32;
 
+/**
+ * The smallest size the content is padded to, in bytes. Every size above it is the next power of
+ * two, so the server learns only which of a few bands a message falls in, and a reaction, a
+ * take-back and a short message all look the same. Doubling keeps the bands few; the largest
+ * message fits in 32 KB (LIMITS.ciphertextLength).
+ */
+export const PAD_MIN_BYTES = 256;
+
+// The padding is one 0x80 byte and then zeros (ISO/IEC 7816-4). The content is JSON, which ends
+// with "}" and never holds a raw zero byte, so content from before padding is told apart by its
+// last byte and still opens.
+const PAD_MARK = 0x80;
+
+/** Pads the content to the smallest band that holds it and the mark. */
+export function padContent(plain: Uint8Array): Uint8Array<ArrayBuffer> {
+  let size = PAD_MIN_BYTES;
+  while (size < plain.length + 1) size *= 2;
+  const out = new Uint8Array(size);
+  out.set(plain);
+  out[plain.length] = PAD_MARK;
+  return out;
+}
+
+/** Strips the padding. Content from before padding is returned as it is. */
+export function unpadContent(plain: Uint8Array): Uint8Array {
+  let end = plain.length;
+  while (end > 0 && plain[end - 1] === 0) end--;
+  if (end === 0 || plain[end - 1] !== PAD_MARK) return plain;
+  return plain.subarray(0, end - 1);
+}
+
 // Plain messages keep the original header, so their signatures from before kinds existed still check.
 const header = (meta: MessageMeta, keyId: string) =>
   `webchat/msg/v1|conv:${meta.conversationId}|kid:${keyId}|from:${meta.senderId}|urgent:${meta.urgent ? 1 : 0}|cid:${meta.clientId}` +
@@ -348,7 +380,7 @@ export async function encryptMessage(
     await subtle().encrypt(
       { name: 'AES-GCM', iv: fromBase64Url(iv), additionalData: utf8(head) },
       chatKey,
-      utf8(JSON.stringify(typeof content === 'string' ? { text: content } : content)),
+      padContent(utf8(JSON.stringify(typeof content === 'string' ? { text: content } : content))),
     ),
   );
   const sig = toBase64Url(await subtle().sign(SIGN, signPrivate, utf8(`${head}|iv:${iv}|ct:${ct}`)));
@@ -458,7 +490,7 @@ export async function decryptContent(
   } catch {
     throw new TamperedMessageError('decryption failed');
   }
-  return readContent(JSON.parse(decoder.decode(plain)));
+  return readContent(JSON.parse(decoder.decode(unpadContent(new Uint8Array(plain)))));
 }
 
 // ---------------------------------------------------------------------------------------------
