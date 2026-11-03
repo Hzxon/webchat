@@ -906,24 +906,29 @@ Cost:
 - Neither the pane nor the cards name a team asked to review. Reading a team needs `read:org` from
   the OAuth App, and a query that asked for one without it made GitHub refuse the whole poll.
 
-### D-059: Repositories owned by organizations are not supported for now
+### D-059: The pane names an organization that hides its pull requests
 
 Accepted 2026-11-03 in #34.
 
-The owner decided on 2026-11-03 that WebChat does not support repositories owned by GitHub
-organizations for now. The pane (D-033) and the linked repositories (D-050) are built for
-repositories under a person's own account. Nothing in the code or the user interface handles
-organizations, and nothing is added for them: no hint when an organization that restricts OAuth
-Apps hides its pull requests (K-6, dropped), no `read:org` scope, and no teams.
+An organization that restricts OAuth Apps hides its pull requests from the token until one of its
+owners approves WebChat (D-033). GitHub still answers the poll with the other pull requests, and
+adds one FORBIDDEN error for each one it left out. The error's message names the organization;
+nothing else in the answer does. `graphql` in `server/github.ts` now returns those errors next to
+the data, and the poll keeps the organizations they name in the stored lists as
+`hiddenOrganizations`. The pane names them in a banner that links to GitHub's page on asking the
+owners for approval, and the connect card says an organization may need to approve the app.
 
-Why: the organization cases need an owner of the organization to approve or install the app, which
-a student cannot do alone, and none had been seen on a real organization. Building hints and
-scopes for them would grow the connector for a case the product does not promise.
+Why: course repositories often live in an instructor's organization, and GitHub turns the
+restriction on for new organizations. Without the banner the pane said "You have no open pull
+requests" to a student whose pull requests were all hidden, and nothing told them that only an
+owner could change that. Only the owner's approval can fix it, so the pane's job is to say so and
+to whom.
 
-Cost: a repository in an organization that restricts OAuth Apps does not show in the pane, and the
-pane gives no hint why. The README says so in one line. A repository in an organization can be
-linked to a project only once an owner of that organization installs the app. Revisit when a real
-course organization needs it.
+Cost: the server recognizes the restriction by the text of GitHub's error message, which no
+schema fixes. If GitHub rewords it, the banner stops showing and the pull requests go silently
+missing again, as before. An organization that enforces SAML single sign-on hides its pull
+requests the same way, but its error names no organization, so the pane says nothing for it. The
+banner was built against GitHub's answer as reports describe it, not against a real organization.
 
 ## Engineering process
 

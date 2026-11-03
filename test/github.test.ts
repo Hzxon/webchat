@@ -74,6 +74,8 @@ async function startFakeGithub() {
     challenge: '',
     reviewRequested: [] as FakePull[],
     authored: [] as FakePull[],
+    /** Organizations that restrict OAuth Apps: GitHub leaves their pull requests out and adds an error for each. */
+    restricted: [] as string[],
     /** What the States query answers for pull requests that left the open list. */
     endings: new Map<string, { state: 'OPEN' | 'CLOSED' | 'MERGED'; mergedBy?: string }>(),
     searches: [] as string[],
@@ -155,13 +157,28 @@ async function startFakeGithub() {
         }
         if (query.includes('query Pulls')) {
           state.searches.push(body.variables.reviewQuery, body.variables.authoredQuery);
-          return json(200, {
-            data: {
-              viewer: { login: 'octo' },
-              reviewRequested: { nodes: state.reviewRequested.map(toNode) },
-              authored: { nodes: state.authored.map(toNode) },
-            },
-          });
+          // A pull request in a restricted organization comes back as a null node, with a
+          // FORBIDDEN error next to the data that names the organization.
+          const errors: unknown[] = [];
+          const nodes = (list: FakePull[], name: string) =>
+            list.map((p, index) => {
+              const owner = (p.repo ?? 'acme/app').split('/')[0]!;
+              if (!state.restricted.includes(owner)) return toNode(p);
+              errors.push({
+                type: 'FORBIDDEN',
+                path: [name, 'nodes', index],
+                extensions: { saml_failure: false },
+                locations: [{ line: 4, column: 3 }],
+                message: `Although you appear to have the correct authorization credentials, the \`${owner}\` organization has enabled OAuth App access restrictions, meaning that data access to third-parties is limited. For more information on these restrictions, including how to enable this app, visit https://docs.github.com/articles/restricting-access-to-your-organization-s-data/`,
+              });
+              return null;
+            });
+          const data = {
+            viewer: { login: 'octo' },
+            reviewRequested: { nodes: nodes(state.reviewRequested, 'reviewRequested') },
+            authored: { nodes: nodes(state.authored, 'authored') },
+          };
+          return json(200, errors.length > 0 ? { data, errors } : { data });
         }
         if (query.includes('query States')) {
           const nodes = (body.variables.ids as string[]).map((id) => {
@@ -473,6 +490,29 @@ describe('GitHub connector', () => {
     assert.equal(data.error, null);
     const pull = data.pulls!.authored.find((p) => p.number === 4)!;
     assert.deepEqual([pull.reviewers, pull.assignees], [['eve-gh'], ['octo']]);
+  });
+
+  test('an organization that restricts OAuth Apps is named, and its pull requests are left out (K-6)', async () => {
+    github.state.restricted = ['classroom'];
+    github.state.authored.push({ id: 'PR_hw_1', number: 1, title: 'Homework 1', author: 'octo', repo: 'classroom/hw1' });
+    github.state.reviewRequested.push({ id: 'PR_hw_2', number: 2, title: 'Homework 2', author: 'alice', repo: 'classroom/hw1' });
+    await pollDue();
+    let { data } = await request<GithubDTO>('GET', '/github');
+    assert.equal(data.error, null, 'the rest of the answer is still shown');
+    assert.deepEqual(data.pulls!.hiddenOrganizations, ['classroom'], 'named once, however many pull requests it hides');
+    assert.ok(!JSON.stringify(data.pulls).includes('Homework'), 'GitHub left them out, and nothing invents them');
+    assert.ok(data.pulls!.authored.some((p) => p.number === 4), 'pull requests from elsewhere still show');
+
+    // An owner approved the app: the pull requests appear, and the note goes away.
+    github.state.restricted = [];
+    await pollDue();
+    ({ data } = await request<GithubDTO>('GET', '/github'));
+    assert.deepEqual(data.pulls!.hiddenOrganizations, []);
+    assert.ok(data.pulls!.authored.some((p) => p.repo === 'classroom/hw1'));
+    github.state.authored = github.state.authored.filter((p) => p.repo !== 'classroom/hw1');
+    github.state.reviewRequested = github.state.reviewRequested.filter((p) => p.repo !== 'classroom/hw1');
+    await pollDue();
+    await request('GET', '/github');
   });
 
   let eve: Awaited<ReturnType<typeof addUser>>;

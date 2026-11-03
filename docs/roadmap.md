@@ -193,19 +193,6 @@ the notes would show it nothing new. They should not count as unread.
 
 ## Known issues
 
-### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
-
-Status: Dropped on 2026-11-03 in #34 (D-059). The owner decided that WebChat does not support
-repositories owned by organizations for now, so the hint is not built. The limit stays in the
-README.
-
-Course repositories usually live in an instructor's organization, such as a GitHub Classroom one.
-An organization that restricts OAuth Apps hides its pull requests until an owner approves WebChat
-(D-033), and a student cannot fix that alone. The README says so in one line; the connect card and
-the pane say nothing. GitHub's GraphQL answer carries the error next to the data (`graphql` in
-`server/github.ts` drops it). Showing it in the pane, and saying in the connect card that an
-organization may need to approve the app, would fix it. Not yet seen on a real organization.
-
 ### K-8: The ciphertext length shows the message length and some reactions
 
 Envelopes are not padded, so the server sees the exact length of every message. For the same
@@ -374,6 +361,21 @@ requests for the record. Nothing here is a candidate for what to do next.
 | R-018: Alerts on iPhones without Web Push, through the Bark app (D-054) | #23 |
 | K-7: A sync answer that breaks off no longer poisons the cursor (D-056) | #27 |
 | K-5: GitHub alerts arrive with every tab closed, through Supabase Cron (D-057) | #29 |
+| K-6: The pane names an organization that hides its pull requests (D-059) | #34 |
+
+### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
+
+Status: Fixed in #34 (D-059). Tested against GitHub's answer as community reports describe it: a
+200 with the pull requests of the organization left out and one FORBIDDEN error for each, naming
+the organization. Not yet seen on a real organization; the first report from one should confirm
+the wording the server matches.
+
+Course repositories usually live in an instructor's organization, such as a GitHub Classroom one.
+An organization that restricts OAuth Apps hides its pull requests until an owner approves WebChat
+(D-033), and a student cannot fix that alone. The README said so in one line; the connect card and
+the pane said nothing. GitHub's GraphQL answer carries the error next to the data (`graphql` in
+`server/github.ts` dropped it). The pane now names the organization and links to how a member
+asks for approval, and the connect card says an organization may need to approve the app.
 
 ### K-5: The connect card promised alerts with every tab closed
 

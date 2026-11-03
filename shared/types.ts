@@ -442,6 +442,12 @@ export interface PullListsDTO {
   reviewRequested: PullRequestDTO[];
   /** Open pull requests this user opened. */
   authored: PullRequestDTO[];
+  /**
+   * Organizations that restrict OAuth Apps and have not approved WebChat. GitHub leaves their pull
+   * requests out of the lists above, so the pane names them instead (K-6). Absent in lists stored
+   * before WebChat read it.
+   */
+  hiddenOrganizations?: string[];
 }
 
 export type GithubEventKind =
