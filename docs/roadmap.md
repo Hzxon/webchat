@@ -250,12 +250,6 @@ When a session ends with a 401, the page drops the keys but not the push subscri
 that browser next sees the old account's notification titles, such as sender and chat names, until
 the subscription is removed. Only "Sign out" removes it.
 
-### K-19: The push test for plain text cannot fail
-
-The test "pushes carry no plain text" in `test/chat.test.ts` looks for `urgent, `, which the message
-`Call me back, it is urgent` does not contain. Only its separate check of `payload.body` guards rule
-7. Search the payload for the whole message instead.
-
 ### K-21: An urgent message from while every tab was closed does not ring
 
 Found while testing a closed browser on 2026-11-01.
@@ -342,6 +336,7 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
 | K-9: A retried send is stored once (D-061) | #35 |
+| K-19: The push test searches the whole payload for the message | #41 |
 | K-26: Messages from a checked security code open without a reload | #42 |
 
 ### K-26: Messages from changed keys stayed unreadable after the check until a reload
@@ -356,6 +351,16 @@ unreadable (D-018). Checking the code in `trustKeys` in `client/src/chat.ts` upd
 but the messages already loaded kept their failed state, and failed reactions were dropped. A
 reload decrypted them. Now the keyring keeps every message and reaction that failed to open, and
 `trustKeys` opens them again through the same decrypt path and puts those that open in the chat.
+
+### K-19: The push test for plain text cannot fail
+
+Status: Fixed in #41. The new check was shown to fail with the message, and with only "me back",
+put into the push payload on the server, where the old check passed.
+
+The test "pushes carry no plain text" in `test/chat.test.ts` looks for `urgent, `, which the message
+`Call me back, it is urgent` does not contain. Only its separate check of `payload.body` guards rule
+7. Now the test searches the whole payload for the message and for its words "Call" and "back".
+"urgent" is left out, because the payload's field name and tag carry it.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 
