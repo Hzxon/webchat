@@ -1,0 +1,29 @@
+# Fails a pull request that gives two entries the same id in the decision log
+# or the roadmap. See D-063 in docs/decisions.md.
+name: doc-ids
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unique-ids:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a commit, like the action in release-please.yml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check that no id is used twice
+        run: |
+          status=0
+          check() {
+            dupes=$(grep -oE "^### ($2):" "$1" | tr -d '#: ' | sort | uniq -d)
+            if [ -n "$dupes" ]; then
+              echo "::error file=$1::Two headings share an id: $(echo $dupes)"
+              status=1
+            fi
+          }
+          check docs/decisions.md 'D-[0-9]+'
+          check docs/roadmap.md '[KRQ]-[0-9]+'
+          exit $status
