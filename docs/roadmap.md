@@ -195,12 +195,16 @@ the notes would show it nothing new. They should not count as unread.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 
+Status: Dropped on 2026-11-03 in #PRNUM (D-059). The owner decided that WebChat does not support
+repositories owned by organizations for now, so the hint is not built. The limit stays in the
+README.
+
 Course repositories usually live in an instructor's organization, such as a GitHub Classroom one.
 An organization that restricts OAuth Apps hides its pull requests until an owner approves WebChat
 (D-033), and a student cannot fix that alone. The README says so in one line; the connect card and
 the pane say nothing. GitHub's GraphQL answer carries the error next to the data (`graphql` in
-`server/github.ts` drops it). Show it in the pane, and say in the connect card that an organization
-may need to approve the app. Not yet seen on a real organization.
+`server/github.ts` drops it). Showing it in the pane, and saying in the connect card that an
+organization may need to approve the app, would fix it. Not yet seen on a real organization.
 
 ### K-8: The ciphertext length shows the message length and some reactions
 

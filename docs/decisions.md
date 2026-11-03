@@ -906,6 +906,25 @@ Cost:
 - Neither the pane nor the cards name a team asked to review. Reading a team needs `read:org` from
   the OAuth App, and a query that asked for one without it made GitHub refuse the whole poll.
 
+### D-059: Repositories owned by organizations are not supported for now
+
+Accepted 2026-11-03 in #PRNUM.
+
+The owner decided on 2026-11-03 that WebChat does not support repositories owned by GitHub
+organizations for now. The pane (D-033) and the linked repositories (D-050) are built for
+repositories under a person's own account. Nothing in the code or the user interface handles
+organizations, and nothing is added for them: no hint when an organization that restricts OAuth
+Apps hides its pull requests (K-6, dropped), no `read:org` scope, and no teams.
+
+Why: the organization cases need an owner of the organization to approve or install the app, which
+a student cannot do alone, and none had been seen on a real organization. Building hints and
+scopes for them would grow the connector for a case the product does not promise.
+
+Cost: a repository in an organization that restricts OAuth Apps does not show in the pane, and the
+pane gives no hint why. The README says so in one line. A repository in an organization can be
+linked to a project only once an owner of that organization installs the app. Revisit when a real
+course organization needs it.
+
 ## Engineering process
 
 ### D-035: Pull requests, squash merges and plain commit messages
