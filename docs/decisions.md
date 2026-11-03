@@ -1164,14 +1164,19 @@ deployment runs main, so it is usually ahead of the latest version. Release Plea
 request with the workflow's `GITHUB_TOKEN`, so the repository setting "Allow GitHub Actions to
 create and approve pull requests" must be on, and that pull request starts no other workflow.
 
-### D-058: Vercel skips the build of a release commit
+### D-058: Vercel skips builds that ship the same app
 
-Accepted 2026-11-02 in #30.
+Accepted 2026-11-02 in #30, changed in #66.
 
 Vercel builds every push to main (D-041). A release commit from Release Please changes only
 `package.json`, `package-lock.json` and `CHANGELOG.md`, and nothing at runtime reads them. Its build
 shipped the same app again, from Hobby build minutes. `scripts/ignore-build.sh`, the Ignored Build
 Step in `vercel.json`, skips a commit whose message starts with `chore(main): Release `.
+
+Since #66 it also skips a commit when nothing outside `docs/`, `test/`, `.github/`, `scripts/` and
+Markdown files changed since the last deployment, whose commit Vercel names in
+`VERCEL_GIT_PREVIOUS_SHA`. Such a deploy shipped the same app too, and made every open tab check the
+new build (K-36). When that commit is unknown or not in Vercel's shallow clone, the build runs.
 
 The release pull request still waits for the owner. It collects every `feat` and `fix` since the
 last release, so the owner merges it when a set of changes is worth a version. A workflow step that
@@ -1182,7 +1187,8 @@ starts no workflow run.
 
 Cost: Vercel still clones the repository and records a canceled deployment for each release commit.
 A commit on main whose message starts like a release commit never deploys, so only Release Please
-may use that title.
+may use that title. A commit that changes only the skipped paths never deploys either, so a file
+there that the app starts to read at runtime must move out of them first.
 
 ### D-059: Message content is padded to a few fixed sizes
 
