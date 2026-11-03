@@ -604,6 +604,24 @@ and client id, and the server then stops at start. The page's retries never made
 two tabs sending the same stored message in a browser without Web Locks could (D-051). A repeat
 answers with the first copy's envelope, not the one just sent, which the page never needs to read.
 
+### D-075: A chat's messages are sent one at a time
+
+Accepted 2026-11-03 in #53.
+
+`sendContent` in `client/src/chat.ts` encrypts and posts a message only once the chat's previous
+send has settled, through `keyedQueue` in `client/src/queue.ts`. A message shows as sending, and
+stays on the device (D-051), from the moment it is written, while it waits its turn. A send that
+fails does not hold up the ones behind it: they go out, and the failed one shows "Not sent". A
+retry joins the back of its chat's queue. Chats do not wait for each other.
+
+Why: the server numbers messages in the order they arrive, and each send ran on its own. Five quick
+sends were stored as one, three, four, two, five, and a reload kept that order (K-24).
+
+Cost: a burst of messages goes out one round trip at a time, so the last one arrives later. A
+request that never ends holds up its chat's later sends until the browser gives up on it, because
+requests carry no timeout. A retried message is stored after the ones sent while it waited. The
+order holds within one tab only: two tabs that send to one chat at once still race.
+
 ### D-072: An expired session ends the browser's push subscription
 
 Accepted 2026-11-03 in #47.

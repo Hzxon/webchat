@@ -27,6 +27,7 @@ import { EncryptionUnavailableError, keyring, type ChatConversation, type ChatMe
 import { keystore, type StoredUnsent } from './e2ee/keystore';
 import { refreshGithub, startGithub } from './github';
 import { disablePushHere, forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
+import { keyedQueue } from './queue';
 import { actions, chatTitle, localEditCount, senderName, store } from './store';
 
 const newClientId = () =>
@@ -48,6 +49,8 @@ let pushEndpoint: string | null = null;
 const seen = new Set<number>();
 /** Client ids of the messages this tab keeps on the device until the server has them (D-051). */
 const unsent = new Set<string>();
+// The server numbers messages as they arrive, so a chat's sends go out one at a time (D-075).
+const sendInOrder = keyedQueue();
 /**
  * Messages up to this id were in the chats when the page loaded, so they never alert. `seen` starts
  * empty on every load, and sync re-sends the last few seconds of messages as an overlap.
@@ -738,7 +741,7 @@ async function sendContent(conversationId: number, content: MessageContent, urge
   actions.addSending(sending);
   rememberUnsent(entry);
   try {
-    const message = await sealAndSend(conversationId, { urgent, clientId, kind: 'message' }, content);
+    const message = await sendInOrder(conversationId, () => sealAndSend(conversationId, { urgent, clientId, kind: 'message' }, content));
     seen.add(message.id);
     actions.addMessage({ ...sending, ...message }, false);
     actions.setPending(clientId, null);

@@ -203,15 +203,6 @@ push reached the device, the notification stays until it is tapped. Without push
 notifications blocked, nothing ever rings, though D-023 says urgent messages ring until the user
 acknowledges them. Decide whether an unread urgent message should ring once when a page opens.
 
-### K-24: Quick sends can be stored out of order
-
-Found while testing #21.
-
-`sendContent` in `client/src/chat.ts` encrypts and posts each message on its own, and the server
-numbers messages in the order they arrive. Sending "one" to "five" with Enter in quick succession
-stored them as one, three, four, two, five, and a reload showed the same order. Send a chat's
-messages one at a time, in the order they were written.
-
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
@@ -280,6 +271,19 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-13: The first key of a group checks its members under the group's lock | #50 |
 | K-11: The New channel dialog and the server share one name rule (D-065) | #51 |
 | K-14: Only failed sign-ins use up the limit for an address (D-068) | #52 |
+| K-24: A chat's messages are sent one at a time, in the order they were written (D-075) | #53 |
+
+### K-24: Quick sends can be stored out of order
+
+Status: Fixed in #53 (D-075). A test runs jobs through the per-chat queue in
+`client/src/queue.ts`; the page's own sends have not been tried in a browser yet.
+
+Found while testing #21.
+
+`sendContent` in `client/src/chat.ts` encrypts and posts each message on its own, and the server
+numbers messages in the order they arrive. Sending "one" to "five" with Enter in quick succession
+stored them as one, three, four, two, five, and a reload showed the same order. Send a chat's
+messages one at a time, in the order they were written.
 
 ### K-14: Sign-ins from one address share a small rate limit
 
