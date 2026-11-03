@@ -582,6 +582,25 @@ and client id, and the server then stops at start. The page's retries never made
 two tabs sending the same stored message in a browser without Web Locks could (D-051). A repeat
 answers with the first copy's envelope, not the one just sent, which the page never needs to read.
 
+### D-069: A check-in answer older than a change on the page is dropped
+
+Accepted 2026-11-03 in #44.
+
+`client/src/store.ts` counts the changes the page makes to its chats and projects ahead of the
+server: a chat or project it adds, changes, leaves or deletes. A check-in notes the count when its
+request goes out. When the count moved before the answer is applied, `applySync` applies nothing,
+and the page checks in again at once with the same stamp and cursor. `reloadAll` fetches again the
+same way, because its callers go on with what it loads.
+
+Why: the server builds an answer from the chats as they were when the request arrived. An answer
+that left before a new chat committed, but came back after the page opened it, closed the chat
+with "It was deleted, or you were removed" until the next check-in (K-15). The same race brought
+back a chat the page had just left or deleted, and put back a project's old member list.
+
+Cost: every change on the page that overlaps a check-in costs one more check-in. A change that
+reaches the store some other way must go through the counted actions, or a late answer undoes it
+until the next check-in.
+
 ## Projects and channels
 
 ### D-054: iPhones without Web Push get alerts through the Bark app

@@ -27,7 +27,7 @@ import { EncryptionUnavailableError, keyring, type ChatConversation, type ChatMe
 import { keystore, type StoredUnsent } from './e2ee/keystore';
 import { refreshGithub, startGithub } from './github';
 import { forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
-import { actions, chatTitle, senderName, store } from './store';
+import { actions, chatTitle, localEditCount, senderName, store } from './store';
 
 const newClientId = () =>
   typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -103,10 +103,16 @@ export async function syncNow(): Promise<void> {
   inFlight = true;
   clearTimeout(timer);
   try {
+    const since = localEditCount();
     const result = await api.sync({ cursor, stamp, attentive: attention.isAttentive(), tabId, endpoint: pushEndpoint });
     failures = 0;
     actions.setConnected(true);
-    if (result.changed) await applyChanges(result);
+    // An answer this page changed a chat under is dropped whole. Stamp and cursor stay, so the
+    // check-in that follows at once brings everything it held again (D-069).
+    if (result.changed && !(await applyChanges(result, since))) {
+      again = true;
+      return;
+    }
     stamp = result.stamp;
     cursor = Math.max(cursor, result.cursor);
     // The server holds more than one answer carries: fetch the rest now, for a few rounds at most.
@@ -134,7 +140,8 @@ export async function syncNow(): Promise<void> {
   }
 }
 
-async function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
+/** Returns false when it applied nothing: the page stopped, or changed a chat after `since`. */
+async function applyChanges(result: Extract<SyncResponse, { changed: true }>, since: number): Promise<boolean> {
   const keysOf = lookupFrom(result.users);
   actions.setKeyWarnings(await keyring.checkKeys(result.users));
   const conversations = await openConversations(result.conversations, keysOf);
@@ -142,12 +149,12 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
   const messages = await Promise.all(
     result.messages.filter((m) => byId.has(m.conversationId)).map((m) => keyring.open(m, byId.get(m.conversationId)!, keysOf)),
   );
-  if (!running) return;
+  if (!running) return false;
 
+  const before = store.get();
+  if (!actions.applySync(result.users, result.projects, conversations, messages, since)) return false;
   const fresh = messages.filter((m) => !seen.has(m.id));
   for (const m of fresh) seen.add(m.id);
-  const before = store.get();
-  actions.applySync(result.users, result.projects, conversations, messages);
   for (const message of fresh) if (shouldAlert(message, byId.get(message.conversationId)!)) onIncoming(message);
   // The server has these after all, for example from a tab that closed before it heard back.
   for (const message of messages) if (message.senderId === meId && message.clientId) forgetUnsent(message.clientId);
@@ -162,6 +169,7 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>) {
   // Someone left these chats. The first member's browser to notice gives each a new key; a failure
   // here waits for the next send, which tries again and says why.
   for (const c of conversations) if (c.keyId && c.needsNewKey) replaceChatKey(c.id).catch(() => undefined);
+  return true;
 }
 
 /**
@@ -179,17 +187,25 @@ function shouldAlert(message: ChatMessage, conversation: ChatConversation): bool
 
 /** Fetches everything again, for when this device missed a change such as a new chat key. */
 async function reloadAll() {
-  const data = await api.bootstrap();
-  await applyChanges({
-    changed: true,
-    stamp: data.stamp,
-    cursor: data.cursor,
-    users: data.users,
-    projects: data.projects,
-    conversations: data.conversations,
-    messages: [],
-    more: false,
-  });
+  // Its callers go on with what it loads, so a load this page changed a chat under is fetched again.
+  for (;;) {
+    const since = localEditCount();
+    const data = await api.bootstrap();
+    const applied = await applyChanges(
+      {
+        changed: true,
+        stamp: data.stamp,
+        cursor: data.cursor,
+        users: data.users,
+        projects: data.projects,
+        conversations: data.conversations,
+        messages: [],
+        more: false,
+      },
+      since,
+    );
+    if (applied || !running) return;
+  }
 }
 
 export type StartResult = { status: 'ready' } | { status: 'locked'; me: UserDTO } | { status: 'stale' };
