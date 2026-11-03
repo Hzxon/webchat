@@ -202,12 +202,6 @@ the pane say nothing. GitHub's GraphQL answer carries the error next to the data
 `server/github.ts` drops it). Show it in the pane, and say in the connect card that an organization
 may need to approve the app. Not yet seen on a real organization.
 
-### K-9: Retrying a send can store the message twice
-
-`retryMessage` sends with a new client id, and the server does not check client ids. When a send
-commits but its answer is lost, a retry stores a second copy, and an urgent one alerts twice. Keep
-the client id on retry and make (sender, client id) unique.
-
 ### K-10: `sslmode=disable` is ignored
 
 `connectPostgres` in `server/sql.ts` turns TLS on for every host except three loopback names and
@@ -364,6 +358,7 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-7: A sync answer that breaks off no longer poisons the cursor (D-056) | #27 |
 | K-5: GitHub alerts arrive with every tab closed, through Supabase Cron (D-057) | #29 |
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
+| K-9: A send retried after a lost answer is stored and alerted once (D-060) | #36 |
 
 ### K-5: The connect card promised alerts with every tab closed
 
@@ -376,6 +371,16 @@ The connect card in `client/src/components/GithubView.tsx` said WebChat alerts "
 closed". On Vercel Hobby that held only after the owner set `CRON_SECRET` and a scheduler called
 `GET /api/github/poll` (D-034). Production had neither, so nothing polled while every tab was
 closed, and nobody was told.
+
+### K-9: Retrying a send could store the message twice
+
+Status: Fixed in #36 (D-060). Found in a review of main on 2026-11-01, with K-7, K-8 and K-10 to
+K-19.
+
+`retryMessage` sent with a new client id, and the server did not check client ids. When a send
+committed but its answer was lost, a retry stored a second copy, and an urgent one alerted twice.
+Now (sender, client id) is unique, a repeat gets the stored message back, and a retry keeps its
+client id.
 
 ### K-8: The ciphertext length shows the message length and some reactions
 

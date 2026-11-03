@@ -528,8 +528,8 @@ What someone types in a chat's message box, and every message the server has not
 the device's IndexedDB next to the account's keys. A draft comes back when its chat opens again:
 after a closed tab, a reload, or a visit to another chat. A message that was sending or failed comes
 back in its chat as "Not sent", with a toast that names the chat, unless the chat's history shows
-that the server has it after all. The page never sends it again by itself, because a retry can
-store a message twice (K-9). A Remove button next to "Tap to retry" drops it. While a message is
+that the server has it after all. The page never sends it again by itself; the user taps to retry,
+which sends it under the same client id (D-060). A Remove button next to "Tap to retry" drops it. While a message is
 still sending, the tab asks before it closes or reloads. Signing out removes drafts and unsent
 messages with the keys.
 
@@ -544,8 +544,8 @@ were for never got them, and the writer believed they had.
 Cost: drafts and unsent messages sit on the device unencrypted until they are sent or the user
 signs out, so anyone with the device's files can read them. A browser without Web Locks, such as
 Safari before 15.4, can show the same unsent message in two tabs. A message that reached the server
-as its tab closed shows as not sent if newer messages push it off the chat's first page, and a retry
-then sends it twice.
+as its tab closed shows as not sent if newer messages push it off the chat's first page, until a
+retry gets it back (D-060).
 
 ### D-056: A 2xx answer whose body does not parse is a failed request
 
@@ -560,7 +560,27 @@ so the default error message stands.
 
 Cost: a route that answers 2xx without a JSON body must use 204, or every call to it fails. A send
 whose answer breaks off now shows as not sent, like one whose connection dropped, although the
-server stored it. A retry stores it again until K-9 is fixed.
+server stored it. A retry gets the stored message back (D-060).
+
+### D-060: A send repeated with its client id is stored once
+
+Accepted 2026-11-03 in #36.
+
+Every send carries a client id the page makes, signed into the envelope (D-016). Migration 10 makes
+(sender, client id) unique on messages. A send that repeats a client id of the same sender is not
+stored again: the server answers the message it already has, with status 200 instead of 201, and
+does not move the chat, mark it read or push for it. A retry of a failed message sends it under the
+same client id, so a send whose answer was lost is stored and alerted once (K-9).
+
+Why: a retry made a new client id, and the server checked none. When a send committed but its
+answer was lost, the retry stored a second copy and an urgent one rang everyone twice. The page
+already matches its unsent messages to the chat's history by client id (D-051), so the id is the
+natural key.
+
+Cost: the server answers the stored message, with its first envelope, whatever the repeat carried.
+A page that reuses a client id for a different message gets the first one back and shows it as
+sent. The migration fails on a database that already holds two messages of one sender under one
+client id, which nothing has made so far: before this, every send made a fresh id.
 
 ## Projects and channels
 
