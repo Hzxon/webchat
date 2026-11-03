@@ -1447,7 +1447,7 @@ describe('chat server', () => {
     const aps = push!.body.aps as { alert: { title: string }; sound: string };
     assert.equal(aps.alert.title, 'URGENT from Alice');
     assert.equal(aps.sound, 'alarm.caf');
-    assert.equal(push!.body.level, 'timeSensitive');
+    assert.equal(push!.body.level, 'critical', 'rings through silent mode and Do Not Disturb (D-079)');
     assert.equal(push!.body.call, '1');
   });
 

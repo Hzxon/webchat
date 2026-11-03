@@ -727,10 +727,12 @@ Accepted 2026-11-03 in #69.
 The server sends an urgent message's push again every 15 seconds to each member who has not read
 the chat and is not looking at the app. It stops when they read the chat on any device, or when the
 message is 3 days old. Each push repeats the first one, so the notification sounds and vibrates
-again, and through Bark the phone rings for 30 seconds each time (D-054). Only Chromium sounds again
-for a notification under the same tag, so the service worker closes the last one before it shows
-the next. Only a chat's newest unread urgent message rings. A recipient who looks at the app gets
-no push: the page rings on its own there (D-023). Dismiss stops only that page's alert.
+again, and through Bark the phone rings for 30 seconds each time (D-054). A Bark alert for an
+urgent message is critical, so it rings through silent mode and Do Not Disturb. Only Chromium
+sounds again for a notification under the same tag, so the service worker closes the last one
+before it shows the next. Only a chat's newest unread urgent message rings. A recipient who looks
+at the app gets no push: the page rings on its own there (D-023). Dismiss stops only that page's
+alert.
 
 A self-hosted server rings on a timer. On Vercel, a second Supabase Cron job, `webchat-urgent-ring`,
 calls `GET /api/urgent/ring` every 15 seconds with the same secret as the GitHub poll (D-057). It
@@ -744,11 +746,15 @@ play a sound, so only a push reaches a locked phone or a closed browser, and onl
 send one later. The 3 days match how long an urgent push waits for an offline device.
 
 Cost: a phone rings every 15 seconds until its owner opens the chat, at night too. Silent mode and
-Do Not Disturb still mute it, because a web app cannot override them. While an urgent message waits
-unread, Vercel runs a function every 15 seconds: up to 5,760 calls a day, a sixth of Hobby's monthly
-million if one waited all month. Push services and Apple see a push every 15 seconds while it
-waits. A browser that is quit rings only once it starts again. Without pg_cron and pg_net on
-Vercel, the server logs why, and an urgent message rings once with every tab closed.
+Do Not Disturb still mute a Web Push, because a web app cannot override them. Bark rings through
+them only where the person allowed critical alerts for it. Where they did not, Bark shows the alert
+as a normal one, which a Focus can hold back, as it could not when urgent alerts were
+time-sensitive. While an urgent message waits unread, Vercel runs a function every 15 seconds: up
+to 5,760 calls a day, a sixth of Hobby's monthly million if one waited all month. Push services and
+Apple see a push every 15 seconds while it waits. A browser that is quit rings only once it starts
+again. Without pg_cron and pg_net on Vercel, the server logs why, and an urgent message rings once
+with every tab closed.
+
 ## Projects and channels
 
 ### D-054: iPhones without Web Push get alerts through the Bark app
