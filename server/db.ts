@@ -963,19 +963,32 @@ export async function openDb(sql: Sql) {
     },
 
     /**
-     * Gives a chat from before encryption its key. Only the first caller wins; returns false if the
-     * chat already has one. A group without an owner becomes the caller's, as migration 4 did for
-     * the groups keyed before it.
+     * Gives a chat from before encryption its key. Only the first caller wins. 'stale' when the
+     * caller left, or the copies do not cover exactly the members. A group without an owner becomes
+     * the caller's, as migration 4 did for the groups keyed before it.
      */
-    setConversationKey(conversationId: number, keyId: string, wrappedBy: number, wrappedKeys: WrappedKeyInput[]) {
+    setConversationKey(
+      conversationId: number,
+      keyId: string,
+      wrappedBy: number,
+      wrappedKeys: WrappedKeyInput[],
+    ): Promise<true | 'has_key' | 'stale'> {
       return sql.transaction(async (tx) => {
-        const updated = await tx.query(
+        // Adding, removing and leaving lock this row too, so the members stay as checked until the key is stored.
+        const chat = await one(
+          tx.query<{ key_id: string | null }>('SELECT key_id FROM webchat.conversations WHERE id = $1 FOR UPDATE', [
+            conversationId,
+          ]),
+        );
+        if (chat?.key_id !== null) return 'has_key';
+        const memberIds = await chatMembers(tx, conversationId);
+        if (!memberIds.includes(wrappedBy) || !sameIds(memberIds, wrappedKeys.map((k) => k.userId))) return 'stale';
+        await tx.query(
           `UPDATE webchat.conversations
            SET key_id = $2, created_by = CASE WHEN type = 'group' THEN COALESCE(created_by, $3) ELSE created_by END
-           WHERE id = $1 AND key_id IS NULL RETURNING id`,
+           WHERE id = $1`,
           [conversationId, keyId, wrappedBy],
         );
-        if (updated.length === 0) return false;
         await insertWrappedKeys(tx, conversationId, wrappedBy, wrappedKeys);
         return true;
       });

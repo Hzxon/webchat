@@ -759,9 +759,10 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const memberIds = await db.memberIds(conversationId);
     await requireKeys(memberIds);
     const key = chatKey(req.body, memberIds);
-    if (!(await db.setConversationKey(conversationId, key.keyId, me.id, key.wrappedKeys))) {
-      throw new HttpError(409, 'This chat already has a key.', 'has_key');
-    }
+    // The members can change before the key is stored, so they are checked again under the lock.
+    const result = await db.setConversationKey(conversationId, key.keyId, me.id, key.wrappedKeys);
+    if (result === 'has_key') throw new HttpError(409, 'This chat already has a key.', 'has_key');
+    if (result === 'stale') throw new HttpError(409, 'The group changed while you were editing. Try again.', 'stale_group');
     res.json(await db.conversationFor(me.id, conversationId));
   });
 
@@ -830,6 +831,10 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     }
     if (endpoint.length > 1000 || p256dh.length > 200 || auth.length > 100 || !push.isAllowedEndpoint(endpoint)) {
       throw new HttpError(400, 'This push service is not supported.');
+    }
+    // The sizes a browser's P-256 public key and auth secret have. web-push throws on others (K-12).
+    if (Buffer.from(p256dh, 'base64url').length !== 65 || Buffer.from(auth, 'base64url').length !== 16) {
+      throw new HttpError(400, 'Subscription keys are invalid.');
     }
     await db.savePushSubscription(me.id, endpoint, p256dh, auth);
     res.status(204).end();
