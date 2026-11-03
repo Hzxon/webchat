@@ -209,12 +209,6 @@ message, a ❤️ reaction is longer than the other five quick reactions, and ta
 shorter. The README says the server cannot see which emoji. Pad envelopes to a few fixed sizes, or
 correct the README and D-020.
 
-### K-9: Retrying a send can store the message twice
-
-`retryMessage` sends with a new client id, and the server does not check client ids. When a send
-commits but its answer is lost, a retry stores a second copy, and an urgent one alerts twice. Keep
-the client id on retry and make (sender, client id) unique.
-
 ### K-10: `sslmode=disable` is ignored
 
 `connectPostgres` in `server/sql.ts` turns TLS on for every host except three loopback names and
@@ -370,6 +364,16 @@ requests for the record. Nothing here is a candidate for what to do next.
 | R-018: Alerts on iPhones without Web Push, through the Bark app (D-054) | #23 |
 | K-7: A sync answer that breaks off no longer poisons the cursor (D-056) | #27 |
 | K-5: GitHub alerts arrive with every tab closed, through Supabase Cron (D-057) | #29 |
+| K-9: A retried send is stored once (D-059) | #35 |
+
+### K-9: Retrying a send can store the message twice
+
+Status: Fixed in #35 (D-059). An integration test sends the same client id twice and checks that
+one row is stored, the second answer carries the first message, and the push goes out once.
+
+`retryMessage` sent with a new client id, and the server did not check client ids. When a send
+committed but its answer was lost, a retry stored a second copy, and an urgent one alerted twice.
+Now the retry keeps the client id, and (chat, sender, client id) is unique.
 
 ### K-5: The connect card promised alerts with every tab closed
 
