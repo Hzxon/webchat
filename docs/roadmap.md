@@ -195,7 +195,7 @@ the notes would show it nothing new. They should not count as unread.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 
-Status: Dropped on 2026-11-03 in #PRNUM (D-059). The owner decided that WebChat does not support
+Status: Dropped on 2026-11-03 in #34 (D-059). The owner decided that WebChat does not support
 repositories owned by organizations for now, so the hint is not built. The limit stays in the
 README.
 

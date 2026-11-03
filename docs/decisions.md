@@ -908,7 +908,7 @@ Cost:
 
 ### D-059: Repositories owned by organizations are not supported for now
 
-Accepted 2026-11-03 in #PRNUM.
+Accepted 2026-11-03 in #34.
 
 The owner decided on 2026-11-03 that WebChat does not support repositories owned by GitHub
 organizations for now. The pane (D-033) and the linked repositories (D-050) are built for
