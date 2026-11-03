@@ -26,7 +26,7 @@ import { holdReloadWhile, setReloadTarget } from './build';
 import { EncryptionUnavailableError, keyring, type ChatConversation, type ChatMessage, type KeyLookup } from './e2ee/keyring';
 import { keystore, type StoredUnsent } from './e2ee/keystore';
 import { refreshGithub, startGithub } from './github';
-import { forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
+import { disablePushHere, forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
 import { actions, chatTitle, senderName, store } from './store';
 
 const newClientId = () =>
@@ -118,6 +118,10 @@ export async function syncNow(): Promise<void> {
     }
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
+      // The expired session cannot remove this browser's subscription on the server, so end it in
+      // the browser. The push service then refuses the server's next push, and the server deletes
+      // the row. Until then, the next person here would see the old account's notifications (K-18).
+      void disablePushHere();
       void endSession();
       return;
     }

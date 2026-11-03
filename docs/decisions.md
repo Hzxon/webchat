@@ -582,6 +582,22 @@ and client id, and the server then stops at start. The page's retries never made
 two tabs sending the same stored message in a browser without Web Locks could (D-051). A repeat
 answers with the first copy's envelope, not the one just sent, which the page never needs to read.
 
+### D-072: An expired session ends the browser's push subscription
+
+Accepted 2026-11-03 in #47.
+
+When a check-in or the page's first load answers 401, the page ends this browser's push
+subscription, the way "Turn off on this device" does. Without a session the server cannot be asked
+to drop its row, so the row stays until the next push to it. The push service answers 410 Gone, and the server deletes the row. "Sign out"
+still drops the row on the server first and leaves the browser subscribed.
+
+Why: the server kept pushing the old account's messages to that browser, and a push names the
+sender and the chat in its title. Whoever used the browser next saw them (K-18).
+
+Cost: the next sign-in in that browser subscribes again with a new endpoint, outside a click. A
+browser that allows that only from a click needs notifications turned on again in the bell dialog.
+Each dead row costs one refused push before it is deleted.
+
 ## Projects and channels
 
 ### D-054: iPhones without Web Push get alerts through the Bark app

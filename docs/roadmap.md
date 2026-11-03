@@ -244,12 +244,6 @@ The service worker's `pushsubscriptionchange` handler subscribes again but does 
 They keep reporting the old endpoint, so pushes for the user while they look go to a dead endpoint,
 and messages show up to 15 seconds late until a reload. Mostly Firefox fires this event.
 
-### K-18: A session that expires leaves push on for that browser
-
-When a session ends with a 401, the page drops the keys but not the push subscription. Whoever uses
-that browser next sees the old account's notification titles, such as sender and chat names, until
-the subscription is removed. Only "Sign out" removes it.
-
 ### K-19: The push test for plain text cannot fail
 
 The test "pushes carry no plain text" in `test/chat.test.ts` looks for `urgent, `, which the message
@@ -351,6 +345,17 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
 | K-9: A retried send is stored once (D-061) | #35 |
+| K-18: An expired session ends the browser's push subscription (D-072) | #47 |
+
+### K-18: A session that expires leaves push on for that browser
+
+Status: Fixed in #47 (D-072). An integration test checks that the server deletes a subscription
+the push service answers 410 Gone. The page's side runs in the browser, which no test reaches, and
+is still to be tried by hand.
+
+When a session ends with a 401, the page drops the keys but not the push subscription. Whoever uses
+that browser next sees the old account's notification titles, such as sender and chat names, until
+the subscription is removed. Only "Sign out" removes it.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 

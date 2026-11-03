@@ -59,18 +59,21 @@ interface ReceivedPush {
 /** Stands in for a browser push service such as FCM, and records what the server sends to it. */
 async function startFakePushService() {
   const received: ReceivedPush[] = [];
+  /** Paths answered 410 Gone, as for a subscription the browser ended. */
+  const gone = new Set<string>();
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
       received.push({ path: req.url ?? '', headers: req.headers, body: Buffer.concat(chunks) });
-      res.writeHead(201).end();
+      res.writeHead(gone.has(req.url ?? '') ? 410 : 201).end();
     });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   return {
     host: `127.0.0.1:${(server.address() as AddressInfo).port}`,
     received,
+    gone,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
@@ -590,6 +593,20 @@ describe('chat server', () => {
     await alice.send(directChat.id, 'Ping after you left');
     const pushes = await waitForPushes(pushService.received, 3);
     assert.equal(pushes.length, 3);
+  });
+
+  test('a subscription the push service reports gone is deleted at the next push', async () => {
+    // A browser whose session expired ends its subscription without telling the server (K-18).
+    const expired = makeSubscription(`http://${pushService.host}/bob-expired`);
+    assert.equal((await bob.request('POST', '/push/subscribe', expired.json)).status, 204);
+    pushService.gone.add('/bob-expired');
+    await bob.sync(false);
+    pushService.received.length = 0;
+    await alice.send(directChat.id, 'Anyone home?');
+    await waitForPushes(pushService.received, 4);
+    await sleep(100);
+    const rows = await instance.sql.query('SELECT 1 FROM webchat.push_subscriptions WHERE endpoint = $1', [expired.json.endpoint]);
+    assert.equal(rows.length, 0);
   });
 
   test('the same send again, after a lost answer, returns the stored message and alerts once', async () => {
@@ -1168,6 +1185,7 @@ describe('chat server', () => {
         'Still there?',
         'Call me back, it is urgent',
         'Ping after you left',
+        'Anyone home?',
         'Did my answer get lost?',
       ],
     );
