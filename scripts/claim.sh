@@ -1,0 +1,48 @@
+#!/bin/sh
+# Claims a roadmap item before any code is written, so two sessions never fix
+# the same one. See D-062 and "How to work here" in AGENTS.md.
+#
+# Usage, on a new branch cut from main whose name carries the item:
+#   scripts/claim.sh K-12 "fix(push): Drop a subscription with bad keys"
+#
+# It refuses when an open pull request names the item, warns about a remote
+# branch that does, then pushes an empty commit and opens a draft pull
+# request whose body names the item. Later commits go to the same branch.
+set -eu
+
+item=${1:?usage: scripts/claim.sh <K-12|R-005|Q-1> "<pull request title>"}
+title=${2:?usage: scripts/claim.sh <K-12|R-005|Q-1> "<pull request title>"}
+case "$item" in
+  [KRQ]-[0-9]|[KRQ]-[0-9][0-9]|[KRQ]-[0-9][0-9][0-9]) ;;
+  *) echo "The item is a roadmap id such as K-12, R-005 or Q-1." >&2; exit 1 ;;
+esac
+branch=$(git rev-parse --abbrev-ref HEAD)
+# K-12 matches branch names such as claude/k12-bad-push-keys and claude/k-12-keys.
+slug=$(printf '%s' "$item" | tr 'A-Z' 'a-z' | sed 's/-/-\\{0,1\\}/')
+
+case "$branch" in
+  main) echo "Cut a branch from main first; main is never pushed to directly." >&2; exit 1 ;;
+esac
+if ! printf '%s' "$branch" | grep -qi -- "$slug"; then
+  echo "Name the branch after the item, for example claude/$(printf '%s' "$item" | tr 'A-Z' 'a-z' | tr -d -)-short-title, so other claims can find it." >&2
+  exit 1
+fi
+
+git fetch -q origin
+taken=$(gh pr list --state open --json number,title,body \
+  --jq ".[] | select((.title + \" \" + (.body // \"\")) | test(\"\\\\b$item\\\\b\"; \"i\")) | \"#\\(.number) \\(.title)\"")
+if [ -n "$taken" ]; then
+  echo "$item is already claimed by an open pull request:" >&2
+  echo "$taken" >&2
+  echo "Pick another item, or ask its owner." >&2
+  exit 1
+fi
+others=$(git ls-remote --heads origin | awk '{print $2}' | sed 's#^refs/heads/##' | grep -i -- "$slug" | grep -vx -- "$branch" || true)
+if [ -n "$others" ]; then
+  echo "Warning: these remote branches also name $item, with no open pull request. Make sure they are abandoned:" >&2
+  echo "$others" >&2
+fi
+
+git commit -q --allow-empty -m "chore: Claim $item"
+git push -q -u origin "$branch"
+gh pr create --draft --title "$title" --body "Claims $item. Work in progress: the diff comes with later commits."
