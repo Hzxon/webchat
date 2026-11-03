@@ -266,17 +266,6 @@ push reached the device, the notification stays until it is tapped. Without push
 notifications blocked, nothing ever rings, though D-023 says urgent messages ring until the user
 acknowledges them. Decide whether an unread urgent message should ring once when a page opens.
 
-### K-23: The Home Screen banner promises notifications on iOS before 16.4
-
-Found while fixing the phone layout in #20. Seen on iOS 15.8 in #21.
-
-Web Push reached Home Screen apps in iOS 16.4. On iOS 15.4 to 16.3, the banner in
-`client/src/components/Sidebar.tsx` still says to add the site to the Home Screen to get
-notifications, which never works there. In the Home Screen app it says "Turn on notifications",
-though that iOS has no `Notification` at all. `needsInstall` in `client/src/push.ts` checks only for
-iPhone or iPad. Read the iOS version from the user agent, and before 16.4 say that notifications
-need iOS 16.4.
-
 ### K-24: Quick sends can be stored out of order
 
 Found while testing #21.
@@ -351,6 +340,22 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
 | K-9: A retried send is stored once (D-061) | #35 |
+| K-23: The banner says notifications need iOS 16.4 on older iPhones | #48 |
+
+### K-23: The Home Screen banner promises notifications on iOS before 16.4
+
+Status: Fixed in #48. A node test reads the version from real user agents of iOS 15.8, 16.3,
+16.4 and 17, an iPad, Chrome on iOS and desktop browsers. An iPad that asks for desktop sites
+reports itself as a Mac with no iOS version, so it still gets the Home Screen advice.
+
+Found while fixing the phone layout in #20. Seen on iOS 15.8 in #21.
+
+Web Push reached Home Screen apps in iOS 16.4. On iOS 15.4 to 16.3, the banner in
+`client/src/components/Sidebar.tsx` still says to add the site to the Home Screen to get
+notifications, which never works there. In the Home Screen app it says "Turn on notifications",
+though that iOS has no `Notification` at all. `needsInstall` in `client/src/push.ts` checks only for
+iPhone or iPad. Read the iOS version from the user agent, and before 16.4 say that notifications
+need iOS 16.4.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 

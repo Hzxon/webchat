@@ -97,7 +97,7 @@ export function NotificationDialog({ onClose }: { onClose: () => void }) {
       {push?.needsInstall && (
         <p className="callout">
           On iPhone and iPad, push works only from the Home Screen app. In Safari, tap Share, then “Add to Home Screen”,
-          and open WebChat from there. On iOS 15 and earlier, use Bark below instead.
+          and open WebChat from there. Before iOS 16.4, use Bark below instead.
         </p>
       )}
       {push?.permission === 'denied' && (
@@ -149,8 +149,8 @@ export function NotificationDialog({ onClose }: { onClose: () => void }) {
           ) : !bark.link ? (
             <>
               <p className="dialog-intro">
-                An iPhone on iOS 15 cannot get Web Push. Install the free Bark app and link it here: alerts then reach it
-                through Apple with the chat and sender names, never the message text.
+                An iPhone before iOS 16.4 cannot get Web Push. Install the free Bark app and link it here: alerts then
+                reach it through Apple with the chat and sender names, never the message text.
               </p>
               <div className="dialog-actions">
                 <button className="button-secondary" disabled={busy} onClick={() => void barkAct(api.linkBark)}>
