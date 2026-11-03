@@ -197,6 +197,9 @@ the notes would show it nothing new. They should not count as unread.
 
 ### K-21: An urgent message from while every tab was closed does not ring
 
+Status: Fixed in #65 (D-078). An integration test checks what bootstrap lists. The alert at open was
+tried in a browser with two accounts and notifications blocked, at desktop width and 375 pixels.
+
 Found while testing a closed browser on 2026-11-01.
 
 A page alerts only for messages that arrive after it loads (D-049). An urgent message sent while

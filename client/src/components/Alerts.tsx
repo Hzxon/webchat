@@ -1,4 +1,4 @@
-import { openConversation, previewText } from '../chat';
+import { dismissUrgent, openConversation, previewText } from '../chat';
 import { actions, chatTitle, senderName, useAppState } from '../store';
 import { formatTime } from './format';
 import { BellRingIcon, CloseIcon } from './icons';
@@ -37,7 +37,7 @@ export function UrgentAlert() {
           <button className="button-primary" autoFocus onClick={() => void openConversation(first.conversationId)}>
             Open chat
           </button>
-          <button className="button-secondary" onClick={() => actions.clearUrgent(first.conversationId, first.id)}>
+          <button className="button-secondary" onClick={() => dismissUrgent(first)}>
             Dismiss
           </button>
         </div>

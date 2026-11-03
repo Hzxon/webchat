@@ -93,10 +93,15 @@ export const keystore = {
   setUnsent: (message: StoredUnsent) => set(`unsent:${message.clientId}`, message),
   deleteUnsent: (clientId: string) => remove(`unsent:${clientId}`),
 
+  /** Ids of the urgent messages dismissed on this device, which do not alert again as a page opens (D-078). */
+  getDismissed: () => get<number[]>('dismissed'),
+  setDismissed: (ids: number[]) => set('dismissed', ids),
+
   /**
-   * Removes the account's keys, drafts and unsent messages from this device, as on sign-out or when
-   * an account signs in. The pins stay: they hold only other people's public key fingerprints, and
-   * keeping them is what lets a later sign-in notice keys that changed in between (D-018).
+   * Removes the account's keys, drafts, unsent messages and dismissed alerts from this device, as on
+   * sign-out or when an account signs in. The pins stay: they hold only other people's public key
+   * fingerprints, and keeping them is what lets a later sign-in notice keys that changed in between
+   * (D-018).
    */
   clearKeys: () =>
     run<undefined>('readwrite', (s) => {

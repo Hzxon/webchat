@@ -137,6 +137,11 @@ export interface BootstrapDTO {
   cursor: number;
   /** Fingerprint of everything this user can see. Sync answers "unchanged" while it matches. */
   stamp: string;
+  /**
+   * Each chat's newest urgent message from someone else that this user has not read, sent in the
+   * last 3 days. The page alerts for them as it opens (D-078).
+   */
+  urgent: MessageDTO[];
 }
 
 export interface ConfigDTO {
