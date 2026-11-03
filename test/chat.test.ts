@@ -571,7 +571,9 @@ describe('chat server', () => {
     const payload = phone.decrypt(phonePush.body);
     assert.equal(payload.title, 'URGENT from Alice');
     assert.equal(payload.body, '');
-    assert.ok(!JSON.stringify(payload).includes('urgent, '), 'no plain text in the push');
+    // "urgent" is left out: the field name and the tag carry it.
+    const serialized = JSON.stringify(payload);
+    for (const part of [text, 'Call', 'back']) assert.ok(!serialized.includes(part), `no "${part}" in the push`);
     const { key } = bob.chatKeys.get(directChat.id)!;
     const decrypted = await decryptMessage(
       key,
