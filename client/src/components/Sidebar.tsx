@@ -247,9 +247,11 @@ function AlertSetupBanner({ onOpen }: { onOpen: () => void }) {
     const text =
       push.permission === 'denied'
         ? 'Notifications are blocked for this site. Allow them in the browser’s site settings.'
-        : push.needsInstall
-          ? 'On iPhone, add this site to your Home Screen to get notifications.'
-          : 'Turn on notifications so urgent messages reach you when this tab is closed.';
+        : push.oldIos
+          ? 'Notifications on iPhone need iOS 16.4. Tap to get alerts through the Bark app instead.'
+          : push.needsInstall
+            ? 'On iPhone, add this site to your Home Screen to get notifications.'
+            : 'Turn on notifications so urgent messages reach you when this tab is closed.';
     return (
       <button className="banner banner-warn" onClick={onOpen}>
         <BellIcon width={18} height={18} />

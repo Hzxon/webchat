@@ -1,0 +1,39 @@
+import assert from 'node:assert/strict';
+import { beforeEach, describe, test } from 'node:test';
+
+// The path lives in a variable so the tools tsconfig, which has no DOM types, does not typecheck
+// the client module. tsx still loads it.
+const clientStore = '../client/src/store.ts';
+
+const { actions, localEditCount, store } = await import(clientStore);
+const chat = (id: number) => ({ id, projectId: null });
+const project = (id: number) => ({ id, memberIds: [] });
+
+describe('A check-in answer in client/src/store.ts, against changes this page made (K-15, D-069)', () => {
+  beforeEach(() => actions.reset());
+
+  test('an answer requested before the page added a chat is ignored, so the chat stays', () => {
+    const since = localEditCount();
+    actions.upsertConversation(chat(7));
+    assert.equal(actions.applySync([], [], [], [], since), false);
+    assert.ok(store.get().conversations[7]);
+  });
+
+  test('an answer requested after it applies, and drops a chat it no longer lists', () => {
+    actions.upsertConversation(chat(7));
+    assert.equal(actions.applySync([], [], [], [], localEditCount()), true);
+    assert.equal(store.get().conversations[7], undefined);
+  });
+
+  test('an answer requested before the page left a chat or changed a project is ignored too', () => {
+    actions.upsertConversation(chat(7));
+    let since = localEditCount();
+    actions.dropConversation(7);
+    assert.equal(actions.applySync([], [], [chat(7)], [], since), false);
+    assert.equal(store.get().conversations[7], undefined);
+    since = localEditCount();
+    actions.upsertProject(project(3));
+    assert.equal(actions.applySync([], [], [], [], since), false);
+    assert.ok(store.get().projects[3]);
+  });
+});
