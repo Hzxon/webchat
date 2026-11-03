@@ -182,6 +182,27 @@ before the pull request merges. Changes people see are checked locally instead (
 Cost: no preview URL on pull requests. Trying a branch on a real phone, where push needs HTTPS,
 takes a deployment by hand with `vercel deploy`, which the setting does not stop.
 
+### D-068: Only failed sign-ins use up the limit for an address
+
+Accepted 2026-11-03 in #52.
+
+Register, login, the upgrade, the key backup and setting keys share one limit per IP address: 20
+attempts in a fixed window of 15 minutes. Each attempt still counts before it runs. When it
+succeeds, the route gives the hit back with `returnRateLimit` in `server/db.ts`. Only failures
+stay counted: a wrong password, an unknown user, a wrong invite code, a taken username, or a
+request that does not parse. A class that signs up together behind one campus address no longer
+locks itself out (K-14).
+
+Why: counting first keeps the check atomic. Counting only after a failure would let a burst of
+parallel guesses all pass the check before any was recorded. Raising the limit for everyone would
+give guessers more tries too. The route gives the hit back before it answers, not on the
+response's `finish` event, because a Vercel function may stop once its answer is sent.
+
+Cost: a full window still blocks everyone behind that address, the right password included. One
+student who types 20 wrong passwords locks out the rest of the class for up to 15 minutes. The
+first sign-in of an account from before encryption counts as a failure, because it answers
+"upgrade required".
+
 ## Data and platform
 
 ### D-010: Migrations only grow at the end

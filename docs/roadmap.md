@@ -193,12 +193,6 @@ the notes would show it nothing new. They should not count as unread.
 
 ## Known issues
 
-### K-14: Sign-ins from one address share a small rate limit
-
-Register, login, upgrade and key routes share 20 requests per 15 minutes per IP address, and
-successes count. A class that signs up together behind one campus address locks itself out for 15
-minutes. Count only failures, or raise the limit for successes. Not seen on a real deployment.
-
 ### K-21: An urgent message from while every tab was closed does not ring
 
 Found while testing a closed browser on 2026-11-01.
@@ -285,6 +279,17 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-17: Open pages pick up a push subscription the service worker replaced | #49 |
 | K-13: The first key of a group checks its members under the group's lock | #50 |
 | K-11: The New channel dialog and the server share one name rule (D-065) | #51 |
+| K-14: Only failed sign-ins use up the limit for an address (D-068) | #52 |
+
+### K-14: Sign-ins from one address share a small rate limit
+
+Status: Fixed in #52 (D-068). Integration tests sign in 21 times from one address without a
+lockout, and check that 20 wrong passwords still lock it out, even for the right password.
+
+Register, login, upgrade and key routes shared 20 requests per 15 minutes per IP address, and
+successes counted. A class that signed up together behind one campus address locked itself out
+for 15 minutes. Now each attempt still counts before it runs, and a success gives its hit back, so
+only failures use up the limit. Not seen on a real deployment.
 
 ### K-11: The New channel dialog can make names the server refuses
 

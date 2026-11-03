@@ -437,6 +437,27 @@ describe('chat server', () => {
     assert.equal(replace.status, 400, 'malformed keys are rejected');
   });
 
+  describe('the sign-in limit for one address (K-14)', () => {
+    const laptop = () => new Client(baseUrl, 'bob');
+    const signIn = async (authKey: string) => (await laptop().request('POST', '/auth/login', { username: 'bob', authKey })).status;
+    const clearLimit = () => instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'auth:%'");
+    before(clearLimit);
+    after(clearLimit);
+
+    test('successful sign-ins do not use it up', async () => {
+      const { authKey } = await laptop().secrets();
+      for (let i = 1; i <= 21; i++) assert.equal(await signIn(authKey), 200, `sign-in ${i}`);
+    });
+
+    test('20 failed sign-ins lock the address out, even for the right password', async () => {
+      await clearLimit();
+      const { authKey } = await laptop().secrets();
+      const { authKey: wrong } = await laptop().secrets('not my password');
+      for (let i = 1; i <= 20; i++) assert.equal(await signIn(wrong), 401, `attempt ${i}`);
+      assert.equal(await signIn(authKey), 429);
+    });
+  });
+
   test('requests without a session are refused', async () => {
     const stranger = new Client(baseUrl, 'nobody');
     assert.equal((await stranger.request('GET', '/bootstrap')).status, 401);
