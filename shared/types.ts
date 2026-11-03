@@ -1,5 +1,8 @@
 // Types shared by the server, the web client, and the service worker.
-// Only type declarations live here, so importing them never adds runtime code.
+// The file also holds the few values and checks that more than one of them must agree on: LIMITS,
+// the channel name rules, the build header and the test for Apple's push service.
+// They live with the types so that each side imports one file and none can drift from the others.
+// They are small and import nothing, so they add little code to the page and the service worker.
 
 /** A user's public keys, base64url of the raw P-256 points. Null until the user sets up encryption. */
 export interface PublicKeysDTO {
