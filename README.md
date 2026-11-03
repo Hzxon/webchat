@@ -96,7 +96,7 @@ All of it runs in the browser with Web Crypto ([shared/e2ee.ts](shared/e2ee.ts))
   worker decrypts it on the device. A message too long for a push shows "New message".
 - **Security codes.** The lock button in a chat shows a 60-digit code per person. If it matches on
   both phones, nobody swapped keys in between. Each device also remembers everyone's keys and warns
-  if they ever change.
+  if they ever change. Until you check the new code, that person's new messages show as unreadable.
 
 What it does not protect against:
 
