@@ -64,8 +64,10 @@ interface Keyring {
   trust: (user: UserDTO) => Promise<void>;
   chatKey: (conversation: Conversation, keysOf: KeyLookup) => Promise<CryptoKey> | null;
   remember: (conversationId: number, keyId: string, key: CryptoKey) => Promise<void>;
-  open: (message: MessageDTO, conversation: ConversationDTO, keysOf: KeyLookup) => Promise<{ text: string; security: string }>;
+  open: (message: MessageDTO, conversation: ConversationDTO, keysOf: KeyLookup) => Promise<Opened>;
+  reopen: (conversations: Record<number, ConversationDTO>, keysOf: KeyLookup) => Promise<Opened[]>;
 }
+type Opened = MessageDTO & { text: string; security: string; reaction: { messageId: number; emoji: string } | null };
 
 const ME = 1;
 const OTHER = 2;
@@ -122,8 +124,11 @@ describe('The keyring in client/src/e2ee/keyring.ts, after a key change nobody c
     } as unknown as ConversationDTO;
   }
 
-  /** A message in the other person's name, signed with the given keys, under a key this device holds. */
-  async function signedBy(identity: Identity): Promise<{ message: MessageDTO; conversation: ConversationDTO }> {
+  /**
+   * A message in the other person's name, and their reaction to it, signed with the given keys,
+   * under a key this device holds.
+   */
+  async function signedBy(identity: Identity): Promise<{ message: MessageDTO; reaction: MessageDTO; conversation: ConversationDTO }> {
     const keyId = newKeyId();
     const raw = newChatKeyBytes();
     const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
@@ -131,10 +136,14 @@ describe('The keyring in client/src/e2ee/keyring.ts, after a key change nobody c
     const meta = { conversationId: CHAT, senderId: OTHER, urgent: false, clientId: 'c1', kind: 'message' as const };
     const envelope = await encryptMessage(key, keyId, identity.signPrivate, meta, 'hello');
     const message = { id: 5, body: '', envelope, createdAt: 0, ...meta } as MessageDTO;
+    const reactionMeta = { ...meta, clientId: 'c2', kind: 'reaction' as const };
+    const content = { text: '', reaction: { messageId: 5, emoji: '👍' } };
+    const reactionEnvelope = await encryptMessage(key, keyId, identity.signPrivate, reactionMeta, content);
+    const reaction = { id: 6, body: '', envelope: reactionEnvelope, createdAt: 0, ...reactionMeta } as MessageDTO;
     // keyring.remember already holds the key, so the wrapped copy is never opened.
     const myKey = { wrappedBy: ME, iv: '', data: '' };
     const conversation = { id: CHAT, keyId, myKey, members: [member(ME), member(OTHER)], keyLinks: [] } as unknown as ConversationDTO;
-    return { message, conversation };
+    return { message, reaction, conversation };
   }
 
   test('refuses to open a chat key that the changed keys wrapped, so nothing is sent under it', async () => {
@@ -163,5 +172,29 @@ describe('The keyring in client/src/e2ee/keyring.ts, after a key change nobody c
     const opened = await keyring.open(message, conversation, keysOf);
     assert.equal(opened.security, 'encrypted');
     assert.equal(opened.text, 'hello');
+  });
+
+  test('opens nothing it held back while the code is still unchecked', async () => {
+    const { message, reaction, conversation } = await signedBy(swapped);
+    assert.equal((await keyring.open(message, conversation, keysOf)).security, 'failed');
+    assert.equal((await keyring.open(reaction, conversation, keysOf)).security, 'failed');
+    assert.deepEqual(await keyring.reopen({ [CHAT]: conversation }, keysOf), []);
+  });
+
+  test('opens the messages and reactions it held back once the user checks the code (K-26)', async () => {
+    const { message, reaction, conversation } = await signedBy(swapped);
+    await keyring.open(message, conversation, keysOf);
+    await keyring.open(reaction, conversation, keysOf);
+    await keyring.trust(user(OTHER, swapped.publicKeys));
+    await keyring.checkKeys([user(OTHER, swapped.publicKeys)]);
+    const reopened = await keyring.reopen({ [CHAT]: conversation }, keysOf);
+    assert.deepEqual(
+      reopened.map((m) => [m.id, m.security, m.text, m.reaction?.emoji]).sort(),
+      [
+        [5, 'encrypted', 'hello', undefined],
+        [6, 'encrypted', '', '👍'],
+      ],
+    );
+    assert.deepEqual(await keyring.reopen({ [CHAT]: conversation }, keysOf), []);
   });
 });
