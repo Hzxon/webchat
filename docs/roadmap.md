@@ -205,13 +205,6 @@ Compose, cannot be reached, and the server stops at start. Only an undocumented 
 to 40 characters and keeps capitals with no lowercase form, such as ℂ. The server then answers 400.
 Keep one rule in `shared/` for both sides.
 
-### K-12: A push subscription with malformed keys breaks pushes for its owner
-
-`generateRequestDetails` in `server/push.ts` throws before the `try` for keys of the wrong size, so
-the row is never deleted. Every later push to that user fails, `/api/push/test` answers 500, and a
-GitHub poll stops after its first alert with a false "Could not reach GitHub". It needs a
-hand-made subscription. Check the key sizes on subscribe, and delete the row when sending throws.
-
 ### K-13: The first key of a group from before encryption races with a removal
 
 `POST /conversations/:id/key` reads the members without the group's lock. A removal at the same
@@ -338,6 +331,18 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-9: A retried send is stored once (D-061) | #35 |
 | K-19: The push test searches the whole payload for the message | #41 |
 | K-26: Messages from a checked security code open without a reload | #42 |
+| K-12: A subscription with bad keys is refused or dropped, and no longer breaks pushes | #43 |
+
+### K-12: A push subscription with malformed keys breaks pushes for its owner
+
+Status: Fixed in #43. Integration tests subscribe with keys of the wrong size and get a 400, and
+show that a subscription web-push cannot encrypt for is deleted while the next push still goes out.
+
+`generateRequestDetails` in `server/push.ts` threw before the `try` for keys of the wrong size, so
+the row was never deleted. Every later push to that user failed, `/api/push/test` answered 500, and
+a GitHub poll stopped after its first alert with a false "Could not reach GitHub". It needed a
+hand-made subscription. Now subscribing checks that the p256dh key is 65 bytes and the auth secret
+16, and a subscription web-push throws on is deleted. A network error still keeps the row.
 
 ### K-26: Messages from changed keys stayed unreadable after the check until a reload
 
