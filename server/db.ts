@@ -300,6 +300,11 @@ CREATE TABLE IF NOT EXISTS webchat.bark_devices (
 );
 CREATE INDEX IF NOT EXISTS bark_devices_by_user ON webchat.bark_devices (user_id);
 `,
+  // 10: a send repeated after a lost answer stores nothing twice (K-9, D-059).
+  `
+CREATE UNIQUE INDEX IF NOT EXISTS messages_by_client_id
+  ON webchat.messages (conversation_id, sender_id, client_id) WHERE client_id IS NOT NULL;
+`,
 ];
 
 const statements = (sql: string) =>
@@ -1408,6 +1413,8 @@ export async function openDb(sql: Sql) {
     /**
      * Stores an encrypted message, moves the chat to the top, and marks it read for its sender. A
      * reaction only bumps the chat's newest event, so it neither reorders chats nor counts as unread.
+     * A client id the sender used before in this chat is the same send again, after its answer was
+     * lost: nothing changes, and `repeated` says so (D-059).
      */
     insertMessage(
       conversationId: number,
@@ -1417,15 +1424,26 @@ export async function openDb(sql: Sql) {
       urgent: boolean,
       clientId: string,
     ) {
-      return sql.transaction(async (tx) => {
+      return sql.transaction(async (tx): Promise<{ message: MessageDTO; repeated: boolean }> => {
         const now = Date.now();
-        const row = (await one(
+        const row = await one(
           tx.query<MessageRow>(
             `INSERT INTO webchat.messages (conversation_id, sender_id, kind, body, envelope, urgent, client_id, created_at)
-             VALUES ($1, $2, $3, '', $4, $5, $6, $7) RETURNING *`,
+             VALUES ($1, $2, $3, '', $4, $5, $6, $7)
+             ON CONFLICT (conversation_id, sender_id, client_id) WHERE client_id IS NOT NULL DO NOTHING RETURNING *`,
             [conversationId, senderId, kind, JSON.stringify(envelope), urgent, clientId, now],
           ),
-        ))!;
+        );
+        if (!row) {
+          const stored = (await one(
+            tx.query<MessageRow>('SELECT * FROM webchat.messages WHERE conversation_id = $1 AND sender_id = $2 AND client_id = $3', [
+              conversationId,
+              senderId,
+              clientId,
+            ]),
+          ))!;
+          return { message: toMessageDTO(stored), repeated: true };
+        }
         if (kind === 'message') {
           await tx.query(
             `UPDATE webchat.conversations
@@ -1440,7 +1458,7 @@ export async function openDb(sql: Sql) {
             conversationId,
           ]);
         }
-        return toMessageDTO(row);
+        return { message: toMessageDTO(row), repeated: false };
       });
     },
     /** Stores a card from GitHub, as plain JSON with no sender, and moves the chat to the top like a message. */
