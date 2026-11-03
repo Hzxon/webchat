@@ -16,9 +16,12 @@ import {
   openChatKeyBytes,
   openIdentity,
   openKeyLink,
+  padContent,
+  PAD_MIN_BYTES,
   safetyCode,
   sealIdentity,
   toBase64Url,
+  unpadContent,
   unwrapChatKey,
   wrapChatKey,
   WrongPasswordError,
@@ -228,6 +231,60 @@ describe('end-to-end encryption', () => {
     const forSelf = await wrapChatKey(raw, alice, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId);
     const key = await unwrapChatKey(forSelf, alice, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId);
     assert.equal(key.extractable, false);
+  });
+
+  test('padding fills the content to the next band, and comes off again', () => {
+    const bytes = (length: number) => new Uint8Array(length).map((_, i) => 32 + (i % 90));
+    for (const [length, band] of [
+      [0, 256],
+      [255, 256],
+      [256, 512],
+      [511, 512],
+      [512, 1024],
+      [5000, 8192],
+    ] as const) {
+      const padded = padContent(bytes(length));
+      assert.equal(padded.length, band, `${length} bytes pad to ${band}`);
+      assert.deepEqual(unpadContent(padded), bytes(length));
+    }
+    assert.equal(PAD_MIN_BYTES, 256);
+  });
+
+  test('a reaction, a take-back and a short message give ciphertexts of the same length', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const keyId = newKeyId();
+    const sign = alice.identity.signPrivate;
+    const message = (clientId: string): MessageMeta => ({ conversationId: 4, senderId: alice.id, urgent: false, clientId });
+    const reaction = (clientId: string): MessageMeta => ({ ...message(clientId), kind: 'reaction' });
+    const lengths = await Promise.all([
+      encryptMessage(key, keyId, sign, message('m1'), 'ok'),
+      encryptMessage(key, keyId, sign, message('m2'), 'See you at the library at six, bring the slides'),
+      encryptMessage(key, keyId, sign, reaction('r1'), { text: '', reaction: { messageId: 12, emoji: '❤️' } }),
+      encryptMessage(key, keyId, sign, reaction('r2'), { text: '', reaction: { messageId: 12, emoji: '👍' } }),
+      encryptMessage(key, keyId, sign, reaction('r3'), { text: '', reaction: { messageId: 12, emoji: '' } }),
+    ]).then((envelopes) => envelopes.map((e) => fromBase64Url(e.ct).length));
+    assert.deepEqual(lengths, Array(5).fill(PAD_MIN_BYTES + 16), 'the smallest band plus the AES-GCM tag');
+
+    const longer = await encryptMessage(key, keyId, sign, message('m3'), 'x'.repeat(300));
+    assert.equal(fromBase64Url(longer.ct).length, 2 * PAD_MIN_BYTES + 16);
+    assert.equal(await decryptMessage(key, alice.identity.publicKeys.sign, message('m3'), longer), 'x'.repeat(300));
+  });
+
+  test('a message from before padding still opens', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const keyId = newKeyId();
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'old1' };
+    const head = `webchat/msg/v1|conv:${meta.conversationId}|kid:${keyId}|from:${meta.senderId}|urgent:0|cid:${meta.clientId}`;
+    const subtle = globalThis.crypto.subtle;
+    const encode = (text: string) => new TextEncoder().encode(text);
+    const iv = toBase64Url(globalThis.crypto.getRandomValues(new Uint8Array(12)));
+    const text = 'Sent before envelopes were padded';
+    const ct = toBase64Url(
+      await subtle.encrypt({ name: 'AES-GCM', iv: fromBase64Url(iv), additionalData: encode(head) }, key, encode(JSON.stringify({ text }))),
+    );
+    const sig = toBase64Url(await subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, alice.identity.signPrivate, encode(`${head}|iv:${iv}|ct:${ct}`)));
+    assert.ok(fromBase64Url(ct).length < PAD_MIN_BYTES, 'not padded');
+    assert.equal(await decryptMessage(key, alice.identity.publicKeys.sign, meta, { v: 1, kid: keyId, iv, ct, sig }), text);
   });
 
   test('messages decrypt only unchanged, with their original metadata, from their real sender', async () => {
