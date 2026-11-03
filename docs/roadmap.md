@@ -215,6 +215,9 @@ loopback address gets TLS like a remote host. Compare with `[::1]`, or strip the
 
 ### K-28: The New channel dialog overflows at 375 pixels with a long name
 
+Status: Fixed in #59. A browser check at 375 pixels and at desktop width, in light and dark mode,
+measured no overflow with a name of 39 characters.
+
 Found in the browser check of K-11 in #51 on 2026-11-03.
 
 The preview "It will be called #…" in `client/src/components/ProjectDialogs.tsx` cannot wrap a
