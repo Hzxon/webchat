@@ -4,7 +4,7 @@ import type { GithubAccountDTO, GithubDTO, GithubEventDTO, GithubEventKind, Pull
 import { connectGithub, disconnectGithub, refreshGithub, setGithubNotify } from '../github';
 import { actions, useAppState } from '../store';
 import { formatAgo } from './format';
-import { AlertIcon, BackIcon, BellIcon, CommentIcon, GithubIcon, PullRequestIcon, RefreshIcon, ShareIcon } from './icons';
+import { AlertIcon, BackIcon, BellIcon, CommentIcon, GithubIcon, LockIcon, PullRequestIcon, RefreshIcon, ShareIcon } from './icons';
 import { PullTags, type Tone } from './PullTags';
 import { SharePullDialog } from './SharePullDialog';
 
@@ -62,6 +62,9 @@ export function GithubView() {
           )}
         </div>
       )}
+      {account && !github?.reconnect && github?.pulls?.hiddenOrganizations?.length ? (
+        <HiddenOrganizations names={github.pulls.hiddenOrganizations} />
+      ) : null}
       {account?.notify && !github?.reconnect && !github?.alertsWhileClosed && (
         <div className="banner" role="status">
           <BellIcon width={18} height={18} />
@@ -83,6 +86,33 @@ export function GithubView() {
         )}
       </div>
     </section>
+  );
+}
+
+/** A member can ask the owners of an organization to approve the app from their own GitHub settings. */
+const REQUEST_APPROVAL_URL =
+  'https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-personal-account-on-github/managing-your-membership-in-organizations/requesting-organization-approval-for-oauth-apps';
+
+/**
+ * Names the organizations whose pull requests GitHub leaves out because they restrict OAuth Apps
+ * (K-6). Without this the lists look complete, and a student cannot tell that an owner has to act.
+ */
+function HiddenOrganizations({ names }: { names: string[] }) {
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  const phrase =
+    names.length === 1
+      ? `The ${list} organization hides its pull requests until one of its owners approves WebChat.`
+      : `The organizations ${list} hide their pull requests until their owners approve WebChat.`;
+  return (
+    <div className="banner" role="status">
+      <LockIcon width={18} height={18} />
+      <span>
+        {phrase}{' '}
+        <a href={REQUEST_APPROVAL_URL} target="_blank" rel="noopener noreferrer">
+          You can ask for that approval on GitHub.
+        </a>
+      </span>
+    </div>
   );
 }
 
@@ -123,7 +153,9 @@ function ConnectCard({ alertsWhileClosed }: { alertsWhileClosed: boolean }) {
       <p className="github-fineprint">
         GitHub will ask for access to your repositories, private ones included: it has no read-only access for them.
         WebChat only reads pull requests. The access token stays on the server, encrypted, and never reaches this
-        browser. Disconnecting deletes it and revokes the access on GitHub.
+        browser. Disconnecting deletes it and revokes the access on GitHub. An organization that restricts OAuth
+        Apps, as a course organization often does, hides its pull requests until one of its owners approves WebChat;
+        the pane names it when that happens.
       </p>
     </div>
   );

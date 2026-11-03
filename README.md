@@ -369,6 +369,7 @@ WebChat tab is open.
 - **Disconnect** deletes the token and the app's grant on GitHub. Revoking the app on GitHub
   (Settings > Applications) works too; the pane then asks you to connect again.
 - An organization that restricts OAuth Apps hides its pull requests until an owner approves the app.
+  The pane names the organization and links to how a member asks for that approval.
 - The GitHub App can only read pull requests, and only in the repositories it is installed on.
   Signing in to it to link a repository lists those repositories, and WebChat revokes that sign-in
   at once, so it keeps no token of the app. GitHub signs every webhook with the webhook secret, and
