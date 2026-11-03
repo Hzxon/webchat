@@ -259,6 +259,9 @@ timed-out send fail like any other so the queue moves on.
 
 ### K-33: The service worker never removes a replaced push endpoint
 
+Status: Fixed in #60. A node test runs the worker's handler with a fake old subscription, and an
+integration test checks that only its owner can delete an endpoint; no browser has fired the event.
+
 Found while fixing K-17 in #49 on 2026-11-03.
 
 The `pushsubscriptionchange` handler in `client/src/sw.ts` subscribes again but ignores the event's

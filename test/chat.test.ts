@@ -688,6 +688,27 @@ describe('chat server', () => {
     assert.equal(rows.length, 0);
   });
 
+  test('the endpoint a worker replaced is deleted by its owner only (K-33)', async () => {
+    const replaced = makeSubscription(`http://${pushService.host}/bob-replaced`);
+    const fresh = makeSubscription(`http://${pushService.host}/bob-fresh`);
+    const stored = async () =>
+      (
+        await instance.sql.query<{ endpoint: string }>(
+          'SELECT endpoint FROM webchat.push_subscriptions WHERE endpoint IN ($1, $2) ORDER BY endpoint',
+          [replaced.json.endpoint, fresh.json.endpoint],
+        )
+      ).map((row) => row.endpoint);
+    assert.equal((await bob.request('POST', '/push/subscribe', replaced.json)).status, 204);
+    assert.equal((await bob.request('POST', '/push/subscribe', fresh.json)).status, 204);
+
+    assert.equal((await alice.request('POST', '/push/unsubscribe', { endpoint: replaced.json.endpoint })).status, 204);
+    assert.deepEqual(await stored(), [fresh.json.endpoint, replaced.json.endpoint], "Alice cannot delete Bob's endpoint");
+    assert.equal((await bob.request('POST', '/push/unsubscribe', { endpoint: replaced.json.endpoint })).status, 204);
+    assert.deepEqual(await stored(), [fresh.json.endpoint]);
+
+    await bob.request('POST', '/push/unsubscribe', { endpoint: fresh.json.endpoint });
+  });
+
   test('the same send again, after a lost answer, returns the stored message and alerts once', async () => {
     pushService.received.length = 0;
     const clientId = crypto.randomUUID();

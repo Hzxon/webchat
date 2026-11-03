@@ -8,6 +8,7 @@ type Listener = (event: unknown) => void;
 const listeners = new Map<string, Listener>();
 const NEW_ENDPOINT = 'https://updates.push.services.mozilla.com/wpush/v2/new';
 const pages = [0, 1].map(() => ({ received: [] as WorkerToPageMessage[] }));
+const posts: { url: string; body: unknown }[] = [];
 
 Object.assign(globalThis, {
   self: {
@@ -24,7 +25,10 @@ Object.assign(globalThis, {
       },
     },
   },
-  fetch: async (url: string) => new Response(url === '/api/config' ? JSON.stringify({ vapidPublicKey: 'AQAB' }) : null),
+  fetch: async (url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') posts.push({ url, body: JSON.parse(init.body as string) });
+    return new Response(url === '/api/config' ? JSON.stringify({ vapidPublicKey: 'AQAB' }) : null);
+  },
 });
 
 // The path lives in a variable so the tools tsconfig, which has no service worker types, does not
@@ -41,5 +45,18 @@ describe('The service worker in client/src/sw.ts', () => {
     listeners.get('pushsubscriptionchange')!({ oldSubscription: null, waitUntil: (p: Promise<unknown>) => (done = p) });
     await done;
     for (const page of pages) assert.deepEqual(page.received, [{ type: 'subscription-changed' }]);
+    assert.deepEqual(posts.map((p) => p.url), ['/api/push/subscribe']);
+  });
+
+  test('deletes the endpoint the browser replaced, so pushes stop going to it (K-33)', async () => {
+    posts.length = 0;
+    let done: Promise<unknown> = Promise.resolve();
+    const oldSubscription = { endpoint: 'https://updates.push.services.mozilla.com/wpush/v2/old' };
+    listeners.get('pushsubscriptionchange')!({ oldSubscription, waitUntil: (p: Promise<unknown>) => (done = p) });
+    await done;
+    assert.deepEqual(posts, [
+      { url: '/api/push/unsubscribe', body: { endpoint: oldSubscription.endpoint } },
+      { url: '/api/push/subscribe', body: { endpoint: NEW_ENDPOINT, keys: { p256dh: 'p', auth: 'a' } } },
+    ]);
   });
 });

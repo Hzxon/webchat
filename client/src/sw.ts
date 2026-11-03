@@ -165,6 +165,15 @@ self.addEventListener('pushsubscriptionchange', (rawEvent) => {
   event.waitUntil(
     (async () => {
       const config = (await (await fetch('/api/config')).json()) as ConfigDTO;
+      // The push service no longer takes the old endpoint, but the server would push to it until it
+      // answered 404 or 410 (K-33). Deleted before the new one is saved, in case both are the same.
+      if (event.oldSubscription) {
+        await fetch('/api/push/unsubscribe', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ endpoint: event.oldSubscription.endpoint }),
+        });
+      }
       const subscription = await self.registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: base64UrlToBytes(config.vapidPublicKey),
