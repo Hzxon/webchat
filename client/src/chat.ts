@@ -940,6 +940,8 @@ export async function deleteGroup(conversationId: number) {
 export async function trustKeys(user: UserDTO) {
   await keyring.trust(user);
   actions.setKeyWarnings(await keyring.checkKeys(Object.values(store.get().users)));
+  // What failed under the unchecked keys opens now, without a reload. It never alerts again.
+  for (const message of await keyring.reopen(store.get().conversations, currentLookup())) actions.addMessage(message, false);
 }
 
 function teardown() {

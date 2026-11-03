@@ -243,12 +243,6 @@ When a session ends with a 401, the page drops the keys but not the push subscri
 that browser next sees the old account's notification titles, such as sender and chat names, until
 the subscription is removed. Only "Sign out" removes it.
 
-### K-19: The push test for plain text cannot fail
-
-The test "pushes carry no plain text" in `test/chat.test.ts` looks for `urgent, `, which the message
-`Call me back, it is urgent` does not contain. Only its separate check of `payload.body` guards rule
-7. Search the payload for the whole message instead.
-
 ### K-21: An urgent message from while every tab was closed does not ring
 
 Found while testing a closed browser on 2026-11-01.
@@ -278,15 +272,6 @@ Found while testing #21.
 numbers messages in the order they arrive. Sending "one" to "five" with Enter in quick succession
 stored them as one, three, four, two, five, and a reload showed the same order. Send a chat's
 messages one at a time, in the order they were written.
-
-### K-26: Messages from changed keys stay unreadable after the check until a reload
-
-Found in a security review of main on 2026-11-03.
-
-Until the user checks a changed security code, the page shows that person's new messages as
-unreadable (D-018). Checking the code in `trustKeys` in `client/src/chat.ts` updates the warnings,
-but the messages already loaded keep their failed state, and failed reactions were dropped. A
-reload decrypts them. Open the loaded messages from that person again after the check.
 
 ## Open questions
 
@@ -344,6 +329,8 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
 | K-9: A retried send is stored once (D-061) | #35 |
+| K-19: The push test searches the whole payload for the message | #41 |
+| K-26: Messages from a checked security code open without a reload | #42 |
 | K-12: A subscription with bad keys is refused or dropped, and no longer breaks pushes | #43 |
 
 ### K-12: A push subscription with malformed keys breaks pushes for its owner
@@ -356,6 +343,29 @@ the row was never deleted. Every later push to that user failed, `/api/push/test
 a GitHub poll stopped after its first alert with a false "Could not reach GitHub". It needed a
 hand-made subscription. Now subscribing checks that the p256dh key is 65 bytes and the auth secret
 16, and a subscription web-push throws on is deleted. A network error still keeps the row.
+
+### K-26: Messages from changed keys stayed unreadable after the check until a reload
+
+Status: Fixed in #42. Keyring tests check that nothing held back opens before the check, and that
+the held message and reaction both open after it. Not yet tried in a browser.
+
+Found in a security review of main on 2026-11-03.
+
+Until the user checks a changed security code, the page shows that person's new messages as
+unreadable (D-018). Checking the code in `trustKeys` in `client/src/chat.ts` updated the warnings,
+but the messages already loaded kept their failed state, and failed reactions were dropped. A
+reload decrypted them. Now the keyring keeps every message and reaction that failed to open, and
+`trustKeys` opens them again through the same decrypt path and puts those that open in the chat.
+
+### K-19: The push test for plain text cannot fail
+
+Status: Fixed in #41. The new check was shown to fail with the message, and with only "me back",
+put into the push payload on the server, where the old check passed.
+
+The test "pushes carry no plain text" in `test/chat.test.ts` looks for `urgent, `, which the message
+`Call me back, it is urgent` does not contain. Only its separate check of `payload.body` guards rule
+7. Now the test searches the whole payload for the message and for its words "Call" and "back".
+"urgent" is left out, because the payload's field name and tag carry it.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 
