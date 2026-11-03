@@ -335,6 +335,7 @@ describe('GitHub connector', () => {
       githubPollSeconds: 0,
       cronSecret: CRON_SECRET,
       githubPollUrl: undefined,
+      urgentRingUrl: undefined,
       build: undefined,
       logger: silent,
     };
@@ -751,6 +752,10 @@ describe('GitHub connector', () => {
     // Polled a moment ago, so nothing is due.
     const again = await request<{ polled: number }>('GET', '/github/poll', { headers: { cookie: '', authorization: `Bearer ${CRON_SECRET}` } });
     assert.deepEqual(again.data, { polled: 0 });
+
+    assert.equal((await request('GET', '/urgent/ring', { headers: { cookie: '' } })).status, 401, 'the urgent ring too');
+    const rang = await request<{ rang: number }>('GET', '/urgent/ring', { headers: { cookie: '', authorization: `Bearer ${CRON_SECRET}` } });
+    assert.deepEqual([rang.status, rang.data], [200, { rang: 0 }]);
   });
 
   test('the pane promises alerts with every tab closed only while a scheduler polls (K-5)', async () => {

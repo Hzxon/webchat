@@ -130,6 +130,12 @@ self.addEventListener('push', (event) => {
         vibrate: payload.urgent ? [400, 150, 400, 150, 400, 150, 800] : [200, 100, 200],
         data: payload.url ? { url: payload.url } : { conversationId: payload.conversationId },
       };
+      // The server rings an unread urgent message again every few seconds (D-079). Only Chromium
+      // knows renotify; Firefox and Safari swap a notification under the same tag in silence, so
+      // the old one closes first and the new one sounds.
+      if (payload.urgent) {
+        for (const old of await self.registration.getNotifications({ tag: payload.tag })) old.close();
+      }
       await self.registration.showNotification(payload.title, options);
     })(),
   );

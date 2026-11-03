@@ -52,7 +52,7 @@ keeps its own cookies and keys.
 | `server/auth.ts` | Hashes login keys with scrypt and makes session tokens that the database stores only as hashes. |
 | `server/db.ts` | The schema, the migrations, the sync fingerprint and every SQL query. |
 | `server/sql.ts` | Opens Postgres with node-postgres, or PGlite, behind the same few query calls. See D-006. |
-| `server/notify.ts` | Decides who gets a push for a message, a reaction or a project invite. |
+| `server/notify.ts` | Decides who gets a push for a message, a reaction or a project invite, and rings unread urgent messages again. See D-079. |
 | `server/push.ts` | Sends Web Push with VAPID keys, and hands alerts to Bark when the user is not looking. |
 | `server/bark.ts` | Alerts for iPhones without Web Push: WebChat stands in for the Bark app's server. |
 | `server/apns.ts` | Sends to Apple's push service over HTTP/2 with a provider token the instances share. |

@@ -374,6 +374,7 @@ describe('chat server', () => {
       githubPollSeconds: 0,
       cronSecret: undefined,
       githubPollUrl: undefined,
+      urgentRingUrl: undefined,
       build: 'test-build',
       logger: silent,
     };
@@ -682,6 +683,35 @@ describe('chat server', () => {
       payload.envelope!,
     );
     assert.equal(decrypted, text);
+  });
+
+  test('an unread urgent message rings again, like an alarm, until it is read (D-079)', async () => {
+    const alarm = makeSubscription(`http://${pushService.host}/bob-alarm`);
+    assert.equal((await bob.request('POST', '/push/subscribe', alarm.json)).status, 204);
+    await bob.sync(false);
+    await alice.send(directChat.id, 'Wake up', true);
+    const newest = await alice.send(directChat.id, 'Wake up now', true);
+    await sleep(300);
+    const ring = async () => {
+      pushService.received.length = 0;
+      await instance.ringUrgent();
+      return pushService.received.filter((p) => p.path === '/bob-alarm');
+    };
+
+    const [first, ...others] = await ring();
+    assert.equal(others.length, 0, 'one alarm per chat');
+    const payload = alarm.decrypt(first!.body);
+    assert.deepEqual([payload.title, payload.tag], ['URGENT from Alice', `urgent-${newest.data.id}`], 'the newest one, as first pushed');
+    const [second] = await ring();
+    assert.ok(first!.headers['topic'] && first!.headers['topic'] === second!.headers['topic'], 'an offline phone keeps only the newest ring');
+    assert.ok(!String(first!.headers['topic']).includes(String(newest.data.id)), 'the topic names no message');
+
+    await bob.sync(true, alarm.json.endpoint);
+    assert.deepEqual(await ring(), [], 'while Bob looks at the app, the page rings instead');
+    await bob.sync(false);
+    assert.equal((await bob.request('POST', `/conversations/${directChat.id}/read`, { messageId: newest.data.id })).status, 204);
+    assert.deepEqual(await ring(), [], 'read, so it stops');
+    assert.equal((await bob.request('POST', '/push/unsubscribe', { endpoint: alarm.json.endpoint })).status, 204);
   });
 
   test('closing the tab (beacon) ends attention at once', async () => {
@@ -1417,7 +1447,7 @@ describe('chat server', () => {
     const aps = push!.body.aps as { alert: { title: string }; sound: string };
     assert.equal(aps.alert.title, 'URGENT from Alice');
     assert.equal(aps.sound, 'alarm.caf');
-    assert.equal(push!.body.level, 'timeSensitive');
+    assert.equal(push!.body.level, 'critical', 'rings through silent mode and Do Not Disturb (D-079)');
     assert.equal(push!.body.call, '1');
   });
 

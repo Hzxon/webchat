@@ -19,6 +19,7 @@ import {
   type UserDTO,
   type WrappedKeyInput,
 } from '../shared/types.js';
+import { randomBytes, toBase64Url } from '../shared/e2ee.js';
 import type { Querier, Sql } from './sql.js';
 
 // Everything lives in its own schema. Supabase exposes only the "public" schema through its
@@ -305,6 +306,10 @@ CREATE INDEX IF NOT EXISTS bark_devices_by_user ON webchat.bark_devices (user_id
 CREATE UNIQUE INDEX IF NOT EXISTS messages_by_client_id
   ON webchat.messages (conversation_id, sender_id, client_id) WHERE client_id IS NOT NULL;
 `,
+  // 11: unread urgent messages are looked for every few seconds, to ring them again (D-079).
+  `
+CREATE INDEX IF NOT EXISTS urgent_messages ON webchat.messages (created_at) WHERE urgent;
+`,
 ];
 
 const statements = (sql: string) =>
@@ -409,12 +414,21 @@ interface GithubEventRow {
 /** Each account keeps this many of its newest pull request events. */
 const GITHUB_EVENTS_KEPT = 50;
 
-/** The Supabase Cron job that calls GET /api/github/poll on Vercel, where nothing runs between requests. */
-const GITHUB_POLL_JOB = 'webchat-github-poll';
-/** The same pace as the self-hosted timer's default. */
-const GITHUB_POLL_SCHEDULE = '*/2 * * * *';
-/** The meta row with the bearer token the job sends. The job reads it on every run, so it is stored once. */
-const GITHUB_POLL_SECRET = 'github_poll_secret';
+/** A Supabase Cron job that calls the server on Vercel, where nothing runs between requests (D-057). */
+export interface DatabaseJob {
+  name: string;
+  schedule: string;
+  /** SQL the job checks on every run. It calls the server only while this holds. */
+  when?: string;
+}
+
+/** Calls GET /api/github/poll at the same pace as the self-hosted timer's default. */
+export const GITHUB_POLL_JOB: DatabaseJob = { name: 'webchat-github-poll', schedule: '*/2 * * * *' };
+/**
+ * The meta row with the bearer token every job sends. The jobs read it on every run, so it is
+ * stored once. It is named for the first job, and deployments already hold it under that name.
+ */
+const JOB_SECRET = 'github_poll_secret';
 /** The meta row with the time pollAll last started, from a timer or a scheduler. */
 const GITHUB_SCHEDULED_AT = 'github_scheduled_at';
 
@@ -441,6 +455,24 @@ const GRANT_TTL_MS = 30 * 60_000;
 const DELIVERY_TTL_MS = 3 * 24 * 3600_000;
 /** An unread urgent message alerts as a page opens for as long as its push waits for an offline device (D-023). */
 const URGENT_WAIT_MS = 3 * 24 * 3600_000;
+
+/**
+ * Urgent messages from the last 3 days, each joined as `msg` with a member `m` who did not send it
+ * and has not read it. `now` is SQL for the time in milliseconds: a parameter, or the database clock.
+ */
+const unreadUrgentFrom = (now: string) =>
+  `webchat.messages msg JOIN webchat.members m ON m.conversation_id = msg.conversation_id
+   WHERE msg.urgent AND msg.created_at > ${now} - ${URGENT_WAIT_MS} AND msg.id > m.last_read_id
+     AND msg.sender_id IS DISTINCT FROM m.user_id`;
+
+/** How often an unread urgent message rings again while its recipient looks away (D-079). */
+export const URGENT_RING_SECONDS = 15;
+/** Calls GET /api/urgent/ring, only while an urgent message is unread, so a quiet day costs no function calls. */
+export const URGENT_RING_JOB: DatabaseJob = {
+  name: 'webchat-urgent-ring',
+  schedule: `${URGENT_RING_SECONDS} seconds`,
+  when: `EXISTS (SELECT 1 FROM ${unreadUrgentFrom('(extract(epoch FROM now()) * 1000)::bigint')})`,
+};
 
 export interface ProjectRow {
   id: number;
@@ -1624,15 +1656,24 @@ export async function openDb(sql: Sql) {
     unreadUrgent: async (userId: number) =>
       (
         await sql.query<MessageRow>(
-          `SELECT DISTINCT ON (msg.conversation_id) msg.* FROM webchat.messages msg
-           JOIN webchat.members m ON m.conversation_id = msg.conversation_id AND m.user_id = $1
-           WHERE msg.urgent AND msg.id > m.last_read_id AND msg.sender_id IS DISTINCT FROM $1 AND msg.created_at > $2
+          `SELECT DISTINCT ON (msg.conversation_id) msg.* FROM ${unreadUrgentFrom('$2::bigint')} AND m.user_id = $1
            ORDER BY msg.conversation_id, msg.id DESC`,
-          [userId, Date.now() - URGENT_WAIT_MS],
+          [userId, Date.now()],
         )
       )
         .sort((a, b) => a.id - b.id)
         .map(toMessageDTO),
+
+    /** For every member, the newest urgent message of each chat they have not read: what rings again (D-079). */
+    urgentRings: async () =>
+      (
+        await sql.query<MessageRow & { recipient_id: number }>(
+          `SELECT DISTINCT ON (m.user_id, msg.conversation_id) m.user_id AS recipient_id, msg.*
+           FROM ${unreadUrgentFrom('$1::bigint')}
+           ORDER BY m.user_id, msg.conversation_id, msg.id DESC`,
+          [Date.now()],
+        )
+      ).map((row) => ({ recipientId: row.recipient_id, message: toMessageDTO(row) })),
 
     latestMessageId: async (userId: number) =>
       (
@@ -1782,43 +1823,44 @@ export async function openDb(sql: Sql) {
         (await one(sql.query<{ value: string }>('SELECT value FROM webchat.meta WHERE key = $1', [GITHUB_SCHEDULED_AT])))
           ?.value ?? 0,
       ),
-    githubPollSecret: async () =>
-      (await one(sql.query<{ value: string }>('SELECT value FROM webchat.meta WHERE key = $1', [GITHUB_POLL_SECRET])))
-        ?.value ?? null,
+    jobSecret: async () =>
+      (await one(sql.query<{ value: string }>('SELECT value FROM webchat.meta WHERE key = $1', [JOB_SECRET])))?.value ??
+      null,
     /**
-     * Makes the database call url every 2 minutes with the poll secret, through Supabase Cron:
+     * Makes the database call url on the job's schedule with the job secret, through Supabase Cron:
      * pg_cron keeps the clock and pg_net sends the request. A job that already matches is left
      * alone, even one the owner deactivated, so every server start can call this cheaply. Throws
      * where the extensions are missing or the role may not enable them. Returns true when it
      * scheduled the job.
      */
-    scheduleGithubPolls: (url: string, newSecret: string) =>
+    scheduleJob: (job: DatabaseJob, url: string) =>
       sql.transaction(async (tx) => {
         // Instances that start at the same moment would race to create the extensions.
         await tx.query('SELECT pg_advisory_xact_lock(7349202)');
         await tx.query('INSERT INTO webchat.meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING', [
-          GITHUB_POLL_SECRET,
-          newSecret,
+          JOB_SECRET,
+          toBase64Url(randomBytes(32)),
         ]);
         // Reading the secret on every run keeps it out of the job's text, which Supabase's Cron page shows.
         const command =
           `SELECT net.http_get(url := ${sqlLiteral(url)}, headers := jsonb_build_object('authorization', ` +
-          `'Bearer ' || (SELECT value FROM webchat.meta WHERE key = ${sqlLiteral(GITHUB_POLL_SECRET)})), ` +
+          `'Bearer ' || (SELECT value FROM webchat.meta WHERE key = ${sqlLiteral(JOB_SECRET)})), ` +
           // pg_net gives up after 2 seconds by default; a poll of every due account takes longer.
-          'timeout_milliseconds := 25000)';
+          'timeout_milliseconds := 25000)' +
+          (job.when ? ` WHERE ${job.when}` : '');
         const installed = await tx.query("SELECT 1 FROM pg_extension WHERE extname IN ('pg_cron', 'pg_net')");
         if (installed.length === 2) {
-          const job = await one(
+          const current = await one(
             tx.query<{ schedule: string; command: string }>('SELECT schedule, command FROM cron.job WHERE jobname = $1', [
-              GITHUB_POLL_JOB,
+              job.name,
             ]),
           );
-          if (job?.schedule === GITHUB_POLL_SCHEDULE && job.command === command) return false;
+          if (current?.schedule === job.schedule && current.command === command) return false;
         }
         await tx.query('CREATE EXTENSION IF NOT EXISTS pg_cron');
         // Supabase keeps extensions in their own schema. pg_net's functions still live in "net".
         await tx.query('CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions');
-        await tx.query('SELECT cron.schedule($1, $2, $3)', [GITHUB_POLL_JOB, GITHUB_POLL_SCHEDULE, command]);
+        await tx.query('SELECT cron.schedule($1, $2, $3)', [job.name, job.schedule, command]);
         return true;
       }),
     saveGithubPulls: async (userId: number, login: string, pulls: string) => {

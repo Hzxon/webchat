@@ -29,8 +29,8 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
   Android and on iPhone (as a Home Screen app, iOS 16.4 or later). An older iPhone gets its alerts
   through the free Bark app instead.
 - **Urgent messages**: tap the bell next to the message box. The other person sees a full-screen
-  alert, the page keeps ringing, and the tab title flashes until they open it. On their phone the
-  notification stays until they act on it.
+  alert, the page keeps ringing, and the tab title flashes until they open it. With the tab closed
+  or the phone locked, the notification rings again every 15 seconds until they open the chat.
 - Unread count in the tab title, favicon, and the app badge of an installed app.
 - Invite-code sign-up, so only people you give the code to can join.
 - **GitHub pull requests**: connect your GitHub account to see the pull requests waiting for your
@@ -60,6 +60,10 @@ allowance in about a week.
   itself, with the key Bark's author publishes, whenever a Web Push would go to your other devices.
   It carries the chat and sender names and never the text. See "Turning on notifications".
 - **Urgent** always alerts. An open tab rings until you dismiss it, even with message sounds off.
+  While you look away, the server sends the push again every 15 seconds, like an alarm, until you
+  read the chat or the message is 3 days old. Silent mode and Do Not Disturb still mute it, except
+  through Bark with critical alerts allowed. On Vercel, a Supabase Cron job, `webchat-urgent-ring`,
+  keeps that clock, as for GitHub polls.
   An urgent message that came while WebChat was closed alerts when you open it, if you have not
   read it and it is at most 3 days old. The browser may hold the sound until your first tap.
 - **After a deploy, open tabs reload** on their next check-in, so a page from before it does not
@@ -220,7 +224,9 @@ Share the address and the invite code with your friends, or send a link that fil
 - **iPhone or iPad before iOS 16.4**, which has no Web Push at all: install the free
   [Bark](https://apps.apple.com/app/id1403753865) app. In WebChat, open the bell, press **Link
   Bark**, and copy the server URL it shows. In Bark, open the server list, add that URL, and
-  allow notifications. Bark registers itself; the dialog then counts the phone, and alerts arrive
+  allow notifications and critical alerts, so urgent messages ring even on silent. If you skipped
+  critical alerts, turn them on for Bark in the iPhone's Settings, under Notifications. Bark
+  registers itself; the dialog then counts the phone, and alerts arrive
   whenever you are not looking at WebChat on another device. Alerts name the chat and the sender,
   never the text, and a tap opens the chat in Safari. To keep even those names from Apple, press
   **Turn encryption on**, then in Bark open Push Encryption, choose AES256 and GCM, and type the

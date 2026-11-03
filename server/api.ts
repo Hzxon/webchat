@@ -23,7 +23,7 @@ import {
 } from './db.js';
 import { GithubError, type Github } from './github.js';
 import type { GithubApp } from './githubApp.js';
-import { notifyAddedToGroup, notifyAddedToProject, notifyNewMessage } from './notify.js';
+import { notifyAddedToGroup, notifyAddedToProject, notifyNewMessage, ringUrgent } from './notify.js';
 import type { Push, PushSubscriptionInput } from './push.js';
 import {
   isChannelName,
@@ -1030,16 +1030,26 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     res.json(await githubView(me.id));
   });
 
-  /**
-   * Polls every connected account that is due, so alerts arrive while every tab is closed. The
-   * database's Supabase Cron job calls it with its own secret, and any other scheduler with
-   * "Authorization: Bearer <CRON_SECRET>".
-   */
-  router.get('/github/poll', async (req, res) => {
-    if (!(await github.isScheduler(req.get('authorization') ?? ''))) {
+  /** Lets in the database's Supabase Cron jobs, with their own secret, and any other scheduler with CRON_SECRET. */
+  const requireScheduler = async (req: Request) => {
+    const authorization = req.get('authorization') ?? '';
+    if (config.cronSecret && safeEqual(authorization, `Bearer ${config.cronSecret}`)) return;
+    const secret = await db.jobSecret();
+    if (secret === null || !safeEqual(authorization, `Bearer ${secret}`)) {
       throw new HttpError(401, 'Send the CRON_SECRET as a bearer token.');
     }
+  };
+
+  /** Polls every connected account that is due, so alerts arrive while every tab is closed. */
+  router.get('/github/poll', async (req, res) => {
+    await requireScheduler(req);
     res.json({ polled: await github.pollAll() });
+  });
+
+  /** Rings every unread urgent message again, so it rings like an alarm while every tab is closed (D-079). */
+  router.get('/urgent/ring', async (req, res) => {
+    await requireScheduler(req);
+    res.json({ rang: await ringUrgent(db, push) });
   });
 
   /** Where GitHub sends the owner back after signing in to the GitHub App. It must be a callback URL registered on the app. */

@@ -55,8 +55,9 @@ export function barkFields(payload: PushPayload, origin: string): Record<string,
     // Opened by a tap: the chat, or the page an alert names, such as a pull request on GitHub.
     url: payload.url ?? (payload.conversationId === null ? origin : `${origin}/?chat=${payload.conversationId}`),
     sound: payload.urgent ? 'alarm.caf' : '1107.caf',
-    // Time-sensitive alerts get through Focus; "call" makes Bark ring for 30 seconds.
-    level: payload.urgent ? 'timeSensitive' : 'active',
+    // A critical alert rings through silent mode and Do Not Disturb, where the person allowed
+    // critical alerts for Bark (D-079). "call" makes Bark ring for 30 seconds.
+    level: payload.urgent ? 'critical' : 'active',
   };
   if (payload.urgent) fields.call = '1';
   if (payload.unreadTotal !== null) fields.badge = String(payload.unreadTotal);
@@ -85,7 +86,7 @@ export function barkPayload(fields: Record<string, string>, cipherKey: string | 
 }
 
 /** The collapse id Apple sees, with nothing of the chat in it. */
-const collapseIdFor = (tag: string) => crypto.createHash('sha256').update(tag).digest('base64url').slice(0, 22);
+export const collapseIdFor = (tag: string) => crypto.createHash('sha256').update(tag).digest('base64url').slice(0, 22);
 
 export function createBark(db: Db, config: Config) {
   const apns = config.barkApnsKey

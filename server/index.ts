@@ -2,9 +2,10 @@
 import http from 'node:http';
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
+import { URGENT_RING_SECONDS } from './db.js';
 
 const config = loadConfig();
-const { app, inviteCode, pollGithub, githubConfigured, close } = await createApp(config);
+const { app, inviteCode, pollGithub, githubConfigured, ringUrgent, close } = await createApp(config);
 const server = http.createServer(app);
 await new Promise<void>((resolve) => server.listen(config.port, config.host, resolve));
 
@@ -20,6 +21,10 @@ if (githubConfigured && config.githubPollSeconds > 0) {
   void poll();
   setInterval(poll, config.githubPollSeconds * 1000).unref();
 }
+
+// The same for urgent messages: they ring again until read, with every tab closed (D-079).
+const ring = () => ringUrgent().catch((error: unknown) => config.logger.error('Urgent ring failed', error));
+setInterval(ring, URGENT_RING_SECONDS * 1000).unref();
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
