@@ -236,9 +236,14 @@ class Client {
     return key;
   }
 
-  async send(conversationId: number, content: string | MessageContent, urgent = false, kind: MessageKind = 'message') {
+  async send(
+    conversationId: number,
+    content: string | MessageContent,
+    urgent = false,
+    kind: MessageKind = 'message',
+    clientId = crypto.randomUUID(),
+  ) {
     const { keyId, key } = this.chatKeys.get(conversationId)!;
-    const clientId = crypto.randomUUID();
     const meta = { conversationId, senderId: this.id, urgent, clientId, kind };
     const envelope = await encryptMessage(key, keyId, this.identity!.signPrivate, meta, content);
     return this.request<MessageDTO & { error?: string; code?: string }>('POST', `/conversations/${conversationId}/messages`, {
@@ -585,6 +590,22 @@ describe('chat server', () => {
     await alice.send(directChat.id, 'Ping after you left');
     const pushes = await waitForPushes(pushService.received, 3);
     assert.equal(pushes.length, 3);
+  });
+
+  test('the same send again, after a lost answer, returns the stored message and alerts once', async () => {
+    pushService.received.length = 0;
+    const clientId = crypto.randomUUID();
+    const text = 'Did my answer get lost?';
+    const first = await alice.send(directChat.id, text, true, 'message', clientId);
+    assert.equal(first.status, 201, JSON.stringify(first.data));
+    const again = await alice.send(directChat.id, text, true, 'message', clientId);
+    assert.equal(again.status, 200, JSON.stringify(again.data));
+    assert.equal(again.data.id, first.data.id);
+    const rows = await instance.sql.query('SELECT id FROM webchat.messages WHERE client_id = $1', [clientId]);
+    assert.equal(rows.length, 1, 'stored once');
+    await waitForPushes(pushService.received, 3);
+    await sleep(100);
+    assert.equal(pushService.received.length, 3, 'alerted once');
   });
 
   test('the service worker can mark a pushed message delivered', async () => {
@@ -1147,6 +1168,7 @@ describe('chat server', () => {
         'Still there?',
         'Call me back, it is urgent',
         'Ping after you left',
+        'Did my answer get lost?',
       ],
     );
     const older = await alice.request<MessageDTO[]>('GET', `/conversations/${directChat.id}/messages?before=${page.data[2]!.id}`);

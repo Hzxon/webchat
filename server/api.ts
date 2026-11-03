@@ -798,10 +798,10 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const urgent = req.body?.urgent === true;
     // The urgent flag is signed into the envelope, so it is refused rather than quietly dropped.
     if (urgent && kind === 'reaction') throw new HttpError(400, 'A reaction cannot be urgent.');
-    const message = await db.insertMessage(conversationId, me.id, kind, sealed, urgent, clientId);
+    const { message, repeated } = await db.insertMessage(conversationId, me.id, kind, sealed, urgent, clientId);
     // Answer the sender first; pushes go out after, while the function stays alive.
-    inBackground(notifyNewMessage(db, push, config, message, me), config.logger);
-    res.status(201).json(message);
+    if (!repeated) inBackground(notifyNewMessage(db, push, config, message, me), config.logger);
+    res.status(repeated ? 200 : 201).json(message);
   });
 
   router.post('/conversations/:id/read', requireAuth, async (req, res) => {

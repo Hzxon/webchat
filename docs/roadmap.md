@@ -193,12 +193,6 @@ the notes would show it nothing new. They should not count as unread.
 
 ## Known issues
 
-### K-9: Retrying a send can store the message twice
-
-`retryMessage` sends with a new client id, and the server does not check client ids. When a send
-commits but its answer is lost, a retry stores a second copy, and an urgent one alerts twice. Keep
-the client id on retry and make (sender, client id) unique.
-
 ### K-10: `sslmode=disable` is ignored
 
 `connectPostgres` in `server/sql.ts` turns TLS on for every host except three loopback names and
@@ -356,6 +350,7 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-5: GitHub alerts arrive with every tab closed, through Supabase Cron (D-057) | #29 |
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
+| K-9: A retried send is stored once (D-061) | #35 |
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 
@@ -370,6 +365,15 @@ An organization that restricts OAuth Apps hides its pull requests until an owner
 the pane said nothing. GitHub's GraphQL answer carries the error next to the data (`graphql` in
 `server/github.ts` dropped it). The pane now names the organization and links to how a member
 asks for approval, and the connect card says an organization may need to approve the app.
+
+### K-9: Retrying a send can store the message twice
+
+Status: Fixed in #35 (D-061). An integration test sends the same client id twice and checks that
+one row is stored, the second answer carries the first message, and the push goes out once.
+
+`retryMessage` sent with a new client id, and the server did not check client ids. When a send
+committed but its answer was lost, a retry stored a second copy, and an urgent one alerted twice.
+Now the retry keeps the client id, and (chat, sender, client id) is unique.
 
 ### K-5: The connect card promised alerts with every tab closed
 

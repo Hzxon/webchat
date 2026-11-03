@@ -528,9 +528,10 @@ What someone types in a chat's message box, and every message the server has not
 the device's IndexedDB next to the account's keys. A draft comes back when its chat opens again:
 after a closed tab, a reload, or a visit to another chat. A message that was sending or failed comes
 back in its chat as "Not sent", with a toast that names the chat, unless the chat's history shows
-that the server has it after all. The page never sends it again by itself, because a retry can
-store a message twice (K-9). A Remove button next to "Tap to retry" drops it. While a message is
-still sending, the tab asks before it closes or reloads. Signing out removes drafts and unsent
+that the server has it after all. The page never sends it again by itself; the person decides with
+"Tap to retry", which keeps the message's client id so the server stores it once (D-061). A Remove
+button next to it drops the message. While a message is still sending, the tab asks before it
+closes or reloads. Signing out removes drafts and unsent
 messages with the keys.
 
 A tab holds a Web Lock while it keeps unsent messages, and each one names its tab. A tab that opens
@@ -544,8 +545,8 @@ were for never got them, and the writer believed they had.
 Cost: drafts and unsent messages sit on the device unencrypted until they are sent or the user
 signs out, so anyone with the device's files can read them. A browser without Web Locks, such as
 Safari before 15.4, can show the same unsent message in two tabs. A message that reached the server
-as its tab closed shows as not sent if newer messages push it off the chat's first page, and a retry
-then sends it twice.
+as its tab closed shows as not sent if newer messages push it off the chat's first page, until a
+retry brings back the stored copy (D-061).
 
 ### D-056: A 2xx answer whose body does not parse is a failed request
 
@@ -560,7 +561,26 @@ so the default error message stands.
 
 Cost: a route that answers 2xx without a JSON body must use 204, or every call to it fails. A send
 whose answer breaks off now shows as not sent, like one whose connection dropped, although the
-server stored it. A retry stores it again until K-9 is fixed.
+server stored it. A retry brings back the stored copy (D-061).
+
+### D-061: A sender's client id names one message per chat
+
+Accepted 2026-11-03 in #35.
+
+Every send carries a client id the page made, signed into the envelope (D-016). A unique index on
+(chat, sender, client id) in `webchat.messages` makes it name one message per chat. When a send
+repeats a client id its sender used in that chat before, `db.insertMessage` stores nothing and
+returns the stored message, the route answers 200 instead of 201, and no push goes out.
+`retryMessage` in `client/src/chat.ts` keeps the client id of the message it sends again.
+
+Why: a send whose answer was lost, to a dropped connection or a 2xx that broke off (D-056), showed
+as not sent although the server had stored it. "Tap to retry" sent it under a new client id, so
+the server stored a second copy, and an urgent one alerted everyone twice (K-9).
+
+Cost: migration 10 fails on a database that already holds two messages with the same chat, sender
+and client id, and the server then stops at start. The page's retries never made such rows; only
+two tabs sending the same stored message in a browser without Web Locks could (D-051). A repeat
+answers with the first copy's envelope, not the one just sent, which the page never needs to read.
 
 ## Projects and channels
 
