@@ -1078,6 +1078,27 @@ Cost: every message costs at least 272 bytes of ciphertext, and a message from a
 (D-017) and shows "New message" on the lock screen. Messages sent before this change keep their
 exact lengths in the database.
 
+### D-063: A check fails a pull request that repeats a decision or roadmap id
+
+Accepted 2026-11-03 in #38.
+
+The `doc-ids` workflow (`.github/workflows/doc-ids.yml`) runs on every pull request. It fails when
+`docs/decisions.md` has two `### D-0xx:` headings with the same number, or `docs/roadmap.md` has two
+`### K-n:`, `### R-nnn:` or `### Q-n:` headings with the same id. It is a few lines of `grep` and
+`sort | uniq -d`, so it adds no dependency. The error names the file and the repeated id, and the
+pull request that merges second renumbers its own entry, as AGENTS.md says.
+
+Why: sessions take "the next free number" in parallel, and the numbers raced twice on 2026-11-03.
+Git does not see it as a conflict when the two entries land in different places in the file, so the
+repeat reached main unless someone read both pull requests. A check on the pull request finds it
+before the merge.
+
+Cost: the check sees only the pull request's merge with main at the time it runs. Two open pull
+requests that take the same number both pass until one merges, and GitHub does not run the second
+one's check again on its own. The second pull request has to be updated from main first, which
+runs the check. Mark the check required in the branch rules, with "Require branches to be up to
+date", or a red result will not stop the merge.
+
 ## Superseded
 
 Decisions that no longer hold. They keep their numbers and reasons for the record. Read the entry
