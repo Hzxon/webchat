@@ -348,11 +348,18 @@ Each device remembers the keys it first saw for each person and warns when they 
 user checks them, the page refuses to wrap a new chat key for that person. Two people can compare a
 60-digit security code: matching codes mean nobody swapped keys between them.
 
+Until the check, the page also trusts nothing signed or wrapped with the changed keys. It refuses to
+open a new chat key that person wrapped, so it never sends under a key the server could know. It
+shows their new messages as unreadable, and the service worker shows their pushes without text. A
+chat key the device stored before the change still works. A security review of main on 2026-11-03
+found that only wrapping was blocked.
+
 These pins stay on the device when someone signs out or signs in, so a swap made while nobody was
 signed in still shows a warning. They hold only fingerprints of other people's public keys. Until a
 review on 2026-11-01, every sign-in erased them along with the account's keys.
 
-Cost: a device trusts the first keys it sees for a person without proof.
+Cost: a device trusts the first keys it sees for a person without proof. After someone's keys
+change for a real reason, their new messages stay unreadable until the user checks the code (K-26).
 
 ### D-019: Accounts and chats from before encryption upgrade once
 

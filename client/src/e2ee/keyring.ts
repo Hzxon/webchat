@@ -100,6 +100,16 @@ function checkRecipients(members: Array<{ id: number; name: string; keys: Public
   }
 }
 let pins: Record<number, string> | null = null;
+/** People whose keys differ from the ones pinned on this device, as of the last checkKeys. */
+let changedKeys = new Set<number>();
+
+/**
+ * Keys this device has not checked since they changed. A key the server swapped would let it open
+ * chat keys it wrapped and sign messages in that person's name, so nothing trusts them (D-018).
+ * One's own keys come from this device, never from the server.
+ */
+const unchecked = (userId: number) => userId !== me?.id && changedKeys.has(userId);
+const WRAPPER_CHANGED = "The security code of whoever shared this chat's key changed. Check it first.";
 
 const chatKeyName = (conversationId: number, keyId: string) => `${conversationId}:${keyId}`;
 
@@ -121,6 +131,7 @@ export const keyring = {
     await keystore.setIdentity({ userId, identity });
     me = { id: userId, identity };
     pins = null;
+    changedKeys = new Set();
   },
 
   createSecrets: () => createIdentity(),
@@ -129,6 +140,7 @@ export const keyring = {
   async forget() {
     me = null;
     pins = null;
+    changedKeys = new Set();
     chatKeys.clear();
     opened.clear();
     await keystore.clearKeys().catch(() => undefined);
@@ -136,7 +148,8 @@ export const keyring = {
 
   /**
    * Shares everyone's public keys with the service worker, and compares each person's keys with
-   * the ones first seen on this device. Returns the people whose keys changed since.
+   * the ones first seen on this device. Returns the people whose keys changed since. Their keys stay
+   * out of the service worker's directory, so a push signed with them shows no text.
    */
   async checkKeys(users: UserDTO[]): Promise<Set<number>> {
     const changed = new Set<number>();
@@ -145,15 +158,17 @@ export const keyring = {
     const directory: Record<number, PublicKeysDTO> = { [me!.id]: me!.identity.publicKeys };
     for (const user of users) {
       if (!user.keys) continue;
-      directory[user.id] = user.keys;
       const fingerprint = await keyFingerprint(user.keys);
       if (!pins[user.id]) {
         pins[user.id] = fingerprint;
         pinned = true;
       } else if (pins[user.id] !== fingerprint) {
         changed.add(user.id);
+        continue;
       }
+      directory[user.id] = user.keys;
     }
+    changedKeys = changed;
     await Promise.all([keystore.setDirectory(directory), pinned ? keystore.setPins(pins) : undefined]).catch(() => undefined);
     return changed;
   },
@@ -182,6 +197,10 @@ export const keyring = {
         const wrapperKeys = keysOf(myKey.wrappedBy);
         if (!wrapperKeys || !conversation.members.some((m) => m.userId === myKey.wrappedBy)) {
           throw new Error('The chat key was not created by a member of this chat.');
+        }
+        // A key stored before the change stays usable above; a new one waits for the check.
+        if (unchecked(myKey.wrappedBy)) {
+          throw new EncryptionUnavailableError(WRAPPER_CHANGED);
         }
         const key = await unwrapChatKey(myKey, self, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
         await keystore.setChatKey(id, keyId, key).catch(() => undefined);
@@ -251,6 +270,9 @@ export const keyring = {
     const wrapperKeys = myKey ? keysOf(myKey.wrappedBy) : null;
     if (!keyId || !myKey || !wrapperKeys || !conversation.members.some((m) => m.userId === myKey.wrappedBy)) {
       throw new EncryptionUnavailableError('This device cannot open one of the channel keys. Reload the page.');
+    }
+    if (unchecked(myKey.wrappedBy)) {
+      throw new EncryptionUnavailableError(WRAPPER_CHANGED);
     }
     const raw = await openChatKeyBytes(myKey, me!, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
     return Promise.all(recipients.map(async (r) => ({ userId: r.id, ...(await wrapChatKey(raw, me!, { id: r.id, dh: r.keys!.dh }, keyId)) })));
@@ -326,7 +348,7 @@ export const keyring = {
 async function decrypt(message: MessageDTO, envelope: EnvelopeDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup) {
   const { conversationId, senderId, urgent, clientId, kind } = message;
   const key = await keyring.keyFor(conversation, envelope.kid, keysOf);
-  const senderKeys = senderId === null ? null : keysOf(senderId);
+  const senderKeys = senderId === null || unchecked(senderId) ? null : keysOf(senderId);
   if (!key || !senderKeys || senderId === null) throw new Error('Missing keys.');
   return decryptContent(key, senderKeys.sign, { conversationId, senderId, urgent, clientId: clientId ?? '', kind }, envelope);
 }
