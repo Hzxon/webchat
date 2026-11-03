@@ -224,6 +224,9 @@ the channel still works. `overflow-wrap: anywhere` on the preview would fix it.
 
 ### K-29: "Turn on notifications" shows on iOS before 16.4
 
+Status: Fixed in #57. A browser check with an iOS 15 user agent and no `Notification` shows the
+dialog without the button and with the Bark section; a normal browser still shows the button.
+
 Found in the browser check of K-23 in #48 on 2026-11-03.
 
 The bell dialog in `client/src/components/NotificationDialog.tsx` hides its main button only when
