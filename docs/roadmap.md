@@ -233,6 +233,9 @@ when push is not supported, and leave the Bark section.
 
 ### K-30: A session found expired at load leaves the keys on the device
 
+Status: Fixed in #56. Tried in a browser: a load after the session row was deleted showed the
+sign-in screen with no keys left, and a load with the API unreachable or answering 503 kept them.
+
 Found while fixing K-18 in #47 on 2026-11-03.
 
 When the first `GET /api/bootstrap` answers 401, the catch in `client/src/App.tsx` shows the

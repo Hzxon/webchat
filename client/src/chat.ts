@@ -127,11 +127,7 @@ export async function syncNow(): Promise<void> {
     }
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
-      // The expired session cannot remove this browser's subscription on the server, so end it in
-      // the browser. The push service then refuses the server's next push, and the server deletes
-      // the row. Until then, the next person here would see the old account's notifications (K-18).
-      void disablePushHere();
-      void endSession();
+      void sessionExpired();
       return;
     }
     failures++;
@@ -994,6 +990,15 @@ async function endSession() {
   // The keys stay usable only while signed in on this device.
   await keyring.forget();
   onSignedOut();
+}
+
+/** For a 401 at load or at a check-in: the session expired, often while every tab was closed. */
+export async function sessionExpired() {
+  // The expired session cannot remove this browser's subscription on the server, so end it in
+  // the browser. The push service then refuses the server's next push, and the server deletes
+  // the row. Until then, the next person here would see the old account's notifications (K-18).
+  void disablePushHere();
+  await endSession();
 }
 
 export async function signOut() {
