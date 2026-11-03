@@ -19,3 +19,7 @@ test('a host that is not loopback still uses TLS by default', async () => {
   assert.deepEqual(await sslFor('postgres://chat:secret@db:5432/webchat'), { rejectUnauthorized: false });
   assert.deepEqual(await sslFor('postgres://chat:secret@db:5432/webchat?sslmode=require'), { rejectUnauthorized: false });
 });
+
+test('the IPv6 loopback address skips TLS', async () => {
+  assert.equal(await sslFor('postgres://chat:secret@[::1]:5432/webchat'), undefined);
+});

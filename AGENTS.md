@@ -58,6 +58,7 @@ keeps its own cookies and keys.
 | `shared/e2ee.ts` | All end-to-end encryption, on Web Crypto only, for the page, the service worker and the tests. |
 | `client/src/chat.ts` | The sync loop, sending, projects and reactions. It decrypts on the way in. |
 | `client/src/store.ts` | The page's state and the actions that change it. |
+| `client/src/queue.ts` | Runs a chat's sends one at a time, in the order they were written. See D-075. |
 | `client/src/e2ee/` | The page's keyring and its IndexedDB key store. |
 | `client/src/sw.ts` | The service worker. It decrypts pushed messages and shows notifications. |
 | `client/src/components/` | The React views. |

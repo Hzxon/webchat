@@ -108,7 +108,9 @@ export function NotificationDialog({ onClose }: { onClose: () => void }) {
       )}
 
       <div className="dialog-actions">
-        {push?.permission !== 'denied' && !push?.subscribed && (
+        {/* Without Web Push the permission still lets the open tab notify, so only a browser with no
+            Notification at all, such as iOS before 16.4, loses the button. */}
+        {push?.permission !== 'denied' && push?.permission !== 'unsupported' && !push?.subscribed && (
           <button className="button-primary" disabled={busy} onClick={() => void act(enableNotifications)}>
             Turn on notifications
           </button>

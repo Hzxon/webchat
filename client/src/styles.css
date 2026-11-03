@@ -1300,6 +1300,8 @@ a {
   margin: 0;
   color: var(--muted);
   font-size: 14px;
+  /* A channel name has no spaces, and without a break it widens the dialog past a phone screen. */
+  overflow-wrap: anywhere;
 }
 
 .dialog-note {
@@ -1340,6 +1342,11 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* An empty row would still take a grid gap, as in the bell dialog on a browser with nothing to turn on. */
+.dialog-actions:empty {
+  display: none;
 }
 
 /* The Bark section of the notification dialog: numbered setup steps and values to copy into the app. */

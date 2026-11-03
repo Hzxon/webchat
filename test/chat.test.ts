@@ -708,6 +708,27 @@ describe('chat server', () => {
     assert.equal(rows.length, 0);
   });
 
+  test('the endpoint a worker replaced is deleted by its owner only (K-33)', async () => {
+    const replaced = makeSubscription(`http://${pushService.host}/bob-replaced`);
+    const fresh = makeSubscription(`http://${pushService.host}/bob-fresh`);
+    const stored = async () =>
+      (
+        await instance.sql.query<{ endpoint: string }>(
+          'SELECT endpoint FROM webchat.push_subscriptions WHERE endpoint IN ($1, $2) ORDER BY endpoint',
+          [replaced.json.endpoint, fresh.json.endpoint],
+        )
+      ).map((row) => row.endpoint);
+    assert.equal((await bob.request('POST', '/push/subscribe', replaced.json)).status, 204);
+    assert.equal((await bob.request('POST', '/push/subscribe', fresh.json)).status, 204);
+
+    assert.equal((await alice.request('POST', '/push/unsubscribe', { endpoint: replaced.json.endpoint })).status, 204);
+    assert.deepEqual(await stored(), [fresh.json.endpoint, replaced.json.endpoint], "Alice cannot delete Bob's endpoint");
+    assert.equal((await bob.request('POST', '/push/unsubscribe', { endpoint: replaced.json.endpoint })).status, 204);
+    assert.deepEqual(await stored(), [fresh.json.endpoint]);
+
+    await bob.request('POST', '/push/unsubscribe', { endpoint: fresh.json.endpoint });
+  });
+
   test('the same send again, after a lost answer, returns the stored message and alerts once', async () => {
     pushService.received.length = 0;
     const clientId = crypto.randomUUID();
@@ -1660,6 +1681,22 @@ describe('chat server', () => {
     ]);
     // Carol passed the route's membership check before the owner removed her; the lock catches it.
     assert.equal(await db.addProjectMembers(projectId, carol.id, [bob.id], []), 'stale');
+  });
+
+  test('a key with two copies for one member and none for another is refused', async () => {
+    const db = await openDb(instance.sql);
+    const now = Date.now();
+    const [{ id }] = (await instance.sql.query<{ id: number }>(
+      `INSERT INTO webchat.conversations (type, title, created_at, updated_at) VALUES ('group', 'Doubled', $1, $1) RETURNING id`,
+      [now],
+    )) as [{ id: number }];
+    for (const user of [alice, bob, carol]) {
+      await instance.sql.query('INSERT INTO webchat.members (conversation_id, user_id, joined_at) VALUES ($1, $2, $3)', [id, user.id, now]);
+    }
+    const key = await alice.newChatKey([alice, bob, bob].map((c) => ({ id: c.id, keys: keysOf(c) })));
+    const route = await alice.request('POST', `/conversations/${id}/key`, key);
+    assert.equal(route.status, 400, 'the route refuses the copies before the database sees them');
+    assert.equal(await db.setConversationKey(id, key.keyId, alice.id, key.wrappedKeys), 'stale');
   });
 
   test('logout ends the session', async () => {
