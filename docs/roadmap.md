@@ -217,13 +217,6 @@ Register, login, upgrade and key routes share 20 requests per 15 minutes per IP 
 successes count. A class that signs up together behind one campus address locks itself out for 15
 minutes. Count only failures, or raise the limit for successes. Not seen on a real deployment.
 
-### K-16: A reaction push can replace a message notification
-
-A reaction push uses the chat's notification tag. When the server still thinks the user is looking,
-for example after a laptop slept before its check-in went out, the service worker shows "Bob reacted
-to a message" over the chat's message notification. D-030 says reactions notify nobody. Not seen on
-a real device.
-
 ### K-17: An open page keeps a push endpoint the service worker replaced
 
 The service worker's `pushsubscriptionchange` handler subscribes again but does not tell open pages.
@@ -326,6 +319,18 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-26: Messages from a checked security code open without a reload | #42 |
 | K-12: A subscription with bad keys is refused or dropped, and no longer breaks pushes | #43 |
 | K-15: A late sync answer no longer closes a chat just created (D-069) | #44 |
+| K-16: A reaction push no longer shows or replaces a message notification (D-070) | #45 |
+
+### K-16: A reaction push can replace a message notification
+
+Status: Fixed in #45 (D-070). An integration test checks that a reaction's push goes only to the
+browser in use, has the kind the service worker shows nothing for, and has a tag other than the
+chat's message tag. No test runs the service worker, and it was not tried on a real device.
+
+A reaction push uses the chat's notification tag. When the server still thinks the user is looking,
+for example after a laptop slept before its check-in went out, the service worker shows "Bob reacted
+to a message" over the chat's message notification. D-030 says reactions notify nobody. Not seen on
+a real device.
 
 ### K-15: A late sync answer can close a chat just created
 

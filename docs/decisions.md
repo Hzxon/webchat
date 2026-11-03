@@ -800,6 +800,21 @@ fetched, not the oldest message it shows, and keeps going while pages bring only
 still running the app from before reactions shows them as messages it cannot decrypt until it
 reloads (roadmap K-1).
 
+### D-070: The service worker never shows a reaction
+
+Accepted 2026-11-03 in #45.
+
+A reaction's push only wakes the page (D-030), so the server sends it only to the browser the user
+is looking at. The server can be wrong for up to 45 seconds (D-007), such as after a laptop slept
+before its check-in went out. The service worker then showed "Bob reacted to a message", and under
+the chat's tag it replaced the message notification. Now the service worker hands a reaction to the
+open pages and shows nothing, whoever is looking. A reaction push also has a tag of its own,
+`reaction-` and the chat id, so it can never replace a message notification.
+
+Cost: a reaction push that reaches a browser nobody looks at shows nothing, and browsers count such
+pushes. Chrome may show its own "updated in the background" notice, and Firefox counts it against
+the site's quota of pushes without a notification. Safari never gets these pushes (D-047).
+
 ### D-031: Project invites notify even while the app is open
 
 Accepted 2026-11-01 in #2, extended in #10.
