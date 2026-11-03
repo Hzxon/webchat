@@ -46,6 +46,7 @@ import type {
   SyncResponse,
   UserDTO,
 } from '../shared/types.ts';
+import { LIMITS, toChannelName } from '../shared/types.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
 const KDF_ROUNDS = 1000;
@@ -911,6 +912,17 @@ describe('chat server', () => {
       assert.equal(taken.data.code, 'name_taken');
       const outsider = await carol.request('POST', `/projects/${project.id}/channels`, { name: 'secret', key });
       assert.equal(outsider.status, 404);
+    });
+
+    test('the server accepts every name the New channel dialog makes', async () => {
+      const members = [{ id: alice.id, keys: keysOf(alice) }];
+      const own = await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'Names', key: await alice.newChatKey(members) });
+      const almostFull = (letter: string) => letter.repeat(LIMITS.channelNameLength - 1);
+      for (const typed of [`${almostFull('a')} b`, 'ℂhat', `${almostFull('c')}𠀀`, 'Slides & Design']) {
+        const name = toChannelName(typed);
+        const res = await alice.request('POST', `/projects/${own.data.project.id}/channels`, { name, key: await alice.newChatKey(members) });
+        assert.equal(res.status, 201, `${typed} became ${name}`);
+      }
     });
 
     test('any member can add a classmate, who then reads every channel from the start', async () => {

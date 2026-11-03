@@ -664,6 +664,21 @@ Channel names use lowercase letters and digits in any script, joined by single h
 characters, and are unique within their project. The page turns what people type into that form,
 so "Slides & Design" becomes `slides-design`. Every project starts with `#general`.
 
+### D-065: One channel name rule for the page and the server
+
+Accepted 2026-11-03 in #51.
+
+`toChannelName` and `isChannelName` in `shared/types.ts` hold the rule of D-027 for both sides. The
+New channel dialog makes names with the first, and the server checks them with the second. The
+page applies NFKC first, so a capital with no lowercase form, such as ℂ, becomes a plain one. It
+cuts the name to the limit before it trims hyphens, and it counts UTF-16 units as the server does.
+
+Why: the dialog had its own copy of the rule, and the copies drifted. It trimmed before it cut, and
+kept capitals the server refuses, so some names it showed got a 400 (K-11).
+
+Cost: NFKC also folds other look-alikes, such as full-width letters and ligatures, so a few typed
+names change more than people expect. The dialog shows the result before it creates the channel.
+
 ### D-039: Owners remove people and delete, before key rotation
 
 Partly superseded by D-044 and D-045: removal now gives each chat a new key, and people can leave.

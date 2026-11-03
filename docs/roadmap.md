@@ -199,12 +199,6 @@ the notes would show it nothing new. They should not count as unread.
 deletes `sslmode`. A self-hosted Postgres without TLS on another host, such as `db` in Docker
 Compose, cannot be reached, and the server stops at start. Only an undocumented `?ssl=0` works.
 
-### K-11: The New channel dialog can make names the server refuses
-
-`toChannelName` in `client/src/components/ProjectDialogs.tsx` trims hyphens before it cuts the name
-to 40 characters and keeps capitals with no lowercase form, such as ℂ. The server then answers 400.
-Keep one rule in `shared/` for both sides.
-
 ### K-12: A push subscription with malformed keys breaks pushes for its owner
 
 `generateRequestDetails` in `server/push.ts` throws before the `try` for keys of the wrong size, so
@@ -351,6 +345,16 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
 | K-9: A retried send is stored once (D-061) | #35 |
+| K-11: The New channel dialog and the server share one name rule (D-065) | #51 |
+
+### K-11: The New channel dialog can make names the server refuses
+
+Status: Fixed in #51 (D-065). Tests cover a long name with a hyphen at the cut, ℂ, and a
+character cut in half, and the server accepts each name the rule makes.
+
+`toChannelName` in `client/src/components/ProjectDialogs.tsx` trimmed hyphens before it cut the name
+to 40 characters and kept capitals with no lowercase form, such as ℂ. The server then answered 400.
+Now one rule in `shared/types.ts` makes the names on the page and checks them on the server.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 
