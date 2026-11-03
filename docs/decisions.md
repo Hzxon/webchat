@@ -1140,3 +1140,7 @@ while a tab is open, otherwise when they next open WebChat. The server learns wh
 project links and which pull requests went into which channel. Everyone in the project sees each
 shared title, even without access to the repository. Reviewers show as GitHub logins, not WebChat
 names, and a card does not update when reviewers change later.
+
+### D-063: Repeated on purpose
+
+Test only.
