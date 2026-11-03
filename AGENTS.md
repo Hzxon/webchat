@@ -71,7 +71,7 @@ keeps its own cookies and keys.
 | `client/src/push.ts` | Notification permission and this device's Web Push subscription. |
 | `client/src/alerts.ts` | In-page alerts: the message sound, the urgent ring, the tab title, the favicon dot and the app badge. See D-023. |
 | `client/src/attention.ts` | Tracks whether the user is looking at this tab, which decides between an in-app alert and a push. See D-007. |
-| `client/src/build.ts` | Reloads the tab once the server runs a newer build, when nothing would be lost. See D-040. |
+| `client/src/build.ts` | Reloads the tab once a deploy changes the page, when nothing would be lost. See D-040. |
 | `client/src/viewport.ts` | Fits the chat above the on-screen keyboard of a touch screen. See D-053. |
 | `client/src/ios.ts` | Reads the iOS version from the user agent, to spot iPhones before 16.4, which have no Web Push. See D-054. |
 | `client/src/github.ts` | Keeps the Pull requests pane fresh and alerts about the events the server found. See D-034. |
