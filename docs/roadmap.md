@@ -70,6 +70,56 @@ Open questions:
 - Should due dates send reminders? That needs R-010.
 - Sprints, epics and story points stay out unless students ask for them.
 
+### R-020: Shared Markdown docs in projects
+
+Status: In progress on `claude/r020-project-docs` (#73).
+
+Asked for by the owner on 2026-11-03.
+
+Why: student teams write a PRD or a spec together. Today it lives in Word files they send each
+other, or in another app. They lose track of the latest version and of who changed what.
+
+Scope:
+
+- A Docs list under each project, next to its channels. A new doc starts blank or from a template:
+  PRD, tech spec, meeting notes or project proposal.
+- A doc is a title and an ordered list of sections. Each section is Markdown, written in a text box
+  with a preview. The preview supports headings, bold and italic, code, lists, checkboxes, links,
+  quotes and tables.
+- One person edits a section at a time. Editing claims a lock on the section, and each check-in
+  from the editor's tab renews it, the way online status works. Everyone else sees who is editing.
+- While the lock is held, saves replace the same revision. Releasing the lock closes it, so a
+  section's history has one entry per editing session. History shows a diff and restores an
+  earlier revision.
+- A doc that changed since this device last opened it shows a dot. The last revision seen stays on
+  the device, so the server does not learn when someone reads a doc.
+- A word count, and an export to PDF through the browser's print dialog and a print stylesheet.
+
+Constraints:
+
+- Titles and sections are encrypted with the project's #general key and signed like messages
+  (D-014, D-016). Every project member is in #general (D-024), and #general lasts as long as the
+  project. So adding people (D-026) and new keys after a removal (D-044) cover docs with no new key
+  code.
+- The signed header binds the chat, the key id, the doc, the section, the revision and the kind.
+  The order of a doc's sections is signed too, so the server cannot reorder or drop sections.
+- The preview builds React elements and never sets raw HTML. Other members write the text, and the
+  Content Security Policy is strict (D-009).
+- The server sees which docs a project has, how many sections each has, who edited which section
+  and when, who holds a lock, and the size band of each section (D-059). List them in the README
+  and in D-020.
+- New revisions and locks change the sync fingerprint (D-021). Schema changes go in a new migration
+  at the end (D-010). The longest section goes in `LIMITS` (D-011).
+- Section text not saved yet stays on the device, like drafts (D-051).
+
+Out of scope for now: docs in groups and direct messages, Markdown and Word exports, Word-style
+editing, comments, mentions, a note in #general for each edit, links to tasks (R-001), images
+(R-005), search (R-008), and two people editing one section at once, which needs Q-1.
+
+Done when: typecheck, tests and build pass. Tests prove that the database holds no doc text in
+plain, that only project members can read or change docs, and that nobody takes a lock someone else
+holds. Docs have been tried in a browser with two accounts (D-037).
+
 ## Planned
 
 ### R-005: Photos and files
