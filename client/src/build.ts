@@ -3,7 +3,8 @@
 import { BUILD_HEADER } from '../../shared/types';
 
 let current: string | null = null;
-let reloading = false;
+/** Set while a new build's page is checked, and for good once the page differs. */
+let checking = false;
 const holds = new Set<() => boolean>();
 /** Where the reload lands. The chat module points it at what is open, so the user keeps their place. */
 let target: () => string = () => '/';
@@ -13,14 +14,43 @@ const QUIET_MS = 30_000;
 /** Called with every API response. The first build seen is the one this page belongs to. */
 export function noteBuild(response: Response) {
   const build = response.headers.get(BUILD_HEADER);
-  if (!build || reloading) return;
+  if (!build || build === current || checking) return;
   if (current === null) {
     current = build;
     return;
   }
-  if (build === current) return;
-  reloading = true;
-  reloadWhenIdle();
+  // A deploy of the server or the docs alone hands out the same page, and a reload would only
+  // lose the user's place (K-36). A page that fails to load is checked again on the next answer.
+  checking = true;
+  pageChanged()
+    .then((changed) => {
+      if (changed) {
+        reloadWhenIdle();
+        return;
+      }
+      current = build;
+      checking = false;
+      // The service worker can change without the page, and the reload no longer fetches it.
+      return navigator.serviceWorker?.getRegistration().then((registration) => registration?.update());
+    })
+    .catch(() => {
+      checking = false;
+    });
+}
+
+/** Vite names every bundle file after its contents, under /assets/. */
+const bundleFiles = (html: string) => new Set(html.match(/\/assets\/[\w.-]+/g));
+
+/**
+ * Whether the page the server hands out now loads a bundle file that this page did not. A page
+ * without bundle files counts as changed, so a new build layout reloads rather than never does.
+ */
+async function pageChanged(): Promise<boolean> {
+  const res = await fetch('/', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`The page answered ${res.status}.`);
+  const here = bundleFiles(document.head.innerHTML);
+  const fresh = bundleFiles(await res.text());
+  return fresh.size === 0 || [...fresh].some((file) => !here.has(file));
 }
 
 /**
