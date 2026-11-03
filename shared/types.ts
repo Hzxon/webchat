@@ -531,8 +531,12 @@ export const LIMITS = {
   messageLength: 4000,
   /** Characters of the quoted message a reply carries. */
   quoteLength: 160,
-  /** Base64url ciphertext of the longest message with its quote, each character up to 4 UTF-8 bytes. */
-  ciphertextLength: 24_000,
+  /**
+   * Base64url ciphertext of the longest message with its quote, each character up to 4 UTF-8
+   * bytes: that is under 17 KB, which pads to 32 KB (PAD_MIN_BYTES in shared/e2ee.ts), plus the
+   * 16-byte tag.
+   */
+  ciphertextLength: 43_712,
   groupTitleLength: 60,
   projectNameLength: 60,
   channelNameLength: 40,

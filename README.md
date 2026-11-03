@@ -79,6 +79,9 @@ All of it runs in the browser with Web Crypto ([shared/e2ee.ts](shared/e2ee.ts))
 - **Every message is encrypted and then signed.** The signature covers the ciphertext, the chat,
   the sender, the urgent flag, and whether it is a message or a reaction. A message the server
   altered, or one a group member forged in someone else's name, shows as "could not be decrypted".
+- **Every message is padded before it is encrypted**, to the smallest of a few fixed sizes that
+  holds it: 256 bytes, 512 bytes, 1 KB and so on. A reaction, a reaction taken back and a short
+  message all look the same to the server.
 - **Replies and reactions are inside the envelope.** A reply carries the message it answers and a
   short quote of it. A reaction carries its emoji and the message it is for. The server sees neither.
   When the original of a quote is loaded, the app shows the original, whose signature it checked,
@@ -111,8 +114,9 @@ What it does not protect against:
   The Bark app on the phone sees the alert in full. The message text is never in it.
 - **Metadata stays visible to the server:** who talks to whom and when, group, project and
   channel names, who is in which project or group and who added them, who owns each project and
-  group, who left, when a chat got a new key, display names, whether a message is urgent, and that
-  someone reacted (not with which emoji, or to which message).
+  group, who left, when a chat got a new key, display names, whether a message is urgent, that
+  someone reacted (not with which emoji, or to which message), and roughly how long a message is:
+  which of the fixed sizes it was padded to, not its exact length.
 - **Which GitHub repositories a project links, and the cards from GitHub in its channels.** The
   server writes those cards from what GitHub sends, so they are not end-to-end encrypted, and a
   server that was changed could write fake ones. Their links still lead only to github.com. A card
