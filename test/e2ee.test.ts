@@ -3,8 +3,10 @@ import { before, describe, test } from 'node:test';
 import {
   createIdentity,
   decryptContent,
+  decryptDoc,
   decryptMessage,
   deriveAccountSecrets,
+  encryptDoc,
   encryptMessage,
   fromBase64Url,
   importChatKey,
@@ -26,6 +28,7 @@ import {
   wrapChatKey,
   WrongPasswordError,
   type Identity,
+  type DocMeta,
   type IdentitySecrets,
   type MessageMeta,
 } from '../shared/e2ee.ts';
@@ -316,6 +319,23 @@ describe('end-to-end encryption', () => {
 
     const wrongKey = await importChatKey(newChatKeyBytes());
     await assert.rejects(decryptMessage(wrongKey, aliceSign, meta, envelope), /decryption failed/);
+  });
+
+  test('a doc revision opens only in its own doc and section, from its author, and never as a message', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const keyId = newKeyId();
+    const meta: DocMeta = { conversationId: 7, authorId: alice.id, docId: newKeyId(), section: 'goals' };
+    const content = { text: '## Goals\n\n- Ship the export', pos: 2 };
+    const envelope = await encryptDoc(key, keyId, alice.identity.signPrivate, meta, content);
+    const aliceSign = alice.identity.publicKeys.sign;
+    assert.deepEqual(await decryptDoc(key, aliceSign, meta, envelope), content);
+    for (const moved of [{ ...meta, section: 'title' }, { ...meta, docId: newKeyId() }, { ...meta, conversationId: 8 }, { ...meta, authorId: bob.id }]) {
+      await assert.rejects(decryptDoc(key, aliceSign, moved, envelope), /bad signature/);
+    }
+    const asMessage: MessageMeta = { conversationId: 7, senderId: alice.id, urgent: false, clientId: 'd1' };
+    await assert.rejects(decryptContent(key, aliceSign, asMessage, envelope), /bad signature/);
+    const forged = await encryptDoc(key, keyId, bob.identity.signPrivate, meta, { text: 'Bob wrote this' });
+    await assert.rejects(decryptDoc(key, aliceSign, meta, forged), /bad signature/);
   });
 
   test('safety codes match on both sides and change when a key changes', async () => {

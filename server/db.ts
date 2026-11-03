@@ -3,6 +3,8 @@ import {
   type AccountKeysInput,
   type ConversationDTO,
   type ConversationType,
+  type DocDTO,
+  type DocRevisionDTO,
   type EnvelopeDTO,
   type GithubEventDTO,
   type GithubEventKind,
@@ -310,6 +312,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS messages_by_client_id
   `
 CREATE INDEX IF NOT EXISTS urgent_messages ON webchat.messages (created_at) WHERE urgent;
 `,
+  // 12: shared Markdown docs in projects (R-020, D-081).
+  `
+-- The browser makes the id, so it signs it into every revision before the server sees the doc.
+-- The doc belongs to its project's #general channel, whose key encrypts it and whose members edit it.
+CREATE TABLE IF NOT EXISTS webchat.docs (
+  id              TEXT PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES webchat.conversations(id) ON DELETE CASCADE,
+  created_by      INTEGER NOT NULL REFERENCES webchat.users(id),
+  created_at      BIGINT NOT NULL,
+  -- Grows with every save, so check-ins notice it (D-021).
+  version         INTEGER NOT NULL DEFAULT 1,
+  updated_by      INTEGER NOT NULL REFERENCES webchat.users(id),
+  updated_at      BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS docs_by_conversation ON webchat.docs (conversation_id);
+-- One row per section per editing session. The newest row of a section is what the doc shows.
+CREATE TABLE IF NOT EXISTS webchat.doc_revisions (
+  id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  doc_id     TEXT NOT NULL REFERENCES webchat.docs(id) ON DELETE CASCADE,
+  section    TEXT NOT NULL,
+  author_id  INTEGER NOT NULL REFERENCES webchat.users(id),
+  envelope   TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS doc_revisions_by_section ON webchat.doc_revisions (doc_id, section, id);
+-- One editor per section. A lock lasts while its holder's tab keeps checking in.
+CREATE TABLE IF NOT EXISTS webchat.doc_locks (
+  doc_id      TEXT NOT NULL REFERENCES webchat.docs(id) ON DELETE CASCADE,
+  section     TEXT NOT NULL,
+  user_id     INTEGER NOT NULL REFERENCES webchat.users(id) ON DELETE CASCADE,
+  -- The revision this editing session writes over, from its first save.
+  revision_id INTEGER,
+  expires_at  BIGINT NOT NULL,
+  PRIMARY KEY (doc_id, section)
+);
+`,
 ];
 
 const statements = (sql: string) =>
@@ -326,6 +365,8 @@ export const ATTENTION_TTL_MS = 45_000;
 const SYNC_OVERLAP_MS = 15_000;
 /** Most messages one check-in returns. A check-in that leaves some behind says so (`more`). */
 const SYNC_PAGE_SIZE = 500;
+/** How long a doc section stays locked after its editor's last check-in or save. A tab in the background checks in every minute. */
+const DOC_LOCK_MS = 2 * 60_000;
 
 export interface UserRow {
   id: number;
@@ -410,6 +451,36 @@ interface GithubEventRow {
   actor: string | null;
   created_at: number;
 }
+
+export interface DocRow {
+  id: string;
+  conversation_id: number;
+  created_by: number;
+  created_at: number;
+  version: number;
+  updated_by: number;
+  updated_at: number;
+}
+
+interface DocRevisionRow {
+  id: number;
+  doc_id: string;
+  section: string;
+  author_id: number;
+  envelope: string;
+  created_at: number;
+  updated_at: number;
+}
+
+const toDocRevisionDTO = (row: DocRevisionRow): DocRevisionDTO => ({
+  id: row.id,
+  docId: row.doc_id,
+  section: row.section,
+  authorId: row.author_id,
+  envelope: JSON.parse(row.envelope) as EnvelopeDTO,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
 
 /** Each account keeps this many of its newest pull request events. */
 const GITHUB_EVENTS_KEPT = 50;
@@ -1307,8 +1378,8 @@ export async function openDb(sql: Sql) {
     conversationFor: async (userId: number, conversationId: number) => (await conversations(userId, conversationId))[0],
     getConversation: (conversationId: number) =>
       one(
-        sql.query<{ type: ConversationType; created_by: number | null }>(
-          'SELECT type, created_by FROM webchat.conversations WHERE id = $1',
+        sql.query<{ type: ConversationType; created_by: number | null; project_id: number | null }>(
+          'SELECT type, created_by, project_id FROM webchat.conversations WHERE id = $1',
           [conversationId],
         ),
       ),
@@ -1583,8 +1654,8 @@ export async function openDb(sql: Sql) {
     /**
      * One cheap query that changes whenever anything this user sees changes: a new message or
      * reaction, a read or delivered pointer, a new or deleted chat, channel or project, someone
-     * joining or leaving one of them, a new key, a new owner, a new person, or someone coming online
-     * or going offline.
+     * joining or leaving one of them, a new key, a new owner, a new person, someone coming online
+     * or going offline, a doc saved, added or deleted, or a doc section locked or freed.
      */
     async stamp(userId: number): Promise<string> {
       const row = await one(
@@ -1599,6 +1670,8 @@ export async function openDb(sql: Sql) {
           people: number;
           withKeys: number;
           online: string | null;
+          docs: string;
+          locks: string;
         }>(
           `WITH mine AS (SELECT conversation_id FROM webchat.members WHERE user_id = $1)
            SELECT
@@ -1626,12 +1699,19 @@ export async function openDb(sql: Sql) {
                  JOIN webchat.project_members pm ON pm.project_id = p.id WHERE pm.user_id = $1
              ) owned) AS owners,
              (SELECT COUNT(*)::int FROM webchat.users) AS people,
-             (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE last_active_at > $2) AS online`,
-          [userId, Date.now() - ONLINE_WINDOW_MS],
+             (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE last_active_at > $2) AS online,
+             -- Every save grows a doc's version, and a doc deleted leaves the list.
+             (SELECT md5(COALESCE(string_agg(id || ':' || version, ',' ORDER BY id), '')) FROM webchat.docs
+               WHERE conversation_id IN (SELECT * FROM mine)) AS docs,
+             -- Who edits which section, while the lock lasts.
+             (SELECT md5(COALESCE(string_agg(l.doc_id || ':' || l.section || ':' || l.user_id, ',' ORDER BY l.doc_id, l.section), ''))
+               FROM webchat.doc_locks l JOIN webchat.docs d ON d.id = l.doc_id
+               WHERE d.conversation_id IN (SELECT * FROM mine) AND l.expires_at > $3) AS locks`,
+          [userId, Date.now() - ONLINE_WINDOW_MS, Date.now()],
         ),
       );
       return row
-        ? `${row.messages}.${row.pointers}.${row.chats}.${row.seats}.${row.keyed}.${row.rekeyed}.${row.owners}.${row.people}.${row.withKeys}.${row.online ?? ''}`
+        ? `${row.messages}.${row.pointers}.${row.chats}.${row.seats}.${row.keyed}.${row.rekeyed}.${row.owners}.${row.people}.${row.withKeys}.${row.online ?? ''}.${row.docs}.${row.locks}`
         : '';
     },
 
@@ -1685,6 +1765,160 @@ export async function openDb(sql: Sql) {
           ),
         )
       )?.id ?? 0,
+
+    /** Docs in the chats this user is in, with each one's title and the locks held now (R-020). */
+    async docsFor(userId: number): Promise<DocDTO[]> {
+      const mine = 'JOIN webchat.members m ON m.conversation_id = d.conversation_id AND m.user_id = $1';
+      const [docs, titles, locks] = await Promise.all([
+        sql.query<DocRow>(`SELECT d.* FROM webchat.docs d ${mine} ORDER BY d.created_at, d.id`, [userId]),
+        sql.query<DocRevisionRow>(
+          `SELECT DISTINCT ON (r.doc_id) r.* FROM webchat.doc_revisions r JOIN webchat.docs d ON d.id = r.doc_id ${mine}
+           WHERE r.section = 'title' ORDER BY r.doc_id, r.id DESC`,
+          [userId],
+        ),
+        sql.query<{ doc_id: string; section: string; user_id: number }>(
+          `SELECT l.doc_id, l.section, l.user_id FROM webchat.doc_locks l JOIN webchat.docs d ON d.id = l.doc_id ${mine}
+           WHERE l.expires_at > $2`,
+          [userId, Date.now()],
+        ),
+      ]);
+      const titleOf = new Map(titles.map((r) => [r.doc_id, toDocRevisionDTO(r)]));
+      return docs.map((d) => ({
+        id: d.id,
+        conversationId: d.conversation_id,
+        createdBy: d.created_by,
+        createdAt: d.created_at,
+        version: d.version,
+        updatedBy: d.updated_by,
+        updatedAt: d.updated_at,
+        title: titleOf.get(d.id) ?? null,
+        locks: locks.filter((l) => l.doc_id === d.id).map((l) => ({ section: l.section, userId: l.user_id })),
+      }));
+    },
+    getDoc: (docId: string) => one(sql.query<DocRow>('SELECT * FROM webchat.docs WHERE id = $1', [docId])),
+
+    /** Stores a new doc with its title and first sections. False when its id is taken. */
+    createDoc(docId: string, conversationId: number, userId: number, revisions: Array<{ section: string; envelope: EnvelopeDTO }>) {
+      return sql.transaction(async (tx) => {
+        const now = Date.now();
+        const created = await tx.query(
+          `INSERT INTO webchat.docs (id, conversation_id, created_by, created_at, updated_by, updated_at)
+           VALUES ($1, $2, $3, $4, $3, $4) ON CONFLICT (id) DO NOTHING RETURNING id`,
+          [docId, conversationId, userId, now],
+        );
+        if (created.length === 0) return false;
+        for (const r of revisions) {
+          await tx.query(
+            `INSERT INTO webchat.doc_revisions (doc_id, section, author_id, envelope, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $5)`,
+            [docId, r.section, userId, JSON.stringify(r.envelope), now],
+          );
+        }
+        return true;
+      });
+    },
+
+    /** The newest revision of each section of a doc, the title among them. */
+    docSections: async (docId: string) =>
+      (
+        await sql.query<DocRevisionRow>(
+          'SELECT DISTINCT ON (section) * FROM webchat.doc_revisions WHERE doc_id = $1 ORDER BY section, id DESC',
+          [docId],
+        )
+      ).map(toDocRevisionDTO),
+
+    /** A section's revisions, newest first. */
+    sectionHistory: async (docId: string, section: string) =>
+      (
+        await sql.query<DocRevisionRow>(
+          `SELECT * FROM webchat.doc_revisions WHERE doc_id = $1 AND section = $2 ORDER BY id DESC LIMIT ${LIMITS.docHistory}`,
+          [docId, section],
+        )
+      ).map(toDocRevisionDTO),
+
+    /**
+     * Locks a section for this user, or keeps the lock they hold, and returns who holds it now: this
+     * user, or someone else whose lock has not run out.
+     */
+    lockSection: async (docId: string, section: string, userId: number) => {
+      const now = Date.now();
+      const row = await one(
+        sql.query<{ user_id: number }>(
+          `WITH claimed AS (
+             INSERT INTO webchat.doc_locks AS l (doc_id, section, user_id, expires_at) VALUES ($1, $2, $3, $4)
+             ON CONFLICT (doc_id, section) DO UPDATE SET user_id = EXCLUDED.user_id, expires_at = EXCLUDED.expires_at,
+               revision_id = CASE WHEN l.user_id = EXCLUDED.user_id THEN l.revision_id END
+             WHERE l.user_id = EXCLUDED.user_id OR l.expires_at <= $5
+             RETURNING user_id
+           )
+           SELECT user_id FROM claimed
+           UNION ALL
+           SELECT user_id FROM webchat.doc_locks WHERE doc_id = $1 AND section = $2 AND NOT EXISTS (SELECT 1 FROM claimed)`,
+          [docId, section, userId, now + DOC_LOCK_MS, now],
+        ),
+      );
+      return row?.user_id;
+    },
+    unlockSection: async (docId: string, section: string, userId: number) => {
+      await sql.query('DELETE FROM webchat.doc_locks WHERE doc_id = $1 AND section = $2 AND user_id = $3', [docId, section, userId]);
+    },
+    /** Keeps the lock of the section a tab is editing, while its user is still in the doc's chat. */
+    renewSectionLock: async (userId: number, docId: string, section: string) => {
+      await sql.query(
+        `UPDATE webchat.doc_locks l SET expires_at = $4
+         WHERE l.doc_id = $1 AND l.section = $2 AND l.user_id = $3
+           AND EXISTS (SELECT 1 FROM webchat.docs d JOIN webchat.members m ON m.conversation_id = d.conversation_id
+                       WHERE d.id = l.doc_id AND m.user_id = l.user_id)`,
+        [docId, section, userId, Date.now() + DOC_LOCK_MS],
+      );
+    },
+
+    /**
+     * Saves a section for the holder of its lock. The editing session's first save adds a revision,
+     * and later ones replace it, so the history keeps one revision per session. Null without the lock.
+     */
+    saveSection(docId: string, section: string, userId: number, envelope: EnvelopeDTO) {
+      return sql.transaction(async (tx): Promise<DocRevisionDTO | null> => {
+        const now = Date.now();
+        const lock = await one(
+          tx.query<{ revision_id: number | null }>(
+            `SELECT revision_id FROM webchat.doc_locks
+             WHERE doc_id = $1 AND section = $2 AND user_id = $3 AND expires_at > $4 FOR UPDATE`,
+            [docId, section, userId, now],
+          ),
+        );
+        if (!lock) return null;
+        const json = JSON.stringify(envelope);
+        const row = (await one(
+          lock.revision_id
+            ? tx.query<DocRevisionRow>('UPDATE webchat.doc_revisions SET envelope = $1, updated_at = $2 WHERE id = $3 RETURNING *', [
+                json,
+                now,
+                lock.revision_id,
+              ])
+            : tx.query<DocRevisionRow>(
+                `INSERT INTO webchat.doc_revisions (doc_id, section, author_id, envelope, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $5) RETURNING *`,
+                [docId, section, userId, json, now],
+              ),
+        ))!;
+        await tx.query('UPDATE webchat.doc_locks SET revision_id = $1, expires_at = $2 WHERE doc_id = $3 AND section = $4', [
+          row.id,
+          now + DOC_LOCK_MS,
+          docId,
+          section,
+        ]);
+        await tx.query('UPDATE webchat.docs SET version = version + 1, updated_by = $1, updated_at = $2 WHERE id = $3', [
+          userId,
+          now,
+          docId,
+        ]);
+        return toDocRevisionDTO(row);
+      });
+    },
+    deleteDoc: async (docId: string) => {
+      await sql.query('DELETE FROM webchat.docs WHERE id = $1', [docId]);
+    },
 
     savePushSubscription: async (userId: number, endpoint: string, p256dh: string, auth: string) => {
       await sql.query(

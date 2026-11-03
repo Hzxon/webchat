@@ -367,24 +367,28 @@ const header = (meta: MessageMeta, keyId: string) =>
   `webchat/msg/v1|conv:${meta.conversationId}|kid:${keyId}|from:${meta.senderId}|urgent:${meta.urgent ? 1 : 0}|cid:${meta.clientId}` +
   (meta.kind && meta.kind !== 'message' ? `|kind:${meta.kind}` : '');
 
-export async function encryptMessage(
+/** Pads and encrypts JSON content under a header, then signs the header with the ciphertext. */
+async function seal(chatKey: CryptoKey, keyId: string, signPrivate: CryptoKey, head: string, content: object): Promise<EnvelopeDTO> {
+  const iv = toBase64Url(randomBytes(12));
+  const ct = toBase64Url(
+    await subtle().encrypt(
+      { name: 'AES-GCM', iv: fromBase64Url(iv), additionalData: utf8(head) },
+      chatKey,
+      padContent(utf8(JSON.stringify(content))),
+    ),
+  );
+  const sig = toBase64Url(await subtle().sign(SIGN, signPrivate, utf8(`${head}|iv:${iv}|ct:${ct}`)));
+  return { v: 1, kid: keyId, iv, ct, sig };
+}
+
+export function encryptMessage(
   chatKey: CryptoKey,
   keyId: string,
   signPrivate: CryptoKey,
   meta: MessageMeta,
   content: string | MessageContent,
 ): Promise<EnvelopeDTO> {
-  const head = header(meta, keyId);
-  const iv = toBase64Url(randomBytes(12));
-  const ct = toBase64Url(
-    await subtle().encrypt(
-      { name: 'AES-GCM', iv: fromBase64Url(iv), additionalData: utf8(head) },
-      chatKey,
-      padContent(utf8(JSON.stringify(typeof content === 'string' ? { text: content } : content))),
-    ),
-  );
-  const sig = toBase64Url(await subtle().sign(SIGN, signPrivate, utf8(`${head}|iv:${iv}|ct:${ct}`)));
-  return { v: 1, kid: keyId, iv, ct, sig };
+  return seal(chatKey, keyId, signPrivate, header(meta, keyId), typeof content === 'string' ? { text: content } : content);
 }
 
 export class TamperedMessageError extends Error {
@@ -473,9 +477,13 @@ export async function decryptContent(
   meta: MessageMeta,
   envelope: EnvelopeDTO,
 ): Promise<MessageContent> {
+  return readContent(await unseal(chatKey, senderSignPublic, header(meta, envelope.kid), envelope));
+}
+
+/** Checks the signature over a header and the ciphertext, then decrypts and parses the content. */
+async function unseal(chatKey: CryptoKey, signPublic: string, head: string, envelope: EnvelopeDTO): Promise<unknown> {
   if (envelope.v !== 1) throw new TamperedMessageError('unknown version');
-  const head = header(meta, envelope.kid);
-  const verifyKey = await subtle().importKey('raw', fromBase64Url(senderSignPublic), ECDSA, false, ['verify']);
+  const verifyKey = await subtle().importKey('raw', fromBase64Url(signPublic), ECDSA, false, ['verify']);
   const signed = utf8(`${head}|iv:${envelope.iv}|ct:${envelope.ct}`);
   if (!(await subtle().verify(SIGN, verifyKey, fromBase64Url(envelope.sig), signed))) {
     throw new TamperedMessageError('bad signature');
@@ -490,7 +498,43 @@ export async function decryptContent(
   } catch {
     throw new TamperedMessageError('decryption failed');
   }
-  return readContent(JSON.parse(decoder.decode(unpadContent(new Uint8Array(plain)))));
+  return JSON.parse(decoder.decode(unpadContent(new Uint8Array(plain))));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Docs
+
+/** Everything about a doc revision the server could tamper with. Its own header keeps it from passing as a message. */
+export interface DocMeta {
+  conversationId: number;
+  authorId: number;
+  docId: string;
+  section: string;
+}
+
+/** What a doc revision holds: the title's text, or a section's Markdown and its place in the doc. */
+export interface DocContent {
+  text: string;
+  /** Sections are shown in order of this number. Signed, so the server cannot reorder them. */
+  pos?: number;
+  /** A section someone deleted. Its earlier revisions stay in its history. */
+  removed?: boolean;
+}
+
+const docHeader = (meta: DocMeta, keyId: string) =>
+  `webchat/doc/v1|conv:${meta.conversationId}|kid:${keyId}|from:${meta.authorId}|doc:${meta.docId}|sec:${meta.section}`;
+
+export const encryptDoc = (chatKey: CryptoKey, keyId: string, signPrivate: CryptoKey, meta: DocMeta, content: DocContent) =>
+  seal(chatKey, keyId, signPrivate, docHeader(meta, keyId), content);
+
+/** Checks the author's signature, then decrypts. Throws TamperedMessageError if anything was changed. */
+export async function decryptDoc(chatKey: CryptoKey, authorSignPublic: string, meta: DocMeta, envelope: EnvelopeDTO): Promise<DocContent> {
+  const raw = (await unseal(chatKey, authorSignPublic, docHeader(meta, envelope.kid), envelope)) as Partial<DocContent> | null;
+  if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
+  const content: DocContent = { text: raw.text };
+  if (typeof raw.pos === 'number' && Number.isFinite(raw.pos)) content.pos = raw.pos;
+  if (raw.removed === true) content.removed = true;
+  return content;
 }
 
 // ---------------------------------------------------------------------------------------------
