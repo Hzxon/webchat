@@ -236,9 +236,14 @@ class Client {
     return key;
   }
 
-  async send(conversationId: number, content: string | MessageContent, urgent = false, kind: MessageKind = 'message') {
+  async send(
+    conversationId: number,
+    content: string | MessageContent,
+    urgent = false,
+    kind: MessageKind = 'message',
+    clientId = crypto.randomUUID(),
+  ) {
     const { keyId, key } = this.chatKeys.get(conversationId)!;
-    const clientId = crypto.randomUUID();
     const meta = { conversationId, senderId: this.id, urgent, clientId, kind };
     const envelope = await encryptMessage(key, keyId, this.identity!.signPrivate, meta, content);
     return this.request<MessageDTO & { error?: string; code?: string }>('POST', `/conversations/${conversationId}/messages`, {
@@ -575,6 +580,24 @@ describe('chat server', () => {
       payload.envelope!,
     );
     assert.equal(decrypted, text);
+  });
+
+  test('a send repeated with its client id is stored and pushed once', async () => {
+    pushService.received.length = 0;
+    const clientId = crypto.randomUUID();
+    const text = 'Did this reach you? It is urgent';
+    const first = await alice.send(directChat.id, text, true, 'message', clientId);
+    assert.equal(first.status, 201, JSON.stringify(first.data));
+    // The same message again, as a retry after a lost answer sends it: a new envelope, the same id.
+    const again = await alice.send(directChat.id, text, true, 'message', clientId);
+    assert.equal(again.status, 200, JSON.stringify(again.data));
+    assert.equal(again.data.id, first.data.id);
+    assert.deepEqual(again.data.envelope, first.data.envelope, 'the stored envelope is answered, not the new one');
+
+    const page = await bob.request<MessageDTO[]>('GET', `/conversations/${directChat.id}/messages`);
+    assert.equal(page.data.filter((m) => m.clientId === clientId).length, 1);
+    await sleep(300);
+    assert.equal(pushService.received.length, 3, 'one push per device, none for the repeat');
   });
 
   test('closing the tab (beacon) ends attention at once', async () => {
@@ -1146,6 +1169,7 @@ describe('chat server', () => {
         'You there?',
         'Still there?',
         'Call me back, it is urgent',
+        'Did this reach you? It is urgent',
         'Ping after you left',
       ],
     );

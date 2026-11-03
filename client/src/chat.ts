@@ -707,11 +707,10 @@ function dropTabLock() {
  * Encrypts and sends one message, showing it as sending until the server has it. Until then it
  * also stays on the device, so closing or reloading the tab does not lose it (D-051).
  */
-async function sendContent(conversationId: number, content: MessageContent, urgent: boolean) {
+async function sendContent(conversationId: number, content: MessageContent, urgent: boolean, clientId = newClientId()) {
   const me = store.get().me;
   if (!me) return;
-  const entry: StoredUnsent = { userId: me.id, tabId, conversationId, clientId: newClientId(), urgent, createdAt: Date.now(), content };
-  const { clientId } = entry;
+  const entry: StoredUnsent = { userId: me.id, tabId, conversationId, clientId, urgent, createdAt: Date.now(), content };
   const sending = unsentMessage(entry);
   actions.addSending(sending);
   rememberUnsent(entry);
@@ -738,12 +737,13 @@ export function discardMessage(message: ChatMessage) {
   forgetUnsent(message.clientId!);
 }
 
+/** Sends a failed message again under the same client id, so the server stores it once (D-060). */
 export function retryMessage(message: ChatMessage) {
   discardMessage(message);
   const content: MessageContent = { text: message.text };
   if (message.replyTo) content.replyTo = message.replyTo;
   if (message.pull) content.pull = message.pull;
-  void sendContent(message.conversationId, content, message.urgent);
+  void sendContent(message.conversationId, content, message.urgent, message.clientId!);
 }
 
 /** Puts an emoji on a message, or takes it back when it is already this user's reaction there. */
