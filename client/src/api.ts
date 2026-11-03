@@ -50,20 +50,33 @@ const accountChannel = typeof BroadcastChannel === 'undefined' ? null : new Broa
 export const announceAccountChange = () => accountChannel?.postMessage('changed');
 accountChannel?.addEventListener('message', () => location.reload());
 
+/**
+ * How long a request waits for its answer to start. Vercel ends a function after 30 seconds, so a
+ * healthy answer starts by then; the rest leaves room for a slow upload. Reading the body is not
+ * timed, so a large check-in answer on a slow phone still arrives whole (D-077).
+ */
+const ANSWER_TIMEOUT_MS = 60_000;
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response;
   const headers: Record<string, string> = {};
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (tabUserId !== null) headers['x-webchat-user'] = String(tabUserId);
+  // A timer and not AbortSignal.timeout, which iOS 15.4 lacks (D-052).
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), ANSWER_TIMEOUT_MS);
   try {
     res = await fetch(`/api${path}`, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       credentials: 'same-origin',
+      signal: abort.signal,
     });
   } catch {
     throw new ApiError(0, 'Cannot reach the server. Check your connection.');
+  } finally {
+    clearTimeout(timer);
   }
   noteBuild(res);
   if (res.status === 204) return undefined as T;
