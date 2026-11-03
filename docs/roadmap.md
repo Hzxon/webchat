@@ -203,6 +203,81 @@ push reached the device, the notification stays until it is tapped. Without push
 notifications blocked, nothing ever rings, though D-023 says urgent messages ring until the user
 acknowledges them. Decide whether an unread urgent message should ring once when a page opens.
 
+### K-27: An IPv6 loopback address still gets TLS
+
+Found while fixing K-10 in #46 on 2026-11-03.
+
+`connectPostgres` in `server/sql.ts` compares `url.hostname` with `::1`, but the WHATWG URL API
+keeps the brackets, so the hostname is `[::1]` and never matches. A `DATABASE_URL` with the IPv6
+loopback address gets TLS like a remote host. Compare with `[::1]`, or strip the brackets.
+
+### K-28: The New channel dialog overflows at 375 pixels with a long name
+
+Found in the browser check of K-11 in #51 on 2026-11-03.
+
+The preview "It will be called #…" in `client/src/components/ProjectDialogs.tsx` cannot wrap a
+name of 39 characters without a space. At 375 pixels the dialog content grows past the dialog,
+the close button is half cut off, the preview is clipped and the dialog scrolls sideways. Creating
+the channel still works. `overflow-wrap: anywhere` on the preview would fix it.
+
+### K-29: "Turn on notifications" shows on iOS before 16.4
+
+Found in the browser check of K-23 in #48 on 2026-11-03.
+
+The bell dialog in `client/src/components/NotificationDialog.tsx` hides its main button only when
+the permission is `denied`. On iOS before 16.4 there is no `Notification`, `enableNotifications` in
+`client/src/push.ts` returns early, and the button does nothing. Hide it when `oldIos` is set, or
+when push is not supported, and leave the Bark section.
+
+### K-30: A session found expired at load leaves the keys on the device
+
+Found while fixing K-18 in #47 on 2026-11-03.
+
+When the first `GET /api/bootstrap` answers 401, the catch in `client/src/App.tsx` shows the
+sign-in screen but does not call `keyring.forget()`, which the check-in 401 path in
+`client/src/chat.ts` does. Sessions last 30 days and mostly expire while every tab is closed, so
+this is the usual path. The account's keys then stay in IndexedDB for whoever uses the browser next.
+
+### K-31: `sameIds` checks only its first list for duplicates
+
+Found while fixing K-13 in #50 on 2026-11-03.
+
+`sameIds` in `server/db.ts` rejects a first list with repeated ids but not a second one, and it is
+called with the wrapped-key list second. A key request with two copies for the same member passes
+the check and reaches the insert. Not yet checked what the database does with the duplicate.
+
+### K-32: A send that never ends blocks a chat's later sends
+
+Found while fixing K-24 in #53 on 2026-11-03. Listed as a cost in D-075.
+
+`client/src/api.ts` sets no timeout on `fetch`. Since #53 a chat's sends wait for each other, so a
+request that never answers, for example on a connection that drops without a reset, holds every
+later send in that chat until a reload. Give requests a timeout with `AbortController`, and let a
+timed-out send fail like any other so the queue moves on.
+
+### K-33: The service worker never removes a replaced push endpoint
+
+Found while fixing K-17 in #49 on 2026-11-03.
+
+The `pushsubscriptionchange` handler in `client/src/sw.ts` subscribes again but ignores the event's
+`oldSubscription`. The old row stays on the server until the push service rejects it with 404 or
+410, and every push until then is sent twice, once to a dead endpoint. Tell the server to delete
+the old endpoint when the event carries one.
+
+### K-34: `shared/types.ts` says it holds only types
+
+Found while fixing K-11 in #51 on 2026-11-03.
+
+The header of `shared/types.ts` says only type declarations live there, but the file also holds
+`BUILD_HEADER`, `showsEveryPush` and, since #51, `isChannelName` and `toChannelName`. Fix the
+header, or move the functions to a file of their own and add it to the map in AGENTS.md.
+
+### K-35: The map of the code does not list `client/src/queue.ts`
+
+Found while fixing K-24 in #53 on 2026-11-03.
+
+#53 adds `client/src/queue.ts`, the per-chat send queue of D-075, and the map in AGENTS.md does not
+name it. Add a row once #53 is on main.
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
