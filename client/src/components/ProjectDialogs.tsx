@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { LIMITS, toChannelName, type ProjectReposDTO } from '../../../shared/types';
 import { api } from '../api';
 import { addGroupMembers, addProjectMembers, createChannel, openConversation } from '../chat';
-import { useAppState } from '../store';
+import { DOC_TEMPLATES } from '../docTemplates';
+import { createDoc } from '../docs';
+import { actions, useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
 import { GithubIcon, HashIcon } from './icons';
@@ -85,6 +87,63 @@ export function NewChannelDialog({ projectId, onClose }: { projectId: number; on
         {error && <p className="form-error">{error}</p>}
         <button className="button-primary" type="submit" disabled={busy || !channel}>
           Create channel
+        </button>
+      </form>
+    </Dialog>
+  );
+}
+
+/** A new doc in a project, from a template. Everyone in the project can read and edit it (R-020). */
+export function NewDocDialog({ projectId, onClose }: { projectId: number; onClose: () => void }) {
+  const project = useAppState((s) => s.projects[projectId]);
+  const [title, setTitle] = useState('');
+  const [template, setTemplate] = useState(0);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function create() {
+    setBusy(true);
+    setError('');
+    try {
+      const id = await createDoc(projectId, title.trim(), DOC_TEMPLATES[template]!.sections);
+      onClose();
+      actions.setDocOpen(id);
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  if (!project) return null;
+  return (
+    <Dialog title={`New doc in ${project.name}`} onClose={onClose}>
+      <form
+        className="dialog-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (title.trim()) void create();
+        }}
+      >
+        <label className="field">
+          Title
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Capstone PRD" maxLength={LIMITS.docTitleLength} />
+        </label>
+        <fieldset className="template-list">
+          <legend>Start from</legend>
+          {DOC_TEMPLATES.map((t, i) => (
+            <label key={t.name} className="template-option">
+              <input type="radio" name="template" checked={template === i} onChange={() => setTemplate(i)} />
+              <span>
+                <strong>{t.name}</strong>
+                <small>{t.description}</small>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        <p className="dialog-intro">Everyone in the project can read and edit it. It is end-to-end encrypted.</p>
+        {error && <p className="form-error">{error}</p>}
+        <button className="button-primary" type="submit" disabled={busy || !title.trim()}>
+          Create doc
         </button>
       </form>
     </Dialog>

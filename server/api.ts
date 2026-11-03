@@ -34,6 +34,7 @@ import {
   type BootstrapDTO,
   type ChatKeyInput,
   type ConfigDTO,
+  type CreateDocInput,
   type CreateProjectResponse,
   type EnvelopeDTO,
   type GithubDTO,
@@ -199,18 +200,24 @@ function rotatedChannelKeys(value: unknown): RotatedChannelKeyInput[] {
   });
 }
 
-function envelope(value: unknown): EnvelopeDTO {
+function envelope(value: unknown, maxLength: number = LIMITS.ciphertextLength): EnvelopeDTO {
   const e = value as Partial<EnvelopeDTO> | undefined;
   if (e?.v !== 1) throw new HttpError(400, 'Messages must be encrypted.');
   return {
     v: 1,
     kid: base64url(e.kid, 'Chat key id', 22),
     iv: base64url(e.iv, 'Message', 16),
-    ct: base64url(e.ct, 'Message', 22, LIMITS.ciphertextLength),
+    ct: base64url(e.ct, 'Message', 22, maxLength),
     // A P-256 signature is 64 bytes.
     sig: base64url(e.sig, 'Signature', 86),
   };
 }
+
+/** A doc's id is a chat key id's size: 16 random bytes. */
+const docId = (value: unknown) => base64url(value, 'Doc id', 22);
+
+/** "title", or the 8 random bytes a browser names a section with. */
+const docSection = (value: unknown) => (value === 'title' ? value : base64url(value, 'Section', 11));
 
 function currentUser(res: Response): UserRow {
   const user = res.locals.user;
@@ -331,6 +338,21 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     (await db.isProjectMember(projectId, userId)) &&
     (await db.getProject(projectId))?.created_by === userId;
 
+  /** Content is sealed with the chat's current key, never with one that someone who left holds. */
+  async function requireCurrentKey(conversationId: number, keyId: string) {
+    const chat = await db.conversationKey(conversationId);
+    if (!chat.key_id) throw new HttpError(409, 'Set up encryption for this chat first.', 'no_chat_key');
+    if (chat.needs_new_key) throw new HttpError(409, 'Someone left this chat, so it needs a new key first.', 'needs_new_key');
+    if (keyId !== chat.key_id) throw new HttpError(409, 'This chat uses a different key. Reload and try again.', 'stale_key');
+  }
+
+  /** A doc in a chat the user is in. Anyone else learns nothing, not even that it exists. */
+  async function requireDoc(id: string, userId: number) {
+    const doc = await db.getDoc(id);
+    if (!doc || !(await db.isMember(doc.conversation_id, userId))) throw new HttpError(404, 'Doc not found.');
+    return doc;
+  }
+
   /** A chat key can only be wrapped for people who have set up encryption. */
   async function requireKeys(userIds: number[]) {
     for (const id of userIds) {
@@ -449,12 +471,13 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     // The fingerprint first: a change that lands while the rest loads then makes the first
     // check-in answer "changed" instead of being counted as seen without being sent.
     const stamp = await db.stamp(me.id);
-    const [users, projects, conversations, cursor, urgent] = await Promise.all([
+    const [users, projects, conversations, cursor, urgent, docs] = await Promise.all([
       db.listUsers(),
       db.projectsFor(me.id),
       db.conversationsFor(me.id),
       db.latestMessageId(me.id),
       db.unreadUrgent(me.id),
+      db.docsFor(me.id),
     ]);
     const now = Date.now();
     const body: BootstrapDTO = {
@@ -465,6 +488,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
       cursor,
       stamp,
       urgent,
+      docs,
     };
     res.json(body);
   });
@@ -480,7 +504,13 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const tabId = typeof input.tabId === 'string' ? input.tabId.slice(0, 64) : '';
     const endpoint = typeof input.endpoint === 'string' && input.endpoint.length <= 1000 ? input.endpoint : null;
 
-    await db.checkIn(me.id, input.attentive === true, tabId, endpoint);
+    const editing = input.editing;
+    await Promise.all([
+      db.checkIn(me.id, input.attentive === true, tabId, endpoint),
+      typeof editing?.docId === 'string' && typeof editing.section === 'string'
+        ? db.renewSectionLock(me.id, editing.docId.slice(0, 64), editing.section.slice(0, 64))
+        : undefined,
+    ]);
     const stamp = await db.stamp(me.id);
     if (stamp === input.stamp) {
       const body: SyncResponse = { changed: false, stamp, cursor };
@@ -489,10 +519,11 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
 
     const messages = await db.messagesSince(me.id, cursor);
     await markDeliveredFrom(me.id, messages);
-    const [users, projects, conversations, newStamp] = await Promise.all([
+    const [users, projects, conversations, docs, newStamp] = await Promise.all([
       db.listUsers(),
       db.projectsFor(me.id),
       db.conversationsFor(me.id),
+      db.docsFor(me.id),
       // Marking messages delivered changes the fingerprint, so read it again.
       db.stamp(me.id),
     ]);
@@ -511,6 +542,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
       projects,
       conversations,
       messages,
+      docs,
     };
     res.json(body);
   });
@@ -780,6 +812,80 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     res.status(204).end();
   });
 
+  /** A new doc in a project's channel, with its title and first sections (R-020). */
+  router.post('/docs', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const input = (req.body ?? {}) as Partial<CreateDocInput>;
+    const id = docId(input.id);
+    const conversationId = positiveInt(input.conversationId, 'Chat id');
+    const raw = Array.isArray(input.revisions) ? input.revisions : [];
+    const revisions = raw.map((r) => ({ section: docSection(r?.section), envelope: envelope(r?.envelope, LIMITS.docCiphertextLength) }));
+    const sections = new Set(revisions.map((r) => r.section));
+    if (!sections.has('title') || sections.size !== revisions.length || revisions.length > LIMITS.docSectionsAtOnce + 1) {
+      throw new HttpError(400, `A doc needs a title and at most ${LIMITS.docSectionsAtOnce} sections, each once.`);
+    }
+    await requireMember(conversationId, me.id);
+    if ((await db.getConversation(conversationId))?.type !== 'channel') throw new HttpError(400, 'Docs belong to a project.');
+    for (const kid of new Set(revisions.map((r) => r.envelope.kid))) await requireCurrentKey(conversationId, kid);
+    if (!(await db.takeRateLimit(`docs:${me.id}`, 30, 10_000))) throw new HttpError(429, 'Slow down a little.');
+    if (!(await db.createDoc(id, conversationId, me.id, revisions))) throw new HttpError(409, 'A doc with this id exists.');
+    res.status(201).json(await db.docFor(me.id, id));
+  });
+
+  /** The newest revision of every section of a doc. */
+  router.get('/docs/:id', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const doc = await requireDoc(docId(req.params.id), me.id);
+    res.json(await db.docSections(doc.id));
+  });
+
+  /** One person deletes a doc for everyone: whoever made it, or the project's owner. */
+  router.delete('/docs/:id', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const doc = await requireDoc(docId(req.params.id), me.id);
+    if (doc.created_by !== me.id) await requireProjectOwner((await db.getConversation(doc.conversation_id))!.project_id!, me.id);
+    await db.deleteDoc(doc.id);
+    res.status(204).end();
+  });
+
+  /** A section's earlier revisions, newest first. */
+  router.get('/docs/:id/sections/:section', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const doc = await requireDoc(docId(req.params.id), me.id);
+    res.json(await db.sectionHistory(doc.id, docSection(req.params.section)));
+  });
+
+  /** Starts editing a section. Only one person edits a section at a time. */
+  router.post('/docs/:id/sections/:section/lock', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const doc = await requireDoc(docId(req.params.id), me.id);
+    const holder = await db.lockSection(doc.id, docSection(req.params.section), me.id);
+    if (holder !== me.id) {
+      const name = holder ? (await db.getUser(holder))?.display_name : undefined;
+      throw new HttpError(409, `${name ?? 'Someone'} is editing this section. Try again when they are done.`, 'locked');
+    }
+    res.status(204).end();
+  });
+
+  router.delete('/docs/:id/sections/:section/lock', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const doc = await requireDoc(docId(req.params.id), me.id);
+    await db.unlockSection(doc.id, docSection(req.params.section), me.id);
+    res.status(204).end();
+  });
+
+  /** Saves a section, sealed for the doc's chat, by the person who holds its lock. */
+  router.put('/docs/:id/sections/:section', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const doc = await requireDoc(docId(req.params.id), me.id);
+    const sealed = envelope(req.body?.envelope, LIMITS.docCiphertextLength);
+    await requireCurrentKey(doc.conversation_id, sealed.kid);
+    if (!(await db.takeRateLimit(`docs:${me.id}`, 30, 10_000))) throw new HttpError(429, 'Slow down a little.');
+    const revision = await db.saveSection(doc.id, docSection(req.params.section), me.id, sealed);
+    if (!revision) throw new HttpError(409, 'Someone else is editing this section now.', 'not_locked');
+    res.json(revision);
+  });
+
   /** Sets the key of a chat from before encryption. The first member to send a message does this. */
   router.post('/conversations/:id/key', requireAuth, async (req, res) => {
     const me = currentUser(res);
@@ -816,11 +922,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const kind: Exclude<MessageKind, 'github'> = req.body?.kind === 'reaction' ? 'reaction' : 'message';
     if (req.body?.kind !== undefined && req.body.kind !== kind) throw new HttpError(400, 'Unknown message kind.');
     await requireMember(conversationId, me.id);
-    const chat = await db.conversationKey(conversationId);
-    if (!chat.key_id) throw new HttpError(409, 'Set up encryption for this chat first.', 'no_chat_key');
-    // The person who left holds the current key, so nothing new is sent with it.
-    if (chat.needs_new_key) throw new HttpError(409, 'Someone left this chat, so it needs a new key first.', 'needs_new_key');
-    if (sealed.kid !== chat.key_id) throw new HttpError(409, 'This chat uses a different key. Reload and try again.', 'stale_key');
+    await requireCurrentKey(conversationId, sealed.kid);
     if (!(await db.takeRateLimit(`send:${me.id}`, 30, 10_000))) throw new HttpError(429, 'Slow down a little.');
 
     const urgent = req.body?.urgent === true;

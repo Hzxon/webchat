@@ -142,6 +142,7 @@ export interface BootstrapDTO {
    * last 3 days. The page alerts for them as it opens (D-078).
    */
   urgent: MessageDTO[];
+  docs: DocDTO[];
 }
 
 export interface ConfigDTO {
@@ -220,6 +221,8 @@ export interface SyncRequest {
   tabId: string;
   /** This browser's push endpoint, if push is on here. Lets the server push only to the tab in use. */
   endpoint: string | null;
+  /** The doc section this tab is editing. Each check-in keeps its lock (R-020). */
+  editing?: { docId: string; section: string } | null;
 }
 
 export type SyncResponse =
@@ -235,7 +238,49 @@ export type SyncResponse =
       messages: MessageDTO[];
       /** True when newer messages exist than this answer carries. The client checks in again at once. */
       more: boolean;
+      docs: DocDTO[];
     };
+
+/**
+ * One section of a doc, or its title, as one person wrote it in one editing session. Encrypted with
+ * the chat key and signed like a message, so the server sees only who wrote which section and when.
+ */
+export interface DocRevisionDTO {
+  id: number;
+  docId: string;
+  /** "title", or the random id the browser gave the section. */
+  section: string;
+  authorId: number;
+  envelope: EnvelopeDTO;
+  createdAt: number;
+  /** The session's last save. Saves replace the revision until its author stops editing. */
+  updatedAt: number;
+}
+
+/** A shared Markdown doc in a project (R-020). GET /docs/:id brings its sections. */
+export interface DocDTO {
+  /** Made by the browser, so every revision is signed with it before the server sees the doc. */
+  id: string;
+  /** The project's #general channel. Its key encrypts the doc, and its members read and edit it. */
+  conversationId: number;
+  createdBy: number;
+  createdAt: number;
+  /** Grows with every save, so an open doc knows to load its sections again. */
+  version: number;
+  updatedBy: number;
+  updatedAt: number;
+  /** The newest revision of the title. */
+  title: DocRevisionDTO | null;
+  /** Who is editing which section now. One person at a time edits a section. */
+  locks: Array<{ section: string; userId: number }>;
+}
+
+export interface CreateDocInput {
+  id: string;
+  conversationId: number;
+  /** The title and the first sections, each sealed for the chat. */
+  revisions: Array<{ section: string; envelope: EnvelopeDTO }>;
+}
 
 export interface SendMessageInput {
   envelope: EnvelopeDTO;
@@ -559,6 +604,17 @@ export const LIMITS = {
   /** Repositories one project links. Each pull request event in them becomes a message. */
   reposPerProject: 10,
   pageSize: 50,
+  docTitleLength: 120,
+  docSectionLength: 10_000,
+  /**
+   * Base64url ciphertext of the longest section: JSON escapes a UTF-16 unit to at most 6 bytes, so
+   * it stays under 64 KB, which is its padding band, plus the 16-byte tag.
+   */
+  docCiphertextLength: 87_403,
+  /** Sections a new doc starts with, from a template. */
+  docSectionsAtOnce: 20,
+  /** Revisions of a section that its history shows. */
+  docHistory: 100,
 } as const;
 
 /** Slack-style channel names (D-027): lowercase letters and digits in any script, joined by single hyphens. */

@@ -20,6 +20,11 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
   the earlier messages too. Any member can leave. The project's owner can remove people, hand the
   project to another member, or delete it with every channel and message for everyone. An owner
   hands it over before leaving. Channels have their own Projects tab, with unread counts per channel.
+- **Shared docs in projects**, such as a PRD, a spec or meeting notes, so a team writes them next
+  to its channels instead of mailing Word files around. A doc starts from a template and is written
+  in Markdown, section by section. One person edits a section at a time, and everyone else sees who.
+  Each section keeps its history: see what every edit changed, and bring back an earlier version.
+  The print button saves a doc as a PDF to hand in. Docs are end-to-end encrypted like messages.
 - **Replies and reactions.** Reply to a message to quote it above yours, and tap the quote to jump
   to the original. React with one of six emoji; tap a reaction again to take it back.
 - Sent, delivered, and read ticks.
@@ -123,6 +128,10 @@ What it does not protect against:
   group, who left, when a chat got a new key, display names, whether a message is urgent, that
   someone reacted (not with which emoji, or to which message), and roughly how long a message is:
   which of the fixed sizes it was padded to, not its exact length.
+- **Who edits which doc section, and when.** The server sees which docs a project has, how many
+  sections each has, who edited which section and when, who is editing one now, and which of the
+  fixed sizes each section was padded to. It never sees a title or the text. It could hide the
+  newest edits of a section and show an older one, as it could hold back messages.
 - **Which GitHub repositories a project links, and the cards from GitHub in its channels.** The
   server writes those cards from what GitHub sends, so they are not end-to-end encrypted, and a
   server that was changed could write fake ones. Their links still lead only to github.com. A card
@@ -458,6 +467,10 @@ Before you change the code, read [AGENTS.md](AGENTS.md). It links to
   open tab of any member makes it within seconds.
 - Reactions never notify anyone. They show up at once in a chat that is open, and otherwise on the
   next check-in.
+- Docs are Markdown only, and export only to PDF, through the browser's print dialog. Two people
+  cannot edit the same section at once. A lock frees itself 2 minutes after its editor's tab stops
+  checking in. Other people's edits show up on the next check-in, and nobody gets a notification.
+  A section holds up to 10,000 characters.
 - An alert through Bark cannot show the message text, and it cannot mark the message delivered.
   The delivered tick comes when the chat is opened. If Bark's author ever withdraws the published
   key, those alerts stop; nothing else is affected.

@@ -12,8 +12,10 @@ import { openDb } from '../server/db.ts';
 import {
   createIdentity,
   decryptContent,
+  decryptDoc,
   decryptMessage,
   deriveAccountSecrets,
+  encryptDoc,
   encryptMessage,
   importChatKey,
   importIdentity,
@@ -26,6 +28,7 @@ import {
   sealIdentity,
   unwrapChatKey,
   wrapChatKey,
+  type DocContent,
   type Identity,
   type MessageContent,
 } from '../shared/e2ee.ts';
@@ -36,6 +39,8 @@ import type {
   ConfigDTO,
   ConversationDTO,
   CreateProjectResponse,
+  DocDTO,
+  DocRevisionDTO,
   LoginResponse,
   MessageDTO,
   MessageKind,
@@ -340,6 +345,7 @@ describe('chat server', () => {
   /** A chat as this person's next bootstrap lists it, without moving their sync cursor. */
   const viewOf = async (client: Client, conversationId: number) =>
     (await client.request<BootstrapDTO>('GET', '/bootstrap')).data.conversations.find((c) => c.id === conversationId)!;
+  const viewDocs = async (client: Client) => (await client.request<BootstrapDTO>('GET', '/bootstrap')).data.docs;
 
   before(async () => {
     pushService = await startFakePushService();
@@ -1355,6 +1361,131 @@ describe('chat server', () => {
       assert.ok(res.changed);
       assert.ok(!res.projects.some((p) => p.id === project.id));
       assert.ok(!res.conversations.some((c) => c.projectId === project.id));
+    });
+  });
+
+  describe('docs (R-020)', () => {
+    let general: ConversationDTO;
+    let doc: DocDTO;
+    const id = newKeyId();
+    const goals = crypto.randomBytes(8).toString('base64url');
+    const plan = 'Requirement: the export works offline';
+
+    /** A revision as this person's browser seals it for the doc's chat. */
+    const seal = (client: Client, section: string, content: DocContent) => {
+      const { keyId, key } = client.chatKeys.get(general.id)!;
+      const meta = { conversationId: general.id, authorId: client.id, docId: id, section };
+      return encryptDoc(key, keyId, client.identity!.signPrivate, meta, content);
+    };
+    const open = (client: Client, author: Client, revision: DocRevisionDTO) =>
+      decryptDoc(
+        client.chatKeys.get(general.id)!.key,
+        keysOf(author).sign,
+        { conversationId: general.id, authorId: revision.authorId, docId: revision.docId, section: revision.section },
+        revision.envelope,
+      );
+    const save = async (client: Client, text: string) =>
+      client.request<DocRevisionDTO & { code?: string }>('PUT', `/docs/${id}/sections/${goals}`, {
+        envelope: await seal(client, goals, { text, pos: 1 }),
+      });
+    const lock = (client: Client, method = 'POST') => client.request(method, `/docs/${id}/sections/${goals}/lock`);
+
+    test('a doc lives in a project channel, and the database holds none of its text', async () => {
+      const key = await alice.newChatKey([alice, bob].map((c) => ({ id: c.id, keys: keysOf(c) })));
+      const created = await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'Specs', memberIds: [bob.id], key });
+      general = created.data.channel;
+      alice.chatKeys.set(general.id, { keyId: key.keyId, key: await importChatKey(key.raw) });
+      await bob.openChatKey(await viewOf(bob, general.id), keysOf(alice));
+
+      const revisions = [
+        { section: 'title', envelope: await seal(alice, 'title', { text: 'Export PRD' }) },
+        { section: goals, envelope: await seal(alice, goals, { text: plan, pos: 1 }) },
+      ];
+      const outsider = await carol.request('POST', '/docs', { id: newKeyId(), conversationId: general.id, revisions });
+      assert.equal(outsider.status, 404);
+      const inDirect = await alice.request('POST', '/docs', { id, conversationId: directChat.id, revisions });
+      assert.equal(inDirect.status, 400, 'docs belong to projects');
+      const untitled = await alice.request('POST', '/docs', { id, conversationId: general.id, revisions: revisions.slice(1) });
+      assert.equal(untitled.status, 400);
+      const res = await alice.request<DocDTO>('POST', '/docs', { id, conversationId: general.id, revisions });
+      assert.equal(res.status, 201, JSON.stringify(res.data));
+      doc = res.data;
+      assert.equal((await alice.request('POST', '/docs', { id, conversationId: general.id, revisions })).status, 409);
+
+      const stored = JSON.stringify(await instance.sql.query('SELECT * FROM webchat.docs d JOIN webchat.doc_revisions r ON r.doc_id = d.id'));
+      assert.ok(!stored.includes('Export PRD') && !stored.includes('offline'), 'the server stores only ciphertext');
+
+      const synced = await bob.sync(true);
+      assert.ok(synced.changed);
+      const listed = synced.docs.find((d) => d.id === id)!;
+      assert.equal((await open(bob, alice, listed.title!)).text, 'Export PRD');
+      const sections = await bob.request<DocRevisionDTO[]>('GET', `/docs/${id}`);
+      assert.deepEqual(await open(bob, alice, sections.data.find((r) => r.section === goals)!), { text: plan, pos: 1 });
+
+      assert.equal((await carol.request('GET', `/docs/${id}`)).status, 404);
+      assert.deepEqual(await viewDocs(carol), []);
+    });
+
+    test('one person edits a section at a time, and each editing session is one revision', async () => {
+      assert.equal((await save(alice, 'No lock yet')).data.code, 'not_locked');
+      assert.equal((await lock(alice)).status, 204);
+      const busy = await bob.request<{ error: string; code: string }>('POST', `/docs/${id}/sections/${goals}/lock`);
+      assert.equal(busy.status, 409);
+      assert.equal(busy.data.code, 'locked');
+      assert.match(busy.data.error, /Alice is editing/);
+      assert.equal((await save(bob, 'Sneaky edit')).data.code, 'not_locked');
+      assert.equal((await lock(carol)).status, 404);
+
+      const first = await save(alice, `${plan}, on a phone`);
+      assert.equal(first.status, 200, JSON.stringify(first.data));
+      const second = await save(alice, `${plan}, on a phone and a laptop`);
+      assert.equal(second.data.id, first.data.id, 'saves in one session replace its revision');
+
+      const seen = await bob.sync(true);
+      assert.ok(seen.changed, 'a save changes the fingerprint');
+      const now = seen.docs.find((d) => d.id === id)!;
+      assert.ok(now.version > doc.version);
+      assert.equal(now.updatedBy, alice.id);
+      assert.deepEqual(now.locks, [{ section: goals, userId: alice.id }]);
+
+      assert.equal((await lock(alice, 'DELETE')).status, 204);
+      assert.ok((await bob.sync(true)).changed, 'a lock let go changes the fingerprint');
+      assert.equal((await lock(bob)).status, 204);
+      const bobs = await save(bob, `${plan}, and prints to PDF`);
+      assert.notEqual(bobs.data.id, first.data.id, 'a new session adds a revision');
+
+      const history = await alice.request<DocRevisionDTO[]>('GET', `/docs/${id}/sections/${goals}`);
+      assert.deepEqual(
+        history.data.map((r) => r.authorId),
+        [bob.id, alice.id, alice.id],
+        'newest first: Bob, then Alice, then the first version',
+      );
+      assert.equal((await open(alice, bob, history.data[0]!)).text, `${plan}, and prints to PDF`);
+      assert.equal((await carol.request('GET', `/docs/${id}/sections/${goals}`)).status, 404);
+    });
+
+    test("a check-in keeps the editor's lock, and a lock that ran out goes to the next editor", async () => {
+      await instance.sql.query('UPDATE webchat.doc_locks SET expires_at = $1', [Date.now() + 1000]);
+      const editing = { docId: id, section: goals };
+      const body: SyncRequest = { cursor: bob.cursor, stamp: bob.stamp, attentive: true, tabId: bob.tabId, endpoint: null, editing };
+      assert.equal((await bob.request('POST', '/sync', body)).status, 200);
+      const [held] = await instance.sql.query<{ expires_at: number }>('SELECT expires_at FROM webchat.doc_locks');
+      assert.ok(held!.expires_at > Date.now() + 60_000, 'the check-in renewed it');
+      assert.equal((await lock(alice)).status, 409);
+
+      await instance.sql.query('UPDATE webchat.doc_locks SET expires_at = $1', [Date.now() - 1]);
+      assert.equal((await lock(alice)).status, 204);
+      assert.equal((await save(bob, 'Too late')).data.code, 'not_locked');
+      assert.equal((await save(alice, plan)).status, 200);
+      assert.equal((await lock(alice, 'DELETE')).status, 204);
+    });
+
+    test('only whoever made a doc, or the project owner, deletes it', async () => {
+      assert.equal((await bob.request('DELETE', `/docs/${id}`)).status, 403);
+      assert.equal((await carol.request('DELETE', `/docs/${id}`)).status, 404);
+      assert.equal((await alice.request('DELETE', `/docs/${id}`)).status, 204);
+      assert.equal((await bob.request('GET', `/docs/${id}`)).status, 404);
+      assert.deepEqual(await viewDocs(bob), []);
     });
   });
 

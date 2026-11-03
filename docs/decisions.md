@@ -435,7 +435,7 @@ the chat list, starts with "Not encrypted:".
 
 ### D-020: Known limits of the encryption
 
-Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4, #10, #13, #14, #17 and #33.
+Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4, #10, #13, #14, #17, #33 and #73.
 
 WebChat accepts these limits and lists them in the README:
 
@@ -445,6 +445,9 @@ WebChat accepts these limits and lists them in the README:
   left, when a chat got a new key, display names, whether a message is urgent, that someone
   reacted, and roughly how long a message is: the size band it was padded to (D-059).
 - Pull request titles and repository names are not end-to-end encrypted (D-033).
+- Which docs a project has, how many sections each has, who edited which section and when, who is
+  editing one now, and the size band of each section. The server could show an older revision of
+  a section as its newest (D-081).
 - Which repositories a project links, and the cards from GitHub in its channels. The server
   writes those cards in plain text, so a server that was changed could write fake ones (D-050).
 - The member list that a new channel's key is wrapped for comes from the server. The New channel
@@ -495,20 +498,22 @@ not seen a new key yet shows "New encrypted message" for a push, until a page op
 
 ### D-021: The sync fingerprint is the change detector
 
-Accepted 2026-11-01 in 74d53ff, extended in #2, #4 and #13.
+Accepted 2026-11-01 in 74d53ff, extended in #2, #4, #13 and #73.
 
 `db.stamp` builds one string per user from a single query. It covers the sum of the newest event
 ids in their chats, the read and delivered pointers, how many chats they are in, the sum of the
 times their members joined those chats, how many chats have keys, the sum of the times their keys
 were replaced, a hash of who owns each of their projects and groups, how many people there are and
-how many have keys, and who is online. A check-in whose stamp matches answers "unchanged" without
+how many have keys, who is online, a hash of each doc's version, and a hash of the doc locks held
+now. A check-in whose stamp matches answers "unchanged" without
 loading anything else.
 
 Cost: any state that pages must see has to change this string, or pages miss it until something
 else changes. #2 added the newest event ids, so reactions show up, and the member count, so new
 members show up. #4 replaced the member count with the sum of join times, so one person leaving and
 another joining between two check-ins still show up. #13 added new keys (D-044) and owners (D-045).
-Owners go in as a hash, not a sum, so two handovers at once cannot cancel out.
+Owners go in as a hash, not a sum, so two handovers at once cannot cancel out. #73 added docs and
+their locks (D-081). A lock that runs out leaves the hash at the next check-in, with nothing saved.
 
 ### D-022: Receipts are per-member pointers
 
@@ -953,6 +958,39 @@ over send no notification, like removal.
 
 Cost: once a project or group is handed over, nothing records who made it. Someone who left can
 come back only when a member adds them again (D-026, D-043).
+
+### D-081: Docs live in a project, keyed by #general, with one editor per section
+
+Accepted 2026-11-04 in #73.
+
+A project's shared docs (R-020) belong to its #general channel. Every project member is in
+#general (D-024), and #general lasts as long as the project. So its key encrypts every doc, and its
+members read and edit them. Adding people (D-026) and new keys after a removal (D-044) cover docs
+with no key code of their own. The server takes a doc only in a channel, never in a group or a
+direct chat.
+
+A doc is a title and sections, each stored as revisions. A revision is sealed like a message, under
+its own header, `webchat/doc/v1`, which binds the chat, the key id, the author, the doc and the
+section. So a revision never passes as a message, and the server cannot move one to another doc or
+section. The browser makes the doc's id, so it is signed before the server sees it. A section's
+place is a number inside its content, so the server cannot reorder sections. A deleted section is a
+revision marked as removed.
+
+One person edits a section at a time. Editing takes a lock in `doc_locks`. Each check-in from the
+editing tab names the section and keeps the lock, which runs out 2 minutes after the last one: a
+tab in the background checks in every minute. A save needs the lock. The saves of one editing
+session replace one revision, so the history has one entry per session, not one per keystroke.
+Each doc's version and the locks held now join the sync fingerprint (D-021).
+
+Why: locks need no merge code, no new dependency and no open connection (D-004), and student teams
+split a spec by section. A CRDT such as Yjs would let two people write one paragraph at once, but
+it needs a dependency, compaction and, for live cursors, WebSockets (Q-1).
+
+Cost: two people cannot edit one section at once. A closed tab holds its lock for up to 2 minutes.
+Every save makes each open copy of the doc load its sections again. The server sees who edits
+which section and when, and could show an older revision of a section as its newest (D-020). Docs
+are Markdown only, shown by a small renderer of WebChat's own instead of a library, and export only
+to PDF through the browser's print dialog.
 
 ## Replies and reactions
 

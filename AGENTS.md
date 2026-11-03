@@ -75,6 +75,8 @@ keeps its own cookies and keys.
 | `client/src/viewport.ts` | Fits the chat above the on-screen keyboard of a touch screen. See D-053. |
 | `client/src/ios.ts` | Reads the iOS version from the user agent, to spot iPhones before 16.4, which have no Web Push. See D-054. |
 | `client/src/github.ts` | Keeps the Pull requests pane fresh and alerts about the events the server found. See D-034. |
+| `client/src/docs.ts` | Shared docs in projects: creating, loading, locking, saving and restoring sections, and the line diff of their history. See D-081. |
+| `client/src/docTemplates.ts` | The templates a new doc starts from, such as a PRD or meeting notes. |
 | `client/src/sw.ts` | The service worker. It decrypts pushed messages and shows notifications. |
 | `client/src/styles.css` | Every style of the page, with the light and dark colors as CSS variables. |
 | `client/src/components/` | The React views. |

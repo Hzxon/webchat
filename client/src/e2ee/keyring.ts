@@ -3,6 +3,8 @@
 import {
   createIdentity,
   decryptContent,
+  decryptDoc,
+  encryptDoc,
   encryptMessage,
   importChatKey,
   importIdentity,
@@ -14,6 +16,8 @@ import {
   openKeyLink,
   unwrapChatKey,
   wrapChatKey,
+  type DocContent,
+  type DocMeta,
   type Identity,
   type IdentitySecrets,
   type MessageContent,
@@ -23,6 +27,8 @@ import { describeGithubCard, readGithubCard } from '../../../shared/github';
 import type {
   ChatKeyInput,
   ConversationDTO,
+  DocDTO,
+  DocRevisionDTO,
   EnvelopeDTO,
   GithubCardDTO,
   MessageDTO,
@@ -60,6 +66,11 @@ export interface ChatConversation extends Omit<ConversationDTO, 'lastMessage'> {
   lastMessage: ChatMessage | null;
 }
 
+/** A doc as the page lists it, with its title decrypted. */
+export interface ChatDoc extends DocDTO {
+  name: string;
+}
+
 /** Looks up a person's public keys: the server's list for others, the unlocked keys for oneself. */
 export type KeyLookup = (userId: number) => PublicKeysDTO | null;
 
@@ -74,6 +85,8 @@ const opened = new Map<number, { content: Opened; signed: string }>();
  * stay here for reopen to try again after the user checks a changed security code (D-018).
  */
 const held = new Map<number, MessageDTO>();
+/** Doc revisions already decrypted, by revision id, with what their signature covered. */
+const openedDocs = new Map<number, { content: DocContent; signed: string }>();
 
 type SignedMeta = Pick<MessageDTO, 'conversationId' | 'senderId' | 'urgent' | 'kind' | 'clientId'>;
 
@@ -149,6 +162,7 @@ export const keyring = {
     chatKeys.clear();
     opened.clear();
     held.clear();
+    openedDocs.clear();
     await keystore.clearKeys().catch(() => undefined);
   },
 
@@ -321,6 +335,27 @@ export const keyring = {
     return encryptMessage(chatKey, keyId, me!.identity.signPrivate, { ...meta, senderId: me!.id }, content);
   },
 
+  sealDoc(chatKey: CryptoKey, keyId: string, meta: Omit<DocMeta, 'authorId'>, content: DocContent) {
+    return encryptDoc(chatKey, keyId, me!.identity.signPrivate, { ...meta, authorId: me!.id }, content);
+  },
+
+  /** Decrypts a doc revision and checks its author's signature. Null when either fails. */
+  async openDoc(revision: DocRevisionDTO, conversation: ChatConversation, keysOf: KeyLookup): Promise<DocContent | null> {
+    const meta: DocMeta = { conversationId: conversation.id, authorId: revision.authorId, docId: revision.docId, section: revision.section };
+    // A save replaces its revision in place, so the signature tells an old copy from a new one.
+    const signed = JSON.stringify([meta, revision.envelope.kid, revision.envelope.sig]);
+    const known = openedDocs.get(revision.id);
+    if (known?.signed === signed) return known.content;
+    try {
+      const { key, signKey } = await signedWith(conversation, revision.envelope.kid, revision.authorId, keysOf);
+      const content = await decryptDoc(key, signKey, meta, revision.envelope);
+      openedDocs.set(revision.id, { content, signed });
+      return content;
+    } catch {
+      return null;
+    }
+  },
+
   /** Remembers what a message this device just sent says, so it never needs decrypting. */
   rememberContent(messageId: number, meta: SignedMeta, envelope: EnvelopeDTO, content: MessageContent) {
     opened.set(messageId, { content: openedFrom(content), signed: signedFields(meta, envelope) });
@@ -360,10 +395,20 @@ export const keyring = {
   },
 };
 
+/**
+ * The chat key something was sealed with, and its signer's public signing key. Throws when either
+ * is missing, or when the signer's keys changed and the user has not checked them (D-018).
+ */
+async function signedWith(conversation: ChatConversation | ConversationDTO, keyId: string, signerId: number, keysOf: KeyLookup) {
+  const key = await keyring.keyFor(conversation, keyId, keysOf);
+  const signerKeys = unchecked(signerId) ? null : keysOf(signerId);
+  if (!key || !signerKeys) throw new Error('Missing keys.');
+  return { key, signKey: signerKeys.sign };
+}
+
 async function decrypt(message: MessageDTO, envelope: EnvelopeDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup) {
   const { conversationId, senderId, urgent, clientId, kind } = message;
-  const key = await keyring.keyFor(conversation, envelope.kid, keysOf);
-  const senderKeys = senderId === null || unchecked(senderId) ? null : keysOf(senderId);
-  if (!key || !senderKeys || senderId === null) throw new Error('Missing keys.');
-  return decryptContent(key, senderKeys.sign, { conversationId, senderId, urgent, clientId: clientId ?? '', kind }, envelope);
+  if (senderId === null) throw new Error('Missing keys.');
+  const { key, signKey } = await signedWith(conversation, envelope.kid, senderId, keysOf);
+  return decryptContent(key, signKey, { conversationId, senderId, urgent, clientId: clientId ?? '', kind }, envelope);
 }
