@@ -288,6 +288,19 @@ Found while fixing K-24 in #53 on 2026-11-03.
 
 #53 adds `client/src/queue.ts`, the per-chat send queue of D-075, and the map in AGENTS.md does not
 name it. Add a row once #53 is on main.
+
+### K-38: The map of the code leaves out most modules
+
+Status: Fixed in #68.
+
+Found while fixing K-35 in #58 on 2026-11-03.
+
+The map in AGENTS.md names 17 of the 33 files and folders under `client/src`, `server` and
+`shared`. It leaves out both entry points, `server/index.ts` and `client/src/main.tsx`, and modules
+such as `server/auth.ts`, `server/sql.ts`, `client/src/api.ts` and `shared/github.ts`. Its
+`client/src/e2ee/` row does not say that sign-up and sign-in live there. An agent that looks up
+where something lives finds nothing and has to search the tree.
+
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
