@@ -268,6 +268,8 @@ the old endpoint when the event carries one.
 
 ### K-34: `shared/types.ts` says it holds only types
 
+Status: Fixed in #64. The header now says what the file holds and why.
+
 Found while fixing K-11 in #51 on 2026-11-03.
 
 The header of `shared/types.ts` says only type declarations live there, but the file also holds
