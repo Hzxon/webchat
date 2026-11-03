@@ -1,5 +1,5 @@
 import webpush from 'web-push';
-import type { Bark } from './bark.js';
+import { collapseIdFor, type Bark } from './bark.js';
 import type { Config } from './config.js';
 import type { Db } from './db.js';
 import type { PushPayload } from '../shared/types.js';
@@ -75,6 +75,9 @@ export async function createPush(db: Db, config: Config, bark: Bark) {
               TTL: payload.urgent ? 3 * 24 * 3600 : 24 * 3600,
               // "high" asks the push service to wake the device now instead of batching for battery.
               urgency: 'high',
+              // An urgent message rings again every few seconds (D-079). For an offline device the
+              // push service keeps only the newest push with this topic, not one per ring.
+              topic: payload.urgent ? collapseIdFor(payload.tag) : undefined,
             },
           );
         } catch (error) {

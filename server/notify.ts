@@ -1,7 +1,7 @@
 import { describeGithubCard, readGithubCard } from '../shared/github.js';
 import { showsEveryPush, type ConversationDTO, type MessageDTO, type ProjectDTO, type PushPayload } from '../shared/types.js';
 import type { Config } from './config.js';
-import { isAttentive, type Db, type UserRow } from './db.js';
+import { isAttentive, URGENT_RING_JOB, URGENT_RING_SECONDS, type Db, type UserRow } from './db.js';
 import type { Push } from './push.js';
 
 function preview(text: string, length = 180): string {
@@ -117,6 +117,42 @@ export async function notifyNewMessage(db: Db, push: Push, config: Config, messa
         if (message.kind !== 'reaction') await push.sendToUser(recipientId, payload);
       }),
   ).catch((error: unknown) => config.logger.error('Push delivery failed', error));
+}
+
+/**
+ * Rings each unread urgent message again, like an alarm, until its recipient reads the chat (D-079).
+ * Its push repeats the first one, under the same tag. A recipient looking at the app is skipped:
+ * the page rings on its own there.
+ */
+export async function ringUrgent(db: Db, push: Push): Promise<number> {
+  const rang = await Promise.all(
+    (await db.urgentRings()).map(async ({ recipientId, message }) => {
+      const [recipient, conversation, sender] = await Promise.all([
+        db.getUser(recipientId),
+        db.conversationFor(recipientId, message.conversationId),
+        message.senderId === null ? undefined : db.getUser(message.senderId),
+      ]);
+      if (!recipient || !conversation || isAttentive(recipient)) return false;
+      await push.sendToUser(recipientId, await payloadFor(db, recipientId, message, conversation, sender ?? null));
+      return true;
+    }),
+  );
+  return rang.filter(Boolean).length;
+}
+
+/**
+ * On Vercel nothing runs between requests, so the database keeps the clock for the urgent ring,
+ * as for GitHub polls (D-057). Without pg_cron and pg_net this logs why.
+ */
+export async function scheduleUrgentRings(db: Db, config: Config) {
+  if (!config.urgentRingUrl) return;
+  try {
+    if (await db.scheduleJob(URGENT_RING_JOB, config.urgentRingUrl)) {
+      config.logger.info(`Supabase Cron now calls ${config.urgentRingUrl} every ${URGENT_RING_SECONDS} seconds while an urgent message is unread.`);
+    }
+  } catch (error) {
+    config.logger.warn(`Could not schedule urgent rings in the database, so with every tab closed an urgent message rings once: ${String(error)}`);
+  }
 }
 
 /**

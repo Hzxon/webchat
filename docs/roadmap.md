@@ -21,6 +21,22 @@ the items under "Next". The decisions these items build on are in [decisions.md]
 
 ## Next
 
+### R-019: Urgent messages ring like an alarm with every tab closed
+
+Status: Done in #69 (D-079). An integration test rings an unread urgent message, skips a recipient
+who looks at the app, and stops once the chat is read. A service worker test checks that each ring
+sounds. Not yet tried on a locked phone.
+
+Asked for by the owner on 2026-11-03.
+
+Why: with the tab closed or the phone locked, an urgent message showed one notification, like any
+other message, and only an open page rang until someone acted on it. Urgent messages exist so
+they are never missed (D-023).
+
+Scope: the server rings each unread urgent message again every 15 seconds, on every device of a
+recipient who is not looking at the app, until they read the chat or the message is 3 days old.
+Done when a closed tab and a locked phone keep ringing until the chat is opened.
+
 ### R-001: Task board for projects, like Jira
 
 Status: Next. The owner set it aside on 2026-11-01 so that projects could ship first.

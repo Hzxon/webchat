@@ -12,6 +12,7 @@ import type { Config } from './config.js';
 import { openDb } from './db.js';
 import { createGithub } from './github.js';
 import { createGithubApp } from './githubApp.js';
+import { ringUrgent, scheduleUrgentRings } from './notify.js';
 import { createPush } from './push.js';
 import { connectPostgres, openPglite, type Sql } from './sql.js';
 
@@ -36,6 +37,8 @@ export interface WebChatApp {
   /** Polls every connected GitHub account that is due. server/index.ts runs it on a timer. */
   pollGithub(): Promise<number>;
   githubConfigured: boolean;
+  /** Rings the unread urgent messages again. server/index.ts runs it on a timer. */
+  ringUrgent(): Promise<number>;
   close(): Promise<void>;
 }
 
@@ -72,7 +75,7 @@ export async function createApp(config: Config): Promise<WebChatApp> {
   const bark = createBark(db, config);
   const push = await createPush(db, config, bark);
   const github = createGithub(db, push, config);
-  await github.schedulePolls();
+  await Promise.all([github.schedulePolls(), scheduleUrgentRings(db, config)]);
   const githubApp = createGithubApp(db, config);
   const app = express();
   app.set('trust proxy', config.trustProxy);
@@ -137,6 +140,7 @@ export async function createApp(config: Config): Promise<WebChatApp> {
     sql,
     pollGithub: github.pollAll,
     githubConfigured: github.configured,
+    ringUrgent: () => ringUrgent(db, push),
     close: () => db.close(),
   };
 }

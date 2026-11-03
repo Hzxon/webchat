@@ -85,7 +85,7 @@ export function barkPayload(fields: Record<string, string>, cipherKey: string | 
 }
 
 /** The collapse id Apple sees, with nothing of the chat in it. */
-const collapseIdFor = (tag: string) => crypto.createHash('sha256').update(tag).digest('base64url').slice(0, 22);
+export const collapseIdFor = (tag: string) => crypto.createHash('sha256').update(tag).digest('base64url').slice(0, 22);
 
 export function createBark(db: Db, config: Config) {
   const apns = config.barkApnsKey

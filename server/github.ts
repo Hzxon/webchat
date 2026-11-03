@@ -22,7 +22,7 @@ import {
 } from '../shared/types.js';
 import { safeEqual } from './auth.js';
 import type { Config } from './config.js';
-import { isAttentive, type Db } from './db.js';
+import { GITHUB_POLL_JOB, isAttentive, type Db } from './db.js';
 import type { Push } from './push.js';
 
 /** Lets the token read pull requests in private repositories too. OAuth Apps have no read-only scope for that. */
@@ -447,20 +447,12 @@ export function createGithub(db: Db, push: Push, config: Config) {
     async schedulePolls(): Promise<void> {
       if (!configured || !config.githubPollUrl) return;
       try {
-        const secret = crypto.randomBytes(32).toString('base64url');
-        if (await db.scheduleGithubPolls(config.githubPollUrl, secret)) {
+        if (await db.scheduleJob(GITHUB_POLL_JOB, config.githubPollUrl)) {
           config.logger.info(`Supabase Cron now calls ${config.githubPollUrl} every 2 minutes.`);
         }
       } catch (error) {
         config.logger.warn(`Could not schedule GitHub polls in the database, so alerts need an open tab: ${String(error)}`);
       }
-    },
-
-    /** Whether a call to GET /api/github/poll carries CRON_SECRET or the secret of the database's own job. */
-    async isScheduler(authorization: string): Promise<boolean> {
-      if (config.cronSecret && safeEqual(authorization, `Bearer ${config.cronSecret}`)) return true;
-      const secret = configured ? await db.githubPollSecret() : null;
-      return secret !== null && safeEqual(authorization, `Bearer ${secret}`);
     },
 
     async view(userId: number): Promise<Omit<GithubDTO, 'appConfigured'>> {
