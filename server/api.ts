@@ -834,6 +834,10 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     if (endpoint.length > 1000 || p256dh.length > 200 || auth.length > 100 || !push.isAllowedEndpoint(endpoint)) {
       throw new HttpError(400, 'This push service is not supported.');
     }
+    // The sizes a browser's P-256 public key and auth secret have. web-push throws on others (K-12).
+    if (Buffer.from(p256dh, 'base64url').length !== 65 || Buffer.from(auth, 'base64url').length !== 16) {
+      throw new HttpError(400, 'Subscription keys are invalid.');
+    }
     await db.savePushSubscription(me.id, endpoint, p256dh, auth);
     res.status(204).end();
   });

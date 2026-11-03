@@ -507,7 +507,8 @@ export interface GithubDTO {
 /** Messages the service worker posts to open pages. */
 export type WorkerToPageMessage =
   | { type: 'push'; payload: PushPayload }
-  | { type: 'open-conversation'; conversationId: number };
+  | { type: 'open-conversation'; conversationId: number }
+  | { type: 'subscription-changed' };
 
 /** Response header that names the server's build. A tab reloads when the value changes. */
 export const BUILD_HEADER = 'x-webchat-build';
