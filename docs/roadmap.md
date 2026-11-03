@@ -193,15 +193,6 @@ the notes would show it nothing new. They should not count as unread.
 
 ## Known issues
 
-### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
-
-Course repositories usually live in an instructor's organization, such as a GitHub Classroom one.
-An organization that restricts OAuth Apps hides its pull requests until an owner approves WebChat
-(D-033), and a student cannot fix that alone. The README says so in one line; the connect card and
-the pane say nothing. GitHub's GraphQL answer carries the error next to the data (`graphql` in
-`server/github.ts` drops it). Show it in the pane, and say in the connect card that an organization
-may need to approve the app. Not yet seen on a real organization.
-
 ### K-10: `sslmode=disable` is ignored
 
 `connectPostgres` in `server/sql.ts` turns TLS on for every host except three loopback names and
@@ -358,11 +349,26 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-7: A sync answer that breaks off no longer poisons the cursor (D-056) | #27 |
 | K-5: GitHub alerts arrive with every tab closed, through Supabase Cron (D-057) | #29 |
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
-| K-9: A retried send is stored once (D-060) | #35 |
+| K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
+| K-9: A retried send is stored once (D-061) | #35 |
+
+### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
+
+Status: Fixed in #34 (D-060). Tested against GitHub's answer as community reports describe it: a
+200 with the pull requests of the organization left out and one FORBIDDEN error for each, naming
+the organization. Not yet seen on a real organization; the first report from one should confirm
+the wording the server matches.
+
+Course repositories usually live in an instructor's organization, such as a GitHub Classroom one.
+An organization that restricts OAuth Apps hides its pull requests until an owner approves WebChat
+(D-033), and a student cannot fix that alone. The README said so in one line; the connect card and
+the pane said nothing. GitHub's GraphQL answer carries the error next to the data (`graphql` in
+`server/github.ts` dropped it). The pane now names the organization and links to how a member
+asks for approval, and the connect card says an organization may need to approve the app.
 
 ### K-9: Retrying a send can store the message twice
 
-Status: Fixed in #35 (D-060). An integration test sends the same client id twice and checks that
+Status: Fixed in #35 (D-061). An integration test sends the same client id twice and checks that
 one row is stored, the second answer carries the first message, and the push goes out once.
 
 `retryMessage` sent with a new client id, and the server did not check client ids. When a send

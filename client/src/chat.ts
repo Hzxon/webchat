@@ -739,7 +739,7 @@ export function discardMessage(message: ChatMessage) {
 
 /**
  * Sends a message that was not sent again, under the same client id. When the server had stored it
- * after all and only its answer was lost, it answers with that copy instead of a second one (D-060).
+ * after all and only its answer was lost, it answers with that copy instead of a second one (D-061).
  */
 export function retryMessage(message: ChatMessage) {
   const content: MessageContent = { text: message.text };

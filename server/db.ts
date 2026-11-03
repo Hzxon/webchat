@@ -300,7 +300,7 @@ CREATE TABLE IF NOT EXISTS webchat.bark_devices (
 );
 CREATE INDEX IF NOT EXISTS bark_devices_by_user ON webchat.bark_devices (user_id);
 `,
-  // 10: a send repeated after a lost answer stores nothing twice (K-9, D-060).
+  // 10: a send repeated after a lost answer stores nothing twice (K-9, D-061).
   `
 CREATE UNIQUE INDEX IF NOT EXISTS messages_by_client_id
   ON webchat.messages (conversation_id, sender_id, client_id) WHERE client_id IS NOT NULL;
@@ -1414,7 +1414,7 @@ export async function openDb(sql: Sql) {
      * Stores an encrypted message, moves the chat to the top, and marks it read for its sender. A
      * reaction only bumps the chat's newest event, so it neither reorders chats nor counts as unread.
      * A client id the sender used before in this chat is the same send again, after its answer was
-     * lost: nothing changes, and `repeated` says so (D-060).
+     * lost: nothing changes, and `repeated` says so (D-061).
      */
     insertMessage(
       conversationId: number,
