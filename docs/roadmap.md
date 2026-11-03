@@ -207,6 +207,8 @@ acknowledges them. Decide whether an unread urgent message should ring once when
 
 ### K-27: An IPv6 loopback address still gets TLS
 
+Status: Fixed in #63. A test in `test/sql.test.ts` checks that `[::1]` gets no TLS.
+
 Found while fixing K-10 in #46 on 2026-11-03.
 
 `connectPostgres` in `server/sql.ts` compares `url.hostname` with `::1`, but the WHATWG URL API
