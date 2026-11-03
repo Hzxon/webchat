@@ -439,6 +439,8 @@ export interface GithubRepoGrant {
 const GRANT_TTL_MS = 30 * 60_000;
 /** Webhook deliveries are remembered this long. GitHub redelivers within hours, if at all. */
 const DELIVERY_TTL_MS = 3 * 24 * 3600_000;
+/** An unread urgent message alerts as a page opens for as long as its push waits for an offline device (D-023). */
+const URGENT_WAIT_MS = 3 * 24 * 3600_000;
 
 export interface ProjectRow {
   id: number;
@@ -1613,6 +1615,20 @@ export async function openDb(sql: Sql) {
            WHERE msg.id > $2::bigint OR msg.created_at > $3
            ORDER BY msg.id > $2::bigint DESC, msg.id LIMIT ${SYNC_PAGE_SIZE}`,
           [userId, cursor, Date.now() - SYNC_OVERLAP_MS],
+        )
+      )
+        .sort((a, b) => a.id - b.id)
+        .map(toMessageDTO),
+
+    /** Each chat's newest urgent message from someone else above the user's read pointer (D-078). */
+    unreadUrgent: async (userId: number) =>
+      (
+        await sql.query<MessageRow>(
+          `SELECT DISTINCT ON (msg.conversation_id) msg.* FROM webchat.messages msg
+           JOIN webchat.members m ON m.conversation_id = msg.conversation_id AND m.user_id = $1
+           WHERE msg.urgent AND msg.id > m.last_read_id AND msg.sender_id IS DISTINCT FROM $1 AND msg.created_at > $2
+           ORDER BY msg.conversation_id, msg.id DESC`,
+          [userId, Date.now() - URGENT_WAIT_MS],
         )
       )
         .sort((a, b) => a.id - b.id)

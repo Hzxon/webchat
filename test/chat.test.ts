@@ -581,6 +581,26 @@ describe('chat server', () => {
     assert.equal((await bob.bootstrap()).conversations.find((c) => c.id === directChat.id)!.unread, 0);
   });
 
+  test('a page that opens learns the newest urgent message of each chat sent while it was closed', async () => {
+    const urgentIds = async (client: Client) =>
+      (await client.request<BootstrapDTO>('GET', '/bootstrap')).data.urgent.filter((m) => m.conversationId === directChat.id).map((m) => m.id);
+    const first = await bob.send(directChat.id, 'Call me', true);
+    const newest = await bob.send(directChat.id, 'Now, please', true);
+    await bob.send(directChat.id, 'Thanks');
+    assert.deepEqual(await urgentIds(alice), [newest.data.id], 'the newest one, though a normal message followed');
+    assert.deepEqual(await urgentIds(bob), [], 'never your own');
+
+    await instance.sql.query('UPDATE webchat.messages SET created_at = created_at - $1 WHERE id >= $2', [
+      3 * 24 * 3600_000,
+      first.data.id,
+    ]);
+    assert.deepEqual(await urgentIds(alice), [], 'no longer than its push waits for an offline device');
+
+    const again = await bob.send(directChat.id, 'Still there?', true);
+    assert.equal((await alice.request('POST', `/conversations/${directChat.id}/read`, { messageId: again.data.id })).status, 204);
+    assert.deepEqual(await urgentIds(alice), [], 'not once read');
+  });
+
   test('while the recipient is looking at the app, only that browser gets a push', async () => {
     const laptop = makeSubscription(`http://${pushService.host}/bob-laptop`);
     const phone = makeSubscription(`http://${pushService.host}/bob-phone`);

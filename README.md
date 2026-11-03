@@ -60,6 +60,8 @@ allowance in about a week.
   itself, with the key Bark's author publishes, whenever a Web Push would go to your other devices.
   It carries the chat and sender names and never the text. See "Turning on notifications".
 - **Urgent** always alerts. An open tab rings until you dismiss it, even with message sounds off.
+  An urgent message that came while WebChat was closed alerts when you open it, if you have not
+  read it and it is at most 3 days old. The browser may hold the sound until your first tap.
 - **After a deploy, open tabs reload** on their next check-in, so a page from before it does not
   show new kinds of data as errors. A tab waits while you type in it, while it holds a draft or a
   message not sent yet, and while an urgent alert waits for you.

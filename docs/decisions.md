@@ -547,6 +547,8 @@ cursor the page loaded with and the user's own read pointer in that chat, and it
 Cost: a message that commits more than a moment after a newer one while the page loads shows up
 without an alert.
 
+D-078 makes an exception: an unread urgent message from the last 3 days alerts when a page opens.
+
 ### D-051: Drafts and unsent messages stay on the device
 
 Accepted 2026-11-02 in #19.
@@ -661,6 +663,29 @@ back a chat the page had just left or deleted, and put back a project's old memb
 Cost: every change on the page that overlaps a check-in costs one more check-in. A change that
 reaches the store some other way must go through the counted actions, or a late answer undoes it
 until the next check-in.
+
+### D-078: A page that opens alerts for the urgent messages it missed
+
+Accepted 2026-11-03 in #65.
+
+`GET /api/bootstrap` lists each chat's newest urgent message from someone else that the user has
+not read, sent in the last 3 days. The page treats each one like a message that has just arrived,
+so the full-screen alert rings until Open chat or Dismiss. It alerts only when the signature checks
+out, so the server cannot make a message urgent (D-016). Dismiss keeps the message's id in the
+device's IndexedDB, and pages on that device do not alert for it again. Open chat marks the chat
+read, which ends the alert on every device. This is an exception to D-049 for urgent messages.
+
+Why: D-049 keeps every message from before the page loaded quiet. An urgent message sent while
+every tab was closed showed only its URGENT tag when the page opened, and without push nothing ever
+rang (K-21). D-023 says urgent messages ring until acknowledged. The 3 days match how long an
+urgent push waits for an offline device.
+
+Cost: browsers hold sound until the first tap or key on a fresh page, so on most of them the alert
+at open is silent until then. When the push reached the device, its notification and the page's
+alert both show. Each other device alerts once, until the user reads the chat or dismisses the
+alert there. Only a chat's newest unread urgent message alerts at open. An older one shows only in
+its chat. The server reads the urgent flag it already stores for push, so it learns nothing new.
+
 ## Projects and channels
 
 ### D-054: iPhones without Web Push get alerts through the Bark app

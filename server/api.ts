@@ -433,11 +433,12 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     // The fingerprint first: a change that lands while the rest loads then makes the first
     // check-in answer "changed" instead of being counted as seen without being sent.
     const stamp = await db.stamp(me.id);
-    const [users, projects, conversations, cursor] = await Promise.all([
+    const [users, projects, conversations, cursor, urgent] = await Promise.all([
       db.listUsers(),
       db.projectsFor(me.id),
       db.conversationsFor(me.id),
       db.latestMessageId(me.id),
+      db.unreadUrgent(me.id),
     ]);
     const now = Date.now();
     const body: BootstrapDTO = {
@@ -447,6 +448,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
       conversations,
       cursor,
       stamp,
+      urgent,
     };
     res.json(body);
   });

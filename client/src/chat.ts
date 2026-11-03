@@ -192,6 +192,34 @@ function shouldAlert(message: ChatMessage, conversation: ChatConversation): bool
   return message.id > alertFloor && message.id > readUpTo;
 }
 
+/**
+ * Alerts for the urgent messages that came while no page was open (D-078), unless this device
+ * dismissed them. Every other message from before the page loaded stays quiet (D-049).
+ */
+async function alertMissedUrgent(urgent: MessageDTO[], keysOf: KeyLookup, run: number) {
+  const dismissed = new Set(await keystore.getDismissed().catch(() => undefined));
+  // The server lists each chat's newest unread one from the last 3 days, so the others never come back.
+  keystore.setDismissed(urgent.map((m) => m.id).filter((id) => dismissed.has(id))).catch(() => undefined);
+  const { conversations } = store.get();
+  const missed = await Promise.all(
+    urgent
+      .filter((m) => conversations[m.conversationId] && !dismissed.has(m.id))
+      .map((m) => keyring.open(m, conversations[m.conversationId]!, keysOf)),
+  );
+  if (run !== generation) return;
+  // Only a signature that checks out shows that the sender, not the server, made it urgent (D-016).
+  for (const message of missed) if (message.security === 'encrypted') onIncoming(message);
+}
+
+/** Clears an urgent alert, and keeps it from alerting again when a page opens on this device (D-078). */
+export function dismissUrgent(message: ChatMessage) {
+  actions.clearUrgent(message.conversationId, message.id);
+  keystore
+    .getDismissed()
+    .then((ids = []) => keystore.setDismissed([...ids, message.id]))
+    .catch(() => undefined);
+}
+
 /** Fetches everything again, for when this device missed a change such as a new chat key. */
 async function reloadAll() {
   // Its callers go on with what it loads, so a load this page changed a chat under is fetched again.
@@ -286,6 +314,7 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
     .then(refreshPushState)
     .then(() => syncNow());
   cleanups.push(startGithub(() => pushActiveHere));
+  void alertMissedUrgent(data.urgent, keysOf, run);
 
   // A notification click on a closed app opens /?chat=<id>.
   const requested = Number(new URLSearchParams(location.search).get('chat'));
