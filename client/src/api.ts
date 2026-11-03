@@ -8,8 +8,12 @@ import type {
   ConfigDTO,
   ConversationDTO,
   CreateChannelInput,
+  CreateDocInput,
   CreateProjectInput,
   CreateProjectResponse,
+  DocDTO,
+  DocRevisionDTO,
+  EnvelopeDTO,
   GithubDTO,
   LoginResponse,
   MessageDTO,
@@ -137,6 +141,14 @@ export const api = {
   replaceChatKey: (conversationId: number, key: RotatedKeyInput) =>
     request<ConversationDTO>('PUT', `/conversations/${conversationId}/key`, key),
   sync: (input: SyncRequest) => request<SyncResponse>('POST', '/sync', input),
+  createDoc: (input: CreateDocInput) => request<DocDTO>('POST', '/docs', input),
+  deleteDoc: (docId: string) => request<void>('DELETE', `/docs/${docId}`),
+  docSections: (docId: string) => request<DocRevisionDTO[]>('GET', `/docs/${docId}`),
+  sectionHistory: (docId: string, section: string) => request<DocRevisionDTO[]>('GET', `/docs/${docId}/sections/${section}`),
+  lockSection: (docId: string, section: string) => request<void>('POST', `/docs/${docId}/sections/${section}/lock`),
+  unlockSection: (docId: string, section: string) => request<void>('DELETE', `/docs/${docId}/sections/${section}/lock`),
+  saveSection: (docId: string, section: string, envelope: EnvelopeDTO) =>
+    request<DocRevisionDTO>('PUT', `/docs/${docId}/sections/${section}`, { envelope }),
   messages: (conversationId: number, before?: number) =>
     request<MessageDTO[]>('GET', `/conversations/${conversationId}/messages${before ? `?before=${before}` : ''}`),
   sendMessage: (conversationId: number, input: SendMessageInput) =>

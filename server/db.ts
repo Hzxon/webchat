@@ -337,7 +337,7 @@ CREATE TABLE IF NOT EXISTS webchat.doc_revisions (
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS doc_revisions_by_section ON webchat.doc_revisions (doc_id, section, id);
+CREATE INDEX IF NOT EXISTS doc_revisions_by_section ON webchat.doc_revisions (doc_id, section, id DESC);
 -- One editor per section. A lock lasts while its holder's tab keeps checking in.
 CREATE TABLE IF NOT EXISTS webchat.doc_locks (
   doc_id      TEXT NOT NULL REFERENCES webchat.docs(id) ON DELETE CASCADE,
@@ -452,7 +452,7 @@ interface GithubEventRow {
   created_at: number;
 }
 
-export interface DocRow {
+interface DocRow {
   id: string;
   conversation_id: number;
   created_by: number;
@@ -885,6 +885,37 @@ export async function openDb(sql: Sql) {
    * Takes someone out of a chat at their own request. They hold its key and cannot make a new one
    * for the others, so the chat waits for a member who stays to replace it.
    */
+  /** Docs in the chats this user is in, or only one of them, with each title and the locks held now (R-020). */
+  async function docs(userId: number, onlyId: string | null): Promise<DocDTO[]> {
+    const mine = `JOIN webchat.members m ON m.conversation_id = d.conversation_id AND m.user_id = $1
+      WHERE ($2::text IS NULL OR d.id = $2)`;
+    const [rows, titles, locks] = await Promise.all([
+      sql.query<DocRow>(`SELECT d.* FROM webchat.docs d ${mine} ORDER BY d.created_at, d.id`, [userId, onlyId]),
+      sql.query<DocRevisionRow>(
+        `SELECT DISTINCT ON (r.doc_id) r.* FROM webchat.doc_revisions r JOIN webchat.docs d ON d.id = r.doc_id ${mine}
+           AND r.section = 'title' ORDER BY r.doc_id, r.id DESC`,
+        [userId, onlyId],
+      ),
+      sql.query<{ doc_id: string; section: string; user_id: number }>(
+        `SELECT l.doc_id, l.section, l.user_id FROM webchat.doc_locks l JOIN webchat.docs d ON d.id = l.doc_id ${mine}
+           AND l.expires_at > $3`,
+        [userId, onlyId, Date.now()],
+      ),
+    ]);
+    const titleOf = new Map(titles.map((r) => [r.doc_id, toDocRevisionDTO(r)]));
+    return rows.map((d) => ({
+      id: d.id,
+      conversationId: d.conversation_id,
+      createdBy: d.created_by,
+      createdAt: d.created_at,
+      version: d.version,
+      updatedBy: d.updated_by,
+      updatedAt: d.updated_at,
+      title: titleOf.get(d.id) ?? null,
+      locks: locks.filter((l) => l.doc_id === d.id).map((l) => ({ section: l.section, userId: l.user_id })),
+    }));
+  }
+
   async function leaveChat(q: Querier, conversationId: number, userId: number) {
     await q.query('DELETE FROM webchat.members WHERE conversation_id = $1 AND user_id = $2', [conversationId, userId]);
     await q.query('DELETE FROM webchat.conversation_keys WHERE conversation_id = $1 AND user_id = $2', [conversationId, userId]);
@@ -1766,35 +1797,8 @@ export async function openDb(sql: Sql) {
         )
       )?.id ?? 0,
 
-    /** Docs in the chats this user is in, with each one's title and the locks held now (R-020). */
-    async docsFor(userId: number): Promise<DocDTO[]> {
-      const mine = 'JOIN webchat.members m ON m.conversation_id = d.conversation_id AND m.user_id = $1';
-      const [docs, titles, locks] = await Promise.all([
-        sql.query<DocRow>(`SELECT d.* FROM webchat.docs d ${mine} ORDER BY d.created_at, d.id`, [userId]),
-        sql.query<DocRevisionRow>(
-          `SELECT DISTINCT ON (r.doc_id) r.* FROM webchat.doc_revisions r JOIN webchat.docs d ON d.id = r.doc_id ${mine}
-           WHERE r.section = 'title' ORDER BY r.doc_id, r.id DESC`,
-          [userId],
-        ),
-        sql.query<{ doc_id: string; section: string; user_id: number }>(
-          `SELECT l.doc_id, l.section, l.user_id FROM webchat.doc_locks l JOIN webchat.docs d ON d.id = l.doc_id ${mine}
-           WHERE l.expires_at > $2`,
-          [userId, Date.now()],
-        ),
-      ]);
-      const titleOf = new Map(titles.map((r) => [r.doc_id, toDocRevisionDTO(r)]));
-      return docs.map((d) => ({
-        id: d.id,
-        conversationId: d.conversation_id,
-        createdBy: d.created_by,
-        createdAt: d.created_at,
-        version: d.version,
-        updatedBy: d.updated_by,
-        updatedAt: d.updated_at,
-        title: titleOf.get(d.id) ?? null,
-        locks: locks.filter((l) => l.doc_id === d.id).map((l) => ({ section: l.section, userId: l.user_id })),
-      }));
-    },
+    docsFor: (userId: number) => docs(userId, null),
+    docFor: async (userId: number, docId: string) => (await docs(userId, docId))[0],
     getDoc: (docId: string) => one(sql.query<DocRow>('SELECT * FROM webchat.docs WHERE id = $1', [docId])),
 
     /** Stores a new doc with its title and first sections. False when its id is taken. */

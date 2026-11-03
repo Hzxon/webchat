@@ -84,9 +84,14 @@ export const keystore = {
   getPins: () => get<Record<number, string>>('pins'),
   setPins: (pins: Record<number, string>) => set('pins', pins),
 
-  getDraft: (conversationId: number) => get<StoredDraft>(`draft:${conversationId}`),
-  setDraft: (conversationId: number, draft: StoredDraft) => set(`draft:${conversationId}`, draft),
-  deleteDraft: (conversationId: number) => remove(`draft:${conversationId}`),
+  /** By chat id, or by "doc:<doc id>:<section>" for a doc section someone is editing. */
+  getDraft: (name: number | string) => get<StoredDraft>(`draft:${name}`),
+  setDraft: (name: number | string, draft: StoredDraft) => set(`draft:${name}`, draft),
+  deleteDraft: (name: number | string) => remove(`draft:${name}`),
+
+  /** The version of each doc this device last showed, so a newer one gets its "Updated" dot. */
+  getDocsSeen: () => get<Record<string, number>>('docs-seen'),
+  setDocsSeen: (seen: Record<string, number>) => set('docs-seen', seen),
 
   /** Every unsent message on this device, from every tab. ";" is the character after ":". */
   getUnsent: () => run<StoredUnsent[]>('readonly', (s) => s.getAll(IDBKeyRange.bound('unsent:', 'unsent;', false, true))),

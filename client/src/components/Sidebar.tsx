@@ -2,7 +2,7 @@ import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { ProjectDTO } from '../../../shared/types';
 import { sound } from '../alerts';
 import { openConversation, previewText, signOut } from '../chat';
-import type { ChatConversation } from '../e2ee/keyring';
+import type { ChatConversation, ChatDoc } from '../e2ee/keyring';
 import { actions, chatTitle, otherMemberId, senderName, useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { formatListTime } from './format';
@@ -10,6 +10,7 @@ import {
   BellIcon,
   BellRingIcon,
   ChatIcon,
+  FileIcon,
   FolderIcon,
   GithubIcon,
   HashIcon,
@@ -30,16 +31,19 @@ interface SidebarProps {
   onAddPeople: (projectId: number) => void;
   onMembers: (projectId: number) => void;
   onRepos: (projectId: number) => void;
+  onNewDoc: (projectId: number) => void;
   onNotifications: () => void;
 }
 
 const newestFirst = (a: ChatConversation, b: ChatConversation) =>
   (b.lastMessage?.createdAt ?? b.updatedAt) - (a.lastMessage?.createdAt ?? a.updatedAt);
 
-export function Sidebar({ onNewChat, onNewProject, onNewChannel, onAddPeople, onMembers, onRepos, onNotifications }: SidebarProps) {
+export function Sidebar(props: SidebarProps) {
+  const { onNewChat, onNewProject, onNewChannel, onAddPeople, onMembers, onRepos, onNewDoc, onNotifications } = props;
   const me = useAppState((s) => s.me);
   const conversations = useAppState((s) => s.conversations);
   const projects = useAppState((s) => s.projects);
+  const docs = useAppState((s) => s.docs);
   const tab = useAppState((s) => s.tab);
   const connected = useAppState((s) => s.connected);
   const push = useAppState((s) => s.push);
@@ -59,19 +63,29 @@ export function Sidebar({ onNewChat, onNewProject, onNewChannel, onAddPeople, on
     [chats, q],
   );
 
-  /** Projects A to Z, each with its channels A to Z. A search matches project or channel names. */
+  /** Projects A to Z, each with its channels and docs A to Z. A search matches project, channel or doc names. */
   const projectList = useMemo(() => {
     const byProject = new Map<number, ChatConversation[]>();
     for (const c of channels) byProject.set(c.projectId!, [...(byProject.get(c.projectId!) ?? []), c]);
+    const docsBy = new Map<number, ChatDoc[]>();
+    for (const d of Object.values(docs)) {
+      const projectId = conversations[d.conversationId]?.projectId;
+      if (projectId) docsBy.set(projectId, [...(docsBy.get(projectId) ?? []), d]);
+    }
     return Object.values(projects)
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((project) => {
         const own = (byProject.get(project.id) ?? []).sort((a, b) => (a.title ?? '').localeCompare(b.title ?? ''));
+        const ownDocs = (docsBy.get(project.id) ?? []).sort((a, b) => a.name.localeCompare(b.name));
         const projectMatches = !q || project.name.toLowerCase().includes(q);
-        return { project, channels: projectMatches ? own : own.filter((c) => (c.title ?? '').includes(q)) };
+        return {
+          project,
+          channels: projectMatches ? own : own.filter((c) => (c.title ?? '').includes(q)),
+          docs: projectMatches ? ownDocs : ownDocs.filter((d) => d.name.toLowerCase().includes(q)),
+        };
       })
-      .filter((entry) => entry.channels.length > 0 || !q);
-  }, [projects, channels, q]);
+      .filter((entry) => entry.channels.length > 0 || entry.docs.length > 0 || !q);
+  }, [projects, channels, docs, conversations, q]);
 
   if (!me) return null;
   const notificationsReady = push?.permission === 'granted';
@@ -145,15 +159,17 @@ export function Sidebar({ onNewChat, onNewProject, onNewChannel, onAddPeople, on
         </ul>
       ) : (
         <ul className="chat-list">
-          {projectList.map(({ project, channels }) => (
+          {projectList.map(({ project, channels, docs }) => (
             <ProjectSection
               key={project.id}
               project={project}
               channels={channels}
+              docs={docs}
               onNewChannel={() => onNewChannel(project.id)}
               onAddPeople={() => onAddPeople(project.id)}
               onMembers={() => onMembers(project.id)}
               onRepos={() => onRepos(project.id)}
+              onNewDoc={() => onNewDoc(project.id)}
             />
           ))}
           {projectList.length === 0 &&
@@ -179,13 +195,18 @@ export function Sidebar({ onNewChat, onNewProject, onNewChannel, onAddPeople, on
 function ProjectSection(props: {
   project: ProjectDTO;
   channels: ChatConversation[];
+  docs: ChatDoc[];
   onNewChannel: () => void;
   onAddPeople: () => void;
   onMembers: () => void;
   onRepos: () => void;
+  onNewDoc: () => void;
 }) {
-  const { project, channels, onNewChannel, onAddPeople, onMembers, onRepos } = props;
+  const { project, channels, docs, onNewChannel, onAddPeople, onMembers, onRepos, onNewDoc } = props;
   const activeId = useAppState((s) => s.activeId);
+  const docOpen = useAppState((s) => s.docOpen);
+  const docsSeen = useAppState((s) => s.docsSeen);
+  const meId = useAppState((s) => s.me?.id);
   const urgent = useAppState((s) => s.urgent);
   // Linking a repository only does something where the GitHub App is set up.
   const github = useAppState((s) => s.github?.appConfigured ?? false);
@@ -233,6 +254,28 @@ function ProjectSection(props: {
             </li>
           );
         })}
+        {docs.map((d) => {
+          // Someone else saved it since this device last showed it.
+          const updated = d.updatedBy !== meId && d.version > (docsSeen[d.id] ?? 0);
+          return (
+            <li key={d.id}>
+              <button
+                className={`channel-item ${docOpen === d.id ? 'is-active' : ''} ${updated ? 'has-unread' : ''}`}
+                onClick={() => actions.setDocOpen(d.id)}
+              >
+                <FileIcon width={16} height={16} />
+                <span className="channel-name">{d.name}</span>
+                {updated && <span className="doc-dot" aria-label="Updated" />}
+              </button>
+            </li>
+          );
+        })}
+        <li>
+          <button className="channel-item channel-add" onClick={onNewDoc}>
+            <PlusIcon width={16} height={16} />
+            <span className="channel-name">New doc</span>
+          </button>
+        </li>
       </ul>
     </li>
   );

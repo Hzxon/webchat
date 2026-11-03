@@ -504,11 +504,13 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const tabId = typeof input.tabId === 'string' ? input.tabId.slice(0, 64) : '';
     const endpoint = typeof input.endpoint === 'string' && input.endpoint.length <= 1000 ? input.endpoint : null;
 
-    await db.checkIn(me.id, input.attentive === true, tabId, endpoint);
     const editing = input.editing;
-    if (typeof editing?.docId === 'string' && typeof editing.section === 'string') {
-      await db.renewSectionLock(me.id, editing.docId.slice(0, 64), editing.section.slice(0, 64));
-    }
+    await Promise.all([
+      db.checkIn(me.id, input.attentive === true, tabId, endpoint),
+      typeof editing?.docId === 'string' && typeof editing.section === 'string'
+        ? db.renewSectionLock(me.id, editing.docId.slice(0, 64), editing.section.slice(0, 64))
+        : undefined,
+    ]);
     const stamp = await db.stamp(me.id);
     if (stamp === input.stamp) {
       const body: SyncResponse = { changed: false, stamp, cursor };
@@ -824,10 +826,10 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     }
     await requireMember(conversationId, me.id);
     if ((await db.getConversation(conversationId))?.type !== 'channel') throw new HttpError(400, 'Docs belong to a project.');
-    for (const r of revisions) await requireCurrentKey(conversationId, r.envelope.kid);
+    for (const kid of new Set(revisions.map((r) => r.envelope.kid))) await requireCurrentKey(conversationId, kid);
     if (!(await db.takeRateLimit(`docs:${me.id}`, 30, 10_000))) throw new HttpError(429, 'Slow down a little.');
     if (!(await db.createDoc(id, conversationId, me.id, revisions))) throw new HttpError(409, 'A doc with this id exists.');
-    res.status(201).json((await db.docsFor(me.id)).find((d) => d.id === id));
+    res.status(201).json(await db.docFor(me.id, id));
   });
 
   /** The newest revision of every section of a doc. */
@@ -841,10 +843,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
   router.delete('/docs/:id', requireAuth, async (req, res) => {
     const me = currentUser(res);
     const doc = await requireDoc(docId(req.params.id), me.id);
-    const projectId = (await db.getConversation(doc.conversation_id))?.project_id;
-    if (doc.created_by !== me.id && (!projectId || (await db.getProject(projectId))?.created_by !== me.id)) {
-      throw new HttpError(403, 'Only whoever made this doc, or the owner of its project, can delete it.', 'not_owner');
-    }
+    if (doc.created_by !== me.id) await requireProjectOwner((await db.getConversation(doc.conversation_id))!.project_id!, me.id);
     await db.deleteDoc(doc.id);
     res.status(204).end();
   });

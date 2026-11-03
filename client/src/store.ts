@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import type { GithubDTO, ProjectDTO, UserDTO } from '../../shared/types';
-import type { ChatConversation, ChatMessage } from './e2ee/keyring';
+import type { ChatConversation, ChatDoc, ChatMessage } from './e2ee/keyring';
 import type { PushState } from './push';
 
 export interface Toast {
@@ -56,6 +56,11 @@ export interface State {
   githubOpen: boolean;
   /** The project whose repositories dialog is open. GitHub sends its owner back to it after linking. */
   reposFor: number | null;
+  docs: Record<string, ChatDoc>;
+  /** The doc showing instead of a chat. */
+  docOpen: string | null;
+  /** The version of each doc this device last showed (see keystore.getDocsSeen). */
+  docsSeen: Record<string, number>;
 }
 
 const initialState: State = {
@@ -77,6 +82,9 @@ const initialState: State = {
   github: null,
   githubOpen: false,
   reposFor: null,
+  docs: {},
+  docOpen: null,
+  docsSeen: {},
 };
 
 let state = initialState;
@@ -158,8 +166,11 @@ function withoutChats(current: State, gone: Set<number>): State {
   if (gone.size === 0) return current;
   const keep = <T>(record: Record<number, T>) =>
     Object.fromEntries(Object.entries(record).filter(([id]) => !gone.has(Number(id)))) as Record<number, T>;
+  const docs = Object.fromEntries(Object.entries(current.docs).filter(([, d]) => !gone.has(d.conversationId)));
   return {
     ...current,
+    docs,
+    docOpen: current.docOpen !== null && !docs[current.docOpen] ? null : current.docOpen,
     conversations: keep(current.conversations),
     messages: keep(current.messages),
     reactions: keep(current.reactions),
@@ -187,13 +198,22 @@ let toastId = 0;
 export const actions = {
   reset: () => store.set(() => initialState),
 
-  bootstrap: (data: { me: UserDTO; users: UserDTO[]; projects: ProjectDTO[]; conversations: ChatConversation[] }) =>
+  bootstrap: (data: {
+    me: UserDTO;
+    users: UserDTO[];
+    projects: ProjectDTO[];
+    conversations: ChatConversation[];
+    docs: ChatDoc[];
+    docsSeen: Record<string, number>;
+  }) =>
     store.set((s) => ({
       ...s,
       me: data.me,
       users: Object.fromEntries(data.users.map((u) => [u.id, u])),
       projects: Object.fromEntries(data.projects.map((p) => [p.id, p])),
       conversations: Object.fromEntries(data.conversations.map((c) => [c.id, c])),
+      docs: Object.fromEntries(data.docs.map((d) => [d.id, d])),
+      docsSeen: data.docsSeen,
     })),
 
   /**
@@ -203,7 +223,14 @@ export const actions = {
    * changed a chat or project after that, the answer may not show the change, so it applies nothing
    * and returns false (D-069).
    */
-  applySync: (users: UserDTO[], projects: ProjectDTO[], conversations: ChatConversation[], messages: ChatMessage[], since: number) => {
+  applySync: (
+    users: UserDTO[],
+    projects: ProjectDTO[],
+    conversations: ChatConversation[],
+    messages: ChatMessage[],
+    docs: ChatDoc[],
+    since: number,
+  ) => {
     if (since !== localEdits) return false;
     store.set((s) => {
       const pending = { ...s.pending };
@@ -217,10 +244,28 @@ export const actions = {
         projects: Object.fromEntries(projects.map((p) => [p.id, p])),
         conversations: Object.fromEntries(conversations.map((c) => [c.id, c])),
         pending,
+        docs: Object.fromEntries(docs.map((d) => [d.id, d])),
+        // Someone deleted the open doc, or this user left its project.
+        docOpen: docs.some((d) => d.id === s.docOpen) ? s.docOpen : null,
       };
     });
     return true;
   },
+
+  upsertDoc: (doc: ChatDoc) => editChats((s) => ({ ...s, docs: { ...s.docs, [doc.id]: doc } })),
+
+  dropDoc: (docId: string) =>
+    editChats((s) => {
+      const docs = { ...s.docs };
+      delete docs[docId];
+      return { ...s, docs, docOpen: s.docOpen === docId ? null : s.docOpen };
+    }),
+
+  /** Shows a doc in place of the open chat, or closes it. */
+  setDocOpen: (docOpen: string | null) =>
+    store.set((s) => ({ ...s, docOpen, activeId: docOpen ? null : s.activeId, githubOpen: docOpen ? false : s.githubOpen })),
+
+  setDocsSeen: (docsSeen: Record<string, number>) => store.set((s) => ({ ...s, docsSeen })),
 
   upsertProject: (project: ProjectDTO) => editChats((s) => ({ ...s, projects: { ...s.projects, [project.id]: project } })),
 
@@ -324,13 +369,18 @@ export const actions = {
     }),
 
   setActive: (activeId: number | null) =>
-    store.set((s) => ({ ...s, activeId, githubOpen: activeId === null ? s.githubOpen : false })),
+    store.set((s) => ({
+      ...s,
+      activeId,
+      githubOpen: activeId === null ? s.githubOpen : false,
+      docOpen: activeId === null ? s.docOpen : null,
+    })),
 
   setGithub: (github: GithubDTO) => store.set((s) => ({ ...s, github })),
 
   /** Shows the pull requests pane in place of the open chat, or closes it. */
   setGithubOpen: (githubOpen: boolean) =>
-    store.set((s) => ({ ...s, githubOpen, activeId: githubOpen ? null : s.activeId })),
+    store.set((s) => ({ ...s, githubOpen, activeId: githubOpen ? null : s.activeId, docOpen: githubOpen ? null : s.docOpen })),
 
   setReposFor: (reposFor: number | null) => store.set((s) => ({ ...s, reposFor })),
 

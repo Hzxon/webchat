@@ -11,6 +11,7 @@ import {
   LIMITS,
   showsEveryPush,
   type ConversationDTO,
+  type DocDTO,
   type PullCardDTO,
   type PullRequestDTO,
   type MessageDTO,
@@ -23,7 +24,14 @@ import { showUnreadInTab, sound } from './alerts';
 import { announceAccountChange, api, ApiError, sendAwayBeacon, setTabUser } from './api';
 import { attention } from './attention';
 import { holdReloadWhile, setReloadTarget } from './build';
-import { EncryptionUnavailableError, keyring, type ChatConversation, type ChatMessage, type KeyLookup } from './e2ee/keyring';
+import {
+  EncryptionUnavailableError,
+  keyring,
+  type ChatConversation,
+  type ChatDoc,
+  type ChatMessage,
+  type KeyLookup,
+} from './e2ee/keyring';
 import { keystore, type StoredUnsent } from './e2ee/keystore';
 import { refreshGithub, startGithub } from './github';
 import { disablePushHere, forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
@@ -45,6 +53,8 @@ let cursor = 0;
 let stamp = '';
 let pushActiveHere = false;
 let pushEndpoint: string | null = null;
+/** The doc section this tab edits. Each check-in names it, so the server keeps its lock (R-020). */
+let editing: { docId: string; section: string } | null = null;
 /** Messages already handled, so the overlap that sync re-sends never alerts twice. */
 const seen = new Set<number>();
 /** Client ids of the messages this tab keeps on the device until the server has them (D-051). */
@@ -74,10 +84,27 @@ function lookupFrom(users: UserDTO[]): KeyLookup {
   return (userId) => (userId === meId ? keyring.myKeys() : (byId.get(userId) ?? null));
 }
 
-const currentLookup = () => lookupFrom(Object.values(store.get().users));
+export const currentLookup = () => lookupFrom(Object.values(store.get().users));
 
 const openConversations = (list: ConversationDTO[], keysOf: KeyLookup): Promise<ChatConversation[]> =>
   Promise.all(list.map(async (c) => ({ ...c, lastMessage: c.lastMessage ? await keyring.open(c.lastMessage, c, keysOf) : null })));
+
+/** Decrypts each doc's title. A doc whose chat this page does not list is left out. */
+export function openDocs(list: DocDTO[], conversations: ChatConversation[], keysOf: KeyLookup): Promise<ChatDoc[]> {
+  const byId = new Map(conversations.map((c) => [c.id, c]));
+  return Promise.all(
+    list
+      .filter((d) => byId.has(d.conversationId))
+      .map(async (d) => {
+        const title = d.title && (await keyring.openDoc(d.title, byId.get(d.conversationId)!, keysOf));
+        return { ...d, name: title ? title.text || 'Untitled doc' : 'Doc that could not be decrypted' };
+      }),
+  );
+}
+
+export function setEditing(section: typeof editing) {
+  editing = section;
+}
 
 /** How long to wait before the next check-in. */
 function syncInterval(): number {
@@ -107,7 +134,7 @@ export async function syncNow(): Promise<void> {
   clearTimeout(timer);
   try {
     const since = localEditCount();
-    const result = await api.sync({ cursor, stamp, attentive: attention.isAttentive(), tabId, endpoint: pushEndpoint });
+    const result = await api.sync({ cursor, stamp, attentive: attention.isAttentive(), tabId, endpoint: pushEndpoint, editing });
     failures = 0;
     actions.setConnected(true);
     // An answer this page changed a chat under is dropped whole. Stamp and cursor stay, so the
@@ -152,10 +179,11 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>, si
   const messages = await Promise.all(
     result.messages.filter((m) => byId.has(m.conversationId)).map((m) => keyring.open(m, byId.get(m.conversationId)!, keysOf)),
   );
+  const docs = await openDocs(result.docs, conversations, keysOf);
   if (!running) return false;
 
   const before = store.get();
-  if (!actions.applySync(result.users, result.projects, conversations, messages, since)) return false;
+  if (!actions.applySync(result.users, result.projects, conversations, messages, docs, since)) return false;
   const fresh = messages.filter((m) => !seen.has(m.id));
   for (const m of fresh) seen.add(m.id);
   for (const message of fresh) if (shouldAlert(message, byId.get(message.conversationId)!)) onIncoming(message);
@@ -232,6 +260,7 @@ async function reloadAll() {
         conversations: data.conversations,
         messages: [],
         more: false,
+        docs: data.docs,
       },
       since,
     );
@@ -258,9 +287,11 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
   const keysOf = lookupFrom(data.users);
   actions.setKeyWarnings(await keyring.checkKeys(data.users));
   const conversations = await openConversations(data.conversations, keysOf);
+  const docs = await openDocs(data.docs, conversations, keysOf);
+  const docsSeen = (await keystore.getDocsSeen().catch(() => undefined)) ?? {};
   if (run !== generation) return { status: 'stale' };
 
-  actions.bootstrap({ me: data.me, users: data.users, projects: data.projects, conversations });
+  actions.bootstrap({ me: data.me, users: data.users, projects: data.projects, conversations, docs, docsSeen });
   cursor = data.cursor;
   alertFloor = data.cursor;
   stamp = data.stamp;
@@ -277,12 +308,13 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
     // A reload after a deploy waits while an alert rings or a message is not sent yet (D-040).
     holdReloadWhile(() => {
       const state = store.get();
-      return state.urgent.length > 0 || Object.keys(state.pending).length > 0;
+      return state.urgent.length > 0 || Object.keys(state.pending).length > 0 || editing !== null;
     }),
     // After a deploy, the reload opens the same chat or pane again, as a notification click would.
     setReloadTarget(() => {
       const state = store.get();
       if (state.githubOpen) return '/?github=open';
+      if (state.docOpen) return `/?doc=${state.docOpen}`;
       return state.activeId === null ? '/' : `/?chat=${state.activeId}`;
     }),
     attention.subscribe((attentive) => {
@@ -313,11 +345,17 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
   void alertMissedUrgent(data.urgent, keysOf, run);
 
   // A notification click on a closed app opens /?chat=<id>.
-  const requested = Number(new URLSearchParams(location.search).get('chat'));
+  const query = new URLSearchParams(location.search);
+  const requested = Number(query.get('chat'));
   let opening = Promise.resolve();
   if (requested && store.get().conversations[requested]) {
     history.replaceState(null, '', '/');
     opening = openConversation(requested);
+  }
+  const doc = query.get('doc');
+  if (doc && store.get().docs[doc]) {
+    history.replaceState(null, '', '/');
+    actions.setDocOpen(doc);
   }
   // After the chat above, so the two never load the same history at once.
   void opening.catch(() => undefined).then(() => restoreUnsent(run));
@@ -393,15 +431,15 @@ async function restoreUnsent(run: number) {
   }
 }
 
-/** The draft this device keeps for a chat, or an empty string (D-051). */
-export async function loadDraft(conversationId: number): Promise<string> {
-  const draft = await keystore.getDraft(conversationId).catch(() => undefined);
+/** The draft this device keeps for a chat or a doc section, or an empty string (D-051). */
+export async function loadDraft(name: number | string): Promise<string> {
+  const draft = await keystore.getDraft(name).catch(() => undefined);
   return draft?.userId === meId ? draft.text : '';
 }
 
-/** Keeps what a chat's message box holds, so closing the tab or opening another chat loses nothing. */
-export function saveDraft(conversationId: number, text: string) {
-  const write = text.trim() ? keystore.setDraft(conversationId, { userId: meId, text }) : keystore.deleteDraft(conversationId);
+/** Keeps what a chat's message box or a doc section's editor holds, so closing the tab loses nothing. */
+export function saveDraft(name: number | string, text: string) {
+  const write = text.trim() ? keystore.setDraft(name, { userId: meId, text }) : keystore.deleteDraft(name);
   write.catch(() => undefined);
 }
 
@@ -647,28 +685,33 @@ async function ensureChatKey(conversationId: number, retried = false): Promise<{
 }
 
 /**
- * Encrypts and sends a message or reaction. When the chat got a new key meanwhile, or someone left
- * it, this reloads and tries once more with the chat's next key.
+ * Seals and sends something with the chat's key. When the chat got a new key meanwhile, or someone
+ * left it, this reloads and tries once more with the chat's next key.
  */
-async function sealAndSend(
+export async function withChatKey<T>(conversationId: number, work: (key: CryptoKey, keyId: string) => Promise<T>, retried = false): Promise<T> {
+  const { key, keyId } = await ensureChatKey(conversationId);
+  try {
+    return await work(key, keyId);
+  } catch (error) {
+    if (retried || !(error instanceof ApiError && (error.code === 'stale_key' || error.code === 'needs_new_key'))) throw error;
+    await reloadAll();
+    return withChatKey(conversationId, work, true);
+  }
+}
+
+/** Encrypts and sends a message or reaction. */
+const sealAndSend = (
   conversationId: number,
   meta: { urgent: boolean; clientId: string; kind: NonNullable<SendMessageInput['kind']> },
   content: MessageContent,
-  retried = false,
-): Promise<MessageDTO> {
-  const { key, keyId } = await ensureChatKey(conversationId);
-  const envelope = await keyring.seal(key, keyId, { conversationId, ...meta }, content);
-  try {
+): Promise<MessageDTO> =>
+  withChatKey(conversationId, async (key, keyId) => {
+    const envelope = await keyring.seal(key, keyId, { conversationId, ...meta }, content);
     const message = await api.sendMessage(conversationId, { envelope, ...meta });
     // This device knows what it sent, so it never needs to decrypt it.
     keyring.rememberContent(message.id, { conversationId, senderId: meId, ...meta }, envelope, content);
     return message;
-  } catch (error) {
-    if (retried || !(error instanceof ApiError && (error.code === 'stale_key' || error.code === 'needs_new_key'))) throw error;
-    await reloadAll();
-    return sealAndSend(conversationId, meta, content, true);
-  }
-}
+  });
 
 /** What a reply carries of the message it answers. A card from GitHub has no sender, so it quotes 0. */
 export const quoteOf = (message: ChatMessage): QuotedMessage => ({
@@ -1008,6 +1051,7 @@ function teardown() {
   alertFloor = 0;
   catchUpRounds = 0;
   stamp = '';
+  editing = null;
   sound.stopRinging();
   showUnreadInTab(0, null);
   lastAlertState = '';

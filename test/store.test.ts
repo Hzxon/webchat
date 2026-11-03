@@ -15,13 +15,13 @@ describe('A check-in answer in client/src/store.ts, against changes this page ma
   test('an answer requested before the page added a chat is ignored, so the chat stays', () => {
     const since = localEditCount();
     actions.upsertConversation(chat(7));
-    assert.equal(actions.applySync([], [], [], [], since), false);
+    assert.equal(actions.applySync([], [], [], [], [], since), false);
     assert.ok(store.get().conversations[7]);
   });
 
   test('an answer requested after it applies, and drops a chat it no longer lists', () => {
     actions.upsertConversation(chat(7));
-    assert.equal(actions.applySync([], [], [], [], localEditCount()), true);
+    assert.equal(actions.applySync([], [], [], [], [], localEditCount()), true);
     assert.equal(store.get().conversations[7], undefined);
   });
 
@@ -29,11 +29,11 @@ describe('A check-in answer in client/src/store.ts, against changes this page ma
     actions.upsertConversation(chat(7));
     let since = localEditCount();
     actions.dropConversation(7);
-    assert.equal(actions.applySync([], [], [chat(7)], [], since), false);
+    assert.equal(actions.applySync([], [], [chat(7)], [], [], since), false);
     assert.equal(store.get().conversations[7], undefined);
     since = localEditCount();
     actions.upsertProject(project(3));
-    assert.equal(actions.applySync([], [], [], [], since), false);
+    assert.equal(actions.applySync([], [], [], [], [], since), false);
     assert.ok(store.get().projects[3]);
   });
 });

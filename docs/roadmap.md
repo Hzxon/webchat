@@ -72,7 +72,10 @@ Open questions:
 
 ### R-020: Shared Markdown docs in projects
 
-Status: In progress on `claude/r020-project-docs` (#73).
+Status: Done in #73 (D-081). Integration tests prove that the database holds no doc text in plain,
+that only project members read or change docs, and that nobody takes a lock someone else holds.
+Tried in a browser with two accounts, at desktop width and 375 pixels, in light and dark mode. Not
+yet tried on a real phone, or printed from Safari.
 
 Asked for by the owner on 2026-11-03.
 
