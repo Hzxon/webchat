@@ -193,12 +193,6 @@ the notes would show it nothing new. They should not count as unread.
 
 ## Known issues
 
-### K-10: `sslmode=disable` is ignored
-
-`connectPostgres` in `server/sql.ts` turns TLS on for every host except three loopback names and
-deletes `sslmode`. A self-hosted Postgres without TLS on another host, such as `db` in Docker
-Compose, cannot be reached, and the server stops at start. Only an undocumented `?ssl=0` works.
-
 ### K-11: The New channel dialog can make names the server refuses
 
 `toChannelName` in `client/src/components/ProjectDialogs.tsx` trims hyphens before it cuts the name
@@ -351,6 +345,17 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
 | K-9: A retried send is stored once (D-061) | #35 |
+| K-10: `sslmode=disable` in `DATABASE_URL` turns TLS off | #46 |
+
+### K-10: `sslmode=disable` is ignored
+
+Status: Fixed in #46. `sslmode=disable` in `DATABASE_URL` now turns TLS off for any host. Without
+it, a host that is not loopback still gets TLS. A test checks the options the pool gets; no Postgres
+without TLS was tried. `.env.example` names the option.
+
+`connectPostgres` in `server/sql.ts` turns TLS on for every host except three loopback names and
+deletes `sslmode`. A self-hosted Postgres without TLS on another host, such as `db` in Docker
+Compose, cannot be reached, and the server stops at start. Only an undocumented `?ssl=0` works.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 
