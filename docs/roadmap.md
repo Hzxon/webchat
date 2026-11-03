@@ -217,13 +217,6 @@ Register, login, upgrade and key routes share 20 requests per 15 minutes per IP 
 successes count. A class that signs up together behind one campus address locks itself out for 15
 minutes. Count only failures, or raise the limit for successes. Not seen on a real deployment.
 
-### K-15: A late sync answer can close a chat just created
-
-`applySync` drops every chat missing from an answer. An answer built before a new chat committed,
-but applied after it opened, closes the chat with "It was deleted, or you were removed." The next
-check-in brings it back. Ignore answers older than a local change, for example with a generation
-number.
-
 ### K-16: A reaction push can replace a message notification
 
 A reaction push uses the chat's notification tag. When the server still thinks the user is looking,
@@ -332,6 +325,17 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-19: The push test searches the whole payload for the message | #41 |
 | K-26: Messages from a checked security code open without a reload | #42 |
 | K-12: A subscription with bad keys is refused or dropped, and no longer breaks pushes | #43 |
+| K-15: A late sync answer no longer closes a chat just created (D-069) | #44 |
+
+### K-15: A late sync answer can close a chat just created
+
+Status: Fixed in #44 (D-069). Tests in `test/store.test.ts` cover the store's side. No automated
+test drives the sync loop in `client/src/chat.ts`, and the browser check is still to do.
+
+`applySync` drops every chat missing from an answer. An answer built before a new chat committed,
+but applied after it opened, closed the chat with "It was deleted, or you were removed." The next
+check-in brought it back. Now the page counts its own changes to chats and projects, and drops an
+answer requested before the latest one.
 
 ### K-12: A push subscription with malformed keys breaks pushes for its owner
 
