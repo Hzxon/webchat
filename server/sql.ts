@@ -26,7 +26,8 @@ export function connectPostgres({ connectionString, caCert }: PostgresOptions): 
   const url = new URL(connectionString);
   // A self-hosted Postgres without TLS on another host, such as db in Docker Compose, opts out with
   // sslmode=disable. Every other host gets TLS, whatever else sslmode says.
-  const plain = ['localhost', '127.0.0.1', '::1'].includes(url.hostname) || url.searchParams.get('sslmode') === 'disable';
+  // The URL API keeps the brackets around an IPv6 address.
+  const plain = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || url.searchParams.get('sslmode') === 'disable';
   // node-postgres reads sslmode from the URL and would override the ssl object below.
   url.searchParams.delete('sslmode');
   const pool = new pg.Pool({
