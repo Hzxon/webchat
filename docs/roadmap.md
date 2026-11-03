@@ -319,6 +319,18 @@ tab, which drops scroll positions and open dialogs. Now a tab fetches the page a
 only when the page loads other bundle files. Vercel also skips the build of a commit that changes
 nothing the app runs (D-058). The 9 deploys that changed the page still reload every tab once each.
 
+### K-37: A long name in a dialog title widens the dialog past a phone screen
+
+Status: Fixed in #67.
+
+Found in the browser check of K-28 in #59 on 2026-11-03.
+
+`.dialog-header h2` in `client/src/styles.css` is shared by every dialog, and it cannot wrap a name
+without spaces. A project name can have 60 characters. The titles "New channel in …",
+"Repositories in …" and "Add people to …" carry such a name. At 375 pixels the dialog content
+grows past the dialog and pushes the close button out. `overflow-wrap: anywhere` on the title
+would fix it. #59 fixed the same overflow in the preview of the New channel dialog.
+
 ### K-38: The map of the code leaves out most modules
 
 Status: Fixed in #68.
