@@ -205,13 +205,6 @@ Compose, cannot be reached, and the server stops at start. Only an undocumented 
 to 40 characters and keeps capitals with no lowercase form, such as ℂ. The server then answers 400.
 Keep one rule in `shared/` for both sides.
 
-### K-12: A push subscription with malformed keys breaks pushes for its owner
-
-`generateRequestDetails` in `server/push.ts` throws before the `try` for keys of the wrong size, so
-the row is never deleted. Every later push to that user fails, `/api/push/test` answers 500, and a
-GitHub poll stops after its first alert with a false "Could not reach GitHub". It needs a
-hand-made subscription. Check the key sizes on subscribe, and delete the row when sending throws.
-
 ### K-13: The first key of a group from before encryption races with a removal
 
 `POST /conversations/:id/key` reads the members without the group's lock. A removal at the same
@@ -224,13 +217,6 @@ Register, login, upgrade and key routes share 20 requests per 15 minutes per IP 
 successes count. A class that signs up together behind one campus address locks itself out for 15
 minutes. Count only failures, or raise the limit for successes. Not seen on a real deployment.
 
-### K-15: A late sync answer can close a chat just created
-
-`applySync` drops every chat missing from an answer. An answer built before a new chat committed,
-but applied after it opened, closes the chat with "It was deleted, or you were removed." The next
-check-in brings it back. Ignore answers older than a local change, for example with a generation
-number.
-
 ### K-17: An open page keeps a push endpoint the service worker replaced
 
 The service worker's `pushsubscriptionchange` handler subscribes again but does not tell open pages.
@@ -242,12 +228,6 @@ and messages show up to 15 seconds late until a reload. Mostly Firefox fires thi
 When a session ends with a 401, the page drops the keys but not the push subscription. Whoever uses
 that browser next sees the old account's notification titles, such as sender and chat names, until
 the subscription is removed. Only "Sign out" removes it.
-
-### K-19: The push test for plain text cannot fail
-
-The test "pushes carry no plain text" in `test/chat.test.ts` looks for `urgent, `, which the message
-`Call me back, it is urgent` does not contain. Only its separate check of `payload.body` guards rule
-7. Search the payload for the whole message instead.
 
 ### K-21: An urgent message from while every tab was closed does not ring
 
@@ -278,15 +258,6 @@ Found while testing #21.
 numbers messages in the order they arrive. Sending "one" to "five" with Enter in quick succession
 stored them as one, three, four, two, five, and a reload showed the same order. Send a chat's
 messages one at a time, in the order they were written.
-
-### K-26: Messages from changed keys stay unreadable after the check until a reload
-
-Found in a security review of main on 2026-11-03.
-
-Until the user checks a changed security code, the page shows that person's new messages as
-unreadable (D-018). Checking the code in `trustKeys` in `client/src/chat.ts` updates the warnings,
-but the messages already loaded keep their failed state, and failed reactions were dropped. A
-reload decrypts them. Open the loaded messages from that person again after the check.
 
 ## Open questions
 
@@ -344,6 +315,10 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
 | K-9: A retried send is stored once (D-061) | #35 |
+| K-19: The push test searches the whole payload for the message | #41 |
+| K-26: Messages from a checked security code open without a reload | #42 |
+| K-12: A subscription with bad keys is refused or dropped, and no longer breaks pushes | #43 |
+| K-15: A late sync answer no longer closes a chat just created (D-069) | #44 |
 | K-16: A reaction push no longer shows or replaces a message notification (D-070) | #45 |
 
 ### K-16: A reaction push can replace a message notification
@@ -356,6 +331,50 @@ A reaction push uses the chat's notification tag. When the server still thinks t
 for example after a laptop slept before its check-in went out, the service worker shows "Bob reacted
 to a message" over the chat's message notification. D-030 says reactions notify nobody. Not seen on
 a real device.
+
+### K-15: A late sync answer can close a chat just created
+
+Status: Fixed in #44 (D-069). Tests in `test/store.test.ts` cover the store's side. No automated
+test drives the sync loop in `client/src/chat.ts`, and the browser check is still to do.
+
+`applySync` drops every chat missing from an answer. An answer built before a new chat committed,
+but applied after it opened, closed the chat with "It was deleted, or you were removed." The next
+check-in brought it back. Now the page counts its own changes to chats and projects, and drops an
+answer requested before the latest one.
+
+### K-12: A push subscription with malformed keys breaks pushes for its owner
+
+Status: Fixed in #43. Integration tests subscribe with keys of the wrong size and get a 400, and
+show that a subscription web-push cannot encrypt for is deleted while the next push still goes out.
+
+`generateRequestDetails` in `server/push.ts` threw before the `try` for keys of the wrong size, so
+the row was never deleted. Every later push to that user failed, `/api/push/test` answered 500, and
+a GitHub poll stopped after its first alert with a false "Could not reach GitHub". It needed a
+hand-made subscription. Now subscribing checks that the p256dh key is 65 bytes and the auth secret
+16, and a subscription web-push throws on is deleted. A network error still keeps the row.
+
+### K-26: Messages from changed keys stayed unreadable after the check until a reload
+
+Status: Fixed in #42. Keyring tests check that nothing held back opens before the check, and that
+the held message and reaction both open after it. Not yet tried in a browser.
+
+Found in a security review of main on 2026-11-03.
+
+Until the user checks a changed security code, the page shows that person's new messages as
+unreadable (D-018). Checking the code in `trustKeys` in `client/src/chat.ts` updated the warnings,
+but the messages already loaded kept their failed state, and failed reactions were dropped. A
+reload decrypted them. Now the keyring keeps every message and reaction that failed to open, and
+`trustKeys` opens them again through the same decrypt path and puts those that open in the chat.
+
+### K-19: The push test for plain text cannot fail
+
+Status: Fixed in #41. The new check was shown to fail with the message, and with only "me back",
+put into the push payload on the server, where the old check passed.
+
+The test "pushes carry no plain text" in `test/chat.test.ts` looks for `urgent, `, which the message
+`Call me back, it is urgent` does not contain. Only its separate check of `payload.body` guards rule
+7. Now the test searches the whole payload for the message and for its words "Call" and "back".
+"urgent" is left out, because the payload's field name and tag carry it.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 
