@@ -359,7 +359,8 @@ signed in still shows a warning. They hold only fingerprints of other people's p
 review on 2026-11-01, every sign-in erased them along with the account's keys.
 
 Cost: a device trusts the first keys it sees for a person without proof. After someone's keys
-change for a real reason, their new messages stay unreadable until the user checks the code (K-26).
+change for a real reason, their new messages stay unreadable until the user checks the code. The
+page keeps what failed to open, and opens it again after the check, without a reload (K-26).
 
 ### D-019: Accounts and chats from before encryption upgrade once
 

@@ -456,6 +456,34 @@ describe('chat server', () => {
     assert.equal(res.status, 400);
   });
 
+  test('push keys of the wrong size are refused', async () => {
+    const { json } = makeSubscription(`http://${pushService.host}/bob-bad-keys`);
+    const shortKey = { ...json, keys: { ...json.keys, p256dh: json.keys.p256dh.slice(0, -2) } };
+    const longAuth = { ...json, keys: { ...json.keys, auth: crypto.randomBytes(32).toString('base64url') } };
+    for (const subscription of [shortKey, longAuth]) {
+      assert.equal((await bob.request('POST', '/push/subscribe', subscription)).status, 400);
+    }
+  });
+
+  test('a subscription web-push cannot encrypt for is deleted, and pushes go on', async () => {
+    const good = makeSubscription(`http://${pushService.host}/bob-good`);
+    // 65 bytes, so the size check passes, but not a point on the curve, so web-push throws.
+    const broken = {
+      endpoint: `http://${pushService.host}/bob-broken`,
+      keys: { p256dh: Buffer.alloc(65, 4).toString('base64url'), auth: crypto.randomBytes(16).toString('base64url') },
+    };
+    assert.equal((await bob.request('POST', '/push/subscribe', good.json)).status, 204);
+    assert.equal((await bob.request('POST', '/push/subscribe', broken)).status, 204);
+
+    const first = await bob.request<{ sent: number; failed: number }>('POST', '/push/test');
+    assert.equal(first.status, 200);
+    assert.deepEqual(first.data, { sent: 1, failed: 1 });
+    const second = await bob.request<{ sent: number; failed: number }>('POST', '/push/test');
+    assert.deepEqual(second.data, { sent: 1, failed: 0 }, 'the broken subscription is gone');
+
+    await bob.request('POST', '/push/unsubscribe', { endpoint: good.json.endpoint });
+  });
+
   test('a sync with nothing new answers "unchanged"', async () => {
     await bob.bootstrap();
     // The first check-in brings Bob online, which is itself a change.
@@ -571,7 +599,9 @@ describe('chat server', () => {
     const payload = phone.decrypt(phonePush.body);
     assert.equal(payload.title, 'URGENT from Alice');
     assert.equal(payload.body, '');
-    assert.ok(!JSON.stringify(payload).includes('urgent, '), 'no plain text in the push');
+    // "urgent" is left out: the field name and the tag carry it.
+    const serialized = JSON.stringify(payload);
+    for (const part of [text, 'Call', 'back']) assert.ok(!serialized.includes(part), `no "${part}" in the push`);
     const { key } = bob.chatKeys.get(directChat.id)!;
     const decrypted = await decryptMessage(
       key,
