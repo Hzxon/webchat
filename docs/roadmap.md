@@ -331,6 +331,18 @@ without spaces. A project name can have 60 characters. The titles "New channel i
 grows past the dialog and pushes the close button out. `overflow-wrap: anywhere` on the title
 would fix it. #59 fixed the same overflow in the preview of the New channel dialog.
 
+### K-38: The map of the code leaves out most modules
+
+Status: Fixed in #68.
+
+Found while fixing K-35 in #58 on 2026-11-03.
+
+The map in AGENTS.md names 17 of the 33 files and folders under `client/src`, `server` and
+`shared`. It leaves out both entry points, `server/index.ts` and `client/src/main.tsx`, and modules
+such as `server/auth.ts`, `server/sql.ts`, `client/src/api.ts` and `shared/github.ts`. Its
+`client/src/e2ee/` row does not say that sign-up and sign-in live there. An agent that looks up
+where something lives finds nothing and has to search the tree.
+
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?

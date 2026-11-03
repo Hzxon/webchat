@@ -45,9 +45,13 @@ keeps its own cookies and keys.
 | Path | What lives there |
 | --- | --- |
 | `api/index.ts` | The Vercel function. It wraps the Express app. |
+| `server/index.ts` | The entry point for `npm start`. It starts the HTTP server and the timer that polls GitHub. See D-005. |
 | `server/app.ts` | Builds the app from its parts: config, database, push, GitHub, routes. |
+| `server/config.ts` | Reads every setting from the environment, with the defaults for Vercel and for a local run. |
 | `server/api.ts` | Every `/api` route, with input checks, sign-in checks and rate limits. |
+| `server/auth.ts` | Hashes login keys with scrypt and makes session tokens that the database stores only as hashes. |
 | `server/db.ts` | The schema, the migrations, the sync fingerprint and every SQL query. |
+| `server/sql.ts` | Opens Postgres with node-postgres, or PGlite, behind the same few query calls. See D-006. |
 | `server/notify.ts` | Decides who gets a push for a message, a reaction or a project invite. |
 | `server/push.ts` | Sends Web Push with VAPID keys, and hands alerts to Bark when the user is not looking. |
 | `server/bark.ts` | Alerts for iPhones without Web Push: WebChat stands in for the Bark app's server. |
@@ -56,11 +60,23 @@ keeps its own cookies and keys.
 | `server/githubApp.ts` | The GitHub App: projects link repositories through it, and its webhooks post cards. |
 | `shared/types.ts` | Types shared by the server, the page and the service worker, and `LIMITS`. |
 | `shared/e2ee.ts` | All end-to-end encryption, on Web Crypto only, for the page, the service worker and the tests. |
+| `shared/github.ts` | Wording for pull request events and cards, and the check that reads a card from a message. See D-042. |
+| `client/src/main.tsx` | The page's entry point. It registers the service worker and renders `App`. |
+| `client/src/App.tsx` | Picks the screen: sign-in, unlock or the chat layout, which holds the sidebar, the chat and the dialogs. |
+| `client/src/api.ts` | Every request to `/api`. Each names the account its tab shows. See D-008 and D-056. |
 | `client/src/chat.ts` | The sync loop, sending, projects and reactions. It decrypts on the way in. |
 | `client/src/store.ts` | The page's state and the actions that change it. |
 | `client/src/queue.ts` | Runs a chat's sends one at a time, in the order they were written. See D-075. |
-| `client/src/e2ee/` | The page's keyring and its IndexedDB key store. |
+| `client/src/e2ee/` | The page's keyring, its IndexedDB key store, and sign-up, sign-in and unlock. |
+| `client/src/push.ts` | Notification permission and this device's Web Push subscription. |
+| `client/src/alerts.ts` | In-page alerts: the message sound, the urgent ring, the tab title, the favicon dot and the app badge. See D-023. |
+| `client/src/attention.ts` | Tracks whether the user is looking at this tab, which decides between an in-app alert and a push. See D-007. |
+| `client/src/build.ts` | Reloads the tab once a deploy changes the page, when nothing would be lost. See D-040. |
+| `client/src/viewport.ts` | Fits the chat above the on-screen keyboard of a touch screen. See D-053. |
+| `client/src/ios.ts` | Reads the iOS version from the user agent, to spot iPhones before 16.4, which have no Web Push. See D-054. |
+| `client/src/github.ts` | Keeps the Pull requests pane fresh and alerts about the events the server found. See D-034. |
 | `client/src/sw.ts` | The service worker. It decrypts pushed messages and shows notifications. |
+| `client/src/styles.css` | Every style of the page, with the light and dark colors as CSS variables. |
 | `client/src/components/` | The React views. |
 | `test/` | Integration tests that drive the real app over HTTP, and crypto tests. |
 | `.github/workflows/release-please.yml` | Release Please: the release pull request, the tags and `CHANGELOG.md`. |
