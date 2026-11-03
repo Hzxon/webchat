@@ -280,15 +280,6 @@ numbers messages in the order they arrive. Sending "one" to "five" with Enter in
 stored them as one, three, four, two, five, and a reload showed the same order. Send a chat's
 messages one at a time, in the order they were written.
 
-### K-26: Messages from changed keys stay unreadable after the check until a reload
-
-Found in a security review of main on 2026-11-03.
-
-Until the user checks a changed security code, the page shows that person's new messages as
-unreadable (D-018). Checking the code in `trustKeys` in `client/src/chat.ts` updates the warnings,
-but the messages already loaded keep their failed state, and failed reactions were dropped. A
-reload decrypts them. Open the loaded messages from that person again after the check.
-
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
@@ -346,6 +337,20 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
 | K-9: A retried send is stored once (D-061) | #35 |
 | K-19: The push test searches the whole payload for the message | #41 |
+| K-26: Messages from a checked security code open without a reload | #42 |
+
+### K-26: Messages from changed keys stayed unreadable after the check until a reload
+
+Status: Fixed in #42. Keyring tests check that nothing held back opens before the check, and that
+the held message and reaction both open after it. Not yet tried in a browser.
+
+Found in a security review of main on 2026-11-03.
+
+Until the user checks a changed security code, the page shows that person's new messages as
+unreadable (D-018). Checking the code in `trustKeys` in `client/src/chat.ts` updated the warnings,
+but the messages already loaded kept their failed state, and failed reactions were dropped. A
+reload decrypted them. Now the keyring keeps every message and reaction that failed to open, and
+`trustKeys` opens them again through the same decrypt path and puts those that open in the chat.
 
 ### K-19: The push test for plain text cannot fail
 
