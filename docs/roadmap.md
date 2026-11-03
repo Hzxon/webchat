@@ -308,9 +308,9 @@ loopback address gets TLS like a remote host. Compare with `[::1]`, or strip the
 Found in the browser check of K-11 in #51 on 2026-11-03.
 
 The preview "It will be called #…" in `client/src/components/ProjectDialogs.tsx` cannot wrap a
-name of 39 characters without a space. At 375 pixels the dialog content grows past the dialog, the close
-button is half cut off, the preview is clipped and the dialog scrolls sideways. Creating the channel
-still works. `overflow-wrap: anywhere` on the preview would fix it.
+name of 39 characters without a space. At 375 pixels the dialog content grows past the dialog,
+the close button is half cut off, the preview is clipped and the dialog scrolls sideways. Creating
+the channel still works. `overflow-wrap: anywhere` on the preview would fix it.
 
 ### K-29: "Turn on notifications" shows on iOS before 16.4
 
