@@ -456,6 +456,34 @@ describe('chat server', () => {
     assert.equal(res.status, 400);
   });
 
+  test('push keys of the wrong size are refused', async () => {
+    const { json } = makeSubscription(`http://${pushService.host}/bob-bad-keys`);
+    const shortKey = { ...json, keys: { ...json.keys, p256dh: json.keys.p256dh.slice(0, -2) } };
+    const longAuth = { ...json, keys: { ...json.keys, auth: crypto.randomBytes(32).toString('base64url') } };
+    for (const subscription of [shortKey, longAuth]) {
+      assert.equal((await bob.request('POST', '/push/subscribe', subscription)).status, 400);
+    }
+  });
+
+  test('a subscription web-push cannot encrypt for is deleted, and pushes go on', async () => {
+    const good = makeSubscription(`http://${pushService.host}/bob-good`);
+    // 65 bytes, so the size check passes, but not a point on the curve, so web-push throws.
+    const broken = {
+      endpoint: `http://${pushService.host}/bob-broken`,
+      keys: { p256dh: Buffer.alloc(65, 4).toString('base64url'), auth: crypto.randomBytes(16).toString('base64url') },
+    };
+    assert.equal((await bob.request('POST', '/push/subscribe', good.json)).status, 204);
+    assert.equal((await bob.request('POST', '/push/subscribe', broken)).status, 204);
+
+    const first = await bob.request<{ sent: number; failed: number }>('POST', '/push/test');
+    assert.equal(first.status, 200);
+    assert.deepEqual(first.data, { sent: 1, failed: 1 });
+    const second = await bob.request<{ sent: number; failed: number }>('POST', '/push/test');
+    assert.deepEqual(second.data, { sent: 1, failed: 0 }, 'the broken subscription is gone');
+
+    await bob.request('POST', '/push/unsubscribe', { endpoint: good.json.endpoint });
+  });
+
   test('a sync with nothing new answers "unchanged"', async () => {
     await bob.bootstrap();
     // The first check-in brings Bob online, which is itself a change.
@@ -554,6 +582,33 @@ describe('chat server', () => {
     assert.equal(pushService.received.length, 0);
   });
 
+  test('a reaction only wakes the browser in use, and never under the tag of a message alert', async () => {
+    const laptop = makeSubscription(`http://${pushService.host}/bob-laptop`);
+    assert.equal((await bob.request('POST', '/push/subscribe', laptop.json)).status, 204);
+    await bob.sync(true, laptop.json.endpoint);
+
+    pushService.received.length = 0;
+    const sent = await alice.send(directChat.id, 'React to this');
+    const message = laptop.decrypt((await waitForPushes(pushService.received, 1))[0]!.body);
+
+    pushService.received.length = 0;
+    const wave = { text: '', reaction: { messageId: sent.data.id, emoji: '👋' } };
+    assert.equal((await alice.send(directChat.id, wave, false, 'reaction')).status, 201);
+    const [push] = await waitForPushes(pushService.received, 1);
+    await sleep(200);
+    assert.deepEqual(
+      pushService.received.map((p) => p.path),
+      ['/bob-laptop'],
+    );
+    const reaction = laptop.decrypt(push!.body);
+    assert.equal(reaction.kind, 'reaction', 'the service worker shows no notification for this kind');
+    assert.equal(reaction.messageId, null);
+    assert.equal(reaction.envelope, null);
+    // The server can think Bob is looking after his laptop slept, so the push can reach a browser
+    // nobody looks at. It must not replace the chat's message notification there.
+    assert.notEqual(reaction.tag, message.tag);
+  });
+
   test('pushes carry no plain text; the device decrypts the envelope inside', async () => {
     const phone = makeSubscription(`http://${pushService.host}/bob-phone-2`);
     assert.equal((await bob.request('POST', '/push/subscribe', phone.json)).status, 204);
@@ -571,7 +626,9 @@ describe('chat server', () => {
     const payload = phone.decrypt(phonePush.body);
     assert.equal(payload.title, 'URGENT from Alice');
     assert.equal(payload.body, '');
-    assert.ok(!JSON.stringify(payload).includes('urgent, '), 'no plain text in the push');
+    // "urgent" is left out: the field name and the tag carry it.
+    const serialized = JSON.stringify(payload);
+    for (const part of [text, 'Call', 'back']) assert.ok(!serialized.includes(part), `no "${part}" in the push`);
     const { key } = bob.chatKeys.get(directChat.id)!;
     const decrypted = await decryptMessage(
       key,
@@ -1166,6 +1223,8 @@ describe('chat server', () => {
         'rejected', // the message the server altered in an earlier test
         'You there?',
         'Still there?',
+        'React to this',
+        '', // the reaction to it
         'Call me back, it is urgent',
         'Ping after you left',
         'Did my answer get lost?',

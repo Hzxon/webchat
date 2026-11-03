@@ -69,6 +69,11 @@ let me: { id: number; identity: Identity } | null = null;
 const chatKeys = new Map<string, Promise<CryptoKey>>();
 /** Content already decrypted, by message id, with the signed fields it was checked against. */
 const opened = new Map<number, { content: Opened; signed: string }>();
+/**
+ * Messages and reactions that failed to open, by id. The store drops a failed reaction, so these
+ * stay here for reopen to try again after the user checks a changed security code (D-018).
+ */
+const held = new Map<number, MessageDTO>();
 
 type SignedMeta = Pick<MessageDTO, 'conversationId' | 'senderId' | 'urgent' | 'kind' | 'clientId'>;
 
@@ -143,6 +148,7 @@ export const keyring = {
     changedKeys = new Set();
     chatKeys.clear();
     opened.clear();
+    held.clear();
     await keystore.clearKeys().catch(() => undefined);
   },
 
@@ -338,10 +344,19 @@ export const keyring = {
       const result = openedFrom(await decrypt(message, message.envelope, conversation, keysOf));
       if ((message.kind === 'reaction') !== (result.reaction !== null)) throw new Error('Reaction without its emoji.');
       if (message.id > 0) opened.set(message.id, { content: result, signed });
+      held.delete(message.id);
       return { ...message, ...result };
     } catch {
+      if (message.id > 0) held.set(message.id, message);
       return { ...message, ...none, text: '', security: 'failed' };
     }
+  },
+
+  /** Opens again every message that failed in a chat still listed, and returns those that open now. */
+  async reopen(conversations: Record<number, ChatConversation>, keysOf: KeyLookup): Promise<ChatMessage[]> {
+    const listed = [...held.values()].filter((m) => conversations[m.conversationId]);
+    const tried = await Promise.all(listed.map((m) => keyring.open(m, conversations[m.conversationId]!, keysOf)));
+    return tried.filter((m) => m.security !== 'failed');
   },
 };
 
