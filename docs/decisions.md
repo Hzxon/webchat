@@ -377,15 +377,15 @@ the chat list, starts with "Not encrypted:".
 
 ### D-020: Known limits of the encryption
 
-Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4, #10, #13, #14 and #17.
+Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4, #10, #13, #14, #17 and #33.
 
 WebChat accepts these limits and lists them in the README:
 
 - The page runs the code the server sends, so an operator who changes the app could read messages.
 - Metadata stays visible to the server: who talks to whom and when, group, project and channel
   names, who is in which project or group and who added them, who owns each project and group, who
-  left, when a chat got a new key, display names, whether a message is urgent, and that someone
-  reacted.
+  left, when a chat got a new key, display names, whether a message is urgent, that someone
+  reacted, and roughly how long a message is: the size band it was padded to (D-059).
 - Pull request titles and repository names are not end-to-end encrypted (D-033).
 - Which repositories a project links, and the cards from GitHub in its channels. The server
   writes those cards in plain text, so a server that was changed could write fake ones (D-050).
@@ -1009,6 +1009,30 @@ starts no workflow run.
 Cost: Vercel still clones the repository and records a canceled deployment for each release commit.
 A commit on main whose message starts like a release commit never deploys, so only Release Please
 may use that title.
+
+### D-059: Message content is padded to a few fixed sizes
+
+Accepted 2026-11-03 in #33.
+
+Before `encryptMessage` encrypts the content, it pads it to the smallest power of two from 256
+bytes that holds it, so a ciphertext is 256, 512, 1,024 bytes and so on, plus the AES-GCM tag. The
+server learns which band a message falls in, not its length. A reaction, a reaction taken back and
+a short message all land in the first band and look the same, which is what the README promises
+(K-8). The padding is one 0x80 byte and then zeros, inside the AES-GCM ciphertext, so it is
+authenticated with the content. The content is JSON, which ends with `}` and never holds a raw
+zero byte, so `decryptContent` tells padded content from the content of messages sent before this
+by the last byte, and both still open. Nothing in the signed header changes, so every old
+signature still verifies (D-016). A new band at the top raised `LIMITS.ciphertextLength` to the
+32 KB band.
+
+Doubling bands were chosen over a fixed step, such as 256 bytes, because a step still shows a long
+message's length to within the step. A few bands reveal less and cost at most half the band in
+padding.
+
+Cost: every message costs at least 272 bytes of ciphertext, and a message from about 1,000 to
+1,800 bytes of content, which fitted in a push before, now pads past the 3,000-byte push payload
+(D-017) and shows "New message" on the lock screen. Messages sent before this change keep their
+exact lengths in the database.
 
 ## Superseded
 
