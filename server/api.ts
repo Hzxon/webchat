@@ -26,6 +26,7 @@ import type { GithubApp } from './githubApp.js';
 import { notifyAddedToGroup, notifyAddedToProject, notifyNewMessage } from './notify.js';
 import type { Push, PushSubscriptionInput } from './push.js';
 import {
+  isChannelName,
   LIMITS,
   type AccountKeysInput,
   type BarkDTO,
@@ -162,12 +163,9 @@ function userIds(value: unknown, field: string, without: number): number[] {
   return [...new Set(raw.map((v) => positiveInt(v, field)))].filter((id) => id !== without);
 }
 
-/** Channel names follow Slack: lowercase letters and digits in any script, joined by single hyphens. */
-const CHANNEL_NAME = /^[\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+(-[\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+)*$/u;
-
 function channelName(value: unknown): string {
   const name = text(value, 'Channel name', 1, LIMITS.channelNameLength);
-  if (!CHANNEL_NAME.test(name)) throw new HttpError(400, 'Channel names use lowercase letters, numbers and single hyphens.');
+  if (!isChannelName(name)) throw new HttpError(400, 'Channel names use lowercase letters, numbers and single hyphens.');
   return name;
 }
 

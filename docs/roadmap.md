@@ -193,12 +193,6 @@ the notes would show it nothing new. They should not count as unread.
 
 ## Known issues
 
-### K-11: The New channel dialog can make names the server refuses
-
-`toChannelName` in `client/src/components/ProjectDialogs.tsx` trims hyphens before it cuts the name
-to 40 characters and keeps capitals with no lowercase form, such as ℂ. The server then answers 400.
-Keep one rule in `shared/` for both sides.
-
 ### K-14: Sign-ins from one address share a small rate limit
 
 Register, login, upgrade and key routes share 20 requests per 15 minutes per IP address, and
@@ -290,6 +284,16 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-23: The banner says notifications need iOS 16.4 on older iPhones | #48 |
 | K-17: Open pages pick up a push subscription the service worker replaced | #49 |
 | K-13: The first key of a group checks its members under the group's lock | #50 |
+| K-11: The New channel dialog and the server share one name rule (D-065) | #51 |
+
+### K-11: The New channel dialog can make names the server refuses
+
+Status: Fixed in #51 (D-065). Tests cover a long name with a hyphen at the cut, ℂ, and a
+character cut in half, and the server accepts each name the rule makes.
+
+`toChannelName` in `client/src/components/ProjectDialogs.tsx` trimmed hyphens before it cut the name
+to 40 characters and kept capitals with no lowercase form, such as ℂ. The server then answered 400.
+Now one rule in `shared/types.ts` makes the names on the page and checks them on the server.
 
 ### K-13: The first key of a group from before encryption races with a removal
 
