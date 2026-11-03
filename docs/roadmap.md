@@ -202,13 +202,6 @@ the pane say nothing. GitHub's GraphQL answer carries the error next to the data
 `server/github.ts` drops it). Show it in the pane, and say in the connect card that an organization
 may need to approve the app. Not yet seen on a real organization.
 
-### K-8: The ciphertext length shows the message length and some reactions
-
-Envelopes are not padded, so the server sees the exact length of every message. For the same
-message, a ❤️ reaction is longer than the other five quick reactions, and taking a reaction back is
-shorter. The README says the server cannot see which emoji. Pad envelopes to a few fixed sizes, or
-correct the README and D-020.
-
 ### K-9: Retrying a send can store the message twice
 
 `retryMessage` sends with a new client id, and the server does not check client ids. When a send
@@ -370,6 +363,7 @@ requests for the record. Nothing here is a candidate for what to do next.
 | R-018: Alerts on iPhones without Web Push, through the Bark app (D-054) | #23 |
 | K-7: A sync answer that breaks off no longer poisons the cursor (D-056) | #27 |
 | K-5: GitHub alerts arrive with every tab closed, through Supabase Cron (D-057) | #29 |
+| K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 
 ### K-5: The connect card promised alerts with every tab closed
 
@@ -382,6 +376,17 @@ The connect card in `client/src/components/GithubView.tsx` said WebChat alerts "
 closed". On Vercel Hobby that held only after the owner set `CRON_SECRET` and a scheduler called
 `GET /api/github/poll` (D-034). Production had neither, so nothing polled while every tab was
 closed, and nobody was told.
+
+### K-8: The ciphertext length shows the message length and some reactions
+
+Status: Fixed in #33 (D-059). A crypto test checks that a ❤️ reaction, a 👍 reaction, a take-back
+and two short messages all give a ciphertext of 272 bytes, and that an envelope made without
+padding still opens. Found in a review of main on 2026-11-01, with K-7 and K-9 to K-19.
+
+Envelopes are not padded, so the server sees the exact length of every message. For the same
+message, a ❤️ reaction is longer than the other five quick reactions, and taking a reaction back is
+shorter. The README says the server cannot see which emoji. Pad envelopes to a few fixed sizes, or
+correct the README and D-020.
 
 ### K-7: A sync answer whose body breaks off sets the cursor to NaN
 
