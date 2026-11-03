@@ -212,12 +212,6 @@ the row is never deleted. Every later push to that user fails, `/api/push/test` 
 GitHub poll stops after its first alert with a false "Could not reach GitHub". It needs a
 hand-made subscription. Check the key sizes on subscribe, and delete the row when sending throws.
 
-### K-13: The first key of a group from before encryption races with a removal
-
-`POST /conversations/:id/key` reads the members without the group's lock. A removal at the same
-moment can leave a copy for the person removed, or make the removed person the owner of a group
-nobody can then open. It needs a group from before encryption with no key yet.
-
 ### K-14: Sign-ins from one address share a small rate limit
 
 Register, login, upgrade and key routes share 20 requests per 15 minutes per IP address, and
@@ -351,6 +345,18 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
 | K-9: A retried send is stored once (D-061) | #35 |
+| K-13: The first key of a group checks its members under the group's lock | #50 |
+
+### K-13: The first key of a group from before encryption races with a removal
+
+Status: Fixed in #50. An integration test removes a member right after the route has read the
+members, and checks that the key is refused and the person removed holds no copy and owns nothing.
+
+`POST /conversations/:id/key` reads the members without the group's lock. A removal at the same
+moment can leave a copy for the person removed, or make the removed person the owner of a group
+nobody can then open. It needs a group from before encryption with no key yet. Now the route checks
+the members again under the group's lock, in the transaction that stores the key, and answers
+`409 stale_group` when they changed. The page reloads and tries once more.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 

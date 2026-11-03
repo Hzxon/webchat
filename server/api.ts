@@ -761,9 +761,10 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const memberIds = await db.memberIds(conversationId);
     await requireKeys(memberIds);
     const key = chatKey(req.body, memberIds);
-    if (!(await db.setConversationKey(conversationId, key.keyId, me.id, key.wrappedKeys))) {
-      throw new HttpError(409, 'This chat already has a key.', 'has_key');
-    }
+    // The members can change before the key is stored, so they are checked again under the lock.
+    const result = await db.setConversationKey(conversationId, key.keyId, me.id, key.wrappedKeys);
+    if (result === 'has_key') throw new HttpError(409, 'This chat already has a key.', 'has_key');
+    if (result === 'stale') throw new HttpError(409, 'The group changed while you were editing. Try again.', 'stale_group');
     res.json(await db.conversationFor(me.id, conversationId));
   });
 
