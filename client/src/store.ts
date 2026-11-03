@@ -170,6 +170,18 @@ function withoutChats(current: State, gone: Set<number>): State {
   };
 }
 
+/**
+ * Counts the changes this page made to its chats and projects ahead of the server, so a check-in
+ * answer requested before one of them is not applied over it (D-069).
+ */
+let localEdits = 0;
+export const localEditCount = () => localEdits;
+
+function editChats(update: (current: State) => State) {
+  localEdits++;
+  store.set(update);
+}
+
 let toastId = 0;
 
 export const actions = {
@@ -187,9 +199,12 @@ export const actions = {
   /**
    * Takes the server's latest people, projects and chats, adds new messages to chats already
    * loaded, and applies new reactions. Chats the server no longer lists were deleted, or the user
-   * was removed from them.
+   * was removed from them. Since is localEditCount() when the answer was requested. When this page
+   * changed a chat or project after that, the answer may not show the change, so it applies nothing
+   * and returns false (D-069).
    */
-  applySync: (users: UserDTO[], projects: ProjectDTO[], conversations: ChatConversation[], messages: ChatMessage[]) =>
+  applySync: (users: UserDTO[], projects: ProjectDTO[], conversations: ChatConversation[], messages: ChatMessage[], since: number) => {
+    if (since !== localEdits) return false;
     store.set((s) => {
       const pending = { ...s.pending };
       for (const message of messages) if (message.clientId) delete pending[message.clientId];
@@ -203,13 +218,15 @@ export const actions = {
         conversations: Object.fromEntries(conversations.map((c) => [c.id, c])),
         pending,
       };
-    }),
+    });
+    return true;
+  },
 
-  upsertProject: (project: ProjectDTO) => store.set((s) => ({ ...s, projects: { ...s.projects, [project.id]: project } })),
+  upsertProject: (project: ProjectDTO) => editChats((s) => ({ ...s, projects: { ...s.projects, [project.id]: project } })),
 
   /** Forgets a project and its channels at once, after deleting it, ahead of the next check-in. */
   dropProject: (projectId: number) =>
-    store.set((s) => {
+    editChats((s) => {
       const projects = { ...s.projects };
       delete projects[projectId];
       const channels = Object.values(s.conversations).filter((c) => c.projectId === projectId);
@@ -217,7 +234,7 @@ export const actions = {
     }),
 
   /** Forgets a chat at once, after deleting it. */
-  dropConversation: (conversationId: number) => store.set((s) => withoutChats(s, new Set([conversationId]))),
+  dropConversation: (conversationId: number) => editChats((s) => withoutChats(s, new Set([conversationId]))),
 
   /** Sets this user's own reaction at once, ahead of the server. Force lets a failed send put back the old one. */
   setMyReaction: (conversationId: number, messageId: number, userId: number, mark: ReactionMark) =>
@@ -229,7 +246,7 @@ export const actions = {
   setConnected: (connected: boolean) => store.set((s) => (s.connected === connected ? s : { ...s, connected })),
 
   upsertConversation: (conversation: ChatConversation) =>
-    store.set((s) => ({ ...s, conversations: { ...s.conversations, [conversation.id]: conversation } })),
+    editChats((s) => ({ ...s, conversations: { ...s.conversations, [conversation.id]: conversation } })),
 
   /** Adds a message and updates the chat preview. The caller decides whether it counts as unread. */
   addMessage: (message: ChatMessage, countsAsUnread: boolean) =>

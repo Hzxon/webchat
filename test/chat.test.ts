@@ -59,18 +59,21 @@ interface ReceivedPush {
 /** Stands in for a browser push service such as FCM, and records what the server sends to it. */
 async function startFakePushService() {
   const received: ReceivedPush[] = [];
+  /** Paths answered 410 Gone, as for a subscription the browser ended. */
+  const gone = new Set<string>();
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
       received.push({ path: req.url ?? '', headers: req.headers, body: Buffer.concat(chunks) });
-      res.writeHead(201).end();
+      res.writeHead(gone.has(req.url ?? '') ? 410 : 201).end();
     });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   return {
     host: `127.0.0.1:${(server.address() as AddressInfo).port}`,
     received,
+    gone,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
@@ -456,6 +459,34 @@ describe('chat server', () => {
     assert.equal(res.status, 400);
   });
 
+  test('push keys of the wrong size are refused', async () => {
+    const { json } = makeSubscription(`http://${pushService.host}/bob-bad-keys`);
+    const shortKey = { ...json, keys: { ...json.keys, p256dh: json.keys.p256dh.slice(0, -2) } };
+    const longAuth = { ...json, keys: { ...json.keys, auth: crypto.randomBytes(32).toString('base64url') } };
+    for (const subscription of [shortKey, longAuth]) {
+      assert.equal((await bob.request('POST', '/push/subscribe', subscription)).status, 400);
+    }
+  });
+
+  test('a subscription web-push cannot encrypt for is deleted, and pushes go on', async () => {
+    const good = makeSubscription(`http://${pushService.host}/bob-good`);
+    // 65 bytes, so the size check passes, but not a point on the curve, so web-push throws.
+    const broken = {
+      endpoint: `http://${pushService.host}/bob-broken`,
+      keys: { p256dh: Buffer.alloc(65, 4).toString('base64url'), auth: crypto.randomBytes(16).toString('base64url') },
+    };
+    assert.equal((await bob.request('POST', '/push/subscribe', good.json)).status, 204);
+    assert.equal((await bob.request('POST', '/push/subscribe', broken)).status, 204);
+
+    const first = await bob.request<{ sent: number; failed: number }>('POST', '/push/test');
+    assert.equal(first.status, 200);
+    assert.deepEqual(first.data, { sent: 1, failed: 1 });
+    const second = await bob.request<{ sent: number; failed: number }>('POST', '/push/test');
+    assert.deepEqual(second.data, { sent: 1, failed: 0 }, 'the broken subscription is gone');
+
+    await bob.request('POST', '/push/unsubscribe', { endpoint: good.json.endpoint });
+  });
+
   test('a sync with nothing new answers "unchanged"', async () => {
     await bob.bootstrap();
     // The first check-in brings Bob online, which is itself a change.
@@ -554,6 +585,33 @@ describe('chat server', () => {
     assert.equal(pushService.received.length, 0);
   });
 
+  test('a reaction only wakes the browser in use, and never under the tag of a message alert', async () => {
+    const laptop = makeSubscription(`http://${pushService.host}/bob-laptop`);
+    assert.equal((await bob.request('POST', '/push/subscribe', laptop.json)).status, 204);
+    await bob.sync(true, laptop.json.endpoint);
+
+    pushService.received.length = 0;
+    const sent = await alice.send(directChat.id, 'React to this');
+    const message = laptop.decrypt((await waitForPushes(pushService.received, 1))[0]!.body);
+
+    pushService.received.length = 0;
+    const wave = { text: '', reaction: { messageId: sent.data.id, emoji: '👋' } };
+    assert.equal((await alice.send(directChat.id, wave, false, 'reaction')).status, 201);
+    const [push] = await waitForPushes(pushService.received, 1);
+    await sleep(200);
+    assert.deepEqual(
+      pushService.received.map((p) => p.path),
+      ['/bob-laptop'],
+    );
+    const reaction = laptop.decrypt(push!.body);
+    assert.equal(reaction.kind, 'reaction', 'the service worker shows no notification for this kind');
+    assert.equal(reaction.messageId, null);
+    assert.equal(reaction.envelope, null);
+    // The server can think Bob is looking after his laptop slept, so the push can reach a browser
+    // nobody looks at. It must not replace the chat's message notification there.
+    assert.notEqual(reaction.tag, message.tag);
+  });
+
   test('pushes carry no plain text; the device decrypts the envelope inside', async () => {
     const phone = makeSubscription(`http://${pushService.host}/bob-phone-2`);
     assert.equal((await bob.request('POST', '/push/subscribe', phone.json)).status, 204);
@@ -571,7 +629,9 @@ describe('chat server', () => {
     const payload = phone.decrypt(phonePush.body);
     assert.equal(payload.title, 'URGENT from Alice');
     assert.equal(payload.body, '');
-    assert.ok(!JSON.stringify(payload).includes('urgent, '), 'no plain text in the push');
+    // "urgent" is left out: the field name and the tag carry it.
+    const serialized = JSON.stringify(payload);
+    for (const part of [text, 'Call', 'back']) assert.ok(!serialized.includes(part), `no "${part}" in the push`);
     const { key } = bob.chatKeys.get(directChat.id)!;
     const decrypted = await decryptMessage(
       key,
@@ -590,6 +650,20 @@ describe('chat server', () => {
     await alice.send(directChat.id, 'Ping after you left');
     const pushes = await waitForPushes(pushService.received, 3);
     assert.equal(pushes.length, 3);
+  });
+
+  test('a subscription the push service reports gone is deleted at the next push', async () => {
+    // A browser whose session expired ends its subscription without telling the server (K-18).
+    const expired = makeSubscription(`http://${pushService.host}/bob-expired`);
+    assert.equal((await bob.request('POST', '/push/subscribe', expired.json)).status, 204);
+    pushService.gone.add('/bob-expired');
+    await bob.sync(false);
+    pushService.received.length = 0;
+    await alice.send(directChat.id, 'Anyone home?');
+    await waitForPushes(pushService.received, 4);
+    await sleep(100);
+    const rows = await instance.sql.query('SELECT 1 FROM webchat.push_subscriptions WHERE endpoint = $1', [expired.json.endpoint]);
+    assert.equal(rows.length, 0);
   });
 
   test('the same send again, after a lost answer, returns the stored message and alerts once', async () => {
@@ -1166,8 +1240,11 @@ describe('chat server', () => {
         'rejected', // the message the server altered in an earlier test
         'You there?',
         'Still there?',
+        'React to this',
+        '', // the reaction to it
         'Call me back, it is urgent',
         'Ping after you left',
+        'Anyone home?',
         'Did my answer get lost?',
       ],
     );
