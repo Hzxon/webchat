@@ -1663,6 +1663,22 @@ describe('chat server', () => {
     assert.equal(await db.addProjectMembers(projectId, carol.id, [bob.id], []), 'stale');
   });
 
+  test('a key with two copies for one member and none for another is refused', async () => {
+    const db = await openDb(instance.sql);
+    const now = Date.now();
+    const [{ id }] = (await instance.sql.query<{ id: number }>(
+      `INSERT INTO webchat.conversations (type, title, created_at, updated_at) VALUES ('group', 'Doubled', $1, $1) RETURNING id`,
+      [now],
+    )) as [{ id: number }];
+    for (const user of [alice, bob, carol]) {
+      await instance.sql.query('INSERT INTO webchat.members (conversation_id, user_id, joined_at) VALUES ($1, $2, $3)', [id, user.id, now]);
+    }
+    const key = await alice.newChatKey([alice, bob, bob].map((c) => ({ id: c.id, keys: keysOf(c) })));
+    const route = await alice.request('POST', `/conversations/${id}/key`, key);
+    assert.equal(route.status, 400, 'the route refuses the copies before the database sees them');
+    assert.equal(await db.setConversationKey(id, key.keyId, alice.id, key.wrappedKeys), 'stale');
+  });
+
   test('logout ends the session', async () => {
     assert.equal((await carol.request('POST', '/auth/logout')).status, 204);
     assert.equal((await carol.request('GET', '/bootstrap')).status, 401);

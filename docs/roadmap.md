@@ -251,6 +251,9 @@ this is the usual path. The account's keys then stay in IndexedDB for whoever us
 
 ### K-31: `sameIds` checks only its first list for duplicates
 
+Status: Fixed in #62. An integration test hands the database a key with two copies for one member
+and none for another, and checks that it is refused as stale.
+
 Found while fixing K-13 in #50 on 2026-11-03.
 
 `sameIds` in `server/db.ts` rejects a first list with repeated ids but not a second one, and it is

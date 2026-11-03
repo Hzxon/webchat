@@ -545,7 +545,7 @@ const one = async <T>(rows: Promise<T[]>) => (await rows)[0];
 
 const sameIds = (a: number[], b: number[]) => {
   const set = new Set(a);
-  return set.size === a.length && a.length === b.length && b.every((id) => set.has(id));
+  return set.size === a.length && new Set(b).size === b.length && a.length === b.length && b.every((id) => set.has(id));
 };
 
 export type Db = Awaited<ReturnType<typeof openDb>>;
