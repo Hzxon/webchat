@@ -259,6 +259,9 @@ the check and reaches the insert. Not yet checked what the database does with th
 
 ### K-32: A send that never ends blocks a chat's later sends
 
+Status: Fixed in #61 (D-077). A test queues a send behind one whose request never answers, and the
+second goes out after the timeout; it has not been tried in a browser on a dropped connection.
+
 Found while fixing K-24 in #53 on 2026-11-03. Listed as a cost in D-075.
 
 `client/src/api.ts` sets no timeout on `fetch`. Since #53 a chat's sends wait for each other, so a

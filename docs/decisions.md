@@ -624,7 +624,7 @@ sends were stored as one, three, four, two, five, and a reload kept that order (
 
 Cost: a burst of messages goes out one round trip at a time, so the last one arrives later. A
 request that never ends holds up its chat's later sends until the browser gives up on it, because
-requests carry no timeout. A retried message is stored after the ones sent while it waited. The
+requests carry no timeout (K-32, fixed by D-077). A retried message is stored after the ones sent while it waited. The
 order holds within one tab only: two tabs that send to one chat at once still race.
 
 ### D-072: An expired session ends the browser's push subscription
@@ -661,6 +661,28 @@ back a chat the page had just left or deleted, and put back a project's old memb
 Cost: every change on the page that overlaps a check-in costs one more check-in. A change that
 reaches the store some other way must go through the counted actions, or a late answer undoes it
 until the next check-in.
+
+### D-077: A request gives up when its answer has not started after a minute
+
+Accepted 2026-11-03 in #61.
+
+`request` in `client/src/api.ts` aborts a request whose answer has not started 60 seconds after it
+went out. It uses an `AbortController` and a timer, because `AbortSignal.timeout` needs Safari 16
+and the build supports iOS 15.4 (D-052). A request that times out fails like one whose connection
+dropped: a send shows "Not sent", and the next one in its chat goes out (D-075). "Tap to retry"
+keeps the client id, so a message the server stored after all is not stored twice (D-061). The
+timer stops once the answer starts, so reading the body is not timed.
+
+Why: requests had no timeout. A request that never got an answer, for example on a connection that
+dropped without a reset, held every later send in its chat, and the check-in loop with it, until a
+reload (K-32). Vercel ends a function after 30 seconds, so a healthy answer starts by then. The
+other 30 seconds leave room for a slow upload, such as a 256 KB body on a weak phone signal. Timing
+only the start keeps a large check-in answer from being cut off on a slow connection, where every
+retry would fail the same way.
+
+Cost: a send on a dead connection shows "Not sent" only after a minute. An answer that stops
+partway through its body still hangs until the browser gives up on it. A request that is still
+uploading after a minute fails, although the server might have taken it.
 ## Projects and channels
 
 ### D-054: iPhones without Web Push get alerts through the Bark app
