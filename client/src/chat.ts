@@ -609,8 +609,8 @@ async function ensureChatKey(conversationId: number, retried = false): Promise<{
     await adoptConversation(await api.setChatKey(conversationId, input), { keyId: input.keyId, key });
     return { key, keyId: input.keyId };
   } catch (error) {
-    // Another member set a key first: use theirs.
-    if (!retried && error instanceof ApiError && error.code === 'has_key') {
+    // Another member set a key first, or the members changed: reload, then use the key or try again.
+    if (!retried && error instanceof ApiError && (error.code === 'has_key' || error.code === 'stale_group')) {
       await reloadAll();
       return ensureChatKey(conversationId, true);
     }

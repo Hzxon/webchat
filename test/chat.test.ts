@@ -1518,6 +1518,50 @@ describe('chat server', () => {
     assert.equal(added.data.keyId, null);
   });
 
+  test('the first key of a group from before encryption checks the members again under the lock', async () => {
+    for (const setter of [bob, carol]) {
+      const now = Date.now();
+      const [{ id }] = (await instance.sql.query<{ id: number }>(
+        `INSERT INTO webchat.conversations (type, title, created_at, updated_at) VALUES ('group', 'Lab group', $1, $1) RETURNING id`,
+        [now],
+      )) as [{ id: number }];
+      for (const user of [alice, bob, carol]) {
+        await instance.sql.query('INSERT INTO webchat.members (conversation_id, user_id, joined_at) VALUES ($1, $2, $3)', [id, user.id, now]);
+      }
+      const members = [alice, bob, carol].map((c) => ({ id: c.id, keys: keysOf(c) }));
+      // Alice removes Carol right after the key route has read the members, before it stores the key.
+      const query = instance.sql.query;
+      let removal: Promise<{ status: number }> | undefined;
+      instance.sql.query = async <T,>(text: string, params?: unknown[]) => {
+        const rows = await query<T>(text, params);
+        if (!removal && text.startsWith('SELECT user_id FROM webchat.members') && params?.[0] === id) {
+          removal = alice.request('DELETE', `/conversations/${id}/members/${carol.id}`, { key: null });
+          await removal;
+        }
+        return rows;
+      };
+      let keyed;
+      try {
+        keyed = await setter.request<{ code?: string }>('POST', `/conversations/${id}/key`, await setter.newChatKey(members));
+      } finally {
+        instance.sql.query = query;
+      }
+      assert.equal((await removal)?.status, 200);
+      assert.equal(keyed.data.code, 'stale_group');
+
+      const copies = await instance.sql.query<{ user_id: number }>(
+        'SELECT user_id FROM webchat.conversation_keys WHERE conversation_id = $1',
+        [id],
+      );
+      assert.ok(!copies.some((c) => c.user_id === carol.id), 'Carol was removed, so she holds no copy');
+      const [chat] = await instance.sql.query<{ created_by: number | null }>(
+        'SELECT created_by FROM webchat.conversations WHERE id = $1',
+        [id],
+      );
+      assert.notEqual(chat?.created_by, carol.id, 'the owner is still a member');
+    }
+  });
+
   test('a tab still showing another account is refused instead of acting as the signed-in one', async () => {
     const asBob = (headers: Record<string, string>) =>
       fetch(`${baseUrl}/api/bootstrap`, { headers: { cookie: bob.cookie, ...headers } });

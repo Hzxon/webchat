@@ -199,12 +199,6 @@ the notes would show it nothing new. They should not count as unread.
 to 40 characters and keeps capitals with no lowercase form, such as ℂ. The server then answers 400.
 Keep one rule in `shared/` for both sides.
 
-### K-13: The first key of a group from before encryption races with a removal
-
-`POST /conversations/:id/key` reads the members without the group's lock. A removal at the same
-moment can leave a copy for the person removed, or make the removed person the owner of a group
-nobody can then open. It needs a group from before encryption with no key yet.
-
 ### K-14: Sign-ins from one address share a small rate limit
 
 Register, login, upgrade and key routes share 20 requests per 15 minutes per IP address, and
@@ -295,6 +289,18 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-18: An expired session ends the browser's push subscription (D-072) | #47 |
 | K-23: The banner says notifications need iOS 16.4 on older iPhones | #48 |
 | K-17: Open pages pick up a push subscription the service worker replaced | #49 |
+| K-13: The first key of a group checks its members under the group's lock | #50 |
+
+### K-13: The first key of a group from before encryption races with a removal
+
+Status: Fixed in #50. An integration test removes a member right after the route has read the
+members, and checks that the key is refused and the person removed holds no copy and owns nothing.
+
+`POST /conversations/:id/key` reads the members without the group's lock. A removal at the same
+moment can leave a copy for the person removed, or make the removed person the owner of a group
+nobody can then open. It needs a group from before encryption with no key yet. Now the route checks
+the members again under the group's lock, in the transaction that stores the key, and answers
+`409 stale_group` when they changed. The page reloads and tries once more.
 
 ### K-17: An open page kept a push endpoint the service worker replaced
 
