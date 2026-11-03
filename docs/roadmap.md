@@ -218,12 +218,6 @@ hand-made subscription. Check the key sizes on subscribe, and delete the row whe
 moment can leave a copy for the person removed, or make the removed person the owner of a group
 nobody can then open. It needs a group from before encryption with no key yet.
 
-### K-14: Sign-ins from one address share a small rate limit
-
-Register, login, upgrade and key routes share 20 requests per 15 minutes per IP address, and
-successes count. A class that signs up together behind one campus address locks itself out for 15
-minutes. Count only failures, or raise the limit for successes. Not seen on a real deployment.
-
 ### K-15: A late sync answer can close a chat just created
 
 `applySync` drops every chat missing from an answer. An answer built before a new chat committed,
@@ -351,6 +345,17 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
 | K-9: A retried send is stored once (D-061) | #35 |
+| K-14: Only failed sign-ins use up the limit for an address (D-068) | #52 |
+
+### K-14: Sign-ins from one address share a small rate limit
+
+Status: Fixed in #52 (D-068). Integration tests sign in 21 times from one address without a
+lockout, and check that 20 wrong passwords still lock it out, even for the right password.
+
+Register, login, upgrade and key routes shared 20 requests per 15 minutes per IP address, and
+successes counted. A class that signed up together behind one campus address locked itself out
+for 15 minutes. Now each attempt still counts before it runs, and a success gives its hit back, so
+only failures use up the limit. Not seen on a real deployment.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 

@@ -833,6 +833,10 @@ export async function openDb(sql: Sql) {
       );
       return (row?.count ?? 0) <= limit;
     },
+    /** Takes back one hit, for an attempt that should not count. */
+    returnRateLimit: async (key: string) => {
+      await sql.query('UPDATE webchat.rate_limits SET count = count - 1 WHERE key = $1 AND count > 0', [key]);
+    },
     purgeExpired: async () => {
       const now = Date.now();
       await sql.query('DELETE FROM webchat.sessions WHERE expires_at <= $1', [now]);
