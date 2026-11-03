@@ -238,12 +238,6 @@ for example after a laptop slept before its check-in went out, the service worke
 to a message" over the chat's message notification. D-030 says reactions notify nobody. Not seen on
 a real device.
 
-### K-17: An open page keeps a push endpoint the service worker replaced
-
-The service worker's `pushsubscriptionchange` handler subscribes again but does not tell open pages.
-They keep reporting the old endpoint, so pushes for the user while they look go to a dead endpoint,
-and messages show up to 15 seconds late until a reload. Mostly Firefox fires this event.
-
 ### K-18: A session that expires leaves push on for that browser
 
 When a session ends with a 401, the page drops the keys but not the push subscription. Whoever uses
@@ -351,6 +345,19 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
 | K-9: A retried send is stored once (D-061) | #35 |
+| K-17: Open pages pick up a push subscription the service worker replaced | #49 |
+
+### K-17: An open page kept a push endpoint the service worker replaced
+
+Status: Fixed in #49. A node test runs the worker's `pushsubscriptionchange` handler with a fake
+global scope and checks that every open page is told. The page's side has not been tried in Firefox
+yet.
+
+The service worker's `pushsubscriptionchange` handler subscribed again but did not tell open pages.
+They kept reporting the old endpoint, so pushes for the user while they looked went to a dead
+endpoint, and messages showed up to 15 seconds late until a reload. Mostly Firefox fires this
+event. Now the worker posts `subscription-changed` to every open page, which saves the new
+subscription, reads its endpoint and checks in at once, as at start.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 
