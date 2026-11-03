@@ -277,15 +277,6 @@ though that iOS has no `Notification` at all. `needsInstall` in `client/src/push
 iPhone or iPad. Read the iOS version from the user agent, and before 16.4 say that notifications
 need iOS 16.4.
 
-### K-24: Quick sends can be stored out of order
-
-Found while testing #21.
-
-`sendContent` in `client/src/chat.ts` encrypts and posts each message on its own, and the server
-numbers messages in the order they arrive. Sending "one" to "five" with Enter in quick succession
-stored them as one, three, four, two, five, and a reload showed the same order. Send a chat's
-messages one at a time, in the order they were written.
-
 ### K-26: Messages from changed keys stay unreadable after the check until a reload
 
 Found in a security review of main on 2026-11-03.
@@ -351,6 +342,19 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-8: Message content is padded, so a ciphertext's length no longer shows a reaction (D-059) | #33 |
 | K-6: The pane names an organization that hides its pull requests (D-060) | #34 |
 | K-9: A retried send is stored once (D-061) | #35 |
+| K-24: A chat's messages are sent one at a time, in the order they were written (D-075) | #53 |
+
+### K-24: Quick sends can be stored out of order
+
+Status: Fixed in #53 (D-075). A test runs jobs through the per-chat queue in
+`client/src/queue.ts`; the page's own sends have not been tried in a browser yet.
+
+Found while testing #21.
+
+`sendContent` in `client/src/chat.ts` encrypts and posts each message on its own, and the server
+numbers messages in the order they arrive. Sending "one" to "five" with Enter in quick succession
+stored them as one, three, four, two, five, and a reload showed the same order. Send a chat's
+messages one at a time, in the order they were written.
 
 ### K-6: Organizations that restrict OAuth Apps hide their pull requests without a hint
 
