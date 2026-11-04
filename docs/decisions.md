@@ -1109,7 +1109,7 @@ another request; it could not forge either, and both texts name the card.
 
 ### D-087: A run is a worktree, a brief and a headless coding agent
 
-Proposed 2026-11-05 in #87.
+Proposed 2026-11-05 in #87, extended in #89.
 
 The daemon runs a card in the project's repository on its owner's machine. `config.json` next to
 the account file maps each project name to a local checkout. A run fetches `origin`, adds a git
@@ -1123,7 +1123,11 @@ small commits, a push and a
 draft pull request with `gh pr create --draft`, and never a push to main. After the agent exits,
 the run fails when it left no commits, and otherwise reports the branch, the pull request `gh`
 finds in the worktree, and the agent's closing line. An agent that prints nothing for 2 hours is
-killed and the run fails. A card run again gets a branch with a number after it.
+killed and the run fails. A card run again gets a branch with a number after it. Since #89
+`config.json` can name Codex or Hermes instead: Codex runs as `codex exec --json` with
+approvals off and its own workspace sandbox, with the network open so it can push, and Hermes as
+`hermes chat --oneshot --quiet --yolo --format stream-json`, with its approval prompts off. Each
+adapter is a command, its arguments and how its final word is read from its output lines.
 
 Why: a worktree per run keeps the owner's own checkout untouched and lets runs of different cards
 sit side by side, as this repository's sessions do. A brief file outside the repository cannot
@@ -1138,8 +1142,9 @@ tool list narrows what the agent's shell runs; it is not a sandbox, since `git`,
 file edits can reach anything the owner can. The agent runs with its owner's git and GitHub
 credentials, so the allow list (D-086) is what keeps a teammate's card from doing more than its
 owner would. A pull request is reported only when
-`gh` is signed in on that machine. Only Claude Code is wired up; other agents need an adapter
-with their command line and their final-word format.
+`gh` is signed in on that machine. Codex and Hermes were wired up from their documented command
+lines and not run end to end here, because neither was usable on the owner's machine when
+written; Claude Code was. Each adapter is a few lines to fix if a command line moves.
 
 ## Replies and reactions
 

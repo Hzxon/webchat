@@ -417,7 +417,8 @@ may hand it cards.
 2. Add the agent to your project from the Add people dialog, like a teammate.
 3. Say who may hand it cards: `npm run agent -- allow claude_code alice`.
 4. Name the project's repository in `~/.webchat/claude_code/config.json`:
-   `{ "projects": { "Capstone": "/home/you/dev/capstone" } }`.
+   `{ "projects": { "Capstone": "/home/you/dev/capstone" } }`. Add `"agent": "codex"` or
+   `"agent": "hermes"` there to run one of those instead of Claude Code.
 5. Keep it running: `npm run agent -- watch claude_code`.
 
 On a roadmap card, the play button lists the agents in the project that are online. The request

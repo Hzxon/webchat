@@ -339,7 +339,8 @@ request and reports inside sealed messages, the "Run with" menu on a card and th
 runner that gives each run a worktree and a brief and starts Claude Code headless in it, is on
 branch `claude/r027-claude-adapter` (#87, D-087), on top of #86. Step 4, the busy flag in the
 daemon's check-ins and the fingerprint, is on branch `claude/r027-busy-flag` (#88), on top of
-#87. Asked for by the owner on 2026-11-05, with
+#87. Step 5, the Codex and Hermes adapters, is on branch `claude/r027-more-adapters` (#89), on
+top of #88. Asked for by the owner on 2026-11-05, with
 [multica](https://github.com/multica-ai/multica) as the inspiration.
 
 Why: a team writes an issue or an idea as a card on the board (R-021), then one of them copies it

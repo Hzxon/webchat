@@ -8,7 +8,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { after, before, describe, test } from 'node:test';
 import { AgentClient } from '../agent/client.ts';
-import { createRunner } from '../agent/runner.ts';
+import { ADAPTERS, createRunner } from '../agent/runner.ts';
 import { Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
@@ -225,6 +225,25 @@ describe('agent client (R-027)', () => {
     }
     const { stdout: branches } = await git('branch', '--list', '--format=%(refname:short)', 'agent/*');
     assert.deepEqual(branches.trim().split('\n').sort(), ['agent/k-1-pushes-with-bad-keys', 'agent/k-1-pushes-with-bad-keys-2']);
+  });
+
+  test('reads the final word of each coding agent from its own output lines', () => {
+    const last = (agent: keyof typeof ADAPTERS, lines: string[]) =>
+      lines.reduce<ReturnType<(typeof ADAPTERS)['claude']['result']>>((kept, line) => ADAPTERS[agent].result(line) ?? kept, undefined);
+    assert.deepEqual(last('claude', ['not json', '{"type":"system"}', '{"type":"result","result":"Done.","is_error":false}']), { text: 'Done.', error: false });
+    assert.deepEqual(
+      last('codex', [
+        '{"type":"item.completed","item":{"type":"reasoning","text":"hmm"}}',
+        '{"type":"item.completed","item":{"type":"agent_message","text":"Pushed."}}',
+        '{"type":"turn.completed"}',
+      ]),
+      { text: 'Pushed.', error: false },
+    );
+    assert.deepEqual(last('codex', ['{"type":"turn.failed","error":{"message":"Out of credit."}}']), { text: 'Out of credit.', error: true });
+    assert.deepEqual(last('hermes', ['{"type":"result","exit_code":2,"text":"Partial."}']), { text: 'Partial.', error: true });
+    for (const agent of Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>) {
+      assert.ok(ADAPTERS[agent].args('/tmp/brief.md').some((a) => a.includes('/tmp/brief.md')), `${agent} is told where the brief is`);
+    }
   });
 
   test('starts again from its file, and signs in again when its session ends', async () => {
