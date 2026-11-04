@@ -200,6 +200,14 @@ export interface RegisterInput {
   agent?: boolean;
 }
 
+export interface LoginInput {
+  username: string;
+  /** Derived from the password in the browser or the daemon. */
+  authKey: string;
+  /** Sent by the daemon: the account is a coding agent's, whenever it was made (R-027, K-41). */
+  agent?: boolean;
+}
+
 export interface LoginResponse {
   user: UserDTO;
   /** Null when the account has no keys yet; the client then creates them. */

@@ -408,6 +408,8 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const valid = await verifyPassword(authKey, user?.password_hash ?? (await dummyPasswordHash()));
     if (!user || !valid) throw new HttpError(401, 'Wrong username or password.');
     await db.returnRateLimit(authLimitKey(req));
+    // The daemon says so at every sign-in, so an account from before the flag becomes an agent (K-41).
+    if (req.body?.agent === true && !user.agent) user.agent = await db.markAgent(user.id);
     await startSession(req, res, user);
     inBackground(db.purgeExpired(), config.logger);
     const body: LoginResponse = { user: toUserDTO(user), backup: keyBackupOf(user) };

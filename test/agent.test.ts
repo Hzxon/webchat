@@ -7,13 +7,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { after, before, describe, test } from 'node:test';
+import { Api } from '../agent/api.ts';
 import { AgentClient } from '../agent/client.ts';
 import { ADAPTERS, createRunner } from '../agent/runner.ts';
 import { Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
-import { newChatKeyBytes, newKeyId, wrapChatKey } from '../shared/e2ee.ts';
-import type { ChatKeyInput, CreateProjectResponse, DocDTO, RunDTO } from '../shared/types.ts';
+import { createIdentity, deriveAccountSecrets, newChatKeyBytes, newKeyId, sealIdentity, wrapChatKey } from '../shared/e2ee.ts';
+import type { ChatKeyInput, ConfigDTO, CreateProjectResponse, DocDTO, RunDTO, UserDTO } from '../shared/types.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
 const KDF_ROUNDS = 1000;
@@ -81,6 +82,33 @@ describe('agent client (R-027)', () => {
     assert.ok(!JSON.stringify(file).includes(PASSWORD), 'the password is not on disk');
     // A second sign-up must not overwrite an account's keys.
     await assert.rejects(AgentClient.signUp(botFile, { ...credentials, username: 'bot2' }, 'Bot', 'friends-only'), { code: 'EEXIST' });
+  });
+
+  test('an account from before the agent flag becomes an agent when the daemon signs in (K-41)', async () => {
+    const credentials = { server: baseUrl, username: 'oldbot', password: PASSWORD, kdfIterations: KDF_ROUNDS };
+    // Signed up without the flag, as a browser or an older daemon would.
+    const api = new Api(baseUrl);
+    const { kdfSalt } = await api.request<ConfigDTO>('GET', '/config');
+    const { authKey, backupKey } = await deriveAccountSecrets(PASSWORD, 'oldbot', kdfSalt, KDF_ROUNDS);
+    const secrets = await createIdentity();
+    const plain = await api.request<UserDTO>('POST', '/auth/register', {
+      username: 'oldbot',
+      displayName: 'Old bot',
+      authKey,
+      inviteCode: 'friends-only',
+      keys: { ...secrets.publicKeys, backup: await sealIdentity(secrets, backupKey) },
+    });
+    const viewer = await AgentClient.signUp(path.join(home, 'viewer.json'), { ...credentials, username: 'viewer' }, 'Viewer', 'friends-only');
+    await viewer.sync();
+    assert.equal(viewer.users.get(plain.id)?.agent, false);
+    await api.request('POST', '/auth/login', { username: 'oldbot', authKey });
+    await viewer.sync();
+    assert.equal(viewer.users.get(plain.id)?.agent, false, 'a sign-in without the flag changes nothing');
+
+    // The flag is in the fingerprint (D-021), so the viewer's next check-in brings it.
+    await AgentClient.signIn(path.join(home, 'oldbot.json'), credentials);
+    await viewer.sync();
+    assert.equal(viewer.users.get(plain.id)?.agent, true);
   });
 
   test('reads and answers in a project it was added to', async () => {
