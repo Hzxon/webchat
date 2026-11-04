@@ -2280,7 +2280,7 @@ a {
   font-size: 14px;
 }
 
-/* A doc's row: its name, then the pencil that renames it, at the row's right edge. */
+/* A doc's row: its name, then the menu of its actions at the row's right edge. */
 .doc-row {
   display: flex;
   align-items: center;
@@ -2291,6 +2291,48 @@ a {
   flex: 1;
   min-width: 0;
   padding-right: 6px;
+}
+
+.menu {
+  position: relative;
+  flex: none;
+}
+
+.menu-list {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 5;
+  min-width: 150px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.menu-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+@media (hover: hover) {
+  .menu-list button:hover {
+    background: var(--panel-2);
+  }
+}
+
+.menu-list .is-danger {
+  color: var(--danger);
 }
 
 .doc-dot {

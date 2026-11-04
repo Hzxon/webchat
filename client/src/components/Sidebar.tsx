@@ -1,7 +1,8 @@
-import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { ProjectDTO } from '../../../shared/types';
 import { sound } from '../alerts';
 import { openConversation, previewText, signOut } from '../chat';
+import { deleteDoc } from '../docs';
 import type { ChatConversation, ChatDoc } from '../e2ee/keyring';
 import { actions, chatTitle, otherMemberId, senderName, useAppState } from '../store';
 import { Avatar } from './Avatar';
@@ -16,11 +17,13 @@ import {
   GithubIcon,
   HashIcon,
   LogoutIcon,
+  MoreIcon,
   PencilIcon,
   PlusIcon,
   PullRequestIcon,
   SearchIcon,
   Ticks,
+  TrashIcon,
   UserPlusIcon,
   UsersIcon,
 } from './icons';
@@ -291,9 +294,7 @@ function ProjectSection(props: {
                 <span className="channel-name">{d.name}</span>
                 {updated && <span className="doc-dot" aria-label="Updated" />}
               </button>
-              <button className="icon-button icon-button-small" onClick={() => onRenameDoc(d)} title="Rename" aria-label={`Rename ${d.name}`}>
-                <PencilIcon width={16} height={16} />
-              </button>
+              <DocMenu doc={d} canDelete={d.createdBy === meId || project.ownerId === meId} onRename={() => onRenameDoc(d)} />
             </li>
           );
         })}
@@ -305,6 +306,66 @@ function ProjectSection(props: {
         </li>
       </ul>
     </li>
+  );
+}
+
+/** The "⋮" at the end of a doc's row: a menu with Rename and, for its creator or the project's owner, Delete. */
+function DocMenu({ doc, canDelete, onRename }: { doc: ChatDoc; canDelete: boolean; onRename: () => void }) {
+  const [open, setOpen] = useState(false);
+  const menu = useRef<HTMLDivElement>(null);
+
+  // A press outside the menu, or Escape, closes it.
+  useEffect(() => {
+    if (!open) return;
+    const onPress = (e: PointerEvent) => menu.current?.contains(e.target as Node) || setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('pointerdown', onPress);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPress);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  async function remove() {
+    if (!confirm(`Delete “${doc.name}” for everyone in the project? This cannot be undone.`)) return;
+    try {
+      await deleteDoc(doc.id);
+    } catch (err) {
+      actions.addToast({ conversationId: null, title: doc.name, body: (err as Error).message });
+    }
+  }
+
+  const pick = (action: () => void) => () => {
+    setOpen(false);
+    action();
+  };
+
+  return (
+    <div className="menu" ref={menu}>
+      <button
+        className="icon-button icon-button-small"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Options for ${doc.name}`}
+        title="Options"
+      >
+        <MoreIcon width={18} height={18} />
+      </button>
+      {open && (
+        <div className="menu-list" role="menu">
+          <button role="menuitem" onClick={pick(onRename)}>
+            <PencilIcon width={16} height={16} /> Rename
+          </button>
+          {canDelete && (
+            <button role="menuitem" className="is-danger" onClick={pick(() => void remove())}>
+              <TrashIcon width={16} height={16} /> Delete
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
