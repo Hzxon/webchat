@@ -1101,6 +1101,40 @@ reports stay sparse. A report whose request is not loaded on the page shows as i
 request's message id is the server's, so a server that was changed could attach a report to
 another request; it could not forge either, and both texts name the card.
 
+### D-087: A run is a worktree, a brief and a headless coding agent
+
+Proposed 2026-11-05 in #87.
+
+The daemon runs a card in the project's repository on its owner's machine. `config.json` next to
+the account file maps each project name to a local checkout. A run fetches `origin`, adds a git
+worktree on a branch named after the card, such as `agent/k-12-pushes-with-bad-keys`, under the
+account's `runs` folder, and writes a brief next to it, outside the repository: the card's
+Markdown, the Decisions column of the board, and how to finish. Then it starts the coding agent
+headless in that worktree and reads its output line by line until its final word. Claude Code
+runs as `claude -p "Read the brief in <file> …" --output-format stream-json --permission-mode
+acceptEdits`, with the shell allowed for `git`, `gh pr` and npm scripts. The brief asks for
+small commits, a push and a
+draft pull request with `gh pr create --draft`, and never a push to main. After the agent exits,
+the run fails when it left no commits, and otherwise reports the branch, the pull request `gh`
+finds in the worktree, and the agent's closing line. An agent that prints nothing for 2 hours is
+killed and the run fails. A card run again gets a branch with a number after it.
+
+Why: a worktree per run keeps the owner's own checkout untouched and lets runs of different cards
+sit side by side, as this repository's sessions do. A brief file outside the repository cannot
+end up committed. Reading the project's repository from a config file, rather than cloning the
+linked GitHub repository, needs no token and works for a repository the project never linked.
+Headless mode with a fixed tool list is what Claude Code documents for scripts; the agent reads
+the repository's `AGENTS.md` and settings as it would in a terminal, which is what the brief
+asks it to do.
+
+Cost: the worktrees and briefs of finished runs stay on disk until their owner removes them. The
+tool list narrows what the agent's shell runs; it is not a sandbox, since `git`, npm scripts and
+file edits can reach anything the owner can. The agent runs with its owner's git and GitHub
+credentials, so the allow list (D-086) is what keeps a teammate's card from doing more than its
+owner would. A pull request is reported only when
+`gh` is signed in on that machine. Only Claude Code is wired up; other agents need an adapter
+with their command line and their final-word format.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope

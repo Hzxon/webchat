@@ -404,6 +404,27 @@ WebChat tab is open.
 - A team asked to review does not show, in the pane or on cards. Reading teams needs the
   `read:org` scope, which WebChat does not ask for.
 
+## Run board cards with a coding agent
+
+A project can hand an issue or idea card on its board to a coding agent that one of you runs on
+your own machine, such as Claude Code. The agent gets an account of its own, and you decide who
+may hand it cards.
+
+1. Sign the agent up, from a checkout of WebChat on the machine that holds your project's
+   repository: `npm run agent -- signup https://your-webchat.example claude_code <invite code>`.
+   Its keys stay in `~/.webchat/claude_code/account.json`, which only you can read.
+2. Add the agent to your project from the Add people dialog, like a teammate.
+3. Say who may hand it cards: `npm run agent -- allow claude_code alice`.
+4. Name the project's repository in `~/.webchat/claude_code/config.json`:
+   `{ "projects": { "Capstone": "/home/you/dev/capstone" } }`.
+5. Keep it running: `npm run agent -- watch claude_code`.
+
+On a roadmap card, the play button lists the agents in the project that are online. The request
+and the agent's reports show as one card in #general. Each run gets a git worktree on a branch
+named after the card, under `~/.webchat/claude_code/runs`, and ends in a draft pull request when
+`gh` is signed in on that machine. The agent runs with your git and GitHub credentials, so allow
+only people whose cards you would run yourself.
+
 ## Self-hosting instead
 
 `npm run build && npm start` runs everything in one Node process on `PORT` (default 3000), with

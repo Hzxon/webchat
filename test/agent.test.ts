@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { after, before, describe, test } from 'node:test';
 import { AgentClient } from '../agent/client.ts';
+import { createRunner } from '../agent/runner.ts';
 import { Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
@@ -14,6 +17,18 @@ import type { ChatKeyInput, CreateProjectResponse, DocDTO, RunDTO } from '../sha
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
 const KDF_ROUNDS = 1000;
+const sh = promisify(execFile);
+
+/** Stands in for a coding agent: keeps the brief it was given as a commit, and prints a result line. */
+const FAKE_AGENT = `#!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+fs.writeFileSync('BRIEF.md', fs.readFileSync(/in (\\S+) and/.exec(process.argv[process.argv.indexOf('-p') + 1])[1]));
+execFileSync('git', ['add', 'BRIEF.md']);
+execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-q', '-m', 'Keep the brief']);
+console.log(JSON.stringify({ type: 'system', subtype: 'init' }));
+console.log(JSON.stringify({ type: 'result', result: process.env.FAKE_FAIL ? 'I gave up.' : 'I kept the brief.\\nIn one file.', is_error: !!process.env.FAKE_FAIL }));
+`;
 const PASSWORD = 'correct horse battery';
 
 /** A fresh chat key, wrapped by this client for each member, as a browser does when it makes a project. */
@@ -151,6 +166,49 @@ describe('agent client (R-027)', () => {
     assert.equal(card?.text, cardText.replace('Status: Open.', 'Status: In progress on branch agent/k1-bad-keys (acme/app#9).'));
     assert.equal(runs.running, null);
     assert.equal((JSON.parse(await fs.readFile(botFile, 'utf8')) as { allow: string[] }).allow.join(), 'alice');
+  });
+
+  test('runs a card with the coding agent in a worktree of the project repository', async () => {
+    // A repository with a remote, as a student's checkout has.
+    const origin = path.join(home, 'origin.git');
+    const repo = path.join(home, 'repo');
+    await sh('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+    await sh('git', ['clone', '-q', origin, repo]);
+    await fs.writeFile(path.join(repo, 'README.md'), '# Capstone\n');
+    const git = (...args: string[]) => sh('git', ['-C', repo, '-c', 'user.name=Alice', '-c', 'user.email=alice@example.com', ...args]);
+    await git('add', 'README.md');
+    await git('commit', '-q', '-m', 'Start');
+    await git('push', '-q', '-u', 'origin', 'main');
+    const fake = path.join(home, 'fake-agent.mjs');
+    await fs.writeFile(fake, FAKE_AGENT, { mode: 0o755 });
+    const runsDir = path.join(home, 'runs');
+    const runs = new Runs(bot, createRunner({ command: fake, projects: { Capstone: repo } }, bot, runsDir));
+
+    const request = async () => {
+      const run: RunDTO = { kind: 'request', card: 'K-1', title: 'Pushes with bad keys', docId: roadmap.id, section: cardId, runtime: bot.id };
+      const id = (await alice.send(generalId, { text: 'Run K-1 with Bot', run })).id;
+      for (const m of await bot.sync()) await runs.handle(m);
+      const heard = await alice.sync();
+      return heard.filter((m) => m.content?.run?.kind !== 'request' && m.content?.run?.request === id).map((m) => m.content?.text);
+    };
+    assert.deepEqual(await request(), ['I am on K-1: Pushes with bad keys', 'I finished K-1 on agent/k-1-pushes-with-bad-keys. In one file.']);
+    const [card] = await alice.sections(roadmap);
+    assert.match(card!.text, /^Status: In progress on branch agent\/k-1-pushes-with-bad-keys\.$/m);
+    const { stdout: brief } = await git('show', 'agent/k-1-pushes-with-bad-keys:BRIEF.md');
+    assert.ok(brief.includes('### K-1: Pushes with bad keys'), 'the brief holds the card');
+    assert.ok(brief.includes('`agent/k-1-pushes-with-bad-keys`'), 'the brief names the branch');
+    assert.ok(brief.includes('gh pr create --draft'), 'the brief says how to finish');
+    assert.deepEqual((await fs.readdir(runsDir)).filter((f) => f.endsWith('.brief.md')).length, 1);
+
+    // A run that fails reports so, and the card keeps its status. The card run again gets a branch of its own.
+    process.env.FAKE_FAIL = '1';
+    try {
+      assert.deepEqual(await request(), ['I am on K-1: Pushes with bad keys', 'I could not run K-1: I gave up.']);
+    } finally {
+      delete process.env.FAKE_FAIL;
+    }
+    const { stdout: branches } = await git('branch', '--list', '--format=%(refname:short)', 'agent/*');
+    assert.deepEqual(branches.trim().split('\n').sort(), ['agent/k-1-pushes-with-bad-keys', 'agent/k-1-pushes-with-bad-keys-2']);
   });
 
   test('starts again from its file, and signs in again when its session ends', async () => {

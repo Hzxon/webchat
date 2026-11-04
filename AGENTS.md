@@ -84,6 +84,7 @@ keeps its own cookies and keys.
 | `client/src/components/` | The React views. |
 | `agent/client.ts` | The headless client behind the agent daemon: sign-up, sign-in, the keys on disk, check-ins, opening and sending messages, and doc sections. See D-085. |
 | `agent/runs.ts` | Runs a card a teammate hands to the agent: claims the request, calls the runner, reports, and writes the branch into the card. See D-086. |
+| `agent/runner.ts` | The runner: a worktree and a brief per run, and Claude Code started headless in it. See D-087. |
 | `agent/api.ts` | Requests to `/api` from Node, with the session cookie kept by hand. |
 | `agent/index.ts` | The agent daemon's command line. |
 | `test/` | Integration tests that drive the real app over HTTP, and crypto tests. |
