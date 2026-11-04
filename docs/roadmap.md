@@ -23,7 +23,8 @@ the items under "Next". The decisions these items build on are in [decisions.md]
 
 ### R-001: Task board for projects, like Jira
 
-Status: Next. The owner set it aside on 2026-11-01 so that projects could ship first.
+Status: Dropped on 2026-11-04, replaced by R-021. The owner chose a board of decisions and
+roadmap cards, like this repository's own documents, over a Jira-style task board.
 
 Why: students track who does what by when, and today that lives in other apps.
 
@@ -53,6 +54,82 @@ Open questions:
   same way as channel keys?
 - Should due dates send reminders? That needs R-010.
 - Sprints, epics and story points stay out unless students ask for them.
+
+### R-021: Project board of decisions and roadmap cards
+
+Status: In progress on branch `claude/r021-project-board` (#75). Replaces R-001.
+
+Asked for by the owner on 2026-11-04.
+
+Why: students in a project team do not know where to start, or why something was built the way it
+was. Teammates and the agents they run make conflicting choices, because a choice made in a chat
+or in one person's head is never written where the next person reads it before acting. This
+repository solved the same problem for itself with `docs/decisions.md` and `docs/roadmap.md`
+(D-038, D-062). The board gives each project team the same two documents, as cards.
+
+Scope:
+
+- A Board entry under each project in the sidebar, next to its channels and Docs. It shows two
+  columns at desktop width and two tabs at 375 pixels: Decisions and Roadmap.
+- The Decisions column holds decision cards, numbered D-1, D-2 and so on within the project. A
+  card has a title, a status (Proposed, Accepted with a date, or Superseded by another card), the
+  decision, why it was made, and what it costs. Cards group by status: Proposed first, then
+  Accepted, with Superseded folded away at the end.
+- The Roadmap column holds two kinds of card: ideas, numbered R-1 and up, and issues, numbered K-1
+  and up. An idea has a title, a status (Idea, Planned, Next, In progress, Done or Dropped), why it
+  matters, its scope and when it is done. An issue has a title, a status (Open, In progress, Fixed
+  or Dropped), where it was seen, the cause and the fix. The column shows all of them or only one
+  kind, grouped by status: In progress first, then Next and Planned, then Idea and Open, with Done,
+  Fixed and Dropped folded away at the end. Open questions are written inside the card they belong
+  to, as in this repository's roadmap.
+- A card is Markdown that matches this repository's documents line for line: a `### D-3: Title`
+  heading, a `Status:` line, then the body. The board reads the kind, the number, the title and the
+  status from those two lines and shows the rest rendered. A new card starts from a template of its
+  kind, with the next free number filled in, and opens in the section editor docs already have,
+  with its preview. A card without that heading still shows, titled by its first line.
+- Each card keeps the history docs already have: one revision per editing session, with a diff and
+  a restore. Cards are never deleted. A decision is superseded and an idea or issue is dropped, by
+  editing the status line.
+- Each column has a "Copy as Markdown" button, which joins its cards in number order into the
+  format of `docs/decisions.md` or `docs/roadmap.md`. A student pastes it into the team's
+  repository, so the agents they run read the same decisions the team made.
+
+How it is built: the board is a view over two docs (R-020, D-081), one for each column, so it needs
+no migration, no route, no key code and no change to the sync fingerprint. A card is a section of
+that doc. The board docs are created by the browser the first time someone adds a card, and marked
+by a `board` field in the sealed content of their title, so the server does not know a board from
+a doc. The sidebar leaves board docs out of the Docs list. The number of a new card is the next
+free one among the cards the page has, so two tabs that add a card at the same moment can take the
+same number. The board marks both cards with a warning, and the second author renumbers, as D-063
+does for this repository. Two tabs that each create the board doc at the same moment make two; the
+board uses the oldest, and the other shows in the Docs list, where it can be deleted.
+
+Constraints:
+
+- Cards are encrypted with the project's #general key and signed like doc sections (D-014, D-016,
+  D-081). The status and the number live inside the Markdown, so the server sees nothing new: a
+  doc, its section count, who edits which section and when, and the size band of each section.
+  No change to the README or to D-020.
+- One person edits a card at a time, with the doc section lock (D-081).
+- The `board` field on a title is a new field of the sealed doc content, so docs from before it
+  still open (D-016). The decision that makes the board a view over docs is recorded with the number
+  reserved at the claim.
+
+Out of scope for now: turning a message into a card, a "Start here" doc, links between cards and
+messages, assignees and due dates, an import from a repository, and a Jira-style board with
+columns that cards move between, which was R-001.
+
+Done when: typecheck, tests and build pass. A unit test proves that the card reader finds the kind,
+number, title and status in each template and in a card without a heading, and that the next free
+number skips the numbers in use. The board has been tried in a browser with two accounts, at
+desktop width and 375 pixels, in light and dark mode (D-037), including two tabs that add a card at
+the same moment and see the duplicate number warning.
+
+Open questions:
+
+- Should a card's status be editable from the card, with a menu, instead of only in the Markdown?
+  A menu is a few lines and spares a student the exact wording.
+- Should the Roadmap column open on "all" or on ideas only?
 
 ## Planned
 

@@ -4,7 +4,7 @@
 import { newKeyId, randomBytes, toBase64Url, type DocContent } from '../../shared/e2ee';
 import type { DocRevisionDTO } from '../../shared/types';
 import { api } from './api';
-import { currentLookup, openDocs, setEditing, withChatKey } from './chat';
+import { currentLookup, loadDraft, openDocs, setEditing, withChatKey } from './chat';
 import { keystore } from './e2ee/keystore';
 import { keyring, type ChatDoc } from './e2ee/keyring';
 import { actions, store } from './store';
@@ -29,8 +29,8 @@ function openRevisions(doc: ChatDoc, revisions: DocRevisionDTO[]) {
   return Promise.all(revisions.map(async (revision) => ({ revision, content: await keyring.openDoc(revision, chat, keysOf) })));
 }
 
-/** Creates a doc in a project, with a title and the sections of a template. Returns its id. */
-export async function createDoc(projectId: number, title: string, sections: string[]): Promise<string> {
+/** Creates a doc in a project, with a title and the sections of a template, or a column of the board. Returns its id. */
+export async function createDoc(projectId: number, title: string, sections: string[], board?: DocContent['board']): Promise<string> {
   // #general is the project's first channel, which it keeps as long as it exists.
   const general = Object.values(store.get().conversations)
     .filter((c) => c.projectId === projectId)
@@ -39,7 +39,7 @@ export async function createDoc(projectId: number, title: string, sections: stri
   const id = newKeyId();
   const dto = await withChatKey(general.id, async (key, keyId) => {
     const seal = (section: string, content: DocContent) => keyring.sealDoc(key, keyId, { conversationId: general.id, docId: id, section }, content);
-    const revisions = [{ section: 'title', envelope: await seal('title', { text: title }) }];
+    const revisions = [{ section: 'title', envelope: await seal('title', { text: title, board }) }];
     for (const [i, text] of sections.entries()) {
       const section = newSectionId();
       revisions.push({ section, envelope: await seal(section, { text, pos: i + 1 }) });
@@ -73,6 +73,24 @@ export const sectionHistory = async (doc: ChatDoc, section: string) => openRevis
 export async function startEditing(docId: string, section: string) {
   await api.lockSection(docId, section);
   setEditing({ docId, section });
+}
+
+/** The section a page edits: one in the doc, or a new one that goes in at `pos`. */
+export interface Editing {
+  id: string;
+  pos: number;
+  /** What the server holds. */
+  saved: string;
+  /** What the editor starts with: the server's text, or a draft this device kept. */
+  text: string;
+  /** Not saved yet, so there is nothing to delete. */
+  isNew: boolean;
+}
+
+/** Locks a section and picks up the device's draft of it, if any. A new section starts from `start`. */
+export async function beginEditing(docId: string, section: string, saved: string, pos: number, isNew: boolean, start = saved): Promise<Editing> {
+  await startEditing(docId, section);
+  return { id: section, pos, saved, isNew, text: (await loadDraft(draftName(docId, section))) || start };
 }
 
 export async function stopEditing(docId: string, section: string) {

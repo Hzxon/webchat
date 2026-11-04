@@ -6,6 +6,7 @@ import { actions, useAppState } from './store';
 import { Toasts, UrgentAlert } from './components/Alerts';
 import { AuthScreen } from './components/AuthScreen';
 import { ChatView } from './components/ChatView';
+import { BoardView } from './components/BoardView';
 import { DocView } from './components/DocView';
 import { GithubView } from './components/GithubView';
 import { MembersDialog, type MembersTarget } from './components/MembersDialog';
@@ -80,6 +81,7 @@ function ChatLayout() {
   const push = useAppState((s) => s.push);
   const githubOpen = useAppState((s) => s.githubOpen);
   const doc = useAppState((s) => (s.docOpen === null ? undefined : s.docs[s.docOpen]));
+  const board = useAppState((s) => (s.boardOpen === null ? undefined : s.projects[s.boardOpen]));
   const reposFor = useAppState((s) => s.reposFor);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const addPeople = (target: MembersTarget) => setDialog({ kind: 'add-people', target });
@@ -88,7 +90,7 @@ function ChatLayout() {
   useEffect(fitToVisualViewport, []);
 
   return (
-    <div className={`layout ${activeId !== null || githubOpen || doc ? 'has-active' : ''}`}>
+    <div className={`layout ${activeId !== null || githubOpen || doc || board ? 'has-active' : ''}`}>
       <Sidebar
         onNewChat={() => setDialog({ kind: 'new-chat', mode: 'person' })}
         onNewProject={() => setDialog({ kind: 'new-chat', mode: 'project' })}
@@ -103,6 +105,8 @@ function ChatLayout() {
         <GithubView />
       ) : doc ? (
         <DocView key={doc.id} doc={doc} />
+      ) : board ? (
+        <BoardView key={board.id} project={board} />
       ) : active ? (
         <ChatView key={active.id} conversation={active} onAddPeople={addPeople} onMembers={showMembers} />
       ) : (

@@ -28,6 +28,7 @@ import {
   wrapChatKey,
   WrongPasswordError,
   type Identity,
+  type DocContent,
   type DocMeta,
   type IdentitySecrets,
   type MessageMeta,
@@ -336,6 +337,9 @@ describe('end-to-end encryption', () => {
     await assert.rejects(decryptContent(key, aliceSign, asMessage, envelope), /bad signature/);
     const forged = await encryptDoc(key, keyId, bob.identity.signPrivate, meta, { text: 'Bob wrote this' });
     await assert.rejects(decryptDoc(key, aliceSign, meta, forged), /bad signature/);
+    // A board doc's title carries which column it is (R-021), and nothing else slips through.
+    const title = await encryptDoc(key, keyId, alice.identity.signPrivate, meta, { text: 'Decisions', board: 'decisions', extra: 1 } as DocContent);
+    assert.deepEqual(await decryptDoc(key, aliceSign, meta, title), { text: 'Decisions', board: 'decisions' });
   });
 
   test('safety codes match on both sides and change when a key changes', async () => {

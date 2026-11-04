@@ -9,6 +9,7 @@ import { formatListTime } from './format';
 import {
   BellIcon,
   BellRingIcon,
+  BoardIcon,
   ChatIcon,
   FileIcon,
   FolderIcon,
@@ -68,9 +69,11 @@ export function Sidebar(props: SidebarProps) {
     const byProject = new Map<number, ChatConversation[]>();
     for (const c of channels) byProject.set(c.projectId!, [...(byProject.get(c.projectId!) ?? []), c]);
     const docsBy = new Map<number, ChatDoc[]>();
+    const boardsBy = new Map<number, ChatDoc[]>();
     for (const d of Object.values(docs)) {
       const projectId = conversations[d.conversationId]?.projectId;
-      if (projectId) docsBy.set(projectId, [...(docsBy.get(projectId) ?? []), d]);
+      const by = d.board ? boardsBy : docsBy;
+      if (projectId) by.set(projectId, [...(by.get(projectId) ?? []), d]);
     }
     return Object.values(projects)
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -82,6 +85,7 @@ export function Sidebar(props: SidebarProps) {
           project,
           channels: projectMatches ? own : own.filter((c) => (c.title ?? '').includes(q)),
           docs: projectMatches ? ownDocs : ownDocs.filter((d) => d.name.toLowerCase().includes(q)),
+          boards: boardsBy.get(project.id) ?? [],
         };
       })
       .filter((entry) => entry.channels.length > 0 || entry.docs.length > 0 || !q);
@@ -159,12 +163,13 @@ export function Sidebar(props: SidebarProps) {
         </ul>
       ) : (
         <ul className="chat-list">
-          {projectList.map(({ project, channels, docs }) => (
+          {projectList.map(({ project, channels, docs, boards }) => (
             <ProjectSection
               key={project.id}
               project={project}
               channels={channels}
               docs={docs}
+              boards={boards}
               onNewChannel={() => onNewChannel(project.id)}
               onAddPeople={() => onAddPeople(project.id)}
               onMembers={() => onMembers(project.id)}
@@ -196,21 +201,27 @@ function ProjectSection(props: {
   project: ProjectDTO;
   channels: ChatConversation[];
   docs: ChatDoc[];
+  /** The docs behind the project board (R-021), for its updated dot. */
+  boards: ChatDoc[];
   onNewChannel: () => void;
   onAddPeople: () => void;
   onMembers: () => void;
   onRepos: () => void;
   onNewDoc: () => void;
 }) {
-  const { project, channels, docs, onNewChannel, onAddPeople, onMembers, onRepos, onNewDoc } = props;
+  const { project, channels, docs, boards, onNewChannel, onAddPeople, onMembers, onRepos, onNewDoc } = props;
   const activeId = useAppState((s) => s.activeId);
   const docOpen = useAppState((s) => s.docOpen);
+  const boardOpen = useAppState((s) => s.boardOpen);
   const docsSeen = useAppState((s) => s.docsSeen);
   const meId = useAppState((s) => s.me?.id);
   const urgent = useAppState((s) => s.urgent);
   // Linking a repository only does something where the GitHub App is set up.
   const github = useAppState((s) => s.github?.appConfigured ?? false);
   const people = project.memberIds.length;
+  /** Someone else saved it since this device last showed it. */
+  const updatedSince = (d: ChatDoc) => d.updatedBy !== meId && d.version > (docsSeen[d.id] ?? 0);
+  const boardUpdated = boards.some(updatedSince);
 
   return (
     <li className="project">
@@ -254,9 +265,18 @@ function ProjectSection(props: {
             </li>
           );
         })}
+        <li>
+          <button
+            className={`channel-item ${boardOpen === project.id ? 'is-active' : ''} ${boardUpdated ? 'has-unread' : ''}`}
+            onClick={() => actions.setBoardOpen(project.id)}
+          >
+            <BoardIcon width={16} height={16} />
+            <span className="channel-name">Board</span>
+            {boardUpdated && <span className="doc-dot" aria-label="Updated" />}
+          </button>
+        </li>
         {docs.map((d) => {
-          // Someone else saved it since this device last showed it.
-          const updated = d.updatedBy !== meId && d.version > (docsSeen[d.id] ?? 0);
+          const updated = updatedSince(d);
           return (
             <li key={d.id}>
               <button

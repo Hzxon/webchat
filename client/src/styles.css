@@ -2621,6 +2621,178 @@ a {
   }
 }
 
+/* Project board (R-021): two columns of cards, which become tabs at phone width. */
+
+.board-view {
+  background: var(--panel);
+}
+
+.board-tabs {
+  display: none;
+  margin-left: auto;
+}
+
+.board-columns {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;
+}
+
+.board-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.board-column + .board-column {
+  border-left: 1px solid var(--line);
+}
+
+.board-column-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.board-column-head h2 {
+  margin: 0 auto 0 0;
+  font-size: 17px;
+}
+
+.board-column-head .doc-note {
+  margin: 0;
+}
+
+.board-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  font-size: 14px;
+}
+
+.board-cards {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px calc(24px + env(safe-area-inset-bottom));
+  overscroll-behavior: contain;
+}
+
+.board-cards .doc-editor {
+  margin-bottom: 12px;
+}
+
+.board-group summary {
+  margin: 10px 0 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.board-group small {
+  font-weight: 400;
+}
+
+.board-card {
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+
+.board-card.is-locked {
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+
+.board-card-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The title keeps a few words' width, so a long status wraps to its own line instead of squeezing it. */
+.board-card-head strong {
+  flex: 1 1 12em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.board-card-id {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.board-card-status {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.board-card-warn {
+  margin: 0;
+  padding: 4px 12px 8px;
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.board-card-body {
+  padding: 0 12px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.board-card-body .doc-section-tools {
+  margin-top: 6px;
+}
+
+@media (max-width: 760px) {
+  .board-tabs {
+    display: flex;
+  }
+
+  .board-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .board-column + .board-column {
+    border-left: 0;
+  }
+
+  .board-columns.shows-decisions .board-roadmap,
+  .board-columns.shows-roadmap .board-decisions {
+    display: none;
+  }
+
+  .board-column-head,
+  .board-cards {
+    padding-inline: 10px;
+  }
+}
+
 /* Export to PDF: the browser's print dialog saves the open doc alone, in black on white. */
 @media print {
   :root {

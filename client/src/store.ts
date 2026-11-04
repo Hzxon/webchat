@@ -59,6 +59,8 @@ export interface State {
   docs: Record<string, ChatDoc>;
   /** The doc showing instead of a chat. */
   docOpen: string | null;
+  /** The project whose board shows instead of a chat (R-021). */
+  boardOpen: number | null;
   /** The version of each doc this device last showed (see keystore.getDocsSeen). */
   docsSeen: Record<string, number>;
 }
@@ -84,6 +86,7 @@ const initialState: State = {
   reposFor: null,
   docs: {},
   docOpen: null,
+  boardOpen: null,
   docsSeen: {},
 };
 
@@ -188,6 +191,9 @@ function withoutChats(current: State, gone: Set<number>): State {
 let localEdits = 0;
 export const localEditCount = () => localEdits;
 
+/** Shows one of the panes that take the chat's place: the chat itself, a doc, a board or the pull requests. */
+const show = (s: State, pane: Partial<State>): State => ({ ...s, activeId: null, githubOpen: false, docOpen: null, boardOpen: null, ...pane });
+
 function editChats(update: (current: State) => State) {
   localEdits++;
   store.set(update);
@@ -262,8 +268,10 @@ export const actions = {
     }),
 
   /** Shows a doc in place of the open chat, or closes it. */
-  setDocOpen: (docOpen: string | null) =>
-    store.set((s) => ({ ...s, docOpen, activeId: docOpen ? null : s.activeId, githubOpen: docOpen ? false : s.githubOpen })),
+  setDocOpen: (docOpen: string | null) => store.set((s) => (docOpen === null ? { ...s, docOpen } : show(s, { docOpen }))),
+
+  /** Shows a project's board in place of the open chat, or closes it. */
+  setBoardOpen: (boardOpen: number | null) => store.set((s) => (boardOpen === null ? { ...s, boardOpen } : show(s, { boardOpen }))),
 
   setDocsSeen: (docsSeen: Record<string, number>) => store.set((s) => ({ ...s, docsSeen })),
 
@@ -368,19 +376,12 @@ export const actions = {
       return same ? s : { ...s, keyWarnings: Object.fromEntries([...ids].map((id) => [id, true as const])) };
     }),
 
-  setActive: (activeId: number | null) =>
-    store.set((s) => ({
-      ...s,
-      activeId,
-      githubOpen: activeId === null ? s.githubOpen : false,
-      docOpen: activeId === null ? s.docOpen : null,
-    })),
+  setActive: (activeId: number | null) => store.set((s) => (activeId === null ? { ...s, activeId } : show(s, { activeId }))),
 
   setGithub: (github: GithubDTO) => store.set((s) => ({ ...s, github })),
 
   /** Shows the pull requests pane in place of the open chat, or closes it. */
-  setGithubOpen: (githubOpen: boolean) =>
-    store.set((s) => ({ ...s, githubOpen, activeId: githubOpen ? null : s.activeId, docOpen: githubOpen ? null : s.docOpen })),
+  setGithubOpen: (githubOpen: boolean) => store.set((s) => (githubOpen ? show(s, { githubOpen }) : { ...s, githubOpen })),
 
   setReposFor: (reposFor: number | null) => store.set((s) => ({ ...s, reposFor })),
 
