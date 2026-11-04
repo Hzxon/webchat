@@ -63,6 +63,19 @@ export interface AccountFile {
    * no cards.
    */
   owner: number | null;
+  /**
+   * The request being run, while one is. The cursor is past it already, so a daemon that stopped
+   * mid-run finds it only here when it starts again, and reports it failed (K-46).
+   */
+  running?: TakenRequest;
+}
+
+/** A run request the daemon took, by its message. */
+export interface TakenRequest {
+  message: number;
+  conversation: number;
+  /** The card's id, such as K-12, for the report's text. */
+  card: string;
 }
 
 export interface Credentials {
@@ -112,6 +125,8 @@ export class AgentClient {
   private readonly changedKeys = new Set<number>();
   /** Said in every check-in while a card runs, so the board offers this account no other (R-027). */
   busy = false;
+  /** The file's last write, which the next one waits for. */
+  private written: Promise<void> = Promise.resolve();
 
   private constructor(
     private readonly file: AccountFile,
@@ -184,10 +199,28 @@ export class AgentClient {
     return client;
   }
 
-  private async save(flag?: string) {
-    this.file.cookie = this.api.cookie;
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
-    await fs.writeFile(this.filePath, JSON.stringify(this.file, null, 2) + '\n', { flag, mode: 0o600 });
+  private save(flag?: string) {
+    // One write at a time: a run saves while check-ins do, and two writes at once can leave the
+    // tail of the longer one behind the shorter, which no longer parses.
+    this.written = this.written
+      .catch(() => undefined)
+      .then(async () => {
+        this.file.cookie = this.api.cookie;
+        await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
+        await fs.writeFile(this.filePath, JSON.stringify(this.file, null, 2) + '\n', { flag, mode: 0o600 });
+      });
+    return this.written;
+  }
+
+  /** The request a daemon took and did not report on to the end, as the file keeps it. */
+  get running() {
+    return this.file.running;
+  }
+
+  /** Keeps the request being run in the file, or clears it with none. */
+  async saveRunning(taken: TakenRequest | undefined) {
+    this.file.running = taken;
+    await this.save();
   }
 
   /** A request that signs in again once when the session has ended, then keeps the new cookie. */

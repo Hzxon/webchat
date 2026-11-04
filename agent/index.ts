@@ -77,6 +77,8 @@ async function main([command, ...args]: string[]) {
         runs.handle(message).catch((error: unknown) => console.error(String(error)));
       };
       const missed = await client.sync();
+      // A run cut short when the daemon last stopped would show as claimed for good (K-46).
+      await runs.recover().catch((error: unknown) => console.error(String(error)));
       for (const project of client.projects) {
         const channels = [...client.conversations.values()].filter((c) => c.projectId === project.id).map((c) => `#${c.title}`);
         const repo = config.projects[project.name] ?? `none, so its cards fail until ${path.join(dir, 'config.json')} names one`;

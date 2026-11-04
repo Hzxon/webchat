@@ -473,6 +473,24 @@ Open questions:
 
 ## Known issues
 
+### K-46: A card run hangs with no end when its daemon stops
+
+Status: Fixed in #96.
+
+Seen: in an audit of the run flow on 2026-11-05. A daemon that stopped mid-run, after a crash, a
+restart or a closed laptop, left its card on "Running" for good. Started again, it never saw the
+request: the cursor in its account file was past it already. A card handed to an agent whose
+daemon was not running said "Waiting for the agent", with no sign that nothing would come.
+
+Cause: the daemon kept the request it ran only in memory, and it saves the sync cursor at each
+check-in, long before a run ends. The run card did not look at whether the agent was online.
+
+Fix: the daemon keeps the request it runs in its account file until a report on the run's end gets
+through. When `watch` starts and finds one left, it reports the run failed: "The daemon stopped
+during the run." It does not run the card again, since nobody may still be waiting for it. The run
+card adds "Agent offline" while it waits or runs and the agent has not checked in for a minute.
+Writes of the account file now go one at a time, since a run saves it while check-ins do.
+
 ### K-45: Your own agent refuses a card a teammate wrote
 
 Status: Fixed in #95 (D-089). An agent runs what its owner hands it, whoever wrote the card.
