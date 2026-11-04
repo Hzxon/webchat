@@ -178,8 +178,9 @@ Done when: a comment-only review on the fake GitHub becomes an event, and a test
 
 ### R-022: Rebrand, step 1: a work-tool palette and type
 
-Status: Planned. First of five steps that move WebChat from a WhatsApp look to a Slack-like
-workspace (R-022 to R-026). Do them in order; each is its own pull request.
+Status: In progress on branch `claude/r022-work-tool-palette` (D-083). First of five steps that
+move WebChat from a WhatsApp look to a Slack-like workspace (R-022 to R-026). Do them in order; each
+is its own pull request.
 
 Why: the features are for serious project work, but the page looks like a consumer messenger.
 `client/src/styles.css` copies WhatsApp's palette (`--accent: #00a884`, `--bubble-out: #d9fdd3`,
