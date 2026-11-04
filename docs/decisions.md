@@ -78,8 +78,7 @@ Why: the features are for project work, but the look said consumer messenger bef
 project. Colors, type and shapes change in `styles.css` alone, so this step changes no behavior.
 
 Cost: people and projects now share one avatar shape. The favicon, the installed app's icon, the
-`theme-color` meta tag and one avatar color are still teal. R-026 replaces the icons. Bubbles stay
-until R-023.
+`theme-color` meta tag and one avatar color are still teal. Bubbles stay until R-023.
 
 ## Architecture and hosting
 
@@ -804,7 +803,7 @@ with every tab closed.
 
 ### D-084: Messages are one feed, not bubbles
 
-Proposed 2026-11-05 in #78. Step 2 of the move to a Slack-like look (R-022 to R-026).
+Proposed 2026-11-05 in #78. Step 2 of the move to a Slack-like look (R-022 and R-023).
 
 Every message renders the same way, in one column: the sender's avatar in a gutter on the left, the
 sender's name and time on one line, the text below. Nothing aligns right, and the viewer's own
