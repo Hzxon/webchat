@@ -433,6 +433,52 @@ Open questions:
 
 ## Known issues
 
+### K-44: A reply or reaction follows the message id, which no signature covers
+
+Status: Open. Found in a security review of main on 2026-11-05.
+
+A reply signs its original's id, sender and quoted text. But `Quote` in
+`client/src/components/ChatView.tsx` shows whatever message now has that id, and never compares
+it with the signed quote. Reactions are filed under the id the same way (`client/src/store.ts`).
+The id is the server's primary key and is in no signature (D-016). So someone who writes to the
+database can swap the ids of two messages from one sender in one chat. A signed "Yes, do it" then
+answers the other question. The swap also reorders the two messages, which shows.
+
+Fix: show the original only when its sender and text match the signed quote, and the signed quote
+otherwise. Bind a reaction to something its target's sender signed, such as the client id.
+
+### K-43: A chat key's wrap does not name its chat
+
+Status: Open. Found in a security review of main on 2026-11-05.
+
+`pairKey` in `shared/e2ee.ts` binds the key id and the two users into the wrap, but not the
+conversation. The key link binds it. The only check that a replaced key never encrypts again
+reads `keyLinks`, which come from the server (`client/src/e2ee/keyring.ts`). So someone who writes
+to the database can restore a chat's old key and delete its link. Members then send with a key
+that a removed member still holds, which breaks the promise that they never get what is sent
+after they left. The README already accepts that the server picks who gets a rotated key, which is
+a stronger attack, so this adds little on its own.
+
+Fix: add the conversation id to the wrap's HKDF info and AAD under a v2 label, so old wraps still
+open. Remember on each device the newest key id per chat, and refuse to seal with an older one.
+
+### K-42: The agent's allow list trusts the username the server sends
+
+Status: Open. Found in a security review of main on 2026-11-05.
+
+`agent/runs.ts` checks a run request against the allow list by `users.get(senderId).username`.
+That map comes from each sync answer, and nothing signs which id has which username. A new id's
+keys are pinned on first sight (`agent/client.ts`). So a compromised server can invent a user named
+after an allowed teammate, with keys it made, plus a chat, a card and a signed request. The
+request opens as encrypted and passes the check. The runner then works in the owner's
+repository with git, `npm install` and `npm run`, which can run any command as the owner. The
+request's age check also uses the server's `createdAt`, so the server can replay an old request.
+A teammate cannot do this: usernames are unique and the signature binds the sender id.
+
+Fix: at `allow`, store the teammate's user id and pinned key fingerprint, and show the security
+code to compare (D-018). At run time, require both to match. Put a signed expiry inside the
+sealed `run` content, in place of `createdAt`.
+
 ### K-41: An account from before the agent flag never becomes an agent
 
 Status: Fixed in #91. The daemon's sign-in now sends the flag too, and the server sets it.
