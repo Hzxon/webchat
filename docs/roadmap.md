@@ -181,9 +181,8 @@ Done when: a comment-only review on the fake GitHub becomes an event, and a test
 
 ### R-022: Rebrand, step 1: a work-tool palette and type
 
-Status: In progress on branch `claude/r022-work-tool-palette` (D-083). First of five steps that
-move WebChat from a WhatsApp look to a Slack-like workspace (R-022 to R-026). Do them in order; each
-is its own pull request.
+Status: In progress on branch `claude/r022-work-tool-palette` (D-083). First of two steps that
+move WebChat from a WhatsApp look to a Slack-like workspace (R-022 and R-023).
 
 Why: the features are for serious project work, but the page looks like a consumer messenger.
 `client/src/styles.css` copies WhatsApp's palette (`--accent: #00a884`, `--bubble-out: #d9fdd3`,
@@ -208,7 +207,7 @@ modes and both widths, and the owner has approved screenshots.
 ### R-023: Rebrand, step 2: a linear message feed instead of bubbles
 
 Status: Dropped on 2026-11-05. #78 built it and reached main, and the owner reverted it: they
-prefer bubbles to a linear feed. D-084 is reverted. The later steps do not depend on this one.
+prefer bubbles to a linear feed. D-084 is reverted.
 
 Why: left and right bubbles with a colored own-message bubble are the strongest messenger signal
 on the page. Work tools show one feed, with everyone's messages aligned the same way.
@@ -234,67 +233,8 @@ nothing new becomes visible to the server. A message's signature is unchanged (D
 Done when: no message has a bubble, replies and reactions work from the hover toolbar on desktop
 and from a long press at 375 pixels, and the owner has approved screenshots.
 
-### R-024: Rebrand, step 3: project-first navigation
-
-Status: Planned. Depends on R-022.
-
-Why: the sidebar is a recency-sorted chat list with message previews, under tabs Chats, Projects
-and Pull requests. The home screen is an inbox. A workspace puts the team first: the project is
-the top-level unit, and chats hang off it.
-
-Scope:
-
-- At desktop width, a narrow rail of projects on the far left, like Slack's workspace rail. The
-  sidebar shows the active project with sections Channels, Docs, Pull requests and, when R-001 is
-  built, Tasks.
-- A Direct messages section below the project's sections holds the one-to-one and group chats
-  outside projects.
-- The page opens on the last project's #general, not on the chat list.
-- At 375 pixels the list-to-chat pattern stays, since Slack's phone app uses the same one, but with
-  the same project-first order.
-- Unread counts stay per channel and per project.
-
-Constraints: the sync loop, the store and `POST /api/sync` do not change. This step moves what the
-page already knows into a new layout. Record the navigation model as a decision.
-
-Done when: a new user with one project lands in #general, every chat is still reachable in at most
-two taps at 375 pixels, and the owner has approved screenshots.
-
-### R-025: Rebrand, step 4: the words and the README
-
-Status: Planned. Depends on R-024.
-
-Why: the copy still describes a messenger. The README opens with "A chat site for you and your
-friends", and the page says "Chats" and "New chat".
-
-Scope:
-
-- In the page: "Chats" becomes "Direct messages", "New chat" becomes "New message", and the
-  composer placeholder reads "Message #general" or "Message Alice". "Projects" and "Urgent" stay.
-- In the README: the first paragraph presents a workspace for student project teams, end-to-end
-  encrypted, that runs for free. The friends-and-family framing moves down or out. Screenshots are
-  retaken from the new look.
-- In `AGENTS.md`: the "What WebChat is" section says the same.
-
-Done when: no user-facing string says "chat" where it means a direct message, and the README,
-`AGENTS.md` and the page agree.
-
-### R-026: Rebrand, step 5: a name and a logo
-
-Status: Idea. Depends on R-025. The owner picks the name.
-
-Why: "WebChat" says chat and nothing else. A rebrand that keeps the name is half done.
-
-Scope: a product name, a wordmark in the sign-in screen and the sidebar header, a favicon and the
-icons of the installed app, and the name in the README and push notifications. The repository and
-the package may keep the name WebChat.
-
-Constraints: `client/src/alerts.ts` draws the unread dot onto the favicon, so it changes with the
-icon. The name lives in `client/index.html`, in `client/public/manifest.webmanifest` and in the
-title of Bark alerts in `server/bark.ts` (D-054).
-
-Done when: the owner has chosen the name and the page, the installed app and the notifications all
-show it.
+R-024 to R-026, the rest of the rebrand, were dropped on 2026-11-05. The owner does not want
+project-first navigation, new wording or a new name. The numbers stay taken.
 
 ## Ideas
 
