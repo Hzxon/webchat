@@ -57,8 +57,12 @@ export interface AccountFile {
   pins: Record<number, string>;
   /** The newest message id seen, so a restart picks up what arrived while the daemon was down. */
   cursor: number;
-  /** Usernames whose run requests this account carries out. Nobody's, until its owner adds them. */
-  allow: string[];
+  /**
+   * The person whose run requests this account carries out, by user id, as the server named them at
+   * sign-up or sign-in (D-089). Their keys are pinned like anyone's. Null for an account that runs
+   * no cards.
+   */
+  owner: number | null;
 }
 
 export interface Credentials {
@@ -120,8 +124,16 @@ export class AgentClient {
     this.floor = file.cursor;
   }
 
-  /** Makes a new account and writes its file. The file must not exist yet. */
-  static async signUp(filePath: string, credentials: Credentials, displayName: string, inviteCode: string) {
+  /** The person whose cards this account runs (D-089). Files from before it have none. */
+  get owner() {
+    return this.file.owner ?? null;
+  }
+
+  /**
+   * Makes a new account and writes its file. The file must not exist yet. With an owner's username,
+   * the account is that person's coding agent.
+   */
+  static async signUp(filePath: string, credentials: Credentials, displayName: string, inviteCode: string, owner?: string) {
     const api = new Api(credentials.server);
     const { authKey, backupKey } = await secretsFor(api, credentials);
     const secrets = await createIdentity();
@@ -131,22 +143,26 @@ export class AgentClient {
       authKey,
       inviteCode,
       keys: { ...secrets.publicKeys, backup: await sealIdentity(secrets, backupKey) },
-      agent: true,
+      owner,
     });
-    return AgentClient.create(filePath, { server: credentials.server, username: credentials.username, userId: user.id, authKey, secrets, cookie: api.cookie }, 'wx');
+    const file = { server: credentials.server, username: credentials.username, userId: user.id, authKey, secrets, cookie: api.cookie, owner: user.agentOwner };
+    return AgentClient.create(filePath, file, 'wx');
   }
 
-  /** Signs in to an existing account, opens its key backup with the password, and writes the file. */
-  static async signIn(filePath: string, credentials: Credentials) {
+  /**
+   * Signs in to an existing account, opens its key backup with the password, and writes the file.
+   * With an owner's username, the account becomes that person's coding agent.
+   */
+  static async signIn(filePath: string, credentials: Credentials, owner?: string) {
     const api = new Api(credentials.server);
     const { authKey, backupKey } = await secretsFor(api, credentials);
-    const { user, backup } = await api.request<LoginResponse>('POST', '/auth/login', { username: credentials.username, authKey, agent: true });
+    const { user, backup } = await api.request<LoginResponse>('POST', '/auth/login', { username: credentials.username, authKey, owner });
     if (!backup) throw new Error('This account has no keys yet. Sign in once in a browser first.');
     const secrets = await openIdentity(backup, backupKey);
     if (user.keys?.dh !== secrets.publicKeys.dh || user.keys.sign !== secrets.publicKeys.sign) {
       throw new Error('The keys the server lists for this account are not the ones in its backup.');
     }
-    return AgentClient.create(filePath, { server: credentials.server, username: credentials.username, userId: user.id, authKey, secrets, cookie: api.cookie });
+    return AgentClient.create(filePath, { server: credentials.server, username: credentials.username, userId: user.id, authKey, secrets, cookie: api.cookie, owner: user.agentOwner });
   }
 
   /** Opens the account an earlier sign-up or sign-in wrote. */
@@ -159,10 +175,10 @@ export class AgentClient {
    * Writes the account file: a sign-up must not overwrite one, a sign-in replaces it. Messages from
    * before this moment are history, not news to act on.
    */
-  private static async create(filePath: string, data: Omit<AccountFile, 'pins' | 'cursor' | 'allow'>, flag?: string) {
+  private static async create(filePath: string, data: Omit<AccountFile, 'pins' | 'cursor'>, flag?: string) {
     const api = new Api(data.server, data.cookie);
     const { cursor } = await api.request<BootstrapDTO>('GET', '/bootstrap');
-    const file: AccountFile = { ...data, pins: {}, cursor, allow: [] };
+    const file: AccountFile = { ...data, pins: {}, cursor };
     const client = new AgentClient(file, filePath, await importIdentity(file.secrets));
     await client.save(flag);
     return client;
@@ -174,29 +190,13 @@ export class AgentClient {
     await fs.writeFile(this.filePath, JSON.stringify(this.file, null, 2) + '\n', { flag, mode: 0o600 });
   }
 
-  /**
-   * Whether this account acts on what this person wrote: its own words, or those of someone its
-   * owner allowed. Usernames match in any case, as they do at sign-in.
-   */
-  trusts(userId: number | null) {
-    if (userId === this.id) return true;
-    const username = userId === null ? undefined : this.users.get(userId)?.username.toLowerCase();
-    return this.file.allow.some((name) => name.toLowerCase() === username);
-  }
-
-  /** Lets a person's run requests be carried out from now on. */
-  async allow(username: string) {
-    if (!this.file.allow.includes(username)) this.file.allow.push(username);
-    await this.save();
-  }
-
   /** A request that signs in again once when the session has ended, then keeps the new cookie. */
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     try {
       return await this.api.request<T>(method, path, body);
     } catch (error) {
       if (!(error instanceof ApiError) || error.status !== 401) throw error;
-      await this.api.request('POST', '/auth/login', { username: this.file.username, authKey: this.file.authKey, agent: true });
+      await this.api.request('POST', '/auth/login', { username: this.file.username, authKey: this.file.authKey });
       await this.save();
       return this.api.request<T>(method, path, body);
     }

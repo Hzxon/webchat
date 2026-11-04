@@ -199,12 +199,9 @@ function start(command: string, adapter: Adapter, briefPath: string, cwd: string
 /** What the agent is told: the card, the project's decisions, and how to finish. */
 async function briefFor(client: AgentClient, projectId: number, cardId: string, card: string, branch: string) {
   const boards = await client.boardDocs(projectId);
-  // Only what allowed people wrote goes into the prompt, as for the card (D-086).
+  // Every member's decisions: they are the team's, and the owner runs cards in this team (D-089).
   const decisions = boards.decisions
-    ? (await client.sections(boards.decisions))
-        .filter((s) => client.trusts(s.authorId))
-        .map((s) => s.text.trim())
-        .join('\n\n')
+    ? (await client.sections(boards.decisions)).map((s) => s.text.trim()).join('\n\n')
     : '';
   return [
     `You are working on card ${cardId} from the team's board. Implement or fix what it describes.`,

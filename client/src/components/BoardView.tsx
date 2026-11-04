@@ -72,8 +72,8 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
   const memberIds = useAppState((s) => s.projects[projectId]?.memberIds ?? NO_MEMBERS);
-  // The coding agents in the project (R-027). A card can be handed to one that is online.
-  const agents = useMemo(() => memberIds.map((id) => users[id]).filter((u): u is UserDTO => !!u?.agent), [memberIds, users]);
+  // This user's coding agents in the project (D-089). A card can be handed to one that is online and idle.
+  const agents = useMemo(() => memberIds.map((id) => users[id]).filter((u): u is UserDTO => !!u && u.agentOwner === meId), [memberIds, users, meId]);
   const [cards, setCards] = useState<Card[]>([]);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
@@ -242,7 +242,8 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                               </summary>
                               <div className="run-menu-list">
                                 {agents.map((agent) => (
-                                  <button key={agent.id} onClick={() => run(handOver(card, agent))} disabled={!agent.online || agent.busy}>
+                                  // A card someone is editing would run as half of what they mean.
+                                  <button key={agent.id} onClick={() => run(handOver(card, agent))} disabled={!agent.online || agent.busy || !!lock}>
                                     {agent.displayName}
                                     {!agent.online ? <small> offline</small> : agent.busy && <small> busy</small>}
                                   </button>

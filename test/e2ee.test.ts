@@ -195,8 +195,11 @@ describe('end-to-end encryption', () => {
       const envelope = await encryptMessage(key, keyId, alice.identity.signPrivate, meta, { text: 'Run K-12', run: run as RunDTO });
       return (await decryptContent(key, alice.identity.publicKeys.sign, meta, envelope)).run;
     };
-    const request = { kind: 'request', card: 'K-12', title: 'Bad keys', docId: 'd'.repeat(22), section: 's'.repeat(11), runtime: 7 };
+    const unsigned = { kind: 'request', card: 'K-12', title: 'Bad keys', docId: 'd'.repeat(22), section: 's'.repeat(11), runtime: 7 };
+    const request = { ...unsigned, sentAt: 1_790_000_000_000 };
     assert.deepEqual(await open(request), request);
+    // A request without a good time still shows; the agent refuses to run it (D-089).
+    assert.deepEqual(await open({ ...unsigned, sentAt: 'now' }), unsigned);
     const done = { kind: 'done', request: 42, branch: 'agent/k12-bad-keys', pull: { repo: 'acme/app', number: 9 }, note: 'Two files.' };
     assert.deepEqual(await open(done), done);
     assert.deepEqual(await open({ kind: 'failed', request: 42, pull: { repo: 'acme/app', number: 'nine' } }), { kind: 'failed', request: 42 });

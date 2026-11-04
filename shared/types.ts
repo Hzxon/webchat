@@ -19,8 +19,8 @@ export interface UserDTO {
   online: boolean;
   lastSeen: number | null;
   keys: PublicKeysDTO | null;
-  /** A coding agent's account, run by a daemon (R-027, D-085). Cards can be run with it. */
-  agent: boolean;
+  /** For a coding agent's account (R-027, D-085), the person it runs cards for (D-089). */
+  agentOwner: number | null;
   /** An agent running a card now. The board offers a card only to agents that are not. */
   busy: boolean;
   /** The account was deleted (R-028). It stays listed so its old messages keep their sender's name. */
@@ -198,16 +198,16 @@ export interface RegisterInput {
   authKey: string;
   inviteCode: string;
   keys: AccountKeysInput;
-  /** True for a coding agent's account (R-027). */
-  agent?: boolean;
+  /** For a coding agent's account: the username of the person it runs cards for (D-089). */
+  owner?: string;
 }
 
 export interface LoginInput {
   username: string;
   /** Derived from the password in the browser or the daemon. */
   authKey: string;
-  /** Sent by the daemon: the account is a coding agent's, whenever it was made (R-027, K-41). */
-  agent?: boolean;
+  /** Sent by the daemon: the account is this person's coding agent, whenever it was made (K-41, D-089). */
+  owner?: string;
 }
 
 export interface LoginResponse {
@@ -456,6 +456,11 @@ export interface RunRequest {
   section: string;
   /** The agent account asked to run it. */
   runtime: number;
+  /**
+   * When the owner's page sent it. Signed, unlike the server's time, so an old request cannot be
+   * played again as new (K-42). The agent refuses a request without it, from before D-089.
+   */
+  sentAt?: number;
 }
 
 export interface RunReport {

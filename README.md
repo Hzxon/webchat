@@ -150,8 +150,8 @@ What it does not protect against:
   (the roadmap's R-027) has an account of its own, and the daemon behind it keeps that account's
   private keys and session in `~/.webchat/<name>/account.json`, readable only by its owner but
   not encrypted. Anyone who can read that file can read what the agent's projects write. The
-  server knows which accounts are agents and when one is busy with a card, and sees a run as
-  messages like any other.
+  server knows which accounts are agents, whose agent each one is, and when one is busy with a
+  card, and sees a run as messages like any other.
 - **People who leave keep the keys they had.** Someone who left or was removed could still read the
   messages from before, if they got them another way, for example from a copy of the database.
   Everything sent after they left uses a new key they never get.
@@ -409,26 +409,30 @@ WebChat tab is open.
 
 ## Run board cards with a coding agent
 
-A project can hand an issue or idea card on its board to a coding agent that one of you runs on
-your own machine, such as Claude Code. The agent gets an account of its own, and you decide who
-may hand it cards.
+You can hand an issue or idea card on your project's board to a coding agent that you run on
+your own machine, such as Claude Code. The agent gets an account of its own, and runs only the
+cards you hand it.
 
-1. Sign the agent up, from a checkout of WebChat on the machine that holds your project's
-   repository: `npm run agent -- signup https://your-webchat.example claude_code <invite code>`.
-   Its keys stay in `~/.webchat/claude_code/account.json`, which only you can read.
-2. Add the agent to your project from the Add people dialog, like a teammate.
-3. Say who may hand it cards: `npm run agent -- allow claude_code alice`.
+1. Sign the agent up as yours, from a checkout of WebChat on the machine that holds your project's
+   repository: `npm run agent -- signup https://your-webchat.example claude_code <invite code> alice`,
+   where `alice` is your username. Its keys stay in `~/.webchat/claude_code/account.json`, which
+   only you can read. An agent account that already exists signs in instead:
+   `npm run agent -- login https://your-webchat.example claude_code alice`.
+2. Both print a security code. Open a direct chat with the agent and check that it shows the same.
+3. Add the agent to your project from the Add people dialog, like a teammate.
 4. Name the project's repository in `~/.webchat/claude_code/config.json`:
    `{ "projects": { "Capstone": "/home/you/dev/capstone" } }`. Add `"agent": "codex"` or
    `"agent": "hermes"` there to run one of those instead of Claude Code.
-5. Keep it running: `npm run agent -- watch claude_code`.
+5. Keep it running: `npm run agent -- watch claude_code`. It lists your projects and the
+   repository it found for each.
 
-On a roadmap card, the play button lists the agents in the project that are online. The request
-and the agent's reports show as one card in #general. Each run gets a git worktree on a branch
-named after the card, under `~/.webchat/claude_code/runs`, and ends in a draft pull request when
-`gh` is signed in on that machine. The agent runs with your git and GitHub credentials, so allow
-only people whose cards you would run yourself. It runs a card only when one of them, or the
-agent, saved it last.
+On a roadmap card, the play button lists your agents in the project. The request and the agent's
+reports show as one card in #general, so your team sees who is on what. The agent reads the card
+as it is on the board, whoever wrote it, and the board's decisions. Each run gets a git worktree
+on a branch named after the card, under `~/.webchat/claude_code/runs`, and ends in a draft pull
+request when `gh` is signed in on that machine. The agent runs with your git and GitHub
+credentials, so run only cards you would do yourself. Handing a card to a teammate's agent comes
+later (R-029).
 
 ## Self-hosting instead
 
