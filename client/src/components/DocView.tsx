@@ -6,7 +6,6 @@ import { ApiError } from '../api';
 import { saveDraft, syncNow } from '../chat';
 import {
   beginEditing,
-  deleteDoc,
   draftName,
   lineDiff,
   loadSections,
@@ -25,7 +24,7 @@ import { keyedQueue } from '../queue';
 import { actions, senderName, useAppState } from '../store';
 import { Dialog } from './Dialog';
 import { formatAgo, formatListTime } from './format';
-import { BackIcon, FileIcon, HistoryIcon, PencilIcon, PlusIcon, PrinterIcon, TrashIcon } from './icons';
+import { BackIcon, FileIcon, HistoryIcon, PencilIcon, PlusIcon, PrinterIcon } from './icons';
 import { Markdown } from './Markdown';
 
 // A section's saves go out one at a time, so an older one never lands after a newer one.
@@ -38,7 +37,6 @@ export function DocView({ doc }: { doc: ChatDoc }) {
   const [sections, setSections] = useState<DocSection[] | null>(null);
   const [error, setError] = useState('');
   const [editing, setEditingSection] = useState<Editing | null>(null);
-  const [renaming, setRenaming] = useState(false);
   const [historyOf, setHistoryOf] = useState<DocSection | null>(null);
 
   // Every save grows the version, so the sections load again whenever anyone saves.
@@ -56,7 +54,6 @@ export function DocView({ doc }: { doc: ChatDoc }) {
 
   const nameOf = (id: number) => (id === meId ? 'You' : senderName(users, id));
   const lockOf = (section: string) => doc.locks.find((l) => l.section === section && l.userId !== meId);
-  const canDelete = doc.createdBy === meId || project?.ownerId === meId;
   const list = sections ?? [];
   const words = useMemo(() => wordCount(list.map((s) => s.text)), [sections]);
 
@@ -74,15 +71,6 @@ export function DocView({ doc }: { doc: ChatDoc }) {
     const before = list[index]?.pos ?? 0;
     const after = list[index + 1]?.pos;
     void edit(newSectionId(), '', after === undefined ? before + 1 : (before + after) / 2, true);
-  }
-
-  async function remove() {
-    if (!confirm(`Delete “${doc.name}” for everyone in ${project?.name ?? 'the project'}? This cannot be undone.`)) return;
-    try {
-      await deleteDoc(doc.id);
-    } catch (err) {
-      setError((err as Error).message);
-    }
   }
 
   // A new section shows in its place while it is written, before its first save.
@@ -107,17 +95,9 @@ export function DocView({ doc }: { doc: ChatDoc }) {
           </span>
         </div>
         <div className="header-end">
-          <button className="icon-button" onClick={() => setRenaming(true)} title="Rename" aria-label="Rename">
-            <PencilIcon />
-          </button>
           <button className="icon-button" onClick={() => print()} title="Export to PDF" aria-label="Export to PDF">
             <PrinterIcon />
           </button>
-          {canDelete && (
-            <button className="icon-button" onClick={() => void remove()} title="Delete doc" aria-label="Delete doc">
-              <TrashIcon />
-            </button>
-          )}
         </div>
       </header>
       <div className="doc-scroll">
@@ -183,7 +163,6 @@ export function DocView({ doc }: { doc: ChatDoc }) {
           )}
         </article>
       </div>
-      {renaming && <RenameDialog doc={doc} onClose={() => setRenaming(false)} />}
       {historyOf && <HistoryDialog doc={doc} section={historyOf} nameOf={nameOf} onClose={() => setHistoryOf(null)} />}
     </section>
   );
@@ -292,7 +271,8 @@ export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing
   );
 }
 
-function RenameDialog({ doc, onClose }: { doc: ChatDoc; onClose: () => void }) {
+/** Opened by the pencil next to the doc's name in the sidebar. */
+export function RenameDialog({ doc, onClose }: { doc: ChatDoc; onClose: () => void }) {
   const [name, setName] = useState(doc.name);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
