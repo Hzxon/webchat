@@ -1,6 +1,6 @@
 // The agent daemon's command line (R-027): an account that signs up, signs in, and watches its chats
-// for cards that the teammates it allows hand to it. Until an adapter runs a coding agent (step 3
-// of the item), every request is reported as failed.
+// for cards that the teammates it allows hand to it, which it runs with the coding agent on this
+// machine. `config.json` next to the account file names each project's repository (D-087).
 //
 //   npm run agent -- signup <server> <username> <invite-code>
 //   npm run agent -- login <server> <username>
@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { AgentClient, type OpenedMessage } from './client.ts';
+import { createRunner, loadRunnerConfig } from './runner.ts';
 import { Runs } from './runs.ts';
 
 const home = process.env.WEBCHAT_AGENT_HOME ?? path.join(os.homedir(), '.webchat');
@@ -55,9 +56,8 @@ async function main([command, ...args]: string[]) {
       const [username] = args;
       if (!username) throw new Error('usage: watch <username>');
       const client = await AgentClient.load(fileFor(username));
-      const runs = new Runs(client, async () => {
-        throw new Error('This runtime has no coding agent yet.');
-      });
+      const dir = path.dirname(fileFor(username));
+      const runs = new Runs(client, createRunner(await loadRunnerConfig(dir), client, path.join(dir, 'runs')));
       const stop = new AbortController();
       for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => stop.abort());
       const print = (message: OpenedMessage) => {
