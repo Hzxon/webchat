@@ -182,8 +182,7 @@ Done when: a comment-only review on the fake GitHub becomes an event, and a test
 ### R-022: Rebrand, step 1: a work-tool palette and type
 
 Status: In progress on branch `claude/r022-work-tool-palette` (D-083). First of two steps that
-move WebChat from a WhatsApp look to a Slack-like workspace (R-022 and R-023). Do them in order;
-each is its own pull request.
+move WebChat from a WhatsApp look to a Slack-like workspace (R-022 and R-023).
 
 Why: the features are for serious project work, but the page looks like a consumer messenger.
 `client/src/styles.css` copies WhatsApp's palette (`--accent: #00a884`, `--bubble-out: #d9fdd3`,
@@ -208,7 +207,7 @@ modes and both widths, and the owner has approved screenshots.
 ### R-023: Rebrand, step 2: a linear message feed instead of bubbles
 
 Status: Dropped on 2026-11-05. #78 built it and reached main, and the owner reverted it: they
-prefer bubbles to a linear feed. D-084 is reverted. The later steps do not depend on this one.
+prefer bubbles to a linear feed. D-084 is reverted.
 
 Why: left and right bubbles with a colored own-message bubble are the strongest messenger signal
 on the page. Work tools show one feed, with everyone's messages aligned the same way.
