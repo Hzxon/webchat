@@ -15,7 +15,7 @@ const run = promisify(execFile);
 
 /** What `config.json` next to the account file holds. */
 export interface RunnerConfig {
-  /** Which coding agent to start. Only Claude Code so far. */
+  /** Which coding agent to start: "claude", "codex" or "hermes". Claude Code by default. */
   agent?: keyof typeof ADAPTERS;
   /** The agent's executable, when it is not on the PATH under its usual name. */
   command?: string;
@@ -37,7 +37,16 @@ interface Adapter {
   result(line: string): Final | undefined;
 }
 
-const ADAPTERS = {
+const parse = (line: string): Record<string, unknown> | null => {
+  try {
+    return JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+};
+
+/** Each one started headless in the worktree, with edits allowed and the final word read from its JSON lines. */
+export const ADAPTERS = {
   claude: {
     command: 'claude',
     // The brief goes by file, not by argument: it can be long, and arguments show in `ps`. Edits need
@@ -64,12 +73,39 @@ const ADAPTERS = {
       'Grep',
     ],
     result: (line) => {
-      try {
-        const event = JSON.parse(line) as { type?: string; result?: string; is_error?: boolean };
-        return event.type === 'result' ? { text: String(event.result ?? ''), error: event.is_error === true } : undefined;
-      } catch {
-        return undefined;
-      }
+      const event = parse(line) as { type?: string; result?: string; is_error?: boolean } | null;
+      return event?.type === 'result' ? { text: String(event.result ?? ''), error: event.is_error === true } : undefined;
+    },
+  } satisfies Adapter,
+  codex: {
+    command: 'codex',
+    // Codex's own sandbox keeps writes inside the worktree; the network is open so it can push.
+    args: (briefPath) => [
+      'exec',
+      '--json',
+      '--ask-for-approval',
+      'never',
+      '--sandbox',
+      'workspace-write',
+      '-c',
+      'sandbox_workspace_write.network_access=true',
+      `Read the brief in ${briefPath} and do what it says.`,
+    ],
+    // The last message the agent wrote is its final word, unless the turn failed.
+    result: (line) => {
+      const event = parse(line) as { type?: string; item?: { type?: string; text?: string }; error?: { message?: string } } | null;
+      if (event?.type === 'turn.failed') return { text: String(event.error?.message ?? ''), error: true };
+      if (event?.type === 'item.completed' && event.item?.type === 'agent_message') return { text: String(event.item.text ?? ''), error: false };
+      return undefined;
+    },
+  } satisfies Adapter,
+  hermes: {
+    command: 'hermes',
+    // One answer and exit, with its approval prompts off, since nobody is there to answer them.
+    args: (briefPath) => ['chat', '--oneshot', '--quiet', '--yolo', '--format', 'stream-json', '--query-file', briefPath],
+    result: (line) => {
+      const event = parse(line) as { type?: string; text?: string; exit_code?: number } | null;
+      return event?.type === 'result' ? { text: String(event.text ?? ''), error: event.exit_code !== 0 } : undefined;
     },
   } satisfies Adapter,
 };
