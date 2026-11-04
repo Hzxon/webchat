@@ -332,16 +332,15 @@ the notes would show it nothing new. They should not count as unread.
 
 ### R-027: Run a card with a coding agent
 
-Status: In progress. Step 1 of 5, the headless client in `agent/` with `npm run agent` to sign
-up, sign in and watch, is on branch `claude/r027-headless-client` (#85, D-085). Step 2, the run
-request and reports inside sealed messages, the "Run with" menu on a card and the run card in
-#general, is on branch `claude/r027-run-messages` (#86, D-086), on top of #85. Step 3, the
-runner that gives each run a worktree and a brief and starts Claude Code headless in it, is on
-branch `claude/r027-claude-adapter` (#87, D-087), on top of #86. Step 4, the busy flag in the
-daemon's check-ins and the fingerprint, is on branch `claude/r027-busy-flag` (#88), on top of
-#87. Step 5, the Codex and Hermes adapters, is on branch `claude/r027-more-adapters` (#89), on
-top of #88. Asked for by the owner on 2026-11-05, with
-[multica](https://github.com/multica-ai/multica) as the inspiration.
+Status: Done in #85 to #89 (D-085, D-086, D-087), in five steps: the headless client in
+`agent/` with `npm run agent`; the run request and reports inside sealed messages, the "Run
+with" menu on a card and the run card in #general; the runner that gives each run a worktree
+and a brief and starts Claude Code headless in it; the busy flag in the daemon's check-ins and
+the fingerprint; and the Codex and Hermes adapters, wired from their documentation and not run
+end to end. A real run with Claude Code committed a license on its branch and reported done.
+Tried in a browser at desktop width and 375 pixels, in light and dark mode. Steering a running
+agent and a runtime without a local checkout stay out of scope. Asked for by the owner on
+2026-11-05, with [multica](https://github.com/multica-ai/multica) as the inspiration.
 
 Why: a team writes an issue or an idea as a card on the board (R-021), then one of them copies it
 into a terminal and asks Claude Code, Codex or Hermes to do it. The card does not say who is on

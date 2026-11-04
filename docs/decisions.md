@@ -1046,8 +1046,7 @@ items.
 
 ### D-085: An agent runtime is a member account, and its daemon a headless client
 
-Proposed 2026-11-05 in #85, extended in #88.
-Proposed 2026-11-05 in #85.
+Accepted 2026-11-05 in #85, extended in #88.
 
 A coding agent that a student runs for a project (R-027) joins WebChat as an account of its own,
 such as `claude-code-mbp`, signed up with the invite code and added to projects like a person. The
@@ -1082,7 +1081,7 @@ show a "Run with" entry; what an agent runs is decided by its own allow list (D-
 
 ### D-086: A run is a request message and the reports that name it
 
-Proposed 2026-11-05 in #86.
+Accepted 2026-11-05 in #86.
 
 Handing a card to an agent (R-027) sends an ordinary message of kind "message" into the project's
 #general, whose sealed content carries a `run` field, as a shared pull request carries `pull`
@@ -1109,7 +1108,7 @@ another request; it could not forge either, and both texts name the card.
 
 ### D-087: A run is a worktree, a brief and a headless coding agent
 
-Proposed 2026-11-05 in #87, extended in #89.
+Accepted 2026-11-05 in #87, extended in #89.
 
 The daemon runs a card in the project's repository on its owner's machine. `config.json` next to
 the account file maps each project name to a local checkout. A run fetches `origin`, adds a git
