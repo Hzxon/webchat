@@ -207,7 +207,8 @@ modes and both widths, and the owner has approved screenshots.
 
 ### R-023: Rebrand, step 2: a linear message feed instead of bubbles
 
-Status: In progress on branch `claude/r023-linear-feed` (#78). Depends on R-022.
+Status: Dropped on 2026-11-05. #78 built it and reached main, and the owner reverted it: they
+prefer bubbles to a linear feed. D-084 is reverted. The later steps do not depend on this one.
 
 Why: left and right bubbles with a colored own-message bubble are the strongest messenger signal
 on the page. Work tools show one feed, with everyone's messages aligned the same way.
