@@ -184,7 +184,6 @@ describe('agent client (R-027)', () => {
     await alice.sync();
     assert.equal(alice.users.get(bot.id)?.busy, false, 'idle again');
   });
-
   test('runs a card with the coding agent in a worktree of the project repository', async () => {
     // A repository with a remote, as a student's checkout has.
     const origin = path.join(home, 'origin.git');

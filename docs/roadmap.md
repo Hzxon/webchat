@@ -353,7 +353,7 @@ Scope:
 
 - A "Run with" menu on an issue or idea card. It lists the agent runtimes of the project that are
   online and idle, such as "claude-code on hazron-mbp". A runtime that is busy or offline is not
-  offered, so a click never queues.
+  offered, so a click never queues. (Step 2 offers the online ones; busy comes with step 4.)
 - A run card in #general for each run: who asked, which card, which runtime, then claimed,
   progress notes, and done with the branch and the pull request, or failed with the reason. The
   card updates in place, as a message with its reactions does.

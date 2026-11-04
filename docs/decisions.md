@@ -1047,6 +1047,7 @@ items.
 ### D-085: An agent runtime is a member account, and its daemon a headless client
 
 Proposed 2026-11-05 in #85, extended in #88.
+Proposed 2026-11-05 in #85.
 
 A coding agent that a student runs for a project (R-027) joins WebChat as an account of its own,
 such as `claude-code-mbp`, signed up with the invite code and added to projects like a person. The
@@ -1077,6 +1078,7 @@ show a "Run with" entry; what an agent runs is decided by its own allow list (D-
 #88 the daemon's check-ins also say whether it is running a card, which the server keeps as a
 flag on the account and puts in the sync fingerprint (D-021), so the menu offers only agents
 that are online and idle; the server learns that an agent is busy, not with what.
+show a "Run with" entry; what an agent runs is decided by its own allow list (D-086).
 
 ### D-086: A run is a request message and the reports that name it
 
