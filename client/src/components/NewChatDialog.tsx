@@ -22,6 +22,7 @@ export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode
   const people = useMemo(() => {
     const q = query.trim().toLowerCase();
     return Object.values(users)
+      .filter((u) => !u.deleted)
       .filter((u) => !q || u.displayName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q))
       .sort((a, b) => Number(b.online) - Number(a.online) || a.displayName.localeCompare(b.displayName));
   }, [users, query]);

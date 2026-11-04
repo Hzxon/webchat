@@ -43,6 +43,8 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
   or the phone locked, the notification rings again every 15 seconds until they open the chat.
 - Unread count in the tab title, favicon, and the app badge of an installed app.
 - Invite-code sign-up, so only people you give the code to can join, with one account per device.
+  You can delete your account from the sidebar: you leave every chat, your direct chats are deleted
+  for both people, and your name and device are free for a new account.
 - **GitHub pull requests**: connect your GitHub account to see the pull requests waiting for your
   review and how your own are doing, with alerts when they change, and share one into a chat as a
   card that names its reviewers. A project can link its repositories through the WebChat GitHub App,

@@ -1091,6 +1091,13 @@ export async function sessionExpired() {
   await endSession();
 }
 
+/** Deletes the account on the server (R-028), then ends the session here as signing out does. */
+export async function deleteAccount() {
+  await api.deleteAccount();
+  await endSession();
+  announceAccountChange();
+}
+
 export async function signOut() {
   sendAwayBeacon(tabId);
   await forgetPushOnServer();

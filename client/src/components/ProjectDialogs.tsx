@@ -318,7 +318,7 @@ export function AddPeopleDialog({ target, onClose }: { target: MembersTarget; on
     const q = query.trim().toLowerCase();
     const members = new Set(chat?.memberIds ?? []);
     return Object.values(users)
-      .filter((u) => !members.has(u.id))
+      .filter((u) => !members.has(u.id) && !u.deleted)
       .filter((u) => !q || u.displayName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q))
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
   }, [users, chat, query]);

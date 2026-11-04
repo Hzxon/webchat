@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { ProjectDTO } from '../../../shared/types';
 import { sound } from '../alerts';
-import { openConversation, previewText, signOut } from '../chat';
+import { deleteAccount, openConversation, previewText, signOut } from '../chat';
 import { deleteDoc } from '../docs';
 import type { ChatConversation, ChatDoc } from '../e2ee/keyring';
 import { actions, chatTitle, otherMemberId, senderName, useAppState } from '../store';
@@ -99,6 +99,16 @@ export function Sidebar(props: SidebarProps) {
   if (!me) return null;
   const notificationsReady = push?.permission === 'granted';
 
+  async function removeAccount() {
+    const warning = 'You leave every project and group, your direct chats are deleted for both people, and your username is freed.';
+    if (!confirm(`Delete your account? ${warning} This cannot be undone.`)) return;
+    try {
+      await deleteAccount();
+    } catch (err) {
+      actions.addToast({ conversationId: null, title: 'Delete account', body: (err as Error).message });
+    }
+  }
+
   return (
     <aside className="sidebar">
       <header className="sidebar-header">
@@ -126,6 +136,9 @@ export function Sidebar(props: SidebarProps) {
         </button>
         <button className="icon-button" onClick={() => void signOut()} title="Sign out" aria-label="Sign out">
           <LogoutIcon />
+        </button>
+        <button className="icon-button" onClick={() => void removeAccount()} title="Delete account" aria-label="Delete account">
+          <TrashIcon />
         </button>
       </header>
 

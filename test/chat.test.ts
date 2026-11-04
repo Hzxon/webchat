@@ -1885,6 +1885,41 @@ describe('chat server', () => {
     assert.equal(await db.setConversationKey(id, key.keyId, alice.id, key.wrappedKeys), 'stale');
   });
 
+  test('deleting an account leaves every chat, frees the name and the device, and blocks on what it owns (R-028)', async () => {
+    const frank = new Client(baseUrl, 'frank');
+    assert.equal((await frank.register()).status, 201);
+    const keyFor = (members: Client[]) => frank.newChatKey(members.map((c) => ({ id: c.id, keys: keysOf(c) })));
+    const direct = await frank.request<ConversationDTO>('POST', '/conversations/direct', { userId: alice.id, key: await keyFor([frank, alice]) });
+    const study = await frank.request<ConversationDTO>('POST', '/conversations/group', { title: 'Study', memberIds: [bob.id], key: await keyFor([frank, bob]) });
+    const thesis = await frank.request<CreateProjectResponse>('POST', '/projects', { name: 'Thesis', memberIds: [bob.id], key: await keyFor([frank, bob]) });
+
+    const owning = await frank.request<{ code?: string }>('DELETE', '/auth/account');
+    assert.equal(owning.status, 409);
+    assert.equal(owning.data.code, 'owner', 'a group or project with other people in it is handed over or deleted first');
+    assert.equal((await frank.request('PUT', `/conversations/${study.data.id}/owner`, { userId: bob.id })).status, 200);
+    assert.equal((await frank.request<{ code?: string }>('DELETE', '/auth/account')).data.code, 'owner', 'the project still blocks it');
+    assert.equal((await frank.request('PUT', `/projects/${thesis.data.project.id}/owner`, { userId: bob.id })).status, 200);
+    assert.equal((await frank.request('DELETE', '/auth/account')).status, 204);
+    const deletedId = frank.id;
+
+    assert.equal((await frank.request('GET', '/bootstrap')).status, 401, 'the session ended');
+    assert.equal((await frank.login()).status, 401, 'nobody signs in to a deleted account');
+    assert.equal((await frank.register()).status, 201, 'the name is free again, and so is the device');
+
+    // Bob stays in the group and the project, which need new keys. Alice's direct chat is gone.
+    const bobView = (await bob.request<BootstrapDTO>('GET', '/bootstrap')).data;
+    const studyLeft = bobView.conversations.find((c) => c.id === study.data.id)!;
+    assert.deepEqual(memberIdsOf(studyLeft), [bob.id]);
+    assert.equal(studyLeft.needsNewKey, true);
+    assert.equal(bobView.conversations.find((c) => c.id === thesis.data.channel.id)!.needsNewKey, true);
+    assert.deepEqual(bobView.projects.find((p) => p.id === thesis.data.project.id)!.memberIds, [bob.id]);
+    const { deleted, displayName, keys } = bobView.users.find((u) => u.id === deletedId)!;
+    assert.deepEqual({ deleted, displayName, keys }, { deleted: true, displayName: 'Deleted account', keys: null });
+    const addBack = await bob.request<{ error?: string }>('POST', `/conversations/${study.data.id}/members`, { userIds: [deletedId] });
+    assert.equal(addBack.data.error, 'Person not found.', 'a deleted account cannot be added to a chat');
+    assert.ok(!(await alice.request<BootstrapDTO>('GET', '/bootstrap')).data.conversations.some((c) => c.id === direct.data.id));
+  });
+
   test('logout ends the session', async () => {
     assert.equal((await carol.request('POST', '/auth/logout')).status, 204);
     assert.equal((await carol.request('GET', '/bootstrap')).status, 401);
