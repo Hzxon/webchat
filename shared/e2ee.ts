@@ -519,6 +519,8 @@ export interface DocContent {
   pos?: number;
   /** A section someone deleted. Its earlier revisions stay in its history. */
   removed?: boolean;
+  /** On a title: this doc is a column of the project board, and its sections are cards (R-021). */
+  board?: 'decisions' | 'roadmap';
 }
 
 const docHeader = (meta: DocMeta, keyId: string) =>
@@ -534,6 +536,7 @@ export async function decryptDoc(chatKey: CryptoKey, authorSignPublic: string, m
   const content: DocContent = { text: raw.text };
   if (typeof raw.pos === 'number' && Number.isFinite(raw.pos)) content.pos = raw.pos;
   if (raw.removed === true) content.removed = true;
+  if (raw.board === 'decisions' || raw.board === 'roadmap') content.board = raw.board;
   return content;
 }
 

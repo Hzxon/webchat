@@ -1,52 +1,63 @@
+/* A work tool's look: neutral grays, one indigo accent, a tinted sidebar and flat panels. See D-083. */
 :root {
-  --bg: #e9edf0;
+  --bg: #f4f4f5;
   --panel: #ffffff;
-  --panel-2: #f5f7f8;
-  --hover: #eef1f3;
-  --line: #e1e5e8;
-  --text: #111b21;
-  --muted: #667781;
-  --accent: #00a884;
-  --accent-strong: #008f6f;
-  --accent-soft: #d8f5ec;
+  --panel-2: #f7f7f8;
+  --hover: #f1f1f3;
+  --line: #e4e4e7;
+  --text: #18181b;
+  --muted: #6a6a73;
+  --accent: #4f46e5;
+  --accent-strong: #4338ca;
+  --accent-soft: #e6e6fc;
   --on-accent: #ffffff;
-  --chat-bg: #eef2f4;
-  --bubble-in: #ffffff;
-  --bubble-out: #d9fdd3;
-  --read: #2b8ef0;
+  --chat-bg: #ffffff;
+  --read: #2563eb;
+  --ok: #15803d;
+  --ok-soft: #dcfce7;
   --danger: #d92d20;
   --danger-soft: #fdecea;
   --warn: #b54708;
   --warn-soft: #fff4e5;
-  --shadow: 0 1px 2px rgb(11 20 26 / 0.08), 0 4px 16px rgb(11 20 26 / 0.06);
-  --quote-bg: rgb(11 20 26 / 0.05);
-  --quote-hover: rgb(11 20 26 / 0.09);
-  --radius: 10px;
+  --sidebar: #f2f2f6;
+  --sidebar-2: #ffffff;
+  --sidebar-hover: #e6e6ee;
+  /* Only what floats over the page casts a shadow: dialogs, toasts and the reaction tray. */
+  --shadow: 0 4px 12px rgb(0 0 0 / 0.08), 0 12px 32px rgb(0 0 0 / 0.12);
+  --backdrop: rgb(9 9 11 / 0.5);
+  --quote-bg: rgb(24 24 27 / 0.05);
+  --quote-hover: rgb(24 24 27 / 0.09);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius: 6px;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0b1418;
-    --panel: #111b21;
-    --panel-2: #172229;
-    --hover: #1d2a31;
-    --line: #233138;
-    --text: #e9edef;
-    --muted: #8696a0;
-    --accent: #21c08b;
-    --accent-strong: #1aa97a;
-    --accent-soft: #123b32;
-    --on-accent: #06281f;
-    --chat-bg: #0b1418;
-    --bubble-in: #1f2c34;
-    --bubble-out: #005c4b;
-    --read: #53bdeb;
+    --bg: #09090b;
+    --panel: #141416;
+    --panel-2: #1c1c1f;
+    --hover: #222226;
+    --line: #2a2a2e;
+    --text: #ececef;
+    --muted: #9b9ba6;
+    --accent: #818cf8;
+    --accent-strong: #a5b4fc;
+    --accent-soft: #25264a;
+    --on-accent: #0f0f2a;
+    --chat-bg: #141416;
+    --read: #60a5fa;
+    --ok: #4ade80;
+    --ok-soft: #143020;
     --danger: #f04438;
     --danger-soft: #3b1715;
     --warn: #fdb022;
     --warn-soft: #33260c;
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 20px rgb(0 0 0 / 0.35);
+    --sidebar: #1a1a20;
+    --sidebar-2: #24242b;
+    --sidebar-hover: #2a2a33;
+    --shadow: 0 4px 12px rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.45);
+    --backdrop: rgb(0 0 0 / 0.6);
     --quote-bg: rgb(255 255 255 / 0.06);
     --quote-hover: rgb(255 255 255 / 0.1);
     color-scheme: dark;
@@ -73,7 +84,7 @@ html {
 body {
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.4 system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font: 14px/1.35 system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -166,7 +177,7 @@ a {
   width: 40px;
   height: 40px;
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--muted);
   flex: none;
@@ -213,7 +224,7 @@ a {
 .segmented button {
   border: 0;
   background: transparent;
-  border-radius: 7px;
+  border-radius: 4px;
   padding: 8px 10px;
   color: var(--muted);
   font-weight: 600;
@@ -222,7 +233,7 @@ a {
 .segmented button[aria-selected='true'] {
   background: var(--panel);
   color: var(--text);
-  box-shadow: var(--shadow);
+  box-shadow: 0 0 0 1px var(--line);
 }
 
 /* Auth and splash */
@@ -241,9 +252,7 @@ a {
   place-items: center;
   min-height: 100%;
   padding: 24px 16px;
-  background:
-    linear-gradient(180deg, var(--accent) 0 220px, transparent 220px),
-    var(--bg);
+  background: var(--bg);
 }
 
 .auth-card {
@@ -251,9 +260,9 @@ a {
   display: grid;
   gap: 20px;
   padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--panel);
-  border-radius: 14px;
-  box-shadow: var(--shadow);
 }
 
 .auth-brand {
@@ -331,14 +340,14 @@ a {
   /* viewport-fit=cover lets the page run under an iPhone's notch in landscape. */
   padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
   background: var(--panel);
-  box-shadow: var(--shadow);
+  box-shadow: 0 0 0 1px var(--line);
 }
 
 @media (min-width: 1640px) {
   .layout {
     height: calc(100% - 38px);
     margin-top: 19px;
-    border-radius: 6px;
+    border-radius: var(--radius);
     overflow: hidden;
   }
 }
@@ -350,6 +359,10 @@ a {
   flex-direction: column;
   min-width: 0;
   border-right: 1px solid var(--line);
+  /* The tint reaches every row, field and banner inside, because they read these same variables. */
+  --panel: var(--sidebar);
+  --panel-2: var(--sidebar-2);
+  --hover: var(--sidebar-hover);
   background: var(--panel);
 }
 
@@ -358,7 +371,7 @@ a {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
   min-height: 60px;
 }
 
@@ -466,6 +479,7 @@ a {
   gap: 10px;
   margin: 8px 12px;
   padding: 0 12px;
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
   color: var(--muted);
@@ -700,15 +714,11 @@ a {
   display: inline-grid;
   place-items: center;
   flex: none;
-  border-radius: 50%;
+  border-radius: var(--radius);
   color: #fff;
   font-weight: 700;
   letter-spacing: 0.02em;
   user-select: none;
-}
-
-.avatar-square {
-  border-radius: 9px;
 }
 
 .avatar-online {
@@ -718,7 +728,7 @@ a {
   width: 28%;
   height: 28%;
   border-radius: 50%;
-  background: #25d366;
+  background: var(--ok);
   border: 2px solid var(--panel);
 }
 
@@ -738,7 +748,7 @@ a {
   gap: 12px;
   min-height: 60px;
   padding: 10px 16px;
-  background: var(--panel-2);
+  background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
 
@@ -766,10 +776,9 @@ a {
 
 .messages {
   flex: 1;
-  /* On a phone the hidden tools of a wide bubble reach past the right edge and let the list slide sideways. */
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 16px 6% 12px;
+  padding: 12px 0;
   overscroll-behavior: contain;
 }
 
@@ -794,97 +803,155 @@ a {
   width: fit-content;
   margin: 14px auto 10px;
   padding: 4px 12px;
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--panel);
   color: var(--muted);
   font-size: 12.5px;
-  box-shadow: 0 1px 1px rgb(11 20 26 / 0.06);
 }
 
-.bubble-row {
-  display: flex;
-  flex-direction: column;
-  margin-top: 2px;
+/* The message feed: one column, the avatar in a gutter, nothing aligned right (D-084). */
+
+.message {
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  column-gap: 8px;
+  padding: 2px 16px 2px 12px;
 }
 
-.bubble-row.first {
+.message.first {
   margin-top: 10px;
 }
 
-.bubble-row.mine {
-  align-items: flex-end;
+@media (hover: hover) {
+  .message:hover {
+    background: var(--hover);
+  }
 }
 
-.bubble-row.theirs {
+.message.is-selected {
+  background: var(--hover);
+}
+
+.message.is-urgent {
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+.message-gutter {
+  display: flex;
+  flex-direction: column;
   align-items: flex-start;
 }
 
-/* The bubble plus its hover tools and reaction tray, which sit outside it. */
-.bubble-line {
-  position: relative;
-  display: flex;
-  max-width: min(75%, 640px);
+/* A grouped message shows its time where the avatar would be, only while the pointer rests on it. */
+.message-gutter .message-time {
+  align-self: flex-end;
+  padding-top: 4px;
+  opacity: 0;
+  font-size: 10.5px;
+  white-space: nowrap;
 }
 
-.bubble {
-  position: relative;
+@media (hover: hover) {
+  .message:hover .message-gutter .message-time {
+    opacity: 1;
+  }
+}
+
+.message.is-selected .message-gutter .message-time {
+  opacity: 1;
+}
+
+.message-body {
   display: grid;
   min-width: 0;
-  max-width: 100%;
-  padding: 6px 9px 7px;
-  border-radius: 9px;
-  background: var(--bubble-in);
-  box-shadow: 0 1px 1px rgb(11 20 26 / 0.08);
+  align-content: start;
   overflow-wrap: anywhere;
 }
 
-.mine .bubble {
-  background: var(--bubble-out);
-}
-
-.mine.first .bubble {
-  border-top-right-radius: 2px;
-}
-
-.theirs.first .bubble {
-  border-top-left-radius: 2px;
-}
-
-.bubble-urgent {
-  box-shadow: inset 3px 0 0 var(--danger), 0 1px 1px rgb(11 20 26 / 0.08);
-  padding-left: 13px;
-}
-
-.bubble-urgent-label {
+.message-head {
   display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.message-sender {
+  font-size: 14.5px;
+  font-weight: 700;
+}
+
+.message-time {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.message-flags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 1px 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.urgent-label {
+  display: inline-flex;
   align-items: center;
   gap: 4px;
   color: var(--danger);
-  font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0.03em;
 }
 
-.bubble-sender {
-  font-size: 13px;
-  font-weight: 600;
+/* Message text is Markdown, set tighter than a doc. */
+.message-text .markdown {
+  line-height: 1.45;
 }
 
-.bubble-text {
-  white-space: pre-wrap;
+.message-text .markdown p,
+.message-text .markdown ul,
+.message-text .markdown ol,
+.message-text .markdown blockquote,
+.message-text .markdown pre,
+.message-text .markdown-table {
+  margin: 4px 0;
 }
 
-.bubble-meta {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 3px;
-  margin-top: -2px;
-  margin-left: 24px;
+.message-text .markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.message-text .markdown h1,
+.message-text .markdown h2,
+.message-text .markdown h3,
+.message-text .markdown h4,
+.message-text .markdown h5,
+.message-text .markdown h6 {
+  margin: 8px 0 2px;
+  font-size: 15px;
+}
+
+.message-text .markdown h1 {
+  font-size: 18px;
+}
+
+.message-text .markdown h2 {
+  font-size: 16.5px;
+}
+
+.message-body .pull-card {
+  max-width: 560px;
+}
+
+/* Own messages keep their ticks, in a column at the feed's edge, until the read-tick question in R-023 is settled. */
+.message-status {
+  display: inline-flex;
+  align-self: start;
+  padding-top: 5px;
   color: var(--muted);
-  font-size: 11px;
-  /* The bubble breaks long words anywhere, and Safari broke the time in two when the ticks changed. */
-  white-space: nowrap;
 }
 
 .ticks {
@@ -896,18 +963,18 @@ a {
   color: var(--read);
 }
 
-/* Quoted replies */
+/* Quoted replies: a block quote above the message, in Slack's style. */
 
 .quote {
   display: grid;
   gap: 1px;
   min-width: 0;
   margin: 2px 0 4px;
-  padding: 5px 9px 6px;
+  padding: 2px 10px;
   border: 0;
   border-left: 4px solid;
-  border-radius: 6px;
-  background: var(--quote-bg);
+  border-radius: 0 4px 4px 0;
+  background: transparent;
   color: var(--text);
   font-size: 13.5px;
   text-align: left;
@@ -915,7 +982,7 @@ a {
 
 @media (hover: hover) {
   button.quote:hover {
-    background: var(--quote-hover);
+    background: var(--quote-bg);
   }
 }
 
@@ -934,46 +1001,40 @@ a {
   -webkit-line-clamp: 2;
 }
 
-.bubble-row.is-flash .bubble {
+.message.is-flash {
   animation: flash 1.6s ease-out;
 }
 
 @keyframes flash {
   0%,
   35% {
-    box-shadow: 0 0 0 3px var(--accent);
+    background: var(--accent-soft);
   }
   100% {
-    box-shadow: 0 0 0 3px transparent;
+    background: transparent;
   }
 }
 
-/* Message tools: react and reply. Desktop shows them on hover; phones open the tray with a tap. */
+/* Message tools: react and reply. Desktop shows them on hover at the edge; a long press opens the tray on phones. */
 
 .message-tools {
   position: absolute;
-  top: 50%;
+  top: -14px;
+  right: 16px;
+  z-index: 2;
   display: flex;
-  gap: 4px;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-50%);
   transition: opacity 0.12s;
 }
 
-.theirs .message-tools {
-  left: 100%;
-  padding-left: 6px;
-}
-
-.mine .message-tools {
-  right: 100%;
-  padding-right: 6px;
-  flex-direction: row-reverse;
-}
-
 @media (hover: hover) {
-  .bubble-row:hover .message-tools {
+  .message:hover .message-tools {
     opacity: 1;
     pointer-events: auto;
   }
@@ -987,42 +1048,34 @@ a {
 .tool-button {
   display: inline-grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: var(--bubble-in);
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
   color: var(--muted);
-  box-shadow: 0 1px 2px rgb(11 20 26 / 0.14);
 }
 
 @media (hover: hover) {
   .tool-button:hover {
-    border-color: var(--muted);
+    background: var(--hover);
     color: var(--text);
   }
 }
 
 .reaction-tray {
   position: absolute;
-  bottom: calc(100% + 6px);
+  right: 16px;
+  bottom: calc(100% + 14px);
   z-index: 3;
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 4px;
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--panel);
   box-shadow: var(--shadow), 0 0 0 1px var(--line);
   animation: tray-in 0.12s ease-out;
-}
-
-.theirs .reaction-tray {
-  left: 0;
-}
-
-.mine .reaction-tray {
-  right: 0;
 }
 
 @keyframes tray-in {
@@ -1036,7 +1089,7 @@ a {
   width: 38px;
   height: 38px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 4px;
   background: transparent;
   font-size: 22px;
   line-height: 1;
@@ -1063,7 +1116,7 @@ a {
   padding: 0 10px 0 12px;
   border: 0;
   border-left: 1px solid var(--line);
-  border-radius: 0 8px 8px 0;
+  border-radius: 0 4px 4px 0;
   background: transparent;
   color: var(--muted);
   font-size: 13.5px;
@@ -1077,21 +1130,13 @@ a {
   }
 }
 
-.bubble-row.is-selected .bubble {
-  box-shadow: 0 0 0 2px var(--accent);
-}
-
 /* Reaction chips under a message */
 
 .reactions {
-  position: relative;
-  z-index: 1;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  max-width: min(75%, 640px);
-  margin-top: -5px;
-  padding: 0 8px;
+  margin-top: 4px;
 }
 
 .reaction {
@@ -1101,12 +1146,11 @@ a {
   height: 24px;
   padding: 0 7px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--panel);
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
-  box-shadow: 0 1px 1px rgb(11 20 26 / 0.06);
 }
 
 @media (hover: hover) {
@@ -1154,7 +1198,7 @@ a {
 
 .composer {
   padding: 8px 12px max(8px, env(safe-area-inset-bottom));
-  background: var(--panel-2);
+  background: var(--panel);
   border-top: 1px solid var(--line);
 }
 
@@ -1173,7 +1217,6 @@ a {
 .composer-reply .quote {
   flex: 1;
   margin: 0;
-  background: var(--panel);
 }
 
 .composer-hint {
@@ -1194,7 +1237,7 @@ a {
   min-height: 42px;
   max-height: 150px;
   padding: 10px 14px;
-  border: 1px solid transparent;
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
   resize: none;
@@ -1217,7 +1260,7 @@ a {
   width: 42px;
   height: 42px;
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--radius);
   background: var(--accent);
   color: var(--on-accent);
 }
@@ -1233,7 +1276,6 @@ a {
   display: grid;
   place-items: center;
   padding: 24px;
-  border-bottom: 6px solid var(--accent);
 }
 
 .chat-empty-card {
@@ -1268,15 +1310,15 @@ a {
   width: min(440px, calc(100% - 32px));
   max-height: min(680px, calc(var(--visible-height, 100%) - 32px));
   padding: 0;
-  border: 0;
-  border-radius: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--panel);
   color: var(--text);
   box-shadow: var(--shadow);
 }
 
 .dialog::backdrop {
-  background: rgb(11 20 26 / 0.45);
+  background: var(--backdrop);
 }
 
 .dialog-body {
@@ -1388,7 +1430,7 @@ a {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 12px;
   word-break: break-all;
   user-select: all;
@@ -1427,7 +1469,7 @@ a {
 }
 
 .settings dd.ok {
-  color: var(--accent);
+  color: var(--ok);
 }
 
 .settings dd.warn {
@@ -1620,7 +1662,7 @@ a {
   gap: 6px;
   width: min(420px, 100%);
   padding: 28px 24px 22px;
-  border-radius: 16px;
+  border-radius: var(--radius);
   background: var(--panel);
   box-shadow: 0 20px 60px rgb(0 0 0 / 0.35);
   text-align: center;
@@ -1773,12 +1815,11 @@ a {
   }
 
   .messages {
-    padding: 12px 10px;
+    padding: 8px 0;
   }
 
-  .bubble-line,
-  .reactions {
-    max-width: 85%;
+  .message {
+    padding: 2px 10px 2px 8px;
   }
 }
 
@@ -1798,7 +1839,7 @@ a {
   margin: 4px auto 14px;
   padding: 7px 12px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--warn-soft);
   color: var(--warn);
   font-size: 12.5px;
@@ -1811,7 +1852,7 @@ a {
   margin-top: 1px;
 }
 
-.bubble-failed {
+.message-failed {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -1842,7 +1883,7 @@ a {
   flex: none;
   width: 48px;
   height: 48px;
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--accent);
   color: var(--on-accent);
 }
@@ -1882,7 +1923,7 @@ a {
   flex: none;
   width: 44px;
   height: 44px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   background: var(--text);
   color: var(--panel);
 }
@@ -1910,9 +1951,9 @@ a {
   gap: 10px;
   margin-top: 6vh;
   padding: 28px;
-  border-radius: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--panel);
-  box-shadow: var(--shadow);
   color: var(--muted);
   text-align: center;
 }
@@ -1934,7 +1975,7 @@ a {
   place-items: center;
   width: 56px;
   height: 56px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   background: var(--text);
   color: var(--panel);
 }
@@ -1967,13 +2008,13 @@ a {
 .github-count {
   min-width: 22px;
   padding: 0 6px;
-  border-radius: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--panel);
   color: var(--muted);
   font-size: 12.5px;
-  line-height: 20px;
+  line-height: 18px;
   text-align: center;
-  box-shadow: 0 1px 1px rgb(11 20 26 / 0.06);
 }
 
 .github-empty {
@@ -1988,9 +2029,9 @@ a {
   margin: 0;
   padding: 0;
   list-style: none;
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
-  box-shadow: 0 1px 2px rgb(11 20 26 / 0.08);
   overflow: hidden;
 }
 
@@ -2031,7 +2072,7 @@ a {
   justify-content: center;
   width: 38px;
   height: 38px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   background: var(--panel-2);
   color: var(--muted);
 }
@@ -2043,7 +2084,7 @@ a {
   min-width: 0;
   margin: 2px 0 4px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--quote-bg);
   color: var(--text);
   font-size: 13.5px;
@@ -2090,7 +2131,7 @@ a {
 .pull-icon {
   flex: none;
   margin-top: 1px;
-  color: var(--accent);
+  color: var(--ok);
 }
 
 .pull-icon.is-draft {
@@ -2132,8 +2173,8 @@ a {
 }
 
 .tag-ok {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  background: var(--ok-soft);
+  color: var(--ok);
 }
 
 .tag-danger {
@@ -2157,7 +2198,7 @@ a {
 }
 
 .pull-add {
-  color: var(--accent-strong);
+  color: var(--ok);
 }
 
 .pull-del {
@@ -2181,7 +2222,7 @@ a {
 }
 
 .activity-dot.tone-ok {
-  background: var(--accent);
+  background: var(--ok);
 }
 
 .activity-dot.tone-danger {
@@ -2217,9 +2258,9 @@ a {
   display: grid;
   gap: 12px;
   padding: 0 14px 14px;
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
-  box-shadow: 0 1px 2px rgb(11 20 26 / 0.08);
 }
 
 .github-settings .toggle-row {
@@ -2278,6 +2319,61 @@ a {
 
 .channel-add {
   font-size: 14px;
+}
+
+/* A doc's row: its name, then the menu of its actions at the row's right edge. */
+.doc-row {
+  display: flex;
+  align-items: center;
+  padding-right: 10px;
+}
+
+.doc-row .channel-item {
+  flex: 1;
+  min-width: 0;
+  padding-right: 6px;
+}
+
+.menu {
+  position: relative;
+  flex: none;
+}
+
+.menu-list {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 5;
+  min-width: 150px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.menu-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+@media (hover: hover) {
+  .menu-list button:hover {
+    background: var(--panel-2);
+  }
+}
+
+.menu-list .is-danger {
+  color: var(--danger);
 }
 
 .doc-dot {
@@ -2376,25 +2472,20 @@ a {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-.doc-editor-tabs {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.doc-editor-tabs .doc-note {
-  margin: 0 0 0 auto;
-}
-
 .doc-textarea {
   resize: vertical;
-  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 14px/1.5 var(--mono);
 }
 
 .doc-editor-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.doc-editor-actions .doc-note {
+  margin: 0 auto 0 0;
 }
 
 .template-list {
@@ -2481,7 +2572,7 @@ a {
 }
 
 .diff-added {
-  background: var(--accent-soft);
+  background: var(--ok-soft);
 }
 
 .diff-removed {
@@ -2559,7 +2650,7 @@ a {
   padding: 1px 5px;
   border-radius: 5px;
   background: var(--quote-bg);
-  font: 0.9em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 0.9em var(--mono);
 }
 
 .markdown pre {
@@ -2618,6 +2709,198 @@ a {
 
   .doc-section {
     padding: 6px 4px;
+  }
+}
+
+/* Project board (R-021): two columns of cards, which become tabs at phone width. */
+
+.board-view {
+  background: var(--panel);
+}
+
+.board-tabs {
+  display: none;
+  margin-left: auto;
+}
+
+.board-columns {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 0;
+}
+
+.board-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.board-column + .board-column {
+  border-left: 1px solid var(--line);
+}
+
+/* Both heads hold only the title and the copy button, so their bottom lines meet. */
+.board-column-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 60px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* The filter, where the column has one, and the new-card buttons at the right. */
+.board-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.board-filter {
+  margin-right: auto;
+}
+
+.board-filter button {
+  padding: 5px 12px;
+  font-size: 14px;
+}
+
+.board-column-head h2 {
+  margin: 0 auto 0 0;
+  font-size: 17px;
+}
+
+.board-column-head .doc-note {
+  margin: 0;
+}
+
+.board-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  font-size: 14px;
+}
+
+.board-cards {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px calc(24px + env(safe-area-inset-bottom));
+  overscroll-behavior: contain;
+}
+
+.board-cards .doc-editor {
+  margin-bottom: 12px;
+}
+
+.board-group summary {
+  margin: 10px 0 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.board-group small {
+  font-weight: 400;
+}
+
+.board-card {
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+
+.board-card.is-locked {
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+
+.board-card-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The title keeps a few words' width, so a long status wraps to its own line instead of squeezing it. */
+.board-card-head strong {
+  flex: 1 1 12em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.board-card-id {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.board-card-status {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.board-card-warn {
+  margin: 0;
+  padding: 4px 12px 8px;
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.board-card-body {
+  padding: 0 12px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.board-card-body .doc-section-tools {
+  margin-top: 6px;
+}
+
+@media (max-width: 760px) {
+  .board-tabs {
+    display: flex;
+  }
+
+  .board-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .board-column + .board-column {
+    border-left: 0;
+  }
+
+  .board-columns.shows-decisions .board-roadmap,
+  .board-columns.shows-roadmap .board-decisions {
+    display: none;
+  }
+
+  .board-column-head,
+  .board-cards {
+    padding-inline: 10px;
   }
 }
 

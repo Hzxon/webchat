@@ -97,7 +97,7 @@ export function openDocs(list: DocDTO[], conversations: ChatConversation[], keys
       .filter((d) => byId.has(d.conversationId))
       .map(async (d) => {
         const title = d.title && (await keyring.openDoc(d.title, byId.get(d.conversationId)!, keysOf));
-        return { ...d, name: title ? title.text || 'Untitled doc' : 'Doc that could not be decrypted' };
+        return { ...d, name: title ? title.text || 'Untitled doc' : 'Doc that could not be decrypted', board: title?.board };
       }),
   );
 }

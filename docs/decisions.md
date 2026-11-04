@@ -60,6 +60,27 @@ Cost: Vercel Hobby is for personal, non-commercial use. Supabase pauses a free p
 week without activity. Hobby cron jobs run only once a day (D-034). The free plan's limits are the
 reason for D-004.
 
+### D-083: A work tool's palette and type
+
+Proposed 2026-11-04 for R-022, the first step of the rebrand.
+
+The page drops WhatsApp's teal and green for neutral grays with one indigo accent (`#4f46e5` light,
+`#818cf8` dark). Success has its own green, `--ok`, so passed checks, added lines and the online dot
+no longer borrow the accent. The sidebar is tinted, and the content area is white, or near black in
+dark mode. The sidebar sets `--panel`, `--panel-2` and `--hover` to its own shades, so every row and
+field inside it follows without its own rule. Panels are flat: a 1px line, no shadow. Only what
+floats over the page casts one: dialogs, toasts and the reaction tray. Type is 14px with a 1.35 line
+height, code uses the `--mono` stack, and every corner, avatars included, has the 6px `--radius`.
+Small status dots stay round. The fonts stay the system's, so the page loads nothing from a font
+host.
+
+Why: the features are for project work, but the look said consumer messenger before anyone saw a
+project. Colors, type and shapes change in `styles.css` alone, so this step changes no behavior.
+
+Cost: people and projects now share one avatar shape. The favicon, the installed app's icon, the
+`theme-color` meta tag and one avatar color are still teal. R-026 replaces the icons. Bubbles stay
+until R-023.
+
 ## Architecture and hosting
 
 ### D-004: No open connections: check-ins and Web Push
@@ -781,6 +802,38 @@ Apple see a push every 15 seconds while it waits. A browser that is quit rings o
 again. Without pg_cron and pg_net on Vercel, the server logs why, and an urgent message rings once
 with every tab closed.
 
+### D-084: Messages are one feed, not bubbles
+
+Proposed 2026-11-05 in #78. Step 2 of the move to a Slack-like look (R-022 to R-026).
+
+Every message renders the same way, in one column: the sender's avatar in a gutter on the left, the
+sender's name and time on one line, the text below. Nothing aligns right, and the viewer's own
+messages have no colored bubble. Messages from the same sender within 5 minutes, on the same day,
+share one name and avatar; a grouped message shows its time in the gutter while the pointer rests
+on it. A quote is a block quote above the text, with the sender's color on its bar, and a tap still
+jumps to the original. Message text renders with the Markdown renderer that docs use, so bold, code,
+lists and links in a message look as they do in a doc; a single line break stays a line break. The
+reply and react tools sit in a toolbar at the row's edge, shown on hover and on keyboard focus. A
+screen without hover opens the same tray with a long press of 450 ms, in place of the tap it took
+before: in a full-width row a tap would too easily hit a link or start a selection. Day separators,
+the urgent label, pull request cards, the encryption notice, reactions and the failed-send row stay.
+
+Why: left and right bubbles, with a colored bubble for your own messages, are the strongest
+messenger signal on the page, and the owner moves WebChat toward the look of a work tool (D-001,
+R-023). One column also leaves room for Markdown, which a narrow bubble did not.
+
+The sender name, the time and the grouping come from fields the page already has, so the server
+sees nothing new, and a message's signature is unchanged (D-016). Own messages keep their ticks, in
+a column at the feed's edge on every own message, until the owner settles the read-tick question
+in R-023.
+
+Cost: multiple spaces and leading spaces in a message collapse, as Markdown does, where the bubble
+kept them. A quote shows the original's Markdown as typed, with its asterisks and backticks. The
+long-press menu of a phone, such as copy or open link, no longer opens on a message, because the
+tray opens instead; a long press on a link still opens the link's menu where the browser offers
+it. The hover toolbar covers the ticks of a hovered own message. Keyboard users reach the tools by
+tabbing through the feed, one pair of buttons per message.
+
 ## Projects and channels
 
 ### D-054: iPhones without Web Push get alerts through the Bark app
@@ -991,6 +1044,32 @@ Every save makes each open copy of the doc load its sections again. The server s
 which section and when, and could show an older revision of a section as its newest (D-020). Docs
 are Markdown only, shown by a small renderer of WebChat's own instead of a library, and export only
 to PDF through the browser's print dialog.
+
+### D-082: The project board is two docs whose sections are cards
+
+Accepted 2026-11-04 in #75.
+
+A project's board (R-021) is a view over two docs: Decisions, and Roadmap for ideas and issues. A
+card is a section of that doc, written in the section editor docs have, with its lock and its
+history (D-081). The two docs are marked by a `board` field inside the sealed content of their
+title, so the server does not know a board from a doc, and the sidebar leaves them out of the Docs
+list. The browser makes them the first time someone adds a card. A card's number, title and status
+are read from its first two lines, `### D-3: Title` and `Status: Accepted 2026-11-04.`, which is
+the format of this repository's own `docs/decisions.md` and `docs/roadmap.md`. "Copy as Markdown"
+joins a column's cards into that file.
+
+Why: the owner wanted student teams to have what this repository has, a numbered decision log and
+a roadmap, because choices made in a chat are lost by the next person or agent to act. Building
+cards on docs needs no migration, no route, no key code and no change to the sync fingerprint, and
+the server learns nothing new. Keeping the repository's format means a team pastes the column into
+its own repository, and the agents it runs read the same decisions.
+
+Cost: the browser numbers a new card from the cards it has, so two tabs that add a card at the
+same moment can take one number. The board warns on both cards and someone renumbers one, as D-063
+has this repository do. Two tabs that make the board doc at the same moment make two; the board
+shows the oldest, and the other appears in the Docs list, where it can be deleted. A card's status
+is wording inside its text, not a field, so a status outside the known list sorts with the open
+items.
 
 ## Replies and reactions
 

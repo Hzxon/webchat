@@ -2,11 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import type { UserDTO } from '../../shared/types';
 import { ApiError } from './api';
 import { sessionExpired, signOut, startChat } from './chat';
+import type { ChatDoc } from './e2ee/keyring';
 import { actions, useAppState } from './store';
 import { Toasts, UrgentAlert } from './components/Alerts';
 import { AuthScreen } from './components/AuthScreen';
 import { ChatView } from './components/ChatView';
-import { DocView } from './components/DocView';
+import { BoardView } from './components/BoardView';
+import { DocView, RenameDialog } from './components/DocView';
 import { GithubView } from './components/GithubView';
 import { MembersDialog, type MembersTarget } from './components/MembersDialog';
 import { NewChatDialog, type NewChatMode } from './components/NewChatDialog';
@@ -71,6 +73,7 @@ type OpenDialog =
   | { kind: 'notifications' }
   | { kind: 'new-channel'; projectId: number }
   | { kind: 'new-doc'; projectId: number }
+  | { kind: 'rename-doc'; doc: ChatDoc }
   | { kind: 'add-people'; target: MembersTarget }
   | { kind: 'members'; target: MembersTarget };
 
@@ -80,6 +83,7 @@ function ChatLayout() {
   const push = useAppState((s) => s.push);
   const githubOpen = useAppState((s) => s.githubOpen);
   const doc = useAppState((s) => (s.docOpen === null ? undefined : s.docs[s.docOpen]));
+  const board = useAppState((s) => (s.boardOpen === null ? undefined : s.projects[s.boardOpen]));
   const reposFor = useAppState((s) => s.reposFor);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const addPeople = (target: MembersTarget) => setDialog({ kind: 'add-people', target });
@@ -88,7 +92,7 @@ function ChatLayout() {
   useEffect(fitToVisualViewport, []);
 
   return (
-    <div className={`layout ${activeId !== null || githubOpen || doc ? 'has-active' : ''}`}>
+    <div className={`layout ${activeId !== null || githubOpen || doc || board ? 'has-active' : ''}`}>
       <Sidebar
         onNewChat={() => setDialog({ kind: 'new-chat', mode: 'person' })}
         onNewProject={() => setDialog({ kind: 'new-chat', mode: 'project' })}
@@ -97,12 +101,15 @@ function ChatLayout() {
         onMembers={(projectId) => showMembers({ kind: 'project', projectId })}
         onRepos={(projectId) => actions.setReposFor(projectId)}
         onNewDoc={(projectId) => setDialog({ kind: 'new-doc', projectId })}
+        onRenameDoc={(doc) => setDialog({ kind: 'rename-doc', doc })}
         onNotifications={() => setDialog({ kind: 'notifications' })}
       />
       {githubOpen ? (
         <GithubView />
       ) : doc ? (
         <DocView key={doc.id} doc={doc} />
+      ) : board ? (
+        <BoardView key={board.id} project={board} />
       ) : active ? (
         <ChatView key={active.id} conversation={active} onAddPeople={addPeople} onMembers={showMembers} />
       ) : (
@@ -126,6 +133,7 @@ function ChatLayout() {
       {dialog?.kind === 'notifications' && <NotificationDialog onClose={() => setDialog(null)} />}
       {dialog?.kind === 'new-channel' && <NewChannelDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'new-doc' && <NewDocDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'rename-doc' && <RenameDialog doc={dialog.doc} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'add-people' && <AddPeopleDialog target={dialog.target} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'members' && <MembersDialog target={dialog.target} onClose={() => setDialog(null)} />}
       {reposFor !== null && <ProjectReposDialog projectId={reposFor} onClose={() => actions.setReposFor(null)} />}

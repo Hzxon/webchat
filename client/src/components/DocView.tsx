@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { LIMITS } from '../../../shared/types';
 import { ApiError } from '../api';
-import { loadDraft, saveDraft, syncNow } from '../chat';
+import { saveDraft, syncNow } from '../chat';
 import {
-  deleteDoc,
+  beginEditing,
   draftName,
   lineDiff,
   loadSections,
@@ -14,33 +14,21 @@ import {
   replaceSection,
   saveSection,
   sectionHistory,
-  startEditing,
   stopEditing,
   wordCount,
   type DocSection,
+  type Editing,
 } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
 import { keyedQueue } from '../queue';
 import { actions, senderName, useAppState } from '../store';
 import { Dialog } from './Dialog';
 import { formatAgo, formatListTime } from './format';
-import { BackIcon, FileIcon, HistoryIcon, PencilIcon, PlusIcon, PrinterIcon, TrashIcon } from './icons';
+import { BackIcon, FileIcon, HistoryIcon, PencilIcon, PlusIcon, PrinterIcon } from './icons';
 import { Markdown } from './Markdown';
 
 // A section's saves go out one at a time, so an older one never lands after a newer one.
 const saveInOrder = keyedQueue();
-
-/** The section this page edits: one in the doc, or a new one that goes in at `pos`. */
-interface Editing {
-  id: string;
-  pos: number;
-  /** What the server holds. */
-  saved: string;
-  /** What the editor starts with: the server's text, or a draft this device kept. */
-  text: string;
-  /** Not saved yet, so there is nothing to delete. */
-  isNew: boolean;
-}
 
 export function DocView({ doc }: { doc: ChatDoc }) {
   const users = useAppState((s) => s.users);
@@ -49,7 +37,6 @@ export function DocView({ doc }: { doc: ChatDoc }) {
   const [sections, setSections] = useState<DocSection[] | null>(null);
   const [error, setError] = useState('');
   const [editing, setEditingSection] = useState<Editing | null>(null);
-  const [renaming, setRenaming] = useState(false);
   const [historyOf, setHistoryOf] = useState<DocSection | null>(null);
 
   // Every save grows the version, so the sections load again whenever anyone saves.
@@ -67,15 +54,13 @@ export function DocView({ doc }: { doc: ChatDoc }) {
 
   const nameOf = (id: number) => (id === meId ? 'You' : senderName(users, id));
   const lockOf = (section: string) => doc.locks.find((l) => l.section === section && l.userId !== meId);
-  const canDelete = doc.createdBy === meId || project?.ownerId === meId;
   const list = sections ?? [];
   const words = useMemo(() => wordCount(list.map((s) => s.text)), [sections]);
 
   async function edit(id: string, saved: string, pos: number, isNew = false) {
     setError('');
     try {
-      await startEditing(doc.id, id);
-      setEditingSection({ id, pos, saved, isNew, text: (await loadDraft(draftName(doc.id, id))) || saved });
+      setEditingSection(await beginEditing(doc.id, id, saved, pos, isNew));
     } catch (err) {
       setError((err as Error).message);
     }
@@ -86,15 +71,6 @@ export function DocView({ doc }: { doc: ChatDoc }) {
     const before = list[index]?.pos ?? 0;
     const after = list[index + 1]?.pos;
     void edit(newSectionId(), '', after === undefined ? before + 1 : (before + after) / 2, true);
-  }
-
-  async function remove() {
-    if (!confirm(`Delete “${doc.name}” for everyone in ${project?.name ?? 'the project'}? This cannot be undone.`)) return;
-    try {
-      await deleteDoc(doc.id);
-    } catch (err) {
-      setError((err as Error).message);
-    }
   }
 
   // A new section shows in its place while it is written, before its first save.
@@ -119,17 +95,9 @@ export function DocView({ doc }: { doc: ChatDoc }) {
           </span>
         </div>
         <div className="header-end">
-          <button className="icon-button" onClick={() => setRenaming(true)} title="Rename" aria-label="Rename">
-            <PencilIcon />
-          </button>
           <button className="icon-button" onClick={() => print()} title="Export to PDF" aria-label="Export to PDF">
             <PrinterIcon />
           </button>
-          {canDelete && (
-            <button className="icon-button" onClick={() => void remove()} title="Delete doc" aria-label="Delete doc">
-              <TrashIcon />
-            </button>
-          )}
         </div>
       </header>
       <div className="doc-scroll">
@@ -195,15 +163,14 @@ export function DocView({ doc }: { doc: ChatDoc }) {
           )}
         </article>
       </div>
-      {renaming && <RenameDialog doc={doc} onClose={() => setRenaming(false)} />}
       {historyOf && <HistoryDialog doc={doc} section={historyOf} nameOf={nameOf} onClose={() => setHistoryOf(null)} />}
     </section>
   );
 }
 
-function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing: Editing; onClose: (message?: string) => void }) {
+/** Edits one section, for a doc or a board card. Done shows it rendered, so there is no preview. */
+export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing: Editing; onClose: (message?: string) => void }) {
   const [text, setText] = useState(editing.text);
-  const [preview, setPreview] = useState(false);
   const [status, setStatus] = useState('');
   const latest = useRef(text);
   latest.current = text;
@@ -280,34 +247,20 @@ function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing: Editi
 
   return (
     <div className="doc-section doc-editor">
-      <div className="doc-editor-tabs">
-        <div className="segmented" role="tablist">
-          <button role="tab" aria-selected={!preview} onClick={() => setPreview(false)}>
-            Write
-          </button>
-          <button role="tab" aria-selected={preview} onClick={() => setPreview(true)}>
-            Preview
-          </button>
-        </div>
-        <span className="doc-note">{status}</span>
-      </div>
-      {preview ? (
-        <Markdown text={text} />
-      ) : (
-        <textarea
-          className="field-input doc-textarea"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={Math.max(6, text.split('\n').length + 1)}
-          maxLength={LIMITS.docSectionLength}
-          placeholder="Write in Markdown: ## Heading, - list, - [ ] task, **bold**, | table |"
-          autoFocus
-        />
-      )}
+      <textarea
+        className="field-input doc-textarea"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={Math.max(6, text.split('\n').length + 1)}
+        maxLength={LIMITS.docSectionLength}
+        placeholder="Write in Markdown: ## Heading, - list, - [ ] task, **bold**, | table |"
+        autoFocus
+      />
       <div className="doc-editor-actions">
+        <span className="doc-note">{status}</span>
         {!editing.isNew && (
           <button className="button-danger" onClick={() => void remove()}>
-            Delete section
+            Delete
           </button>
         )}
         <button className="button-primary" onClick={() => void done()}>
@@ -318,7 +271,8 @@ function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing: Editi
   );
 }
 
-function RenameDialog({ doc, onClose }: { doc: ChatDoc; onClose: () => void }) {
+/** Opened by the pencil next to the doc's name in the sidebar. */
+export function RenameDialog({ doc, onClose }: { doc: ChatDoc; onClose: () => void }) {
   const [name, setName] = useState(doc.name);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -360,7 +314,7 @@ function RenameDialog({ doc, onClose }: { doc: ChatDoc; onClose: () => void }) {
 type History = Awaited<ReturnType<typeof sectionHistory>>;
 
 /** A section's editing sessions, newest first. Each shows what it changed, and an older one can come back. */
-function HistoryDialog(props: { doc: ChatDoc; section: DocSection; nameOf: (id: number) => string; onClose: () => void }) {
+export function HistoryDialog(props: { doc: ChatDoc; section: DocSection; nameOf: (id: number) => string; onClose: () => void }) {
   const { doc, section, nameOf, onClose } = props;
   const [entries, setEntries] = useState<History | null>(null);
   const [picked, setPicked] = useState(0);

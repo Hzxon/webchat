@@ -69,6 +69,8 @@ export interface ChatConversation extends Omit<ConversationDTO, 'lastMessage'> {
 /** A doc as the page lists it, with its title decrypted. */
 export interface ChatDoc extends DocDTO {
   name: string;
+  /** Set on the two docs behind the project board (R-021), which the Docs list leaves out. */
+  board?: DocContent['board'];
 }
 
 /** Looks up a person's public keys: the server's list for others, the unlocked keys for oneself. */
