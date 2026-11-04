@@ -992,6 +992,32 @@ which section and when, and could show an older revision of a section as its new
 are Markdown only, shown by a small renderer of WebChat's own instead of a library, and export only
 to PDF through the browser's print dialog.
 
+### D-082: The project board is two docs whose sections are cards
+
+Accepted 2026-11-04 in #75.
+
+A project's board (R-021) is a view over two docs: Decisions, and Roadmap for ideas and issues. A
+card is a section of that doc, written in the section editor docs have, with its lock and its
+history (D-081). The two docs are marked by a `board` field inside the sealed content of their
+title, so the server does not know a board from a doc, and the sidebar leaves them out of the Docs
+list. The browser makes them the first time someone adds a card. A card's number, title and status
+are read from its first two lines, `### D-3: Title` and `Status: Accepted 2026-11-04.`, which is
+the format of this repository's own `docs/decisions.md` and `docs/roadmap.md`. "Copy as Markdown"
+joins a column's cards into that file.
+
+Why: the owner wanted student teams to have what this repository has, a numbered decision log and
+a roadmap, because choices made in a chat are lost by the next person or agent to act. Building
+cards on docs needs no migration, no route, no key code and no change to the sync fingerprint, and
+the server learns nothing new. Keeping the repository's format means a team pastes the column into
+its own repository, and the agents it runs read the same decisions.
+
+Cost: the browser numbers a new card from the cards it has, so two tabs that add a card at the
+same moment can take one number. The board warns on both cards and someone renumbers one, as D-063
+has this repository do. Two tabs that make the board doc at the same moment make two; the board
+shows the oldest, and the other appears in the Docs list, where it can be deleted. A card's status
+is wording inside its text, not a field, so a status outside the known list sorts with the open
+items. A card is never deleted from the board, only superseded or dropped.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope

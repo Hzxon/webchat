@@ -25,6 +25,11 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
   in Markdown, section by section. One person edits a section at a time, and everyone else sees who.
   Each section keeps its history: see what every edit changed, and bring back an earlier version.
   The print button saves a doc as a PDF to hand in. Docs are end-to-end encrypted like messages.
+- **A board in each project** with two columns: the team's numbered decisions, each with why it
+  was made and what it costs, and its roadmap of ideas and issues. A card is Markdown in the same
+  format as this repository's own decision log and roadmap, so "Copy as Markdown" gives a file a
+  team drops into its repository for the coding agents it runs. Cards are edited like doc sections,
+  one person at a time, with the same history.
 - **Replies and reactions.** Reply to a message to quote it above yours, and tap the quote to jump
   to the original. React with one of six emoji; tap a reaction again to take it back.
 - Sent, delivered, and read ticks.

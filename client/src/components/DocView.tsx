@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { LIMITS } from '../../../shared/types';
 import { ApiError } from '../api';
-import { loadDraft, saveDraft, syncNow } from '../chat';
+import { saveDraft, syncNow } from '../chat';
 import {
+  beginEditing,
   deleteDoc,
   draftName,
   lineDiff,
@@ -14,10 +15,10 @@ import {
   replaceSection,
   saveSection,
   sectionHistory,
-  startEditing,
   stopEditing,
   wordCount,
   type DocSection,
+  type Editing,
 } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
 import { keyedQueue } from '../queue';
@@ -29,18 +30,6 @@ import { Markdown } from './Markdown';
 
 // A section's saves go out one at a time, so an older one never lands after a newer one.
 const saveInOrder = keyedQueue();
-
-/** The section this page edits: one in the doc, or a new one that goes in at `pos`. */
-interface Editing {
-  id: string;
-  pos: number;
-  /** What the server holds. */
-  saved: string;
-  /** What the editor starts with: the server's text, or a draft this device kept. */
-  text: string;
-  /** Not saved yet, so there is nothing to delete. */
-  isNew: boolean;
-}
 
 export function DocView({ doc }: { doc: ChatDoc }) {
   const users = useAppState((s) => s.users);
@@ -74,8 +63,7 @@ export function DocView({ doc }: { doc: ChatDoc }) {
   async function edit(id: string, saved: string, pos: number, isNew = false) {
     setError('');
     try {
-      await startEditing(doc.id, id);
-      setEditingSection({ id, pos, saved, isNew, text: (await loadDraft(draftName(doc.id, id))) || saved });
+      setEditingSection(await beginEditing(doc.id, id, saved, pos, isNew));
     } catch (err) {
       setError((err as Error).message);
     }
@@ -201,7 +189,9 @@ export function DocView({ doc }: { doc: ChatDoc }) {
   );
 }
 
-function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing: Editing; onClose: (message?: string) => void }) {
+/** Edits one section. The board passes `keep`, because a card is superseded or dropped, never deleted (R-021). */
+export function SectionEditor(props: { doc: ChatDoc; editing: Editing; keep?: boolean; onClose: (message?: string) => void }) {
+  const { doc, editing, keep, onClose } = props;
   const [text, setText] = useState(editing.text);
   const [preview, setPreview] = useState(false);
   const [status, setStatus] = useState('');
@@ -305,7 +295,7 @@ function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing: Editi
         />
       )}
       <div className="doc-editor-actions">
-        {!editing.isNew && (
+        {!editing.isNew && !keep && (
           <button className="button-danger" onClick={() => void remove()}>
             Delete section
           </button>
@@ -360,7 +350,7 @@ function RenameDialog({ doc, onClose }: { doc: ChatDoc; onClose: () => void }) {
 type History = Awaited<ReturnType<typeof sectionHistory>>;
 
 /** A section's editing sessions, newest first. Each shows what it changed, and an older one can come back. */
-function HistoryDialog(props: { doc: ChatDoc; section: DocSection; nameOf: (id: number) => string; onClose: () => void }) {
+export function HistoryDialog(props: { doc: ChatDoc; section: DocSection; nameOf: (id: number) => string; onClose: () => void }) {
   const { doc, section, nameOf, onClose } = props;
   const [entries, setEntries] = useState<History | null>(null);
   const [picked, setPicked] = useState(0);
