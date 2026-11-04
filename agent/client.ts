@@ -138,7 +138,7 @@ export class AgentClient {
   static async signIn(filePath: string, credentials: Credentials) {
     const api = new Api(credentials.server);
     const { authKey, backupKey } = await secretsFor(api, credentials);
-    const { user, backup } = await api.request<LoginResponse>('POST', '/auth/login', { username: credentials.username, authKey });
+    const { user, backup } = await api.request<LoginResponse>('POST', '/auth/login', { username: credentials.username, authKey, agent: true });
     if (!backup) throw new Error('This account has no keys yet. Sign in once in a browser first.');
     const secrets = await openIdentity(backup, backupKey);
     if (user.keys?.dh !== secrets.publicKeys.dh || user.keys.sign !== secrets.publicKeys.sign) {
@@ -189,7 +189,7 @@ export class AgentClient {
       return await this.api.request<T>(method, path, body);
     } catch (error) {
       if (!(error instanceof ApiError) || error.status !== 401) throw error;
-      await this.api.request('POST', '/auth/login', { username: this.file.username, authKey: this.file.authKey });
+      await this.api.request('POST', '/auth/login', { username: this.file.username, authKey: this.file.authKey, agent: true });
       await this.save();
       return this.api.request<T>(method, path, body);
     }

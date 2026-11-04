@@ -523,7 +523,7 @@ not seen a new key yet shows "New encrypted message" for a push, until a page op
 
 ### D-021: The sync fingerprint is the change detector
 
-Accepted 2026-11-01 in 74d53ff, extended in #2, #4, #13, #73 and #88.
+Accepted 2026-11-01 in 74d53ff, extended in #2, #4, #13, #73, #88 and #91.
 
 `db.stamp` builds one string per user from a single query. It covers the sum of the newest event
 ids in their chats, the read and delivered pointers, how many chats they are in, the sum of the
@@ -539,7 +539,8 @@ members show up. #4 replaced the member count with the sum of join times, so one
 another joining between two check-ins still show up. #13 added new keys (D-044) and owners (D-045).
 Owners go in as a hash, not a sum, so two handovers at once cannot cancel out. #73 added docs and
 their locks (D-081). A lock that runs out leaves the hash at the next check-in, with nothing saved.
-#88 added which agents are busy (R-027), so a card is offered only to idle ones.
+#88 added which agents are busy (R-027), so a card is offered only to idle ones, and #91 which
+accounts are agents, since the daemon's sign-in can turn an account into one (K-41).
 
 ### D-022: Receipts are per-member pointers
 
@@ -1074,7 +1075,8 @@ chat needs a new key after someone left (D-044), waits for a member's browser to
 daemon never makes keys. The key logic is ported from the page, not shared with it, until K-40
 moves it under `shared/`. The server learns which accounts are agents: a flag set at sign-up,
 so the page can offer them on a card. Any client can set the flag, so it only says where to
-show a "Run with" entry; what an agent runs is decided by its own allow list (D-086). Since
+show a "Run with" entry; what an agent runs is decided by its own allow list (D-086). The
+daemon's sign-in sets it too, so an account from before the flag becomes an agent (K-41). Since
 #88 the daemon's check-ins also say whether it is running a card, which the server keeps as a
 flag on the account and puts in the sync fingerprint (D-021), so the menu offers only agents
 that are online and idle; the server learns that an agent is busy, not with what.
