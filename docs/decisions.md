@@ -1073,14 +1073,11 @@ keeps a key unexportable; the README lists this. Two daemons must not share one 
 because each keeps its own sync cursor there. A daemon that is removed from a project, or whose
 chat needs a new key after someone left (D-044), waits for a member's browser to rotate it: the
 daemon never makes keys. The key logic is ported from the page, not shared with it, until K-40
-moves it under `shared/`. The server learns which accounts are agents: a flag set at sign-up,
-so the page can offer them on a card. Any client can set the flag, so it only says where to
-show a "Run with" entry; what an agent runs is decided by its own allow list (D-086). The
-daemon's sign-in sets it too, so an account from before the flag becomes an agent (K-41). Since
+moves it under `shared/`. The server learns which accounts are agents, and since #95 whose
+agent each one is (D-089), which replaces the flag set at sign-up and at sign-in (K-41). Since
 #88 the daemon's check-ins also say whether it is running a card, which the server keeps as a
 flag on the account and puts in the sync fingerprint (D-021), so the menu offers only agents
 that are online and idle; the server learns that an agent is busy, not with what.
-show a "Run with" entry; what an agent runs is decided by its own allow list (D-086).
 
 ### D-086: A run is a request message and the reports that name it
 
@@ -1090,7 +1087,7 @@ Handing a card to an agent (R-027) sends an ordinary message of kind "message" i
 #general, whose sealed content carries a `run` field, as a shared pull request carries `pull`
 (D-042): the card's id and title, its doc and section, and the agent's account. The daemon
 answers with messages of its own whose `run` field names the request's message id and says
-claimed, progress, done or failed, with a note, a branch and a pull request where there is one.
+claimed, done or failed, with a note, a branch and a pull request where there is one.
 The text of each says the same in words. A page folds the reports into the request's card and
 shows the latest, but only reports from the agent the request names. An older page shows the
 texts. The daemon runs a request only from accounts its owner listed with `npm run agent --
@@ -1099,7 +1096,9 @@ on the board of the request's project, and saved last by a listed account or by 
 text is the agent's prompt. The brief leaves out decisions from anyone else. When a run is done,
 the daemon reads the card again under the section lock (D-081) and writes the branch into its
 status line, unless someone not listed saved it meanwhile. The request names the card, not its text: the daemon reads
-the card from the board when it claims, with the key it has as a member.
+the card from the board when it claims, with the key it has as a member. Since #95 the allow
+list, the checks on who saved the card and the decisions, and the status line are gone: an agent
+runs what its owner hands it (D-089).
 
 Why: a field inside the envelope changes nothing on the server, which sees messages and nothing
 more, and the signature proves who asked (D-016). Reports as messages of their own, instead of
@@ -1150,6 +1149,42 @@ owner would. A pull request is reported only when
 `gh` is signed in on that machine. Codex and Hermes were wired up from their documented command
 lines and not run end to end here, because neither was usable on the owner's machine when
 written; Claude Code was. Each adapter is a few lines to fix if a command line moves.
+
+### D-089: An agent runs the cards its owner hands it
+
+Proposed 2026-11-05 in #95.
+
+An agent account belongs to one person, its owner, named when its daemon signs up or signs in:
+`npm run agent -- signup <server> <name> <invite-code> <owner>`. The server keeps the owner on
+the account and lists it with the user, in place of the agent flag of D-085, and the sync
+fingerprint (D-021) carries it. A card's play button lists only the viewer's own agents in the
+project, and none while someone holds the card's lock. The daemon keeps the owner's user id in its
+account file, pins their keys at its first check-in, and prints the security code that the owner
+compares in a direct chat with the agent (D-018).
+
+The daemon runs a request only when the owner sent it, which the signature proves against the
+pinned keys. The owner's page signs the time it sent the request into the `run` field, and the
+daemon refuses one more than 10 minutes from its own clock, or without that time. A request from
+anyone else fails with a report that says so. The daemon reads the card as it is on the board,
+whoever saved it last, and puts every decision of the board into the brief. It no longer writes
+the branch into the card's status line: the run card in #general is the run's status, and the pull
+request card shows the branch.
+
+Why: under D-086 a run needed the sender, the card's last author and each decision's author on a
+username allow list. The owner had to allow themselves before their own clicks worked. A card a
+teammate wrote failed unless the teammate was allowed, which also let that teammate send runs to
+the owner's machine (K-45). The list trusted the username the server reported for an id, and the
+age check trusted the server's clock (K-42). One owner, pinned by id and key, and a time the owner
+signed, close both. The status line needed the section lock and checks of its own, and failed
+whenever someone was editing the card.
+
+Cost: the owner vouches for the card and the decisions by clicking. A teammate who writes a card
+or a decision writes part of a prompt that runs on the owner's machine with their credentials. The
+board shows a card's status only as people set it. Any client can name any owner, so a stranger's
+agent in a project can show in someone's menu; a request to it names a card it can already read
+as a member. The `agent` column of migration 13 is no longer read. An agent from before #95 has no
+play button until its daemon signs in again with an owner. Handing a card to a teammate's agent is
+R-029.
 
 ## Replies and reactions
 

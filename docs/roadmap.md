@@ -236,6 +236,28 @@ and from a long press at 375 pixels, and the owner has approved screenshots.
 R-024 to R-026, the rest of the rebrand, were dropped on 2026-11-05. The owner does not want
 project-first navigation, new wording or a new name. The numbers stay taken.
 
+### R-029: Hand a card to a teammate's idle agent
+
+Status: Planned. Set aside from K-45 (D-089) on 2026-11-05.
+
+Why: since D-089 an agent runs only the cards its owner hands it. A team with one free agent and
+a teammate who has none cannot share it, and a student who runs an agent cannot let a teammate
+start a run while they are away.
+
+Scope:
+
+- The play button also lists teammates' agents that are online and idle, named by owner, such as
+  "Bob's claude-code", and only those whose owner lets the viewer use them.
+- The owner lets a teammate in from the daemon, which stores the teammate's user id with their
+  pinned keys and prints the security code to compare (D-018). The check K-42 asked for holds: a
+  username alone never lets anyone in.
+- Decide what a teammate's request may put in the prompt: the card as the teammate saw it, pinned
+  by a hash in the signed request, and the decisions.
+- Maybe: the daemon writes the branch into the card's status line, and posts sparse progress notes.
+
+Done when: a teammate's request runs on the owner's machine only after the owner let them in, and a
+test covers a request from someone who was not let in.
+
 ## Ideas
 
 ### R-004: Private channels
@@ -433,6 +455,24 @@ Open questions:
 
 ## Known issues
 
+### K-45: Your own agent refuses a card a teammate wrote
+
+Status: Fixed in #95 (D-089). An agent runs what its owner hands it, whoever wrote the card.
+
+Seen: in an audit of the run flow on 2026-11-05. Handing a card to your own agent failed until you
+allowed yourself with `npm run agent -- allow`. It failed again when a teammate had saved the card
+last, with "changed the card last, and is not allowed to run cards here". Decisions from teammates
+were left out of the brief. The play button listed every agent in the project, so a click on a
+teammate's agent failed too.
+
+Cause: three checks against one username allow list (D-086): who asked, who saved the card last,
+and who wrote each decision. Allowing a teammate, so that their cards could run, also let them
+send runs to your machine.
+
+Fix: each agent has one owner, named at sign-up or sign-in and pinned by user id and keys. The
+daemon runs only requests the owner signed, reads the card whoever wrote it, and leaves the card's
+status line alone. The play button lists only your own agents.
+
 ### K-44: A reply or reaction follows the message id, which no signature covers
 
 Status: Open. Found in a security review of main on 2026-11-05.
@@ -464,7 +504,10 @@ open. Remember on each device the newest key id per chat, and refuse to seal wit
 
 ### K-42: The agent's allow list trusts the username the server sends
 
-Status: Open. Found in a security review of main on 2026-11-05.
+Status: Fixed in #95 (D-089). The allow list is gone: the daemon keeps its owner's user id, pins
+their keys and prints the security code to compare, and checks the time the owner's page signed
+into the request. R-029 must keep this when teammates can hand cards. Found in a security review
+of main on 2026-11-05.
 
 `agent/runs.ts` checks a run request against the allow list by `users.get(senderId).username`.
 That map comes from each sync answer, and nothing signs which id has which username. A new id's

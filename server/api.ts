@@ -364,6 +364,18 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     }
   }
 
+  /**
+   * The person a daemon names as its agent's owner (K-45, D-089), or null when it names nobody.
+   * Any client can name anyone, so it only decides whose menu offers the agent; the daemon itself
+   * runs only what the owner it pinned signed.
+   */
+  async function agentOwner(body: { owner?: unknown } | undefined) {
+    if (body?.owner === undefined) return null;
+    const owner = typeof body.owner === 'string' ? await db.findUserByUsername(body.owner.trim()) : undefined;
+    if (!owner) throw new HttpError(400, 'No account has the owner username.');
+    return owner.id;
+  }
+
   /** Marks the newest message from others in each chat as delivered to this user. */
   function markDeliveredFrom(userId: number, messages: MessageDTO[]) {
     const upTo = new Map<number, number>();
@@ -390,7 +402,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     if (!safeEqual(String(req.body?.inviteCode ?? '').trim(), inviteCode)) {
       throw new HttpError(403, 'Invite code is wrong. Ask the owner for it.');
     }
-    const user = await db.createUser(username, displayName, await hashPassword(authKey), keys, req.body?.agent === true);
+    const user = await db.createUser(username, displayName, await hashPassword(authKey), keys, await agentOwner(req.body));
     if (!user) throw new HttpError(409, 'That username is taken.');
     await db.returnRateLimit(authLimitKey(req));
     await startSession(req, res, user);
@@ -408,8 +420,9 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const valid = await verifyPassword(authKey, user?.password_hash ?? (await dummyPasswordHash()));
     if (!user || !valid) throw new HttpError(401, 'Wrong username or password.');
     await db.returnRateLimit(authLimitKey(req));
-    // The daemon says so at every sign-in, so an account from before the flag becomes an agent (K-41).
-    if (req.body?.agent === true && !user.agent) user.agent = await db.markAgent(user.id);
+    // The daemon names its owner at every sign-in, so any account can become someone's agent (K-41, K-45).
+    const owner = await agentOwner(req.body);
+    if (owner !== null) user.agent_owner = await db.setAgentOwner(user.id, owner);
     await startSession(req, res, user);
     inBackground(db.purgeExpired(), config.logger);
     const body: LoginResponse = { user: toUserDTO(user), backup: keyBackupOf(user) };

@@ -357,6 +357,10 @@ ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS agent BOOLEAN NOT NULL DEFAUL
   `
 ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS busy BOOLEAN NOT NULL DEFAULT FALSE;
 `,
+  // 15: the person an agent runs cards for, which replaces the agent flag of 13 (K-45, D-089).
+  `
+ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS agent_owner INTEGER REFERENCES webchat.users(id) ON DELETE SET NULL;
+`,
 ];
 
 const statements = (sql: string) =>
@@ -390,7 +394,7 @@ export interface UserRow {
   dh_public: string | null;
   sign_public: string | null;
   key_backup: string | null;
-  agent: boolean;
+  agent_owner: number | null;
   busy: boolean;
 }
 
@@ -627,7 +631,7 @@ export function toUserDTO(row: UserRow, now = Date.now()): UserDTO {
     online: row.last_active_at !== null && now - row.last_active_at < ONLINE_WINDOW_MS,
     lastSeen: row.last_active_at,
     keys: row.dh_public && row.sign_public ? { dh: row.dh_public, sign: row.sign_public } : null,
-    agent: row.agent,
+    agentOwner: row.agent_owner,
     busy: row.busy,
   };
 }
@@ -994,20 +998,20 @@ export async function openDb(sql: Sql) {
     },
 
     /** Creates an account with its keys. Returns undefined when the username is taken. */
-    createUser: async (username: string, displayName: string, loginKeyHash: string, keys: AccountKeysInput, agent: boolean) =>
+    createUser: async (username: string, displayName: string, loginKeyHash: string, keys: AccountKeysInput, agentOwner: number | null) =>
       one(
         sql.query<UserRow>(
           `INSERT INTO webchat.users
-             (username, display_name, password_hash, created_at, auth_version, dh_public, sign_public, key_backup, agent)
+             (username, display_name, password_hash, created_at, auth_version, dh_public, sign_public, key_backup, agent_owner)
            VALUES ($1, $2, $3, $4, 2, $5, $6, $7, $8)
            ON CONFLICT DO NOTHING RETURNING *`,
-          [username, displayName, loginKeyHash, Date.now(), keys.dh, keys.sign, JSON.stringify(keys.backup), agent],
+          [username, displayName, loginKeyHash, Date.now(), keys.dh, keys.sign, JSON.stringify(keys.backup), agentOwner],
         ),
       ),
-    /** Marks an account as a coding agent's (R-027). Returns the flag. */
-    markAgent: async (userId: number) => {
-      await sql.query('UPDATE webchat.users SET agent = TRUE WHERE id = $1', [userId]);
-      return true;
+    /** Makes an account the coding agent of another (K-45). Returns the owner. */
+    setAgentOwner: async (userId: number, ownerId: number) => {
+      await sql.query('UPDATE webchat.users SET agent_owner = $2 WHERE id = $1', [userId, ownerId]);
+      return ownerId;
     },
     /** Switches an account from a raw-password hash to a login-key hash. */
     upgradeAuth: (userId: number, loginKeyHash: string) =>
@@ -1750,8 +1754,8 @@ export async function openDb(sql: Sql) {
              ) owned) AS owners,
              (SELECT COUNT(*)::int FROM webchat.users) AS people,
              (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE last_active_at > $2) AS online,
-             -- Agents, and those running a card, so the board offers the idle ones (R-027, K-41).
-             (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE agent) AS agents,
+             -- Agents with their owners, and those running a card, so the board offers each owner's idle ones (K-45).
+             (SELECT string_agg(id || ':' || agent_owner, ',' ORDER BY id) FROM webchat.users WHERE agent_owner IS NOT NULL) AS agents,
              (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE busy) AS busy,
              -- Every save grows a doc's version, and a doc deleted leaves the list.
              (SELECT md5(COALESCE(string_agg(id || ':' || version, ',' ORDER BY id), '')) FROM webchat.docs

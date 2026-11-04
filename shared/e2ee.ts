@@ -454,7 +454,7 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
     const docId = short(raw.docId, 64);
     const section = short(raw.section, 64);
     if (!card || !CARD_ID.test(card) || title === undefined || !docId || !section || !isId(raw.runtime)) return;
-    return { kind: 'request', card, title, docId, section, runtime: raw.runtime };
+    return { kind: 'request', card, title, docId, section, runtime: raw.runtime, ...(isId(raw.sentAt) && { sentAt: raw.sentAt }) };
   }
   const kind = REPORT_KINDS.find((k) => k === raw.kind);
   if (!kind || !isId(raw.request)) return;

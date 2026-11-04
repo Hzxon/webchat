@@ -729,15 +729,16 @@ export function sendMessage(conversationId: number, body: string, urgent: boolea
 }
 
 /**
- * Hands a board card to a coding agent (R-027): a message in the project's #general whose `run`
- * field names the card and the agent's account. The daemon answers with reports that name this
- * message, and pages fold them into its card. The text says the same in words for older pages.
+ * Hands a board card to the user's coding agent (R-027, D-089): a message in the project's #general
+ * whose `run` field names the card and the agent's account, and when it was sent. The daemon
+ * answers with reports that name this message, and pages fold them into its card. The text says
+ * the same in words for older pages.
  */
 export async function requestRun(projectId: number, docId: string, card: Card, runtime: UserDTO) {
   const general = generalOf(store.get(), projectId);
   if (!general) throw new Error('Project not found.');
   const id = `${card.kind}-${card.number}`;
-  const run: RunRequest = { kind: 'request', card: id, title: card.title.slice(0, LIMITS.runNoteLength), docId, section: card.id, runtime: runtime.id };
+  const run: RunRequest = { kind: 'request', card: id, title: card.title.slice(0, LIMITS.runNoteLength), docId, section: card.id, runtime: runtime.id, sentAt: Date.now() };
   await sendContent(general.id, { text: `Run ${id} with ${runtime.displayName}: ${card.title}`, run }, false);
 }
 
