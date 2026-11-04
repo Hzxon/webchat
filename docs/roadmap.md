@@ -57,7 +57,10 @@ Open questions:
 
 ### R-021: Project board of decisions and roadmap cards
 
-Status: In progress on branch `claude/r021-project-board` (#75). Replaces R-001.
+Status: Done in #75 (D-082). Unit tests cover the card reader, the numbering, the duplicate
+warning and the Markdown output. Tried in a browser with two accounts, at desktop width and 375
+pixels, in light and dark mode. The owner's first use asked for a delete button, even heads and
+no preview tab, which a follow-up pull request adds. Replaces R-001.
 
 Asked for by the owner on 2026-11-04.
 
@@ -85,11 +88,11 @@ Scope:
 - A card is Markdown that matches this repository's documents line for line: a `### D-3: Title`
   heading, a `Status:` line, then the body. The board reads the kind, the number, the title and the
   status from those two lines and shows the rest rendered. A new card starts from a template of its
-  kind, with the next free number filled in, and opens in the section editor docs already have,
-  with its preview. A card without that heading still shows, titled by its first line.
+  kind, with the next free number filled in, and opens in the section editor docs already have.
+  A card without that heading still shows, titled by its first line.
 - Each card keeps the history docs already have: one revision per editing session, with a diff and
-  a restore. Cards are never deleted. A decision is superseded and an idea or issue is dropped, by
-  editing the status line.
+  a restore. A deleted card keeps its history too. A decision is superseded and an idea or issue
+  is dropped, by editing the status line.
 - Each column has a "Copy as Markdown" button, which joins its cards in number order into the
   format of `docs/decisions.md` or `docs/roadmap.md`. A student pastes it into the team's
   repository, so the agents they run read the same decisions the team made.
@@ -178,8 +181,9 @@ Done when: a comment-only review on the fake GitHub becomes an event, and a test
 
 ### R-022: Rebrand, step 1: a work-tool palette and type
 
-Status: Planned. First of five steps that move WebChat from a WhatsApp look to a Slack-like
-workspace (R-022 to R-026). Do them in order; each is its own pull request.
+Status: In progress on branch `claude/r022-work-tool-palette` (D-083). First of five steps that
+move WebChat from a WhatsApp look to a Slack-like workspace (R-022 to R-026). Do them in order; each
+is its own pull request.
 
 Why: the features are for serious project work, but the page looks like a consumer messenger.
 `client/src/styles.css` copies WhatsApp's palette (`--accent: #00a884`, `--bubble-out: #d9fdd3`,
@@ -493,8 +497,8 @@ Scope:
 - A Docs list under each project, next to its channels. A new doc starts blank or from a template:
   PRD, tech spec, meeting notes or project proposal.
 - A doc is a title and an ordered list of sections. Each section is Markdown, written in a text box
-  with a preview. The preview supports headings, bold and italic, code, lists, checkboxes, links,
-  quotes and tables.
+  and shown rendered once editing ends (the preview tab went in #75). The renderer supports
+  headings, bold and italic, code, lists, checkboxes, links, quotes and tables.
 - One person edits a section at a time. Editing claims a lock on the section, and each check-in
   from the editor's tab renews it, the way online status works. Everyone else sees who is editing.
 - While the lock is held, saves replace the same revision. Releasing the lock closes it, so a
