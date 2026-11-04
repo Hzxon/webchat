@@ -264,6 +264,33 @@ allows one more account. Someone who signs in on a friend's phone or a shared co
 browser from signing up for 400 days. Testing two accounts still needs two hosts, such as
 `alice.localhost` and `bob.localhost`.
 
+### D-088: A deleted account leaves every chat and keeps its row
+
+Accepted 2026-11-05 in #94 (R-028).
+
+`DELETE /api/auth/account` deletes the signed-in account. The server treats it as leaving every
+group and channel at once (D-044, D-045): the person's member rows and wrapped keys go, and each
+chat needs a new key before anyone sends again. It refuses, with `owner`, while the person owns a
+project or group with other people in it, so they hand it over or delete it first. Groups and
+projects with nobody else in them are deleted, and so are the person's direct chats. Sessions,
+push subscriptions, Bark and GitHub links go too. The `users` row stays, with `deleted_at` set, the
+display name "Deleted account", the username `deleted-<id>`, an empty password hash and no keys. A
+deleted id counts as "Person not found" wherever someone would key a chat for it. The answer clears
+the session cookie and the device cookie of D-080.
+
+Why: `messages.sender_id`, docs and revisions point at the row, and other members keep their copy
+of what the person wrote, so the row has to stay for those messages to keep a sender. Leaving is
+the one path that already rotates keys the way rule 5 demands, so deletion reuses it instead of
+adding a second. The username is freed because a name is the person's, not the server's; a hyphen
+is not allowed in usernames, so nobody can sign up as the stand-in. The device cookie is cleared
+because the device has no account any more, which is what D-080 counts.
+
+Cost: a direct chat is deleted for the other person too, since a direct chat with one member has
+nobody to name it. Someone can delete an account and sign up again on the same device, which is
+one way around D-080's one account per device; the invite code still gates it. The page shows
+"Deleted account" on old messages, and pickers hide those rows, but their ids stay in the users list
+every page loads. Deleting asks for a confirm, not the password.
+
 ## Data and platform
 
 ### D-010: Migrations only grow at the end
