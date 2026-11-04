@@ -21,22 +21,6 @@ the items under "Next". The decisions these items build on are in [decisions.md]
 
 ## Next
 
-### R-019: Urgent messages ring like an alarm with every tab closed
-
-Status: Done in #69 (D-079). An integration test rings an unread urgent message, skips a recipient
-who looks at the app, and stops once the chat is read. A service worker test checks that each ring
-sounds. Not yet tried on a locked phone.
-
-Asked for by the owner on 2026-11-03.
-
-Why: with the tab closed or the phone locked, an urgent message showed one notification, like any
-other message, and only an open page rang until someone acted on it. Urgent messages exist so
-they are never missed (D-023).
-
-Scope: the server rings each unread urgent message again every 15 seconds, on every device of a
-recipient who is not looking at the app, until they read the chat or the message is 3 days old.
-Done when a closed tab and a locked phone keep ringing until the chat is opened.
-
 ### R-001: Task board for projects, like Jira
 
 Status: Next. The owner set it aside on 2026-11-01 so that projects could ship first.
@@ -69,59 +53,6 @@ Open questions:
   same way as channel keys?
 - Should due dates send reminders? That needs R-010.
 - Sprints, epics and story points stay out unless students ask for them.
-
-### R-020: Shared Markdown docs in projects
-
-Status: Done in #73 (D-081). Integration tests prove that the database holds no doc text in plain,
-that only project members read or change docs, and that nobody takes a lock someone else holds.
-Tried in a browser with two accounts, at desktop width and 375 pixels, in light and dark mode. Not
-yet tried on a real phone, or printed from Safari.
-
-Asked for by the owner on 2026-11-03.
-
-Why: student teams write a PRD or a spec together. Today it lives in Word files they send each
-other, or in another app. They lose track of the latest version and of who changed what.
-
-Scope:
-
-- A Docs list under each project, next to its channels. A new doc starts blank or from a template:
-  PRD, tech spec, meeting notes or project proposal.
-- A doc is a title and an ordered list of sections. Each section is Markdown, written in a text box
-  with a preview. The preview supports headings, bold and italic, code, lists, checkboxes, links,
-  quotes and tables.
-- One person edits a section at a time. Editing claims a lock on the section, and each check-in
-  from the editor's tab renews it, the way online status works. Everyone else sees who is editing.
-- While the lock is held, saves replace the same revision. Releasing the lock closes it, so a
-  section's history has one entry per editing session. History shows a diff and restores an
-  earlier revision.
-- A doc that changed since this device last opened it shows a dot. The last revision seen stays on
-  the device, so the server does not learn when someone reads a doc.
-- A word count, and an export to PDF through the browser's print dialog and a print stylesheet.
-
-Constraints:
-
-- Titles and sections are encrypted with the project's #general key and signed like messages
-  (D-014, D-016). Every project member is in #general (D-024), and #general lasts as long as the
-  project. So adding people (D-026) and new keys after a removal (D-044) cover docs with no new key
-  code.
-- The signed header binds the chat, the key id, the doc, the section, the revision and the kind.
-  The order of a doc's sections is signed too, so the server cannot reorder or drop sections.
-- The preview builds React elements and never sets raw HTML. Other members write the text, and the
-  Content Security Policy is strict (D-009).
-- The server sees which docs a project has, how many sections each has, who edited which section
-  and when, who holds a lock, and the size band of each section (D-059). List them in the README
-  and in D-020.
-- New revisions and locks change the sync fingerprint (D-021). Schema changes go in a new migration
-  at the end (D-010). The longest section goes in `LIMITS` (D-011).
-- Section text not saved yet stays on the device, like drafts (D-051).
-
-Out of scope for now: docs in groups and direct messages, Markdown and Word exports, Word-style
-editing, comments, mentions, a note in #general for each edit, links to tasks (R-001), images
-(R-005), search (R-008), and two people editing one section at once, which needs Q-1.
-
-Done when: typecheck, tests and build pass. Tests prove that the database holds no doc text in
-plain, that only project members can read or change docs, and that nobody takes a lock someone else
-holds. Docs have been tried in a browser with two accounts (D-037).
 
 ## Planned
 
@@ -264,169 +195,7 @@ the notes would show it nothing new. They should not count as unread.
 
 ## Known issues
 
-### K-21: An urgent message from while every tab was closed does not ring
-
-Status: Fixed in #65 (D-078). An integration test checks what bootstrap lists. The alert at open was
-tried in a browser with two accounts and notifications blocked, at desktop width and 375 pixels.
-
-Found while testing a closed browser on 2026-11-01.
-
-A page alerts only for messages that arrive after it loads (D-049). An urgent message sent while
-every tab was closed shows only its URGENT tag in the chat list when the page opens again. If its
-push reached the device, the notification stays until it is tapped. Without push, for example with
-notifications blocked, nothing ever rings, though D-023 says urgent messages ring until the user
-acknowledges them. Decide whether an unread urgent message should ring once when a page opens.
-
-### K-27: An IPv6 loopback address still gets TLS
-
-Status: Fixed in #63. A test in `test/sql.test.ts` checks that `[::1]` gets no TLS.
-
-Found while fixing K-10 in #46 on 2026-11-03.
-
-`connectPostgres` in `server/sql.ts` compares `url.hostname` with `::1`, but the WHATWG URL API
-keeps the brackets, so the hostname is `[::1]` and never matches. A `DATABASE_URL` with the IPv6
-loopback address gets TLS like a remote host. Compare with `[::1]`, or strip the brackets.
-
-### K-28: The New channel dialog overflows at 375 pixels with a long name
-
-Status: Fixed in #59. A browser check at 375 pixels and at desktop width, in light and dark mode,
-measured no overflow with a name of 39 characters.
-
-Found in the browser check of K-11 in #51 on 2026-11-03.
-
-The preview "It will be called #…" in `client/src/components/ProjectDialogs.tsx` cannot wrap a
-name of 39 characters without a space. At 375 pixels the dialog content grows past the dialog,
-the close button is half cut off, the preview is clipped and the dialog scrolls sideways. Creating
-the channel still works. `overflow-wrap: anywhere` on the preview would fix it.
-
-### K-29: "Turn on notifications" shows on iOS before 16.4
-
-Status: Fixed in #57. A browser check with an iOS 15 user agent and no `Notification` shows the
-dialog without the button and with the Bark section; a normal browser still shows the button.
-
-Found in the browser check of K-23 in #48 on 2026-11-03.
-
-The bell dialog in `client/src/components/NotificationDialog.tsx` hides its main button only when
-the permission is `denied`. On iOS before 16.4 there is no `Notification`, `enableNotifications` in
-`client/src/push.ts` returns early, and the button does nothing. Hide it when `oldIos` is set, or
-when push is not supported, and leave the Bark section.
-
-### K-30: A session found expired at load leaves the keys on the device
-
-Status: Fixed in #56. Tried in a browser: a load after the session row was deleted showed the
-sign-in screen with no keys left, and a load with the API unreachable or answering 503 kept them.
-
-Found while fixing K-18 in #47 on 2026-11-03.
-
-When the first `GET /api/bootstrap` answers 401, the catch in `client/src/App.tsx` shows the
-sign-in screen but does not call `keyring.forget()`, which the check-in 401 path in
-`client/src/chat.ts` does. Sessions last 30 days and mostly expire while every tab is closed, so
-this is the usual path. The account's keys then stay in IndexedDB for whoever uses the browser next.
-
-### K-31: `sameIds` checks only its first list for duplicates
-
-Status: Fixed in #62. An integration test hands the database a key with two copies for one member
-and none for another, and checks that it is refused as stale.
-
-Found while fixing K-13 in #50 on 2026-11-03.
-
-`sameIds` in `server/db.ts` rejects a first list with repeated ids but not a second one, and it is
-called with the wrapped-key list second. A key request with two copies for the same member passes
-the check and reaches the insert. Not yet checked what the database does with the duplicate.
-
-### K-32: A send that never ends blocks a chat's later sends
-
-Status: Fixed in #61 (D-077). A test queues a send behind one whose request never answers, and the
-second goes out after the timeout; it has not been tried in a browser on a dropped connection.
-
-Found while fixing K-24 in #53 on 2026-11-03. Listed as a cost in D-075.
-
-`client/src/api.ts` sets no timeout on `fetch`. Since #53 a chat's sends wait for each other, so a
-request that never answers, for example on a connection that drops without a reset, holds every
-later send in that chat until a reload. Give requests a timeout with `AbortController`, and let a
-timed-out send fail like any other so the queue moves on.
-
-### K-33: The service worker never removes a replaced push endpoint
-
-Status: Fixed in #60. A node test runs the worker's handler with a fake old subscription, and an
-integration test checks that only its owner can delete an endpoint; no browser has fired the event.
-
-Found while fixing K-17 in #49 on 2026-11-03.
-
-The `pushsubscriptionchange` handler in `client/src/sw.ts` subscribes again but ignores the event's
-`oldSubscription`. The old row stays on the server until the push service rejects it with 404 or
-410, and every push until then is sent twice, once to a dead endpoint. Tell the server to delete
-the old endpoint when the event carries one.
-
-### K-34: `shared/types.ts` says it holds only types
-
-Status: Fixed in #64. The header now says what the file holds and why.
-
-Found while fixing K-11 in #51 on 2026-11-03.
-
-The header of `shared/types.ts` says only type declarations live there, but the file also holds
-`BUILD_HEADER`, `showsEveryPush` and, since #51, `isChannelName` and `toChannelName`. Fix the
-header, or move the functions to a file of their own and add it to the map in AGENTS.md.
-
-### K-35: The map of the code does not list `client/src/queue.ts`
-
-Status: Fixed in #58.
-
-Found while fixing K-24 in #53 on 2026-11-03.
-
-#53 adds `client/src/queue.ts`, the per-chat send queue of D-075, and the map in AGENTS.md does not
-name it. Add a row once #53 is on main.
-
-### K-36: Every deploy reloaded every open tab, even with the same page
-
-Status: Fixed in #66. Tests show that a deploy with the same page does not reload a tab, and that
-the Ignored Build Step skips a commit that changes only the docs, the tests, the CI or the scripts.
-
-Found by the owner on 2026-11-03, when 16 pull requests deployed in 40 minutes.
-
-A tab reloads when the build header changes (D-040). On Vercel the header is the deployment id,
-which every deploy changes. Of the 16 deploys from 21:10 to 21:49, 7 handed out the same page: 3
-changed only the docs, 1 only the tests and 3 only the server. Each one still reloaded every open
-tab, which drops scroll positions and open dialogs. Now a tab fetches the page again and reloads
-only when the page loads other bundle files. Vercel also skips the build of a commit that changes
-nothing the app runs (D-058). The 9 deploys that changed the page still reload every tab once each.
-
-### K-37: A long name in a dialog title widens the dialog past a phone screen
-
-Status: Fixed in #67.
-
-Found in the browser check of K-28 in #59 on 2026-11-03.
-
-`.dialog-header h2` in `client/src/styles.css` is shared by every dialog, and it cannot wrap a name
-without spaces. A project name can have 60 characters. The titles "New channel in …",
-"Repositories in …" and "Add people to …" carry such a name. At 375 pixels the dialog content
-grows past the dialog and pushes the close button out. `overflow-wrap: anywhere` on the title
-would fix it. #59 fixed the same overflow in the preview of the New channel dialog.
-
-### K-38: The map of the code leaves out most modules
-
-Status: Fixed in #68.
-
-Found while fixing K-35 in #58 on 2026-11-03.
-
-The map in AGENTS.md names 17 of the 33 files and folders under `client/src`, `server` and
-`shared`. It leaves out both entry points, `server/index.ts` and `client/src/main.tsx`, and modules
-such as `server/auth.ts`, `server/sql.ts`, `client/src/api.ts` and `shared/github.ts`. Its
-`client/src/e2ee/` row does not say that sign-up and sign-in live there. An agent that looks up
-where something lives finds nothing and has to search the tree.
-
-### K-39: A long message from someone else lets the chat slide sideways on a phone
-
-Status: Fixed in #70.
-
-Found by the owner on a phone on 2026-11-03.
-
-The React and Reply tools sit right of a bubble from someone else, and they stay in the layout
-while hidden. On a phone a bubble can take 85% of the list, which leaves too little room for the
-tools in a screen narrower than 420 pixels. They reached past the right edge of `.messages`, and
-the list slid sideways under a finger. At 375 pixels the list was 382 pixels wide. Now
-`.messages` hides what reaches past its sides. A mouse user in a window that narrow sees the tools
-of the widest bubbles cut at the edge.
+None open.
 
 ## Open questions
 
@@ -497,6 +266,256 @@ requests for the record. Nothing here is a candidate for what to do next.
 | K-11: The New channel dialog and the server share one name rule (D-065) | #51 |
 | K-14: Only failed sign-ins use up the limit for an address (D-068) | #52 |
 | K-24: A chat's messages are sent one at a time, in the order they were written (D-075) | #53 |
+| K-30: A session found expired at load forgets the keys on the device | #56 |
+| K-29: The bell dialog hides "Turn on notifications" on iOS before 16.4 | #57 |
+| K-35: The map of the code lists `client/src/queue.ts` | #58 |
+| K-28: The New channel dialog wraps a long name at 375 pixels | #59 |
+| K-33: The service worker deletes the push endpoint it replaced | #60 |
+| K-32: Requests time out, so a send that never ends no longer blocks a chat (D-077) | #61 |
+| K-31: `sameIds` refuses duplicates in both lists | #62 |
+| K-27: The IPv6 loopback address gets no TLS | #63 |
+| K-34: `shared/types.ts` says what it holds | #64 |
+| K-21: An urgent message missed while every tab was closed rings when a page opens (D-078) | #65 |
+| K-36: A deploy reloads a tab only when the page changes | #66 |
+| K-37: Long names in dialog titles wrap on a phone | #67 |
+| K-38: The map of the code lists every module | #68 |
+| R-019: Urgent messages ring like an alarm with every tab closed (D-079) | #69 |
+| K-39: A long message no longer lets the chat slide sideways on a phone | #70 |
+| One account per device (D-080) | #71 |
+| R-020: Shared Markdown docs in projects (D-081) | #73 |
+
+### R-020: Shared Markdown docs in projects
+
+Status: Done in #73 (D-081). Integration tests prove that the database holds no doc text in plain,
+that only project members read or change docs, and that nobody takes a lock someone else holds.
+Tried in a browser with two accounts, at desktop width and 375 pixels, in light and dark mode. Not
+yet tried on a real phone, or printed from Safari.
+
+Asked for by the owner on 2026-11-03.
+
+Why: student teams write a PRD or a spec together. Today it lives in Word files they send each
+other, or in another app. They lose track of the latest version and of who changed what.
+
+Scope:
+
+- A Docs list under each project, next to its channels. A new doc starts blank or from a template:
+  PRD, tech spec, meeting notes or project proposal.
+- A doc is a title and an ordered list of sections. Each section is Markdown, written in a text box
+  with a preview. The preview supports headings, bold and italic, code, lists, checkboxes, links,
+  quotes and tables.
+- One person edits a section at a time. Editing claims a lock on the section, and each check-in
+  from the editor's tab renews it, the way online status works. Everyone else sees who is editing.
+- While the lock is held, saves replace the same revision. Releasing the lock closes it, so a
+  section's history has one entry per editing session. History shows a diff and restores an
+  earlier revision.
+- A doc that changed since this device last opened it shows a dot. The last revision seen stays on
+  the device, so the server does not learn when someone reads a doc.
+- A word count, and an export to PDF through the browser's print dialog and a print stylesheet.
+
+Constraints:
+
+- Titles and sections are encrypted with the project's #general key and signed like messages
+  (D-014, D-016). Every project member is in #general (D-024), and #general lasts as long as the
+  project. So adding people (D-026) and new keys after a removal (D-044) cover docs with no new key
+  code.
+- The signed header binds the chat, the key id, the doc, the section, the revision and the kind.
+  The order of a doc's sections is signed too, so the server cannot reorder or drop sections.
+- The preview builds React elements and never sets raw HTML. Other members write the text, and the
+  Content Security Policy is strict (D-009).
+- The server sees which docs a project has, how many sections each has, who edited which section
+  and when, who holds a lock, and the size band of each section (D-059). List them in the README
+  and in D-020.
+- New revisions and locks change the sync fingerprint (D-021). Schema changes go in a new migration
+  at the end (D-010). The longest section goes in `LIMITS` (D-011).
+- Section text not saved yet stays on the device, like drafts (D-051).
+
+Out of scope for now: docs in groups and direct messages, Markdown and Word exports, Word-style
+editing, comments, mentions, a note in #general for each edit, links to tasks (R-001), images
+(R-005), search (R-008), and two people editing one section at once, which needs Q-1.
+
+Done when: typecheck, tests and build pass. Tests prove that the database holds no doc text in
+plain, that only project members can read or change docs, and that nobody takes a lock someone else
+holds. Docs have been tried in a browser with two accounts (D-037).
+
+### K-39: A long message from someone else lets the chat slide sideways on a phone
+
+Status: Fixed in #70.
+
+Found by the owner on a phone on 2026-11-03.
+
+The React and Reply tools sit right of a bubble from someone else, and they stay in the layout
+while hidden. On a phone a bubble can take 85% of the list, which leaves too little room for the
+tools in a screen narrower than 420 pixels. They reached past the right edge of `.messages`, and
+the list slid sideways under a finger. At 375 pixels the list was 382 pixels wide. Now
+`.messages` hides what reaches past its sides. A mouse user in a window that narrow sees the tools
+of the widest bubbles cut at the edge.
+
+### R-019: Urgent messages ring like an alarm with every tab closed
+
+Status: Done in #69 (D-079). An integration test rings an unread urgent message, skips a recipient
+who looks at the app, and stops once the chat is read. A service worker test checks that each ring
+sounds. Not yet tried on a locked phone.
+
+Asked for by the owner on 2026-11-03.
+
+Why: with the tab closed or the phone locked, an urgent message showed one notification, like any
+other message, and only an open page rang until someone acted on it. Urgent messages exist so
+they are never missed (D-023).
+
+Scope: the server rings each unread urgent message again every 15 seconds, on every device of a
+recipient who is not looking at the app, until they read the chat or the message is 3 days old.
+Done when a closed tab and a locked phone keep ringing until the chat is opened.
+
+### K-38: The map of the code leaves out most modules
+
+Status: Fixed in #68.
+
+Found while fixing K-35 in #58 on 2026-11-03.
+
+The map in AGENTS.md names 17 of the 33 files and folders under `client/src`, `server` and
+`shared`. It leaves out both entry points, `server/index.ts` and `client/src/main.tsx`, and modules
+such as `server/auth.ts`, `server/sql.ts`, `client/src/api.ts` and `shared/github.ts`. Its
+`client/src/e2ee/` row does not say that sign-up and sign-in live there. An agent that looks up
+where something lives finds nothing and has to search the tree.
+
+### K-37: A long name in a dialog title widens the dialog past a phone screen
+
+Status: Fixed in #67.
+
+Found in the browser check of K-28 in #59 on 2026-11-03.
+
+`.dialog-header h2` in `client/src/styles.css` is shared by every dialog, and it cannot wrap a name
+without spaces. A project name can have 60 characters. The titles "New channel in …",
+"Repositories in …" and "Add people to …" carry such a name. At 375 pixels the dialog content
+grows past the dialog and pushes the close button out. `overflow-wrap: anywhere` on the title
+would fix it. #59 fixed the same overflow in the preview of the New channel dialog.
+
+### K-36: Every deploy reloaded every open tab, even with the same page
+
+Status: Fixed in #66. Tests show that a deploy with the same page does not reload a tab, and that
+the Ignored Build Step skips a commit that changes only the docs, the tests, the CI or the scripts.
+
+Found by the owner on 2026-11-03, when 16 pull requests deployed in 40 minutes.
+
+A tab reloads when the build header changes (D-040). On Vercel the header is the deployment id,
+which every deploy changes. Of the 16 deploys from 21:10 to 21:49, 7 handed out the same page: 3
+changed only the docs, 1 only the tests and 3 only the server. Each one still reloaded every open
+tab, which drops scroll positions and open dialogs. Now a tab fetches the page again and reloads
+only when the page loads other bundle files. Vercel also skips the build of a commit that changes
+nothing the app runs (D-058). The 9 deploys that changed the page still reload every tab once each.
+
+### K-21: An urgent message from while every tab was closed does not ring
+
+Status: Fixed in #65 (D-078). An integration test checks what bootstrap lists. The alert at open was
+tried in a browser with two accounts and notifications blocked, at desktop width and 375 pixels.
+
+Found while testing a closed browser on 2026-11-01.
+
+A page alerts only for messages that arrive after it loads (D-049). An urgent message sent while
+every tab was closed shows only its URGENT tag in the chat list when the page opens again. If its
+push reached the device, the notification stays until it is tapped. Without push, for example with
+notifications blocked, nothing ever rings, though D-023 says urgent messages ring until the user
+acknowledges them. Decide whether an unread urgent message should ring once when a page opens.
+
+### K-34: `shared/types.ts` says it holds only types
+
+Status: Fixed in #64. The header now says what the file holds and why.
+
+Found while fixing K-11 in #51 on 2026-11-03.
+
+The header of `shared/types.ts` says only type declarations live there, but the file also holds
+`BUILD_HEADER`, `showsEveryPush` and, since #51, `isChannelName` and `toChannelName`. Fix the
+header, or move the functions to a file of their own and add it to the map in AGENTS.md.
+
+### K-27: An IPv6 loopback address still gets TLS
+
+Status: Fixed in #63. A test in `test/sql.test.ts` checks that `[::1]` gets no TLS.
+
+Found while fixing K-10 in #46 on 2026-11-03.
+
+`connectPostgres` in `server/sql.ts` compares `url.hostname` with `::1`, but the WHATWG URL API
+keeps the brackets, so the hostname is `[::1]` and never matches. A `DATABASE_URL` with the IPv6
+loopback address gets TLS like a remote host. Compare with `[::1]`, or strip the brackets.
+
+### K-31: `sameIds` checks only its first list for duplicates
+
+Status: Fixed in #62. An integration test hands the database a key with two copies for one member
+and none for another, and checks that it is refused as stale.
+
+Found while fixing K-13 in #50 on 2026-11-03.
+
+`sameIds` in `server/db.ts` rejects a first list with repeated ids but not a second one, and it is
+called with the wrapped-key list second. A key request with two copies for the same member passes
+the check and reaches the insert. Not yet checked what the database does with the duplicate.
+
+### K-32: A send that never ends blocks a chat's later sends
+
+Status: Fixed in #61 (D-077). A test queues a send behind one whose request never answers, and the
+second goes out after the timeout; it has not been tried in a browser on a dropped connection.
+
+Found while fixing K-24 in #53 on 2026-11-03. Listed as a cost in D-075.
+
+`client/src/api.ts` sets no timeout on `fetch`. Since #53 a chat's sends wait for each other, so a
+request that never answers, for example on a connection that drops without a reset, holds every
+later send in that chat until a reload. Give requests a timeout with `AbortController`, and let a
+timed-out send fail like any other so the queue moves on.
+
+### K-33: The service worker never removes a replaced push endpoint
+
+Status: Fixed in #60. A node test runs the worker's handler with a fake old subscription, and an
+integration test checks that only its owner can delete an endpoint; no browser has fired the event.
+
+Found while fixing K-17 in #49 on 2026-11-03.
+
+The `pushsubscriptionchange` handler in `client/src/sw.ts` subscribes again but ignores the event's
+`oldSubscription`. The old row stays on the server until the push service rejects it with 404 or
+410, and every push until then is sent twice, once to a dead endpoint. Tell the server to delete
+the old endpoint when the event carries one.
+
+### K-28: The New channel dialog overflows at 375 pixels with a long name
+
+Status: Fixed in #59. A browser check at 375 pixels and at desktop width, in light and dark mode,
+measured no overflow with a name of 39 characters.
+
+Found in the browser check of K-11 in #51 on 2026-11-03.
+
+The preview "It will be called #…" in `client/src/components/ProjectDialogs.tsx` cannot wrap a
+name of 39 characters without a space. At 375 pixels the dialog content grows past the dialog,
+the close button is half cut off, the preview is clipped and the dialog scrolls sideways. Creating
+the channel still works. `overflow-wrap: anywhere` on the preview would fix it.
+
+### K-35: The map of the code does not list `client/src/queue.ts`
+
+Status: Fixed in #58.
+
+Found while fixing K-24 in #53 on 2026-11-03.
+
+#53 adds `client/src/queue.ts`, the per-chat send queue of D-075, and the map in AGENTS.md does not
+name it. Add a row once #53 is on main.
+
+### K-29: "Turn on notifications" shows on iOS before 16.4
+
+Status: Fixed in #57. A browser check with an iOS 15 user agent and no `Notification` shows the
+dialog without the button and with the Bark section; a normal browser still shows the button.
+
+Found in the browser check of K-23 in #48 on 2026-11-03.
+
+The bell dialog in `client/src/components/NotificationDialog.tsx` hides its main button only when
+the permission is `denied`. On iOS before 16.4 there is no `Notification`, `enableNotifications` in
+`client/src/push.ts` returns early, and the button does nothing. Hide it when `oldIos` is set, or
+when push is not supported, and leave the Bark section.
+
+### K-30: A session found expired at load leaves the keys on the device
+
+Status: Fixed in #56. Tried in a browser: a load after the session row was deleted showed the
+sign-in screen with no keys left, and a load with the API unreachable or answering 503 kept them.
+
+Found while fixing K-18 in #47 on 2026-11-03.
+
+When the first `GET /api/bootstrap` answers 401, the catch in `client/src/App.tsx` shows the
+sign-in screen but does not call `keyring.forget()`, which the check-in 401 path in
+`client/src/chat.ts` does. Sessions last 30 days and mostly expire while every tab is closed, so
+this is the usual path. The account's keys then stay in IndexedDB for whoever uses the browser next.
 
 ### K-24: Quick sends can be stored out of order
 
