@@ -57,7 +57,10 @@ Open questions:
 
 ### R-021: Project board of decisions and roadmap cards
 
-Status: In progress on branch `claude/r021-project-board` (#75). Replaces R-001.
+Status: Done in #75 (D-082). Unit tests cover the card reader, the numbering, the duplicate
+warning and the Markdown output. Tried in a browser with two accounts, at desktop width and 375
+pixels, in light and dark mode. The owner's first use asked for a delete button, even heads and
+no preview tab, which a follow-up pull request adds. Replaces R-001.
 
 Asked for by the owner on 2026-11-04.
 
