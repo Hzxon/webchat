@@ -12,6 +12,8 @@
   --accent-soft: #e6e6fc;
   --on-accent: #ffffff;
   --chat-bg: #ffffff;
+  --bubble-in: #f1f1f3;
+  --bubble-out: #ececfd;
   --read: #2563eb;
   --ok: #15803d;
   --ok-soft: #dcfce7;
@@ -46,6 +48,8 @@
     --accent-soft: #25264a;
     --on-accent: #0f0f2a;
     --chat-bg: #141416;
+    --bubble-in: #222226;
+    --bubble-out: #2a2b52;
     --read: #60a5fa;
     --ok: #4ade80;
     --ok-soft: #143020;
@@ -776,9 +780,10 @@ a {
 
 .messages {
   flex: 1;
+  /* On a phone the hidden tools of a wide bubble reach past the right edge and let the list slide sideways. */
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 12px 0;
+  padding: 16px 6% 12px;
   overscroll-behavior: contain;
 }
 
@@ -810,148 +815,89 @@ a {
   font-size: 12.5px;
 }
 
-/* The message feed: one column, the avatar in a gutter, nothing aligned right (D-084). */
-
-.message {
-  position: relative;
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  column-gap: 8px;
-  padding: 2px 16px 2px 12px;
+.bubble-row {
+  display: flex;
+  flex-direction: column;
+  margin-top: 2px;
 }
 
-.message.first {
+.bubble-row.first {
   margin-top: 10px;
 }
 
-@media (hover: hover) {
-  .message:hover {
-    background: var(--hover);
-  }
+.bubble-row.mine {
+  align-items: flex-end;
 }
 
-.message.is-selected {
-  background: var(--hover);
-}
-
-.message.is-urgent {
-  box-shadow: inset 3px 0 0 var(--danger);
-}
-
-.message-gutter {
-  display: flex;
-  flex-direction: column;
+.bubble-row.theirs {
   align-items: flex-start;
 }
 
-/* A grouped message shows its time where the avatar would be, only while the pointer rests on it. */
-.message-gutter .message-time {
-  align-self: flex-end;
-  padding-top: 4px;
-  opacity: 0;
-  font-size: 10.5px;
-  white-space: nowrap;
+/* The bubble plus its hover tools and reaction tray, which sit outside it. */
+.bubble-line {
+  position: relative;
+  display: flex;
+  max-width: min(75%, 640px);
 }
 
-@media (hover: hover) {
-  .message:hover .message-gutter .message-time {
-    opacity: 1;
-  }
-}
-
-.message.is-selected .message-gutter .message-time {
-  opacity: 1;
-}
-
-.message-body {
+.bubble {
+  position: relative;
   display: grid;
   min-width: 0;
-  align-content: start;
+  max-width: 100%;
+  padding: 6px 9px 7px;
+  border-radius: var(--radius);
+  background: var(--bubble-in);
   overflow-wrap: anywhere;
 }
 
-.message-head {
+.mine .bubble {
+  background: var(--bubble-out);
+}
+
+.mine.first .bubble {
+  border-top-right-radius: 2px;
+}
+
+.theirs.first .bubble {
+  border-top-left-radius: 2px;
+}
+
+.bubble-urgent {
+  box-shadow: inset 3px 0 0 var(--danger);
+  padding-left: 13px;
+}
+
+.bubble-urgent-label {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 7px;
-}
-
-.message-sender {
-  font-size: 14.5px;
-  font-weight: 700;
-}
-
-.message-time {
-  color: var(--muted);
-  font-size: 11.5px;
-}
-
-.message-flags {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin: 1px 0;
-  color: var(--muted);
-  font-size: 11.5px;
-}
-
-.urgent-label {
-  display: inline-flex;
   align-items: center;
   gap: 4px;
   color: var(--danger);
+  font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0.03em;
 }
 
-/* Message text is Markdown, set tighter than a doc. */
-.message-text .markdown {
-  line-height: 1.45;
+.bubble-sender {
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.message-text .markdown p,
-.message-text .markdown ul,
-.message-text .markdown ol,
-.message-text .markdown blockquote,
-.message-text .markdown pre,
-.message-text .markdown-table {
-  margin: 4px 0;
+.bubble-text {
+  white-space: pre-wrap;
 }
 
-.message-text .markdown > :last-child {
-  margin-bottom: 0;
-}
-
-.message-text .markdown h1,
-.message-text .markdown h2,
-.message-text .markdown h3,
-.message-text .markdown h4,
-.message-text .markdown h5,
-.message-text .markdown h6 {
-  margin: 8px 0 2px;
-  font-size: 15px;
-}
-
-.message-text .markdown h1 {
-  font-size: 18px;
-}
-
-.message-text .markdown h2 {
-  font-size: 16.5px;
-}
-
-.message-body .pull-card {
-  max-width: 560px;
-}
-
-/* Own messages keep their ticks, in a column at the feed's edge, until the read-tick question in R-023 is settled. */
-.message-status {
-  display: inline-flex;
-  align-self: start;
-  padding-top: 5px;
+.bubble-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  margin-top: -2px;
+  margin-left: 24px;
   color: var(--muted);
+  font-size: 11px;
+  /* The bubble breaks long words anywhere, and Safari broke the time in two when the ticks changed. */
+  white-space: nowrap;
 }
 
 .ticks {
@@ -963,18 +909,18 @@ a {
   color: var(--read);
 }
 
-/* Quoted replies: a block quote above the message, in Slack's style. */
+/* Quoted replies */
 
 .quote {
   display: grid;
   gap: 1px;
   min-width: 0;
   margin: 2px 0 4px;
-  padding: 2px 10px;
+  padding: 5px 9px 6px;
   border: 0;
   border-left: 4px solid;
-  border-radius: 0 4px 4px 0;
-  background: transparent;
+  border-radius: 6px;
+  background: var(--quote-bg);
   color: var(--text);
   font-size: 13.5px;
   text-align: left;
@@ -982,7 +928,7 @@ a {
 
 @media (hover: hover) {
   button.quote:hover {
-    background: var(--quote-bg);
+    background: var(--quote-hover);
   }
 }
 
@@ -1001,40 +947,46 @@ a {
   -webkit-line-clamp: 2;
 }
 
-.message.is-flash {
+.bubble-row.is-flash .bubble {
   animation: flash 1.6s ease-out;
 }
 
 @keyframes flash {
   0%,
   35% {
-    background: var(--accent-soft);
+    box-shadow: 0 0 0 3px var(--accent);
   }
   100% {
-    background: transparent;
+    box-shadow: 0 0 0 3px transparent;
   }
 }
 
-/* Message tools: react and reply. Desktop shows them on hover at the edge; a long press opens the tray on phones. */
+/* Message tools: react and reply. Desktop shows them on hover; phones open the tray with a tap. */
 
 .message-tools {
   position: absolute;
-  top: -14px;
-  right: 16px;
-  z-index: 2;
+  top: 50%;
   display: flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
+  gap: 4px;
   opacity: 0;
   pointer-events: none;
+  transform: translateY(-50%);
   transition: opacity 0.12s;
 }
 
+.theirs .message-tools {
+  left: 100%;
+  padding-left: 6px;
+}
+
+.mine .message-tools {
+  right: 100%;
+  padding-right: 6px;
+  flex-direction: row-reverse;
+}
+
 @media (hover: hover) {
-  .message:hover .message-tools {
+  .bubble-row:hover .message-tools {
     opacity: 1;
     pointer-events: auto;
   }
@@ -1048,25 +1000,24 @@ a {
 .tool-button {
   display: inline-grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border: 0;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: transparent;
+  background: var(--panel);
   color: var(--muted);
 }
 
 @media (hover: hover) {
   .tool-button:hover {
-    background: var(--hover);
+    border-color: var(--muted);
     color: var(--text);
   }
 }
 
 .reaction-tray {
   position: absolute;
-  right: 16px;
-  bottom: calc(100% + 14px);
+  bottom: calc(100% + 6px);
   z-index: 3;
   display: flex;
   align-items: center;
@@ -1076,6 +1027,14 @@ a {
   background: var(--panel);
   box-shadow: var(--shadow), 0 0 0 1px var(--line);
   animation: tray-in 0.12s ease-out;
+}
+
+.theirs .reaction-tray {
+  left: 0;
+}
+
+.mine .reaction-tray {
+  right: 0;
 }
 
 @keyframes tray-in {
@@ -1130,13 +1089,21 @@ a {
   }
 }
 
+.bubble-row.is-selected .bubble {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
 /* Reaction chips under a message */
 
 .reactions {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin-top: 4px;
+  max-width: min(75%, 640px);
+  margin-top: -5px;
+  padding: 0 8px;
 }
 
 .reaction {
@@ -1815,11 +1782,12 @@ a {
   }
 
   .messages {
-    padding: 8px 0;
+    padding: 12px 10px;
   }
 
-  .message {
-    padding: 2px 10px 2px 8px;
+  .bubble-line,
+  .reactions {
+    max-width: 85%;
   }
 }
 
@@ -1852,7 +1820,7 @@ a {
   margin-top: 1px;
 }
 
-.message-failed {
+.bubble-failed {
   display: flex;
   align-items: center;
   gap: 5px;

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import type { QuotedMessage } from '../../../shared/e2ee';
 import { githubCardEvent } from '../../../shared/github';
 import { LIMITS, type GithubCardDTO, type PullCardDTO, type PullEvent } from '../../../shared/types';
@@ -7,7 +7,7 @@ import { discardMessage, loadDraft, loadOlder, quoteOf, react, retryMessage, sav
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { actions, chatTitle, otherMemberId, senderName, useAppState, type MessageReactions, type State } from '../store';
 import { Avatar, nameColor } from './Avatar';
-import { dayLabel, formatTime, presenceText } from './format';
+import { dayLabel, formatTime, linkify, presenceText } from './format';
 import {
   AlertIcon,
   BackIcon,
@@ -25,7 +25,6 @@ import {
   UsersIcon,
 } from './icons';
 import type { MembersTarget } from './MembersDialog';
-import { Markdown } from './Markdown';
 import { PullTags, Tag, type Tone } from './PullTags';
 import { receiptState } from './receipts';
 import { SecurityCodeDialog } from './SecurityCodeDialog';
@@ -35,7 +34,7 @@ const NO_REACTIONS: Record<number, MessageReactions> = {};
 /** The six quick reactions WhatsApp offers. */
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
-/** Phones and tablets: no hover, and a keyboard that would cover a chat just opened. */
+/** Phones and tablets: no hover, so tapping a message opens its reactions and reply. */
 const touchOnly = () => window.matchMedia('(hover: none)').matches;
 
 /**
@@ -149,14 +148,8 @@ interface MessageListProps {
   onReply: (message: ChatMessage) => void;
 }
 
-/** Messages from one sender this close together share one name and avatar, as in Slack (D-084). */
-const RUN_GAP = 5 * 60_000;
-/** How long a finger rests on a message before its tools open. */
-const LONG_PRESS = 450;
-
 function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
-  const me = useAppState((s) => s.me);
-  const meId = me?.id;
+  const meId = useAppState((s) => s.me?.id);
   const users = useAppState((s) => s.users);
   const messages = useAppState((s) => s.messages[conversation.id] ?? EMPTY);
   const reactions = useAppState((s) => s.reactions[conversation.id] ?? NO_REACTIONS);
@@ -173,8 +166,6 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
   /** The message just jumped to from a quote, highlighted for a moment. */
   const [flashId, setFlashId] = useState<number | null>(null);
   const byId = useMemo(() => new Map(messages.map((m) => [m.id, m])), [messages]);
-  /** A finger resting on a message, until it lifts, moves or the tools open. */
-  const press = useRef<{ timer: number; x: number; y: number; opened: boolean } | null>(null);
 
   useEffect(() => {
     if (trayFor === null) return;
@@ -193,28 +184,10 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
     setTimeout(() => setFlashId((current) => (current === id ? null : current)), 1600);
   }
 
-  // Phones have no hover to show the tools, so a long press opens the tray instead.
-  function pressStart(event: PointerEvent<HTMLElement>, id: number) {
-    // A link or a button keeps the browser's own long-press menu.
-    if (!touchOnly() || (event.target as Element).closest('a, button')) return;
-    pressEnd();
-    const timer = window.setTimeout(() => {
-      if (press.current) press.current.opened = true;
-      // The browser may have started selecting a word under the finger.
-      window.getSelection()?.removeAllRanges();
-      setTrayFor(id);
-    }, LONG_PRESS);
-    press.current = { timer, x: event.clientX, y: event.clientY, opened: false };
-  }
-
-  function pressMove(event: PointerEvent<HTMLElement>) {
-    const p = press.current;
-    if (p && !p.opened && Math.hypot(event.clientX - p.x, event.clientY - p.y) > 8) pressEnd();
-  }
-
-  function pressEnd() {
-    if (press.current) clearTimeout(press.current.timer);
-    press.current = null;
+  function onBubbleClick(event: MouseEvent, id: number) {
+    // Leave links, quotes and text selection alone.
+    if ((event.target as Element).closest('a, button') || !window.getSelection()?.isCollapsed) return;
+    setTrayFor((current) => (touchOnly() && current !== id ? id : null));
   }
 
   // Keep the view pinned to the newest message unless the user scrolled up to read history.
@@ -263,10 +236,9 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
       onScroll={(e) => {
         const el = e.currentTarget;
         stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-        pressEnd();
       }}
       onClick={(e) => {
-        if (trayFor !== null && !(e.target as Element).closest('.reaction-tray, .message-tools')) setTrayFor(null);
+        if (trayFor !== null && !(e.target as Element).closest('.reaction-tray, .message-tools, .bubble')) setTrayFor(null);
       }}
     >
       <button className="encryption-notice" onClick={onShowCodes}>
@@ -285,149 +257,118 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
         const previous = messages[i - 1];
         const newDay = !previous || dayLabel(previous.createdAt) !== dayLabel(message.createdAt);
         const mine = message.senderId === meId;
-        const firstOfRun =
-          !previous || newDay || previous.senderId !== message.senderId || message.createdAt - previous.createdAt > RUN_GAP;
+        const firstOfRun = newDay || previous?.senderId !== message.senderId;
         const status = message.clientId ? pending[message.clientId] : undefined;
         const canAct = message.id > 0 && message.security !== 'failed';
         const marks = reactions[message.id];
-        // The users list leaves out the viewer.
-        const name = mine && me ? me.displayName : senderName(users, message.senderId, 'Unknown');
-        const notEncrypted =
-          message.security === 'plain'
-            ? 'Sent before end-to-end encryption was turned on'
-            : message.security === 'github'
-              ? 'WebChat wrote this from what GitHub sent, so it is not end-to-end encrypted'
-              : null;
         const rowClass = [
-          'message',
+          'bubble-row',
+          mine ? 'mine' : 'theirs',
           firstOfRun ? 'first' : '',
-          message.urgent ? 'is-urgent' : '',
           trayFor === message.id ? 'is-selected' : '',
           flashId === message.id ? 'is-flash' : '',
         ].join(' ');
         return (
           <Fragment key={message.clientId ?? message.id}>
             {newDay && <div className="day-separator">{dayLabel(message.createdAt)}</div>}
-            <div
-              className={rowClass}
-              id={message.id > 0 ? `message-${message.id}` : undefined}
-              onPointerDown={canAct ? (e) => pressStart(e, message.id) : undefined}
-              onPointerMove={pressMove}
-              onPointerUp={pressEnd}
-              onPointerCancel={pressEnd}
-              // A long press that opened the tray is not a request for the browser's own menu.
-              onContextMenu={(e) => {
-                if (press.current?.opened) e.preventDefault();
-              }}
-            >
-              <div className="message-gutter">
-                {firstOfRun ? (
-                  <Avatar name={name} seed={message.senderId ?? 0} size={36} />
-                ) : (
-                  <span className="message-time">{formatTime(message.createdAt)}</span>
-                )}
-              </div>
-              <div className="message-body">
-                {firstOfRun && (
-                  <div className="message-head">
-                    <span className="message-sender" style={{ color: nameColor(message.senderId ?? 0) }}>
-                      {name}
+            <div className={rowClass} id={message.id > 0 ? `message-${message.id}` : undefined}>
+              <div className="bubble-line">
+                <div
+                  className={`bubble ${message.urgent ? 'bubble-urgent' : ''}`}
+                  onClick={canAct ? (e) => onBubbleClick(e, message.id) : undefined}
+                >
+                  {conversation.type !== 'direct' && !mine && firstOfRun && (
+                    <span className="bubble-sender" style={{ color: nameColor(message.senderId ?? 0) }}>
+                      {senderName(users, message.senderId, 'Unknown')}
                     </span>
-                    <span className="message-time">{formatTime(message.createdAt)}</span>
-                  </div>
-                )}
-                {(message.urgent || notEncrypted) && (
-                  <div className="message-flags">
-                    {message.urgent && (
-                      <span className="urgent-label">
-                        <BellRingIcon width={13} height={13} /> URGENT
-                      </span>
-                    )}
-                    {notEncrypted && (
-                      <span className="not-encrypted" title={notEncrypted}>
+                  )}
+                  {message.urgent && (
+                    <span className="bubble-urgent-label">
+                      <BellRingIcon width={13} height={13} /> URGENT
+                    </span>
+                  )}
+                  {message.replyTo && (
+                    <Quote quote={message.replyTo} original={byId.get(message.replyTo.id)} onJump={() => jumpTo(message.replyTo!.id)} />
+                  )}
+                  {message.security === 'failed' ? (
+                    <span className="bubble-text bubble-failed">
+                      <LockIcon width={13} height={13} /> This message could not be decrypted. It may have been altered.
+                    </span>
+                  ) : message.github ? (
+                    <GithubCard card={message.github} />
+                  ) : message.pull ? (
+                    <PullCard pull={message.pull} />
+                  ) : (
+                    <span className="bubble-text">{linkify(message.text)}</span>
+                  )}
+                  <span className="bubble-meta">
+                    {message.security === 'plain' && (
+                      <span className="not-encrypted" title="Sent before end-to-end encryption was turned on">
                         <LockOpenIcon width={11} height={11} /> Not encrypted
                       </span>
                     )}
-                  </div>
-                )}
-                {message.replyTo && (
-                  <Quote quote={message.replyTo} original={byId.get(message.replyTo.id)} onJump={() => jumpTo(message.replyTo!.id)} />
-                )}
-                {message.security === 'failed' ? (
-                  <span className="message-failed">
-                    <LockIcon width={13} height={13} /> This message could not be decrypted. It may have been altered.
+                    {message.security === 'github' && (
+                      <span className="not-encrypted" title="WebChat wrote this from what GitHub sent, so it is not end-to-end encrypted">
+                        <LockOpenIcon width={11} height={11} /> Not encrypted
+                      </span>
+                    )}
+                    {formatTime(message.createdAt)}
+                    {mine && status === 'sending' && <ClockIcon width={13} height={13} aria-label="sending" />}
+                    {mine && !status && message.id > 0 && <Ticks state={receiptState(conversation, message.id, meId)} />}
                   </span>
-                ) : message.github ? (
-                  <GithubCard card={message.github} />
-                ) : message.pull ? (
-                  <PullCard pull={message.pull} />
-                ) : (
-                  <div className="message-text">
-                    <Markdown text={message.text} />
-                  </div>
-                )}
-                {marks && <ReactionChips marks={marks} onToggle={(emoji) => void react(message, emoji)} />}
-                {status === 'failed' && (
-                  <div className="send-failed-row">
-                    <button className="send-failed" onClick={() => retryMessage(message)}>
-                      <AlertIcon width={14} height={14} /> Not sent. Tap to retry.
+                </div>
+                {canAct && (
+                  <span className="message-tools">
+                    <button
+                      className="tool-button"
+                      onClick={() => setTrayFor((current) => (current === message.id ? null : message.id))}
+                      title="React"
+                      aria-label="React"
+                    >
+                      <SmilePlusIcon width={17} height={17} />
                     </button>
-                    <button className="send-discard" onClick={() => discardMessage(message)}>
-                      Remove
+                    <button className="tool-button" onClick={() => onReply(message)} title="Reply" aria-label="Reply">
+                      <ReplyIcon width={17} height={17} />
+                    </button>
+                  </span>
+                )}
+                {trayFor === message.id && (
+                  <div className="reaction-tray" role="menu" aria-label="React or reply">
+                    {QUICK_REACTIONS.map((emoji) => (
+                      <button
+                        key={emoji}
+                        role="menuitem"
+                        className={`tray-emoji ${meId !== undefined && marks?.[meId]?.emoji === emoji ? 'is-mine' : ''}`}
+                        onClick={() => {
+                          setTrayFor(null);
+                          void react(message, emoji);
+                        }}
+                        aria-label={`React with ${emoji}`}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                    <button
+                      role="menuitem"
+                      className="tray-reply"
+                      onClick={() => {
+                        setTrayFor(null);
+                        onReply(message);
+                      }}
+                    >
+                      <ReplyIcon width={16} height={16} /> Reply
                     </button>
                   </div>
                 )}
               </div>
-              {mine && status === 'sending' && (
-                <span className="message-status">
-                  <ClockIcon width={13} height={13} aria-label="sending" />
-                </span>
-              )}
-              {mine && !status && message.id > 0 && (
-                <span className="message-status">
-                  <Ticks state={receiptState(conversation, message.id, meId)} />
-                </span>
-              )}
-              {canAct && (
-                <span className="message-tools">
-                  <button
-                    className="tool-button"
-                    onClick={() => setTrayFor((current) => (current === message.id ? null : message.id))}
-                    title="React"
-                    aria-label="React"
-                  >
-                    <SmilePlusIcon width={17} height={17} />
+              {marks && <ReactionChips marks={marks} onToggle={(emoji) => void react(message, emoji)} />}
+              {status === 'failed' && (
+                <div className="send-failed-row">
+                  <button className="send-failed" onClick={() => retryMessage(message)}>
+                    <AlertIcon width={14} height={14} /> Not sent. Tap to retry.
                   </button>
-                  <button className="tool-button" onClick={() => onReply(message)} title="Reply" aria-label="Reply">
-                    <ReplyIcon width={17} height={17} />
-                  </button>
-                </span>
-              )}
-              {trayFor === message.id && (
-                <div className="reaction-tray" role="menu" aria-label="React or reply">
-                  {QUICK_REACTIONS.map((emoji) => (
-                    <button
-                      key={emoji}
-                      role="menuitem"
-                      className={`tray-emoji ${meId !== undefined && marks?.[meId]?.emoji === emoji ? 'is-mine' : ''}`}
-                      onClick={() => {
-                        setTrayFor(null);
-                        void react(message, emoji);
-                      }}
-                      aria-label={`React with ${emoji}`}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                  <button
-                    role="menuitem"
-                    className="tray-reply"
-                    onClick={() => {
-                      setTrayFor(null);
-                      onReply(message);
-                    }}
-                  >
-                    <ReplyIcon width={16} height={16} /> Reply
+                  <button className="send-discard" onClick={() => discardMessage(message)}>
+                    Remove
                   </button>
                 </div>
               )}
@@ -480,7 +421,7 @@ const EVENT_TAGS: Record<Exclude<PullEvent, 'opened'>, [Tone, string]> = {
 function GithubCard({ card }: { card: GithubCardDTO }) {
   return (
     <>
-      <div className="message-text">{githubCardEvent(card)}</div>
+      <span className="bubble-text">{githubCardEvent(card)}</span>
       <PullCard pull={card.pull} event={card.event === 'opened' ? undefined : EVENT_TAGS[card.event]} />
     </>
   );
