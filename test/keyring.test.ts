@@ -82,6 +82,7 @@ const user = (id: number, keys: PublicKeysDTO): UserDTO => ({
   keys,
   agentOwner: null,
   busy: false,
+  deleted: false,
 });
 
 const member = (userId: number) => ({ userId, lastDeliveredId: 0, lastReadId: 0 });

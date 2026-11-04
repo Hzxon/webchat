@@ -357,7 +357,11 @@ ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS agent BOOLEAN NOT NULL DEFAUL
   `
 ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS busy BOOLEAN NOT NULL DEFAULT FALSE;
 `,
-  // 15: the person an agent runs cards for, which replaces the agent flag of 13 (K-45, D-089).
+  // 15: when an account was deleted. The row stays, so old messages keep their sender (R-028, D-088).
+  `
+ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS deleted_at BIGINT;
+`,
+  // 16: the person an agent runs cards for, which replaces the agent flag of 13 (K-45, D-089).
   `
 ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS agent_owner INTEGER REFERENCES webchat.users(id) ON DELETE SET NULL;
 `,
@@ -396,6 +400,7 @@ export interface UserRow {
   key_backup: string | null;
   agent_owner: number | null;
   busy: boolean;
+  deleted_at: number | null;
 }
 
 interface ConversationRow {
@@ -633,6 +638,7 @@ export function toUserDTO(row: UserRow, now = Date.now()): UserDTO {
     keys: row.dh_public && row.sign_public ? { dh: row.dh_public, sign: row.sign_public } : null,
     agentOwner: row.agent_owner,
     busy: row.busy,
+    deleted: row.deleted_at !== null,
   };
 }
 
@@ -1008,6 +1014,63 @@ export async function openDb(sql: Sql) {
           [username, displayName, loginKeyHash, Date.now(), keys.dh, keys.sign, JSON.stringify(keys.backup), agentOwner],
         ),
       ),
+    /**
+     * Deletes an account (R-028, D-088). The row stays, without its name, secrets or keys, so old
+     * messages keep their sender. The person leaves every group and channel the way leaving does,
+     * so each needs a new key before anyone sends again. Groups with nobody else, and direct chats,
+     * which have nobody left to name them, are deleted. False when the person still owns a project
+     * or group with other people in it: they hand it over or delete it first, as for leaving.
+     * A new table with rows per user needs a line in the list below, since the row is never deleted.
+     */
+    deleteUser(userId: number): Promise<boolean> {
+      return sql.transaction(async (tx) => {
+        const projects = [];
+        for (const { project_id } of await tx.query<{ project_id: number }>(
+          'SELECT project_id FROM webchat.project_members WHERE user_id = $1 ORDER BY project_id',
+          [userId],
+        )) {
+          projects.push({ id: project_id, ...(await lockProject(tx, project_id)) });
+        }
+        const chats = await tx.query<{ id: number; type: ConversationType; created_by: number | null; members: number }>(
+          `SELECT c.id, c.type, c.created_by,
+             (SELECT COUNT(*)::int FROM webchat.members WHERE conversation_id = c.id) AS members
+           FROM webchat.conversations c JOIN webchat.members m ON m.conversation_id = c.id
+           WHERE m.user_id = $1 ORDER BY c.id FOR UPDATE OF c`,
+          [userId],
+        );
+        if (
+          projects.some((p) => p.ownerId === userId && p.memberIds.length > 1) ||
+          chats.some((c) => c.type === 'group' && c.created_by === userId && c.members > 1)
+        ) {
+          return false;
+        }
+        for (const project of projects) {
+          if (project.memberIds.length === 1) await tx.query('DELETE FROM webchat.projects WHERE id = $1', [project.id]);
+          else await tx.query('DELETE FROM webchat.project_members WHERE project_id = $1 AND user_id = $2', [project.id, userId]);
+        }
+        // The channels of a project deleted above are gone already, so these queries skip them.
+        for (const chat of chats) {
+          if (chat.type === 'direct' || (chat.type === 'group' && chat.members === 1)) {
+            await tx.query('DELETE FROM webchat.conversations WHERE id = $1', [chat.id]);
+          } else {
+            await leaveChat(tx, chat.id, userId);
+          }
+        }
+        for (const table of ['sessions', 'push_subscriptions', 'bark_devices', 'bark_links', 'github_events', 'github_accounts', 'github_app_grants', 'doc_locks']) {
+          await tx.query(`DELETE FROM webchat.${table} WHERE user_id = $1`, [userId]);
+        }
+        // The username is freed. A hyphen is not allowed in one, so nobody can sign up as the stand-in.
+        await tx.query(
+          `UPDATE webchat.users
+           SET username = 'deleted-' || id, display_name = 'Deleted account', password_hash = '', last_active_at = NULL,
+             attentive_until = 0, attentive_tab = NULL, attentive_endpoint = NULL, dh_public = NULL, sign_public = NULL,
+             key_backup = NULL, agent = FALSE, busy = FALSE, deleted_at = $2
+           WHERE id = $1`,
+          [userId, Date.now()],
+        );
+        return true;
+      });
+    },
     /** Makes an account the coding agent of another (K-45). Returns the owner. */
     setAgentOwner: async (userId: number, ownerId: number) => {
       await sql.query('UPDATE webchat.users SET agent_owner = $2 WHERE id = $1', [userId, ownerId]);
@@ -1032,7 +1095,7 @@ export async function openDb(sql: Sql) {
       ),
     getUser: (id: number) => one(sql.query<UserRow>('SELECT * FROM webchat.users WHERE id = $1', [id])),
     findUserByUsername: (username: string) =>
-      one(sql.query<UserRow>('SELECT * FROM webchat.users WHERE lower(username) = lower($1)', [username])),
+      one(sql.query<UserRow>('SELECT * FROM webchat.users WHERE lower(username) = lower($1) AND deleted_at IS NULL', [username])),
     listUsers: () => sql.query<UserRow>('SELECT * FROM webchat.users ORDER BY lower(display_name)'),
 
     /**

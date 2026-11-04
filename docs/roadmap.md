@@ -236,6 +236,24 @@ and from a long press at 375 pixels, and the owner has approved screenshots.
 R-024 to R-026, the rest of the rebrand, were dropped on 2026-11-05. The owner does not want
 project-first navigation, new wording or a new name. The numbers stay taken.
 
+### R-028: Delete an account
+
+Status: Done in #94 (D-088). An integration test covers the refusal for an owner, the handover
+that unblocks it, the ended session, the freed name and device, the chats that need a new key and
+the deleted direct chat.
+
+Why: a student who stops using WebChat, or signs up again from scratch, needs a way out that takes
+their keys, their push subscriptions and their name with it, without someone at the database.
+
+What it covers: a trash button next to Sign out in the sidebar. After a confirm, the server leaves
+every group and channel for the person, so each needs a new key (D-044), deletes their direct chats
+and the groups and projects with nobody else in them, deletes their sessions, push subscriptions,
+Bark and GitHub links, and keeps the row with no name, keys or secrets, so old messages still name
+"Deleted account". Someone who owns a project or group with other people in it hands it over or
+deletes it first, as for leaving (D-045). The username and the device are free for a new account.
+
+Done when: the test above passes, and the owner has tried it in a browser with two accounts.
+
 ### R-029: Hand a card to a teammate's idle agent
 
 Status: Planned. Set aside from K-45 (D-089) on 2026-11-05.

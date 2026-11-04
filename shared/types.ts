@@ -23,6 +23,8 @@ export interface UserDTO {
   agentOwner: number | null;
   /** An agent running a card now. The board offers a card only to agents that are not. */
   busy: boolean;
+  /** The account was deleted (R-028). It stays listed so its old messages keep their sender's name. */
+  deleted: boolean;
 }
 
 /** An encrypted, signed message. The server stores and relays it without being able to read it. */

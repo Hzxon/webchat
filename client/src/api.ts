@@ -108,6 +108,7 @@ export const api = {
   upgrade: (username: string, password: string, authKey: string) =>
     request<LoginResponse>('POST', '/auth/upgrade', { username, password, authKey }),
   logout: () => request<void>('POST', '/auth/logout'),
+  deleteAccount: () => request<void>('DELETE', '/auth/account'),
   keysBackup: (authKey: string) => request<LoginResponse>('POST', '/keys/backup', { authKey }),
   putKeys: (authKey: string, keys: AccountKeysInput) => request<UserDTO>('PUT', '/keys', { authKey, keys }),
   bootstrap: () => request<BootstrapDTO>('GET', '/bootstrap'),

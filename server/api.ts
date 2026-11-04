@@ -357,7 +357,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
   async function requireKeys(userIds: number[]) {
     for (const id of userIds) {
       const user = await db.getUser(id);
-      if (!user) throw new HttpError(404, 'Person not found.');
+      if (!user || user.deleted_at !== null) throw new HttpError(404, 'Person not found.');
       if (!user.dh_public) {
         throw new HttpError(409, `${user.display_name} has not set up encryption yet. They need to sign in again.`, 'no_keys');
       }
@@ -478,6 +478,17 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     res.clearCookie(SESSION_COOKIE, { path: '/' });
     // A browser signed in from before D-080 has no device cookie yet.
     markDevice(req, res);
+    res.status(204).end();
+  });
+
+  /** Deletes the account (R-028, D-088). Owned projects and groups with other people in them block it. */
+  router.delete('/auth/account', requireAuth, async (_req, res) => {
+    if (!(await db.deleteUser(currentUser(res).id))) {
+      throw new HttpError(409, 'Hand over or delete the projects and groups you own first.', 'owner');
+    }
+    res.clearCookie(SESSION_COOKIE, { path: '/' });
+    // The device has no account any more, so it may sign up for one again (D-080).
+    res.clearCookie(DEVICE_COOKIE, { path: '/' });
     res.status(204).end();
   });
 
