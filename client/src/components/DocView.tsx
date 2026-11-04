@@ -38,7 +38,6 @@ export function DocView({ doc }: { doc: ChatDoc }) {
   const [sections, setSections] = useState<DocSection[] | null>(null);
   const [error, setError] = useState('');
   const [editing, setEditingSection] = useState<Editing | null>(null);
-  const [renaming, setRenaming] = useState(false);
   const [historyOf, setHistoryOf] = useState<DocSection | null>(null);
 
   // Every save grows the version, so the sections load again whenever anyone saves.
@@ -107,9 +106,6 @@ export function DocView({ doc }: { doc: ChatDoc }) {
           </span>
         </div>
         <div className="header-end">
-          <button className="icon-button" onClick={() => setRenaming(true)} title="Rename" aria-label="Rename">
-            <PencilIcon />
-          </button>
           <button className="icon-button" onClick={() => print()} title="Export to PDF" aria-label="Export to PDF">
             <PrinterIcon />
           </button>
@@ -183,7 +179,6 @@ export function DocView({ doc }: { doc: ChatDoc }) {
           )}
         </article>
       </div>
-      {renaming && <RenameDialog doc={doc} onClose={() => setRenaming(false)} />}
       {historyOf && <HistoryDialog doc={doc} section={historyOf} nameOf={nameOf} onClose={() => setHistoryOf(null)} />}
     </section>
   );
@@ -292,7 +287,8 @@ export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing
   );
 }
 
-function RenameDialog({ doc, onClose }: { doc: ChatDoc; onClose: () => void }) {
+/** Opened by the pencil next to the doc's name in the sidebar. */
+export function RenameDialog({ doc, onClose }: { doc: ChatDoc; onClose: () => void }) {
   const [name, setName] = useState(doc.name);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);

@@ -16,6 +16,7 @@ import {
   GithubIcon,
   HashIcon,
   LogoutIcon,
+  PencilIcon,
   PlusIcon,
   PullRequestIcon,
   SearchIcon,
@@ -33,6 +34,7 @@ interface SidebarProps {
   onMembers: (projectId: number) => void;
   onRepos: (projectId: number) => void;
   onNewDoc: (projectId: number) => void;
+  onRenameDoc: (doc: ChatDoc) => void;
   onNotifications: () => void;
 }
 
@@ -40,7 +42,7 @@ const newestFirst = (a: ChatConversation, b: ChatConversation) =>
   (b.lastMessage?.createdAt ?? b.updatedAt) - (a.lastMessage?.createdAt ?? a.updatedAt);
 
 export function Sidebar(props: SidebarProps) {
-  const { onNewChat, onNewProject, onNewChannel, onAddPeople, onMembers, onRepos, onNewDoc, onNotifications } = props;
+  const { onNewChat, onNewProject, onNewChannel, onAddPeople, onMembers, onRepos, onNewDoc, onRenameDoc, onNotifications } = props;
   const me = useAppState((s) => s.me);
   const conversations = useAppState((s) => s.conversations);
   const projects = useAppState((s) => s.projects);
@@ -175,6 +177,7 @@ export function Sidebar(props: SidebarProps) {
               onMembers={() => onMembers(project.id)}
               onRepos={() => onRepos(project.id)}
               onNewDoc={() => onNewDoc(project.id)}
+              onRenameDoc={onRenameDoc}
             />
           ))}
           {projectList.length === 0 &&
@@ -208,8 +211,9 @@ function ProjectSection(props: {
   onMembers: () => void;
   onRepos: () => void;
   onNewDoc: () => void;
+  onRenameDoc: (doc: ChatDoc) => void;
 }) {
-  const { project, channels, docs, boards, onNewChannel, onAddPeople, onMembers, onRepos, onNewDoc } = props;
+  const { project, channels, docs, boards, onNewChannel, onAddPeople, onMembers, onRepos, onNewDoc, onRenameDoc } = props;
   const activeId = useAppState((s) => s.activeId);
   const docOpen = useAppState((s) => s.docOpen);
   const boardOpen = useAppState((s) => s.boardOpen);
@@ -278,7 +282,7 @@ function ProjectSection(props: {
         {docs.map((d) => {
           const updated = updatedSince(d);
           return (
-            <li key={d.id}>
+            <li key={d.id} className="doc-row">
               <button
                 className={`channel-item ${docOpen === d.id ? 'is-active' : ''} ${updated ? 'has-unread' : ''}`}
                 onClick={() => actions.setDocOpen(d.id)}
@@ -286,6 +290,9 @@ function ProjectSection(props: {
                 <FileIcon width={16} height={16} />
                 <span className="channel-name">{d.name}</span>
                 {updated && <span className="doc-dot" aria-label="Updated" />}
+              </button>
+              <button className="icon-button icon-button-small" onClick={() => onRenameDoc(d)} title="Rename" aria-label={`Rename ${d.name}`}>
+                <PencilIcon width={16} height={16} />
               </button>
             </li>
           );

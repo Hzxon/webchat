@@ -2280,6 +2280,19 @@ a {
   font-size: 14px;
 }
 
+/* A doc's row: its name, then the pencil that renames it, at the row's right edge. */
+.doc-row {
+  display: flex;
+  align-items: center;
+  padding-right: 10px;
+}
+
+.doc-row .channel-item {
+  flex: 1;
+  min-width: 0;
+  padding-right: 6px;
+}
+
 .doc-dot {
   flex: none;
   width: 9px;
