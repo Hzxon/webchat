@@ -353,6 +353,10 @@ CREATE TABLE IF NOT EXISTS webchat.doc_locks (
   `
 ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS agent BOOLEAN NOT NULL DEFAULT FALSE;
 `,
+  // 14: an agent says in its check-ins whether it is running a card, so a card is offered only to idle ones (R-027).
+  `
+ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS busy BOOLEAN NOT NULL DEFAULT FALSE;
+`,
 ];
 
 const statements = (sql: string) =>
@@ -387,6 +391,7 @@ export interface UserRow {
   sign_public: string | null;
   key_backup: string | null;
   agent: boolean;
+  busy: boolean;
 }
 
 interface ConversationRow {
@@ -623,6 +628,7 @@ export function toUserDTO(row: UserRow, now = Date.now()): UserDTO {
     lastSeen: row.last_active_at,
     keys: row.dh_public && row.sign_public ? { dh: row.dh_public, sign: row.sign_public } : null,
     agent: row.agent,
+    busy: row.busy,
   };
 }
 
@@ -1024,14 +1030,14 @@ export async function openDb(sql: Sql) {
      * Records a check-in from a tab. An attentive tab claims the user's attention; when that same
      * tab stops being attentive, the claim ends at once instead of waiting for it to expire.
      */
-    async checkIn(userId: number, attentive: boolean, tabId: string, endpoint: string | null) {
+    async checkIn(userId: number, attentive: boolean, tabId: string, endpoint: string | null, busy = false) {
       const now = Date.now();
       if (attentive) {
         await sql.query(
           `UPDATE webchat.users
-           SET last_active_at = $2, attentive_until = $3, attentive_tab = $4, attentive_endpoint = $5
+           SET last_active_at = $2, attentive_until = $3, attentive_tab = $4, attentive_endpoint = $5, busy = $6
            WHERE id = $1`,
-          [userId, now, now + ATTENTION_TTL_MS, tabId, endpoint],
+          [userId, now, now + ATTENTION_TTL_MS, tabId, endpoint, busy],
         );
       } else {
         await sql.query(
@@ -1707,6 +1713,7 @@ export async function openDb(sql: Sql) {
           people: number;
           withKeys: number;
           online: string | null;
+          busy: string | null;
           docs: string;
           locks: string;
         }>(
@@ -1737,6 +1744,8 @@ export async function openDb(sql: Sql) {
              ) owned) AS owners,
              (SELECT COUNT(*)::int FROM webchat.users) AS people,
              (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE last_active_at > $2) AS online,
+             -- Agents running a card, so the board stops offering them (R-027).
+             (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE busy) AS busy,
              -- Every save grows a doc's version, and a doc deleted leaves the list.
              (SELECT md5(COALESCE(string_agg(id || ':' || version, ',' ORDER BY id), '')) FROM webchat.docs
                WHERE conversation_id IN (SELECT * FROM mine)) AS docs,
@@ -1748,7 +1757,7 @@ export async function openDb(sql: Sql) {
         ),
       );
       return row
-        ? `${row.messages}.${row.pointers}.${row.chats}.${row.seats}.${row.keyed}.${row.rekeyed}.${row.owners}.${row.people}.${row.withKeys}.${row.online ?? ''}.${row.docs}.${row.locks}`
+        ? `${row.messages}.${row.pointers}.${row.chats}.${row.seats}.${row.keyed}.${row.rekeyed}.${row.owners}.${row.people}.${row.withKeys}.${row.online ?? ''}.${row.busy ?? ''}.${row.docs}.${row.locks}`
         : '';
     },
 

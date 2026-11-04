@@ -45,6 +45,7 @@ export class Runs {
     if (!projectId || !doc || !card) return failed('The card is not on the board.');
 
     this.running = run;
+    this.client.busy = true;
     try {
       await report({ kind: 'claimed' }, `I am on ${run.card}: ${run.title}`);
       const result = await this.runner({ request: run, card: card.text, projectId });
@@ -55,6 +56,7 @@ export class Runs {
       await failed(error instanceof Error ? error.message : String(error));
     } finally {
       this.running = null;
+      this.client.busy = false;
     }
   }
 

@@ -242,9 +242,9 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                               </summary>
                               <div className="run-menu-list">
                                 {agents.map((agent) => (
-                                  <button key={agent.id} onClick={() => run(handOver(card, agent))} disabled={!agent.online}>
+                                  <button key={agent.id} onClick={() => run(handOver(card, agent))} disabled={!agent.online || agent.busy}>
                                     {agent.displayName}
-                                    {!agent.online && <small> offline</small>}
+                                    {!agent.online ? <small> offline</small> : agent.busy && <small> busy</small>}
                                   </button>
                                 ))}
                               </div>

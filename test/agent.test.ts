@@ -168,6 +168,23 @@ describe('agent client (R-027)', () => {
     assert.equal((JSON.parse(await fs.readFile(botFile, 'utf8')) as { allow: string[] }).allow.join(), 'alice');
   });
 
+  test('says it is busy in its check-ins while a card runs, so the board offers it no other', async () => {
+    const runs = new Runs(bot, async () => {
+      // The watch loop keeps checking in while the runner works.
+      await bot.sync();
+      const seen = await alice.sync();
+      assert.equal(alice.users.get(bot.id)?.busy, true, `busy mid-run (${seen.length} new)`);
+      return { branch: 'agent/k1' };
+    });
+    assert.equal(alice.users.get(bot.id)?.busy, false);
+    const run: RunDTO = { kind: 'request', card: 'K-1', title: 'Pushes with bad keys', docId: roadmap.id, section: cardId, runtime: bot.id };
+    await alice.send(generalId, { text: 'Run K-1 with Bot', run });
+    for (const m of await bot.sync()) await runs.handle(m);
+    await bot.sync();
+    await alice.sync();
+    assert.equal(alice.users.get(bot.id)?.busy, false, 'idle again');
+  });
+
   test('runs a card with the coding agent in a worktree of the project repository', async () => {
     // A repository with a remote, as a student's checkout has.
     const origin = path.join(home, 'origin.git');
