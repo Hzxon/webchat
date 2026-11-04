@@ -210,6 +210,11 @@ Accepted 2026-11-01 in #7.
 `main`. Vercel for GitHub otherwise built a preview for every push and a production deployment for
 every merge, two builds per pull request, from Hobby build minutes and the daily deployment cap.
 
+A branch without `vercel.json`, such as one that holds only screenshots, escapes that rule, because
+Vercel reads it from the pushed commit. So the project's settings on Vercel set the Ignored Build
+Step to `[ "$VERCEL_ENV" != production ]`, which skips every build but production. The
+`ignoreCommand` in `vercel.json` overrides it, so it runs only on such a branch (#83).
+
 Why: a preview of this app is not useful. The GitHub connector cannot connect on a preview URL,
 because the OAuth App has one callback URL (D-032). The server runs pending migrations at start
 (D-010), so a preview that shares the production database would apply a branch's new migration
