@@ -80,6 +80,7 @@ const user = (id: number, keys: PublicKeysDTO): UserDTO => ({
   online: false,
   lastSeen: null,
   keys,
+  agent: false,
 });
 
 const member = (userId: number) => ({ userId, lastDeliveredId: 0, lastReadId: 0 });

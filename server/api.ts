@@ -390,7 +390,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     if (!safeEqual(String(req.body?.inviteCode ?? '').trim(), inviteCode)) {
       throw new HttpError(403, 'Invite code is wrong. Ask the owner for it.');
     }
-    const user = await db.createUser(username, displayName, await hashPassword(authKey), keys);
+    const user = await db.createUser(username, displayName, await hashPassword(authKey), keys, req.body?.agent === true);
     if (!user) throw new HttpError(409, 'That username is taken.');
     await db.returnRateLimit(authLimitKey(req));
     await startSession(req, res, user);

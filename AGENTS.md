@@ -34,7 +34,7 @@ Vercel's Hobby plan with Supabase Postgres, or on any Node host with an embedded
 | `npm run typecheck` | Checks the server, client, service worker, and the tooling with the agent, each with its own tsconfig. |
 | `npm run build` | Typechecks, then builds the client, the service worker and the server. |
 | `npm start` | Runs the built app in one Node process. |
-| `npm run agent -- signup\|login\|watch …` | The agent daemon's command line (R-027, D-085): an account that signs up, signs in and watches its chats with no browser. |
+| `npm run agent -- signup\|login\|allow\|watch …` | The agent daemon's command line (R-027, D-085): an account that signs up, signs in, and watches its chats for cards to run. |
 | `scripts/claim.sh K-12 "<title>" [D-077]` | Claims a roadmap item and, given one, reserves a decision number: refuses what an open pull request names, then opens your draft. |
 
 The server log prints the invite code. Set `INVITE_CODE` to choose one. To test with two accounts in
@@ -83,6 +83,7 @@ keeps its own cookies and keys.
 | `client/src/styles.css` | Every style of the page, with the light and dark colors as CSS variables. |
 | `client/src/components/` | The React views. |
 | `agent/client.ts` | The headless client behind the agent daemon: sign-up, sign-in, the keys on disk, check-ins, opening and sending messages, and doc sections. See D-085. |
+| `agent/runs.ts` | Runs a card a teammate hands to the agent: claims the request, calls the runner, reports, and writes the branch into the card. See D-086. |
 | `agent/api.ts` | Requests to `/api` from Node, with the session cookie kept by hand. |
 | `agent/index.ts` | The agent daemon's command line. |
 | `test/` | Integration tests that drive the real app over HTTP, and crypto tests. |

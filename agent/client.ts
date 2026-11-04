@@ -57,6 +57,8 @@ export interface AccountFile {
   pins: Record<number, string>;
   /** The newest message id seen, so a restart picks up what arrived while the daemon was down. */
   cursor: number;
+  /** Usernames whose run requests this account carries out. Nobody's, until its owner adds them. */
+  allow: string[];
 }
 
 export interface Credentials {
@@ -125,6 +127,7 @@ export class AgentClient {
       authKey,
       inviteCode,
       keys: { ...secrets.publicKeys, backup: await sealIdentity(secrets, backupKey) },
+      agent: true,
     });
     return AgentClient.create(filePath, { server: credentials.server, username: credentials.username, userId: user.id, authKey, secrets, cookie: api.cookie }, 'wx');
   }
@@ -152,10 +155,10 @@ export class AgentClient {
    * Writes the account file: a sign-up must not overwrite one, a sign-in replaces it. Messages from
    * before this moment are history, not news to act on.
    */
-  private static async create(filePath: string, data: Omit<AccountFile, 'pins' | 'cursor'>, flag?: string) {
+  private static async create(filePath: string, data: Omit<AccountFile, 'pins' | 'cursor' | 'allow'>, flag?: string) {
     const api = new Api(data.server, data.cookie);
     const { cursor } = await api.request<BootstrapDTO>('GET', '/bootstrap');
-    const file: AccountFile = { ...data, pins: {}, cursor };
+    const file: AccountFile = { ...data, pins: {}, cursor, allow: [] };
     const client = new AgentClient(file, filePath, await importIdentity(file.secrets));
     await client.save(flag);
     return client;
@@ -165,6 +168,17 @@ export class AgentClient {
     this.file.cookie = this.api.cookie;
     await fs.mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
     await fs.writeFile(this.filePath, JSON.stringify(this.file, null, 2) + '\n', { flag, mode: 0o600 });
+  }
+
+  /** Whether this person's run requests are carried out. */
+  allows(username: string) {
+    return this.file.allow.includes(username);
+  }
+
+  /** Lets a person's run requests be carried out from now on. */
+  async allow(username: string) {
+    if (!this.file.allow.includes(username)) this.file.allow.push(username);
+    await this.save();
   }
 
   /** A request that signs in again once when the session has ended, then keeps the new cookie. */

@@ -147,7 +147,8 @@ What it does not protect against:
 - **An agent's keys live in a file on its owner's machine.** A coding agent that a project runs
   (the roadmap's R-027) has an account of its own, and the daemon behind it keeps that account's
   private keys and session in `~/.webchat/<name>/account.json`, readable only by its owner but
-  not encrypted. Anyone who can read that file can read what the agent's projects write.
+  not encrypted. Anyone who can read that file can read what the agent's projects write. The
+  server knows which accounts are agents, and sees a run as messages like any other.
 - **People who leave keep the keys they had.** Someone who left or was removed could still read the
   messages from before, if they got them another way, for example from a copy of the database.
   Everything sent after they left uses a new key they never get.

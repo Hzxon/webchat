@@ -1070,7 +1070,36 @@ keeps a key unexportable; the README lists this. Two daemons must not share one 
 because each keeps its own sync cursor there. A daemon that is removed from a project, or whose
 chat needs a new key after someone left (D-044), waits for a member's browser to rotate it: the
 daemon never makes keys. The key logic is ported from the page, not shared with it, until K-40
-moves it under `shared/`.
+moves it under `shared/`. The server learns which accounts are agents: a flag set at sign-up,
+so the page can offer them on a card. Any client can set the flag, so it only says where to
+show a "Run with" entry; what an agent runs is decided by its own allow list (D-086).
+
+### D-086: A run is a request message and the reports that name it
+
+Proposed 2026-11-05 in #86.
+
+Handing a card to an agent (R-027) sends an ordinary message of kind "message" into the project's
+#general, whose sealed content carries a `run` field, as a shared pull request carries `pull`
+(D-042): the card's id and title, its doc and section, and the agent's account. The daemon
+answers with messages of its own whose `run` field names the request's message id and says
+claimed, progress, done or failed, with a note, a branch and a pull request where there is one.
+The text of each says the same in words. A page folds the reports into the request's card and
+shows the latest; an older page shows the texts. The daemon runs a request only from accounts
+its owner listed with `npm run agent -- allow`, one at a time, and not one older than 10 minutes
+when it first sees it. When a run is done, the daemon writes the branch into the card's status
+line under the section lock (D-081). The request names the card, not its text: the daemon reads
+the card from the board when it claims, with the key it has as a member.
+
+Why: a field inside the envelope changes nothing on the server, which sees messages and nothing
+more, and the signature proves who asked (D-016). Reports as messages of their own, instead of
+edits to the request, keep every message immutable and signed by its author: the agent cannot
+alter what the teammate wrote, and the teammate cannot alter what the agent reported. The
+allow list keeps a teammate's prompt from running on another student's laptop without their say.
+
+Cost: each report counts as an unread message and alerts like one, so a chatty run is noisy;
+reports stay sparse. A report whose request is not loaded on the page shows as its text. The
+request's message id is the server's, so a server that was changed could attach a report to
+another request; it could not forge either, and both texts name the card.
 
 ## Replies and reactions
 

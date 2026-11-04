@@ -1,8 +1,10 @@
-// The agent daemon's command line (R-027). Step 1 of the item: an account that signs up, signs in
-// and watches its chats from a terminal, with no browser. Later steps make it run cards.
+// The agent daemon's command line (R-027): an account that signs up, signs in, and watches its chats
+// for cards that the teammates it allows hand to it. Until an adapter runs a coding agent (step 3
+// of the item), every request is reported as failed.
 //
 //   npm run agent -- signup <server> <username> <invite-code>
 //   npm run agent -- login <server> <username>
+//   npm run agent -- allow <username> <teammate>
 //   npm run agent -- watch <username>
 //
 // The password comes from WEBCHAT_PASSWORD, or is asked for. Accounts live under WEBCHAT_AGENT_HOME,
@@ -11,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { AgentClient, type OpenedMessage } from './client.ts';
+import { Runs } from './runs.ts';
 
 const home = process.env.WEBCHAT_AGENT_HOME ?? path.join(os.homedir(), '.webchat');
 const fileFor = (username: string) => path.join(home, username, 'account.json');
@@ -41,10 +44,20 @@ async function main([command, ...args]: string[]) {
       console.log(`Signed in as ${username} (#${client.id}). Keys are in ${fileFor(username)}.`);
       return;
     }
+    case 'allow': {
+      const [username, teammate] = args;
+      if (!username || !teammate) throw new Error('usage: allow <username> <teammate>');
+      await (await AgentClient.load(fileFor(username))).allow(teammate);
+      console.log(`${teammate} can now hand cards to ${username}.`);
+      return;
+    }
     case 'watch': {
       const [username] = args;
       if (!username) throw new Error('usage: watch <username>');
       const client = await AgentClient.load(fileFor(username));
+      const runs = new Runs(client, async () => {
+        throw new Error('This runtime has no coding agent yet.');
+      });
       const stop = new AbortController();
       for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => stop.abort());
       const print = (message: OpenedMessage) => {
@@ -52,6 +65,8 @@ async function main([command, ...args]: string[]) {
         const where = chat?.title ? `#${chat.title}` : 'direct';
         const who = (message.senderId && client.users.get(message.senderId)?.displayName) || 'GitHub';
         console.log(`[${where}] ${who}: ${message.content?.text ?? `(${message.security})`}`);
+        // A run takes long, and check-ins go on meanwhile. Its reports carry its errors.
+        runs.handle(message).catch((error: unknown) => console.error(String(error)));
       };
       const missed = await client.sync();
       for (const project of client.projects) {
@@ -63,7 +78,7 @@ async function main([command, ...args]: string[]) {
       return;
     }
     default:
-      throw new Error('usage: npm run agent -- signup|login|watch ...');
+      throw new Error('usage: npm run agent -- signup|login|allow|watch ...');
   }
 }
 
