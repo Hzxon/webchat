@@ -19,11 +19,12 @@ import {
   type Card,
   type CardKind,
 } from '../board';
-import { beginEditing, createDoc, loadSections, markSeen, newSectionId, type Editing } from '../docs';
+import { syncNow } from '../chat';
+import { beginEditing, createDoc, loadSections, markSeen, newSectionId, replaceSection, type Editing } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
 import { actions, senderName, store, useAppState } from '../store';
 import { HistoryDialog, SectionEditor } from './DocView';
-import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlusIcon } from './icons';
+import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlusIcon, TrashIcon } from './icons';
 import { Markdown } from './Markdown';
 
 export function BoardView({ project }: { project: ProjectDTO }) {
@@ -123,6 +124,13 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
     await edit(target, newSectionId(), '', pos, true, cardTemplate(kind, nextNumber(cards, kind)));
   }
 
+  /** Removes a card in an editing session of its own. Its revisions stay in the history. */
+  async function remove(card: Card) {
+    if (!confirm(`Delete ${card.kind ? `${card.kind}-${card.number}` : 'this card'} for everyone? Its history stays.`)) return;
+    await replaceSection(doc!, card.id, { text: card.text, pos: card.pos, removed: true });
+    void syncNow();
+  }
+
   async function copy() {
     await navigator.clipboard.writeText(columnMarkdown(column, cards));
     setNote('Copied');
@@ -135,15 +143,6 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
     <div className={`board-column board-${column}`}>
       <header className="board-column-head">
         <h2>{COLUMN_TITLES[column]}</h2>
-        {column === 'roadmap' && (
-          <div className="segmented" role="tablist">
-            {(Object.keys(FILTERS) as Filter[]).map((f) => (
-              <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)}>
-                {FILTERS[f]}
-              </button>
-            ))}
-          </div>
-        )}
         <span className="doc-note">{note}</span>
         <button
           className="icon-button icon-button-small"
@@ -154,13 +153,24 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
         >
           <CopyIcon width={18} height={18} />
         </button>
-        {kinds.map((kind) => (
-          <button key={kind} className="button-secondary board-new" onClick={() => run(add(kind))} disabled={editing !== null}>
-            <PlusIcon width={16} height={16} /> {KIND_NAMES[kind]}
-          </button>
-        ))}
       </header>
       <div className="board-cards">
+        <div className="board-tools">
+          {column === 'roadmap' && (
+            <div className="segmented board-filter" role="tablist">
+              {(Object.keys(FILTERS) as Filter[]).map((f) => (
+                <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)}>
+                  {FILTERS[f]}
+                </button>
+              ))}
+            </div>
+          )}
+          {kinds.map((kind) => (
+            <button key={kind} className="button-secondary board-new" onClick={() => run(add(kind))} disabled={editing !== null}>
+              <PlusIcon width={16} height={16} /> {KIND_NAMES[kind]}
+            </button>
+          ))}
+        </div>
         {error && <p className="form-error">{error}</p>}
         {/* The card being edited shows here, whatever its group, so its editor keeps its text and its lock. */}
         {editing && (
@@ -168,7 +178,6 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
             key={editing.section.id}
             doc={editing.doc}
             editing={editing.section}
-            keep
             onClose={(message) => {
               setEditing(null);
               setError(message ?? '');
@@ -214,6 +223,15 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                           </button>
                           <button className="icon-button icon-button-small" onClick={() => setHistoryOf(card)} title="History" aria-label="Card history">
                             <HistoryIcon width={18} height={18} />
+                          </button>
+                          <button
+                            className="icon-button icon-button-small"
+                            onClick={() => run(remove(card))}
+                            disabled={editing !== null || !!lock}
+                            title="Delete"
+                            aria-label="Delete card"
+                          >
+                            <TrashIcon width={18} height={18} />
                           </button>
                         </div>
                         {card.body ? <Markdown text={card.body} /> : <p className="doc-note">Nothing more.</p>}

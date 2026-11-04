@@ -2376,16 +2376,6 @@ a {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-.doc-editor-tabs {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.doc-editor-tabs .doc-note {
-  margin: 0 0 0 auto;
-}
-
 .doc-textarea {
   resize: vertical;
   font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -2393,8 +2383,13 @@ a {
 
 .doc-editor-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.doc-editor-actions .doc-note {
+  margin: 0 auto 0 0;
 }
 
 .template-list {
@@ -2650,13 +2645,33 @@ a {
   border-left: 1px solid var(--line);
 }
 
+/* Both heads hold only the title and the copy button, so their bottom lines meet. */
 .board-column-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 60px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* The filter, where the column has one, and the new-card buttons at the right. */
+.board-tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
+  margin-bottom: 10px;
+}
+
+.board-filter {
+  margin-right: auto;
+}
+
+.board-filter button {
+  padding: 5px 12px;
+  font-size: 14px;
 }
 
 .board-column-head h2 {
