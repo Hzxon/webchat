@@ -1016,7 +1016,7 @@ same moment can take one number. The board warns on both cards and someone renum
 has this repository do. Two tabs that make the board doc at the same moment make two; the board
 shows the oldest, and the other appears in the Docs list, where it can be deleted. A card's status
 is wording inside its text, not a field, so a status outside the known list sorts with the open
-items. A card is never deleted from the board, only superseded or dropped.
+items.
 
 ## Replies and reactions
 

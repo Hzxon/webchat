@@ -189,11 +189,9 @@ export function DocView({ doc }: { doc: ChatDoc }) {
   );
 }
 
-/** Edits one section. The board passes `keep`, because a card is superseded or dropped, never deleted (R-021). */
-export function SectionEditor(props: { doc: ChatDoc; editing: Editing; keep?: boolean; onClose: (message?: string) => void }) {
-  const { doc, editing, keep, onClose } = props;
+/** Edits one section, for a doc or a board card. Done shows it rendered, so there is no preview. */
+export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing: Editing; onClose: (message?: string) => void }) {
   const [text, setText] = useState(editing.text);
-  const [preview, setPreview] = useState(false);
   const [status, setStatus] = useState('');
   const latest = useRef(text);
   latest.current = text;
@@ -270,34 +268,20 @@ export function SectionEditor(props: { doc: ChatDoc; editing: Editing; keep?: bo
 
   return (
     <div className="doc-section doc-editor">
-      <div className="doc-editor-tabs">
-        <div className="segmented" role="tablist">
-          <button role="tab" aria-selected={!preview} onClick={() => setPreview(false)}>
-            Write
-          </button>
-          <button role="tab" aria-selected={preview} onClick={() => setPreview(true)}>
-            Preview
-          </button>
-        </div>
-        <span className="doc-note">{status}</span>
-      </div>
-      {preview ? (
-        <Markdown text={text} />
-      ) : (
-        <textarea
-          className="field-input doc-textarea"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={Math.max(6, text.split('\n').length + 1)}
-          maxLength={LIMITS.docSectionLength}
-          placeholder="Write in Markdown: ## Heading, - list, - [ ] task, **bold**, | table |"
-          autoFocus
-        />
-      )}
+      <textarea
+        className="field-input doc-textarea"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={Math.max(6, text.split('\n').length + 1)}
+        maxLength={LIMITS.docSectionLength}
+        placeholder="Write in Markdown: ## Heading, - list, - [ ] task, **bold**, | table |"
+        autoFocus
+      />
       <div className="doc-editor-actions">
-        {!editing.isNew && !keep && (
+        <span className="doc-note">{status}</span>
+        {!editing.isNew && (
           <button className="button-danger" onClick={() => void remove()}>
-            Delete section
+            Delete
           </button>
         )}
         <button className="button-primary" onClick={() => void done()}>
