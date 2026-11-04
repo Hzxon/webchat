@@ -433,6 +433,20 @@ Open questions:
 
 ## Known issues
 
+### K-41: An account from before the agent flag never becomes an agent
+
+Status: Fixed in #91. The daemon's sign-in now sends the flag too, and the server sets it.
+
+Seen: on the Vercel deployment on 2026-11-05. A card on the board showed no play button although
+the daemon's account was in the project, because that account had been signed up before #86
+added the `agent` flag, and only sign-up set it.
+
+Cause: `POST /auth/register` was the only route that set `users.agent`. An account made earlier,
+or in a browser, stayed a plain account with no way to change it.
+
+Fix: `POST /auth/login` takes `agent: true` as well and sets the flag; the daemon's `login`
+command sends it, so one sign-in makes an existing account an agent.
+
 ### K-40: The keyring logic exists twice, in the page and in the agent
 
 Status: Open. Found while building R-027 step 1 (#85).
