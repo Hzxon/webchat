@@ -802,38 +802,6 @@ Apple see a push every 15 seconds while it waits. A browser that is quit rings o
 again. Without pg_cron and pg_net on Vercel, the server logs why, and an urgent message rings once
 with every tab closed.
 
-### D-084: Messages are one feed, not bubbles
-
-Proposed 2026-11-05 in #78. Step 2 of the move to a Slack-like look (R-022 to R-026).
-
-Every message renders the same way, in one column: the sender's avatar in a gutter on the left, the
-sender's name and time on one line, the text below. Nothing aligns right, and the viewer's own
-messages have no colored bubble. Messages from the same sender within 5 minutes, on the same day,
-share one name and avatar; a grouped message shows its time in the gutter while the pointer rests
-on it. A quote is a block quote above the text, with the sender's color on its bar, and a tap still
-jumps to the original. Message text renders with the Markdown renderer that docs use, so bold, code,
-lists and links in a message look as they do in a doc; a single line break stays a line break. The
-reply and react tools sit in a toolbar at the row's edge, shown on hover and on keyboard focus. A
-screen without hover opens the same tray with a long press of 450 ms, in place of the tap it took
-before: in a full-width row a tap would too easily hit a link or start a selection. Day separators,
-the urgent label, pull request cards, the encryption notice, reactions and the failed-send row stay.
-
-Why: left and right bubbles, with a colored bubble for your own messages, are the strongest
-messenger signal on the page, and the owner moves WebChat toward the look of a work tool (D-001,
-R-023). One column also leaves room for Markdown, which a narrow bubble did not.
-
-The sender name, the time and the grouping come from fields the page already has, so the server
-sees nothing new, and a message's signature is unchanged (D-016). Own messages keep their ticks, in
-a column at the feed's edge on every own message, until the owner settles the read-tick question
-in R-023.
-
-Cost: multiple spaces and leading spaces in a message collapse, as Markdown does, where the bubble
-kept them. A quote shows the original's Markdown as typed, with its asterisks and backticks. The
-long-press menu of a phone, such as copy or open link, no longer opens on a message, because the
-tray opens instead; a long press on a link still opens the link's menu where the browser offers
-it. The hover toolbar covers the ticks of a hovered own message. Keyboard users reach the tools by
-tabbing through the feed, one pair of buttons per message.
-
 ## Projects and channels
 
 ### D-054: iPhones without Web Push get alerts through the Bark app
@@ -1535,3 +1503,37 @@ while a tab is open, otherwise when they next open WebChat. The server learns wh
 project links and which pull requests went into which channel. Everyone in the project sees each
 shared title, even without access to the repository. Reviewers show as GitHub logins, not WebChat
 names, and a card does not update when reviewers change later.
+
+### D-084: Messages are one feed, not bubbles
+
+Reverted on 2026-11-05: the owner prefers bubbles to a linear feed, so #78 was reverted and
+R-023 is dropped. Was: Proposed 2026-11-05 in #78, step 2 of the move to a Slack-like look
+(R-022 to R-026).
+
+Every message renders the same way, in one column: the sender's avatar in a gutter on the left, the
+sender's name and time on one line, the text below. Nothing aligns right, and the viewer's own
+messages have no colored bubble. Messages from the same sender within 5 minutes, on the same day,
+share one name and avatar; a grouped message shows its time in the gutter while the pointer rests
+on it. A quote is a block quote above the text, with the sender's color on its bar, and a tap still
+jumps to the original. Message text renders with the Markdown renderer that docs use, so bold, code,
+lists and links in a message look as they do in a doc; a single line break stays a line break. The
+reply and react tools sit in a toolbar at the row's edge, shown on hover and on keyboard focus. A
+screen without hover opens the same tray with a long press of 450 ms, in place of the tap it took
+before: in a full-width row a tap would too easily hit a link or start a selection. Day separators,
+the urgent label, pull request cards, the encryption notice, reactions and the failed-send row stay.
+
+Why: left and right bubbles, with a colored bubble for your own messages, are the strongest
+messenger signal on the page, and the owner moves WebChat toward the look of a work tool (D-001,
+R-023). One column also leaves room for Markdown, which a narrow bubble did not.
+
+The sender name, the time and the grouping come from fields the page already has, so the server
+sees nothing new, and a message's signature is unchanged (D-016). Own messages keep their ticks, in
+a column at the feed's edge on every own message, until the owner settles the read-tick question
+in R-023.
+
+Cost: multiple spaces and leading spaces in a message collapse, as Markdown does, where the bubble
+kept them. A quote shows the original's Markdown as typed, with its asterisks and backticks. The
+long-press menu of a phone, such as copy or open link, no longer opens on a message, because the
+tray opens instead; a long press on a link still opens the link's menu where the browser offers
+it. The hover toolbar covers the ticks of a hovered own message. Keyboard users reach the tools by
+tabbing through the feed, one pair of buttons per message.
