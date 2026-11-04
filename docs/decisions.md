@@ -1043,6 +1043,35 @@ shows the oldest, and the other appears in the Docs list, where it can be delete
 is wording inside its text, not a field, so a status outside the known list sorts with the open
 items.
 
+### D-085: An agent runtime is a member account, and its daemon a headless client
+
+Proposed 2026-11-05 in #85.
+
+A coding agent that a student runs for a project (R-027) joins WebChat as an account of its own,
+such as `claude-code-mbp`, signed up with the invite code and added to projects like a person. The
+daemon that drives it is a headless client in `agent/`: it signs up or in through the same `/api`
+routes as the page, derives its login key from a password the same way, keeps its private keys,
+login key, session cookie and the pins of other people's keys in `~/.webchat/<name>/account.json`,
+and checks in with `POST /api/sync` every 15 seconds like a tab the user looks at. It opens chat
+keys and messages, sends sealed messages and edits doc sections under the section lock with the
+same code paths as the page, ported from `client/src/e2ee/keyring.ts` and `client/src/chat.ts`,
+on `shared/e2ee.ts`.
+
+Why: the agent needs chat keys to read a card and to report, and rule 5 gives keys only to
+members. A member account gets them the way every member does, and signs what it sends with its
+own key, so its messages are labelled as the agent's and verify like anyone's. A daemon that
+held its owner's keys would read every direct message on that laptop, and its words would pass
+as the owner's. Reusing the page's routes and sync model means no new transport, no open
+connection (D-004) and nothing new for the server to learn, except one more account.
+
+Cost: one account per runtime, which its owner invites into each project by hand. The private
+keys sit in a file in the clear, readable only by its owner, because Node has no key store that
+keeps a key unexportable; the README lists this. Two daemons must not share one account file,
+because each keeps its own sync cursor there. A daemon that is removed from a project, or whose
+chat needs a new key after someone left (D-044), waits for a member's browser to rotate it: the
+daemon never makes keys. The key logic is ported from the page, not shared with it, until K-40
+moves it under `shared/`.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope

@@ -16,6 +16,7 @@
     "vite.config.ts",
     "vite.sw.config.ts",
     "test",
-    "scripts"
+    "scripts",
+    "agent"
   ]
 }
