@@ -1090,10 +1090,13 @@ Handing a card to an agent (R-027) sends an ordinary message of kind "message" i
 answers with messages of its own whose `run` field names the request's message id and says
 claimed, progress, done or failed, with a note, a branch and a pull request where there is one.
 The text of each says the same in words. A page folds the reports into the request's card and
-shows the latest; an older page shows the texts. The daemon runs a request only from accounts
-its owner listed with `npm run agent -- allow`, one at a time, and not one older than 10 minutes
-when it first sees it. When a run is done, the daemon writes the branch into the card's status
-line under the section lock (D-081). The request names the card, not its text: the daemon reads
+shows the latest, but only reports from the agent the request names. An older page shows the
+texts. The daemon runs a request only from accounts its owner listed with `npm run agent --
+allow`, one at a time, and not one older than 10 minutes when it first sees it. The card must be
+on the board of the request's project, and saved last by a listed account or by the agent: its
+text is the agent's prompt. The brief leaves out decisions from anyone else. When a run is done,
+the daemon reads the card again under the section lock (D-081) and writes the branch into its
+status line, unless someone not listed saved it meanwhile. The request names the card, not its text: the daemon reads
 the card from the board when it claims, with the key it has as a member.
 
 Why: a field inside the envelope changes nothing on the server, which sees messages and nothing

@@ -143,9 +143,9 @@ export function createRunner(config: RunnerConfig, client: AgentClient, runsDir:
     await git('fetch', '-q', 'origin');
     const main = await git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD').then((r) => r.stdout.trim(), () => 'origin/main');
     const slug = slugOf(`${request.card}-${request.title}`);
-    // A card run again gets a branch of its own, next to the one its earlier run left.
+    // A card run again gets a branch of its own, next to the one its earlier run left, here or on origin.
     let branch = `agent/${slug}`;
-    for (let n = 2; await git('rev-parse', '--verify', '--quiet', `refs/heads/${branch}`).then(() => true, () => false); n++) branch = `agent/${slug}-${n}`;
+    for (let n = 2; await git('show-ref', '--quiet', `refs/heads/${branch}`, `refs/remotes/origin/${branch}`).then(() => true, () => false); n++) branch = `agent/${slug}-${n}`;
     const dir = path.join(runsDir, `${slug}-${Date.now().toString(36)}`);
     await fs.mkdir(runsDir, { recursive: true });
     await git('worktree', 'add', '-q', '-b', branch, dir, main);
@@ -199,7 +199,13 @@ function start(command: string, adapter: Adapter, briefPath: string, cwd: string
 /** What the agent is told: the card, the project's decisions, and how to finish. */
 async function briefFor(client: AgentClient, projectId: number, cardId: string, card: string, branch: string) {
   const boards = await client.boardDocs(projectId);
-  const decisions = boards.decisions ? (await client.sections(boards.decisions)).map((s) => s.text.trim()).join('\n\n') : '';
+  // Only what allowed people wrote goes into the prompt, as for the card (D-086).
+  const decisions = boards.decisions
+    ? (await client.sections(boards.decisions))
+        .filter((s) => client.trusts(s.authorId))
+        .map((s) => s.text.trim())
+        .join('\n\n')
+    : '';
   return [
     `You are working on card ${cardId} from the team's board. Implement or fix what it describes.`,
     'Read AGENTS.md or CLAUDE.md in this repository first if there is one, and follow it.',
