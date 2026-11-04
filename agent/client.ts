@@ -104,6 +104,8 @@ export class AgentClient {
   private readonly floor: number;
   /** People whose keys differ from the pinned ones. Nothing from them opens until someone checks. */
   private readonly changedKeys = new Set<number>();
+  /** Said in every check-in while a card runs, so the board offers this account no other (R-027). */
+  busy = false;
 
   private constructor(
     private readonly file: AccountFile,
@@ -203,7 +205,7 @@ export class AgentClient {
     const fresh: MessageDTO[] = [];
     let dirty = false;
     for (let rounds = 0; rounds < 10; rounds++) {
-      const body: SyncRequest = { cursor: this.file.cursor, stamp: this.stamp, attentive: true, tabId: this.tabId, endpoint: null };
+      const body: SyncRequest = { cursor: this.file.cursor, stamp: this.stamp, attentive: true, tabId: this.tabId, endpoint: null, busy: this.busy };
       const answer = await this.request<SyncResponse>('POST', '/sync', body);
       dirty ||= answer.cursor !== this.file.cursor;
       this.file.cursor = answer.cursor;

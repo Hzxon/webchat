@@ -21,6 +21,8 @@ export interface UserDTO {
   keys: PublicKeysDTO | null;
   /** A coding agent's account, run by a daemon (R-027, D-085). Cards can be run with it. */
   agent: boolean;
+  /** An agent running a card now. The board offers a card only to agents that are not. */
+  busy: boolean;
 }
 
 /** An encrypted, signed message. The server stores and relays it without being able to read it. */
@@ -227,6 +229,8 @@ export interface SyncRequest {
   endpoint: string | null;
   /** The doc section this tab is editing. Each check-in keeps its lock (R-020). */
   editing?: { docId: string; section: string } | null;
+  /** From an agent's daemon: it is running a card (R-027). */
+  busy?: boolean;
 }
 
 export type SyncResponse =
