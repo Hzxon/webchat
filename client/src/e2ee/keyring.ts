@@ -36,6 +36,7 @@ import type {
   PublicKeysDTO,
   PullCardDTO,
   RotatedKeyInput,
+  RunDTO,
   UserDTO,
   WrappedKeyInput,
 } from '../../../shared/types';
@@ -52,6 +53,8 @@ interface Opened {
   pull: PullCardDTO | null;
   /** Set on every readable message of kind "github": the card the server wrote from GitHub. */
   github: GithubCardDTO | null;
+  /** A card handed to a coding agent, or the agent's report on it (R-027). */
+  run: RunDTO | null;
   /**
    * "plain" for messages from before encryption; "github" for a card the server wrote, which
    * nobody signs; "failed" if decryption or the signature check failed.
@@ -105,6 +108,7 @@ const openedFrom = (content: MessageContent): Opened => ({
   reaction: content.reaction ?? null,
   pull: content.pull ?? null,
   github: null,
+  run: content.run ?? null,
   security: 'encrypted',
 });
 
@@ -365,7 +369,7 @@ export const keyring = {
 
   /** Decrypts a message and checks its signature. Never throws: failures come back as "failed". */
   async open(message: MessageDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup): Promise<ChatMessage> {
-    const none = { replyTo: null, reaction: null, pull: null, github: null };
+    const none = { replyTo: null, reaction: null, pull: null, github: null, run: null };
     if (message.kind === 'github') {
       // Shown as GitHub's, never as a person's, whatever sender the server names.
       const card = readGithubCard(message.body);

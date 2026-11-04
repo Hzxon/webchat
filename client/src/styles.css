@@ -2412,6 +2412,53 @@ a {
   margin: -2px -6px 0 8px;
 }
 
+/* The agents a roadmap card can be handed to (R-027). */
+.run-menu {
+  position: relative;
+}
+
+.run-menu > summary {
+  list-style: none;
+}
+
+.run-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.run-menu-list {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 2;
+  display: grid;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.run-menu-list button {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.run-menu-list button:disabled {
+  color: var(--muted);
+}
+
+@media (hover: hover) {
+  .run-menu-list button:not(:disabled):hover {
+    background: var(--hover);
+  }
+}
+
 .doc-lock {
   margin: 0 6px 0 0;
   color: var(--warn);

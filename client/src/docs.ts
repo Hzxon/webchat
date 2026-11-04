@@ -7,7 +7,7 @@ import { api } from './api';
 import { currentLookup, loadDraft, openDocs, setEditing, withChatKey } from './chat';
 import { keystore } from './e2ee/keystore';
 import { keyring, type ChatDoc } from './e2ee/keyring';
-import { actions, store } from './store';
+import { actions, generalOf, store } from './store';
 
 export interface DocSection {
   id: string;
@@ -31,10 +31,7 @@ function openRevisions(doc: ChatDoc, revisions: DocRevisionDTO[]) {
 
 /** Creates a doc in a project, with a title and the sections of a template, or a column of the board. Returns its id. */
 export async function createDoc(projectId: number, title: string, sections: string[], board?: DocContent['board']): Promise<string> {
-  // #general is the project's first channel, which it keeps as long as it exists.
-  const general = Object.values(store.get().conversations)
-    .filter((c) => c.projectId === projectId)
-    .sort((a, b) => a.id - b.id)[0];
+  const general = generalOf(store.get(), projectId);
   if (!general) throw new Error('Project not found.');
   const id = newKeyId();
   const dto = await withChatKey(general.id, async (key, keyId) => {

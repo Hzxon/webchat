@@ -410,6 +410,13 @@ export const actions = {
     store.set((s) => (s.toasts.some((t) => t.id === id) ? { ...s, toasts: s.toasts.filter((t) => t.id !== id) } : s)),
 };
 
+/** The project's #general: its first channel, which it keeps as long as it exists (D-081). */
+export function generalOf(state: State, projectId: number): ChatConversation | undefined {
+  return Object.values(state.conversations)
+    .filter((c) => c.projectId === projectId)
+    .sort((a, b) => a.id - b.id)[0];
+}
+
 /** Who sent a message, as the page names them. A card the server wrote from GitHub has no sender. */
 export function senderName(users: State['users'], senderId: number | null, fallback = 'Someone'): string {
   return senderId === null ? 'GitHub' : (users[senderId]?.displayName ?? fallback);

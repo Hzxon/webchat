@@ -349,6 +349,10 @@ CREATE TABLE IF NOT EXISTS webchat.doc_locks (
   PRIMARY KEY (doc_id, section)
 );
 `,
+  // 13: an account a coding agent's daemon runs, which cards can be handed to (R-027, D-085).
+  `
+ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS agent BOOLEAN NOT NULL DEFAULT FALSE;
+`,
 ];
 
 const statements = (sql: string) =>
@@ -382,6 +386,7 @@ export interface UserRow {
   dh_public: string | null;
   sign_public: string | null;
   key_backup: string | null;
+  agent: boolean;
 }
 
 interface ConversationRow {
@@ -617,6 +622,7 @@ export function toUserDTO(row: UserRow, now = Date.now()): UserDTO {
     online: row.last_active_at !== null && now - row.last_active_at < ONLINE_WINDOW_MS,
     lastSeen: row.last_active_at,
     keys: row.dh_public && row.sign_public ? { dh: row.dh_public, sign: row.sign_public } : null,
+    agent: row.agent,
   };
 }
 
@@ -982,14 +988,14 @@ export async function openDb(sql: Sql) {
     },
 
     /** Creates an account with its keys. Returns undefined when the username is taken. */
-    createUser: async (username: string, displayName: string, loginKeyHash: string, keys: AccountKeysInput) =>
+    createUser: async (username: string, displayName: string, loginKeyHash: string, keys: AccountKeysInput, agent: boolean) =>
       one(
         sql.query<UserRow>(
           `INSERT INTO webchat.users
-             (username, display_name, password_hash, created_at, auth_version, dh_public, sign_public, key_backup)
-           VALUES ($1, $2, $3, $4, 2, $5, $6, $7)
+             (username, display_name, password_hash, created_at, auth_version, dh_public, sign_public, key_backup, agent)
+           VALUES ($1, $2, $3, $4, 2, $5, $6, $7, $8)
            ON CONFLICT DO NOTHING RETURNING *`,
-          [username, displayName, loginKeyHash, Date.now(), keys.dh, keys.sign, JSON.stringify(keys.backup)],
+          [username, displayName, loginKeyHash, Date.now(), keys.dh, keys.sign, JSON.stringify(keys.backup), agent],
         ),
       ),
     /** Switches an account from a raw-password hash to a login-key hash. */

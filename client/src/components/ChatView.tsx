@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import type { QuotedMessage } from '../../../shared/e2ee';
 import { githubCardEvent } from '../../../shared/github';
-import { LIMITS, type GithubCardDTO, type PullCardDTO, type PullEvent } from '../../../shared/types';
+import { LIMITS, type GithubCardDTO, type PullCardDTO, type PullEvent, type RunReport, type RunRequest } from '../../../shared/types';
 import { holdReloadWhile } from '../build';
 import { discardMessage, loadDraft, loadOlder, quoteOf, react, retryMessage, saveDraft, sendMessage } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
@@ -166,6 +166,16 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
   /** The message just jumped to from a quote, highlighted for a moment. */
   const [flashId, setFlashId] = useState<number | null>(null);
   const byId = useMemo(() => new Map(messages.map((m) => [m.id, m])), [messages]);
+  // An agent's reports fold into the card of the request they name, when that request is here.
+  const { reports, shown } = useMemo(() => {
+    const reports = new Map<number, RunReport>();
+    const shown: ChatMessage[] = [];
+    for (const m of messages) {
+      if (m.run && m.run.kind !== 'request' && byId.has(m.run.request)) reports.set(m.run.request, m.run);
+      else shown.push(m);
+    }
+    return { reports, shown };
+  }, [messages, byId]);
 
   useEffect(() => {
     if (trayFor === null) return;
@@ -253,8 +263,8 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
         </button>
       )}
       {messages.length === 0 && complete && <p className="messages-empty">No messages yet. Say hello.</p>}
-      {messages.map((message, i) => {
-        const previous = messages[i - 1];
+      {shown.map((message, i) => {
+        const previous = shown[i - 1];
         const newDay = !previous || dayLabel(previous.createdAt) !== dayLabel(message.createdAt);
         const mine = message.senderId === meId;
         const firstOfRun = newDay || previous?.senderId !== message.senderId;
@@ -296,6 +306,8 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                     </span>
                   ) : message.github ? (
                     <GithubCard card={message.github} />
+                  ) : message.run?.kind === 'request' ? (
+                    <RunCard run={message.run} state={reports.get(message.id) ?? null} users={users} />
                   ) : message.pull ? (
                     <PullCard pull={message.pull} />
                   ) : (
@@ -413,6 +425,35 @@ const EVENT_TAGS: Record<Exclude<PullEvent, 'opened'>, [Tone, string]> = {
   merged: ['ok', 'Merged'],
   closed: ['muted', 'Closed'],
 };
+
+const RUN_TAGS: Record<RunReport['kind'], [Tone, string]> = {
+  claimed: ['info', 'Running'],
+  done: ['ok', 'Done'],
+  failed: ['danger', 'Failed'],
+};
+
+/** A card handed to a coding agent (R-027), with the agent's latest report on it folded in. */
+function RunCard({ run, state, users }: { run: RunRequest; state: RunReport | null; users: State['users'] }) {
+  const [tone, label] = state ? RUN_TAGS[state.kind] : (['muted', 'Waiting for the agent'] as [Tone, string]);
+  return (
+    <span className="pull-card">
+      <span className="pull-card-head">
+        {run.card} · {senderName(users, run.runtime)}
+      </span>
+      <span className="pull-title">{run.title}</span>
+      <span className="pull-tags">
+        <Tag tone={tone}>{label}</Tag>
+        {state?.branch && <code>{state.branch}</code>}
+        {state?.pull && (
+          <a href={`https://github.com/${state.pull.repo}/pull/${state.pull.number}`} target="_blank" rel="noopener noreferrer">
+            {state.pull.repo}#{state.pull.number}
+          </a>
+        )}
+      </span>
+      {state?.note && <span className="pull-people">{state.note}</span>}
+    </span>
+  );
+}
 
 /**
  * A pull request event in a linked repository. The server wrote it from GitHub's webhook (D-050),

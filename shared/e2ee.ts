@@ -22,6 +22,8 @@ import {
   type PullCardDTO,
   type PullChecks,
   type PullReview,
+  type RunDTO,
+  type RunReport,
   type SealedBackupDTO,
 } from './types.js';
 
@@ -326,6 +328,8 @@ export interface MessageContent {
   reaction?: { messageId: number; emoji: string };
   /** A shared pull request. The text holds the same in words, for pages and devices without the card. */
   pull?: PullCardDTO;
+  /** A card handed to a coding agent, or the agent's report on it. The text says the same in words. */
+  run?: RunDTO;
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -437,6 +441,33 @@ export function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | u
   return card;
 }
 
+const CARD_ID = /^[DRK]-\d{1,6}$/;
+const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed'];
+const short = (value: unknown, max: number) => (typeof value === 'string' && value.length <= max ? value : undefined);
+
+/** A run request or report, if it has the right shape. A pull request is named by repository and number only. */
+export function readRun(raw: Record<string, unknown> | undefined): RunDTO | undefined {
+  if (!raw) return;
+  if (raw.kind === 'request') {
+    const card = short(raw.card, 8);
+    const title = short(raw.title, LIMITS.runNoteLength);
+    const docId = short(raw.docId, 64);
+    const section = short(raw.section, 64);
+    if (!card || !CARD_ID.test(card) || title === undefined || !docId || !section || !isId(raw.runtime)) return;
+    return { kind: 'request', card, title, docId, section, runtime: raw.runtime };
+  }
+  const kind = REPORT_KINDS.find((k) => k === raw.kind);
+  if (!kind || !isId(raw.request)) return;
+  const run: RunReport = { kind, request: raw.request };
+  const note = short(raw.note, LIMITS.runNoteLength);
+  if (note) run.note = note;
+  const branch = short(raw.branch, LIMITS.branchLength);
+  if (branch) run.branch = branch;
+  const pull = raw.pull as { repo?: unknown; number?: unknown } | undefined;
+  if (typeof pull?.repo === 'string' && REPO.test(pull.repo) && isId(pull.number)) run.pull = { repo: pull.repo, number: pull.number };
+  return run;
+}
+
 /** Keeps the parts of decrypted content that have the right shape. The sender signed it, so it is not tampered. */
 function readContent(value: unknown): MessageContent {
   const raw = value as {
@@ -444,6 +475,7 @@ function readContent(value: unknown): MessageContent {
     replyTo?: Partial<QuotedMessage>;
     reaction?: { messageId?: unknown; emoji?: unknown };
     pull?: Partial<PullCardDTO>;
+    run?: Record<string, unknown>;
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -457,6 +489,8 @@ function readContent(value: unknown): MessageContent {
   }
   const pull = readPull(raw.pull);
   if (pull) content.pull = pull;
+  const run = readRun(raw.run);
+  if (run) content.run = run;
   return content;
 }
 

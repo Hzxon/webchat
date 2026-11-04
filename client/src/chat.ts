@@ -15,6 +15,7 @@ import {
   type PullCardDTO,
   type PullRequestDTO,
   type MessageDTO,
+  type RunRequest,
   type SendMessageInput,
   type SyncResponse,
   type UserDTO,
@@ -35,8 +36,9 @@ import {
 import { keystore, type StoredUnsent } from './e2ee/keystore';
 import { refreshGithub, startGithub } from './github';
 import { disablePushHere, forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
+import type { Card } from './board';
 import { keyedQueue } from './queue';
-import { actions, chatTitle, localEditCount, senderName, store } from './store';
+import { actions, chatTitle, generalOf, localEditCount, senderName, store } from './store';
 
 const newClientId = () =>
   typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -727,6 +729,19 @@ export function sendMessage(conversationId: number, body: string, urgent: boolea
 }
 
 /**
+ * Hands a board card to a coding agent (R-027): a message in the project's #general whose `run`
+ * field names the card and the agent's account. The daemon answers with reports that name this
+ * message, and pages fold them into its card. The text says the same in words for older pages.
+ */
+export async function requestRun(projectId: number, docId: string, card: Card, runtime: UserDTO) {
+  const general = generalOf(store.get(), projectId);
+  if (!general) throw new Error('Project not found.');
+  const id = `${card.kind}-${card.number}`;
+  const run: RunRequest = { kind: 'request', card: id, title: card.title.slice(0, LIMITS.runNoteLength), docId, section: card.id, runtime: runtime.id };
+  await sendContent(general.id, { text: `Run ${id} with ${runtime.displayName}: ${card.title}`, run }, false);
+}
+
+/**
  * Sends a pull request into a chat as a card. The text says the same in words, so an older page,
  * a notification and the chat list have something to show. The server sees an ordinary message.
  */
@@ -766,6 +781,7 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     reaction: null,
     pull: entry.content.pull ?? null,
     github: null,
+    run: entry.content.run ?? null,
     security: 'encrypted',
   };
 }
@@ -839,6 +855,7 @@ export function retryMessage(message: ChatMessage) {
   const content: MessageContent = { text: message.text };
   if (message.replyTo) content.replyTo = message.replyTo;
   if (message.pull) content.pull = message.pull;
+  if (message.run) content.run = message.run;
   void sendContent(message.conversationId, content, message.urgent, message.clientId!);
 }
 

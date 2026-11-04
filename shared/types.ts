@@ -19,6 +19,8 @@ export interface UserDTO {
   online: boolean;
   lastSeen: number | null;
   keys: PublicKeysDTO | null;
+  /** A coding agent's account, run by a daemon (R-027, D-085). Cards can be run with it. */
+  agent: boolean;
 }
 
 /** An encrypted, signed message. The server stores and relays it without being able to read it. */
@@ -192,6 +194,8 @@ export interface RegisterInput {
   authKey: string;
   inviteCode: string;
   keys: AccountKeysInput;
+  /** True for a coding agent's account (R-027). */
+  agent?: boolean;
 }
 
 export interface LoginResponse {
@@ -423,6 +427,34 @@ export interface PullRequestDTO {
 }
 
 /**
+ * A board card handed to a coding agent (R-027, D-086), or the agent's report on the run. Both
+ * travel inside a message's envelope, like a shared pull request, so the server sees messages
+ * and nothing more. A report names the request's message.
+ */
+export type RunDTO = RunRequest | RunReport;
+
+export interface RunRequest {
+  kind: 'request';
+  /** The card's id, such as K-12. */
+  card: string;
+  title: string;
+  docId: string;
+  section: string;
+  /** The agent account asked to run it. */
+  runtime: number;
+}
+
+export interface RunReport {
+  kind: 'claimed' | 'done' | 'failed';
+  request: number;
+  /** What happened, in a line. */
+  note?: string;
+  /** For a run that is done: the branch it left, and the pull request it opened. */
+  branch?: string;
+  pull?: { repo: string; number: number };
+}
+
+/**
  * A pull request shared into a chat: a snapshot of how it stood when it was shared. It travels
  * inside the message's envelope, so the server never sees which pull request was shared.
  */
@@ -615,6 +647,10 @@ export const LIMITS = {
   docSectionsAtOnce: 20,
   /** Revisions of a section that its history shows. */
   docHistory: 100,
+  /** A run report's note, and a run request's card title. */
+  runNoteLength: 1000,
+  /** A branch name in a run report. */
+  branchLength: 200,
 } as const;
 
 /** Slack-style channel names (D-027): lowercase letters and digits in any script, joined by single hyphens. */

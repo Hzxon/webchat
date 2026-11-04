@@ -332,9 +332,12 @@ the notes would show it nothing new. They should not count as unread.
 
 ### R-027: Run a card with a coding agent
 
-Status: In progress on branch `claude/r027-headless-client` (#85, D-085): step 1 of 5, the
-headless client in `agent/`, with `npm run agent` to sign up, sign in and watch. Asked for by the
-owner on 2026-11-05, with [multica](https://github.com/multica-ai/multica) as the inspiration.
+Status: In progress. Step 1 of 5, the headless client in `agent/` with `npm run agent` to sign
+up, sign in and watch, is on branch `claude/r027-headless-client` (#85, D-085). Step 2, the run
+request and reports inside sealed messages, the "Run with" menu on a card and the run card in
+#general, is on branch `claude/r027-run-messages` (#86, D-086), on top of #85. Until step 3 adds
+an adapter, the daemon reports every request as failed. Asked for by the owner on 2026-11-05,
+with [multica](https://github.com/multica-ai/multica) as the inspiration.
 
 Why: a team writes an issue or an idea as a card on the board (R-021), then one of them copies it
 into a terminal and asks Claude Code, Codex or Hermes to do it. The card does not say who is on
@@ -347,7 +350,7 @@ Scope:
 
 - A "Run with" menu on an issue or idea card. It lists the agent runtimes of the project that are
   online and idle, such as "claude-code on hazron-mbp". A runtime that is busy or offline is not
-  offered, so a click never queues.
+  offered, so a click never queues. (Step 2 offers the online ones; busy comes with step 4.)
 - A run card in #general for each run: who asked, which card, which runtime, then claimed,
   progress notes, and done with the branch and the pull request, or failed with the reason. The
   card updates in place, as a message with its reactions does.

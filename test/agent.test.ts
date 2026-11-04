@@ -6,10 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { AgentClient } from '../agent/client.ts';
+import { Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { newChatKeyBytes, newKeyId, wrapChatKey } from '../shared/e2ee.ts';
-import type { ChatKeyInput, CreateProjectResponse, DocDTO } from '../shared/types.ts';
+import type { ChatKeyInput, CreateProjectResponse, DocDTO, RunDTO } from '../shared/types.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
 const KDF_ROUNDS = 1000;
@@ -36,6 +37,9 @@ describe('agent client (R-027)', () => {
   let botFile: string;
   let projectId: number;
   let generalId: number;
+  let roadmap: DocDTO;
+  let cardId: string;
+  const cardText = '### K-1: Pushes with bad keys\n\nStatus: Open.\n\nSeen: on a phone.';
 
   before(async () => {
     const config = loadConfig({ PGLITE_DIR: ':memory:', INVITE_CODE: 'friends-only', GITHUB_POLL_SECONDS: '0', SESSION_DAYS: '1' });
@@ -58,7 +62,7 @@ describe('agent client (R-027)', () => {
     bot = await AgentClient.signUp(botFile, credentials, 'Bot', 'friends-only');
     assert.equal((await fs.stat(botFile)).mode & 0o777, 0o600);
     const file = JSON.parse(await fs.readFile(botFile, 'utf8'));
-    assert.deepEqual(Object.keys(file).sort(), ['authKey', 'cookie', 'cursor', 'pins', 'secrets', 'server', 'userId', 'username']);
+    assert.deepEqual(Object.keys(file).sort(), ['allow', 'authKey', 'cookie', 'cursor', 'pins', 'secrets', 'server', 'userId', 'username']);
     assert.ok(!JSON.stringify(file).includes(PASSWORD), 'the password is not on disk');
     // A second sign-up must not overwrite an account's keys.
     await assert.rejects(AgentClient.signUp(botFile, { ...credentials, username: 'bot2' }, 'Bot', 'friends-only'), { code: 'EEXIST' });
@@ -89,8 +93,8 @@ describe('agent client (R-027)', () => {
 
   test('edits a board card under the section lock', async () => {
     const doc = { id: newKeyId(), conversationId: generalId };
-    const card = newKeyId().slice(0, 11);
-    const text = '### K-1: Pushes with bad keys\n\nStatus: Open.\n\nSeen: on a phone.';
+    const card = (cardId = newKeyId().slice(0, 11));
+    const text = cardText;
     await alice.request('POST', '/docs', {
       ...doc,
       revisions: [
@@ -103,7 +107,7 @@ describe('agent client (R-027)', () => {
     const boards = await bot.boardDocs(projectId);
     assert.equal(boards.roadmap?.id, doc.id);
     assert.equal(boards.decisions, undefined);
-    const roadmap = boards.roadmap as DocDTO;
+    roadmap = boards.roadmap as DocDTO;
     assert.deepEqual(await bot.sections(roadmap), [{ id: card, text, pos: 1 }]);
 
     const edited = text.replace('Status: Open.', 'Status: In progress on branch agent/k1-bad-keys.');
@@ -113,6 +117,40 @@ describe('agent client (R-027)', () => {
     // The lock is free again: Alice can edit the card in turn.
     await alice.replaceSection(roadmap, card, { text, pos: 1 });
     assert.deepEqual((await bot.sections(roadmap)).map((s) => s.text), [text]);
+  });
+
+  test('runs a card a teammate hands to it, and reports in #general', async () => {
+    const jobs: Parameters<Runner>[0][] = [];
+    const runs = new Runs(bot, async (job) => {
+      jobs.push(job);
+      return { branch: 'agent/k1-bad-keys', pull: { repo: 'acme/app', number: 9 }, note: 'Two files changed.' };
+    });
+    const request = async (): Promise<number> => {
+      const run: RunDTO = { kind: 'request', card: 'K-1', title: 'Pushes with bad keys', docId: roadmap.id, section: cardId, runtime: bot.id };
+      return (await alice.send(generalId, { text: 'Run K-1 with Bot', run })).id;
+    };
+    const reports = async (requestId: number) => {
+      const heard = await alice.sync();
+      return heard.map((m) => [m.content?.run && m.content.run.kind !== 'request' && m.content.run.request === requestId, m.content?.run?.kind, m.content?.text]);
+    };
+    // Alice is not allowed yet.
+    let id = await request();
+    for (const m of await bot.sync()) await runs.handle(m);
+    assert.deepEqual(await reports(id), [[true, 'failed', 'I could not run K-1: Alice is not allowed to run cards here.']]);
+    assert.equal(jobs.length, 0);
+
+    await bot.allow('alice');
+    id = await request();
+    for (const m of await bot.sync()) await runs.handle(m);
+    assert.deepEqual(await reports(id), [
+      [true, 'claimed', 'I am on K-1: Pushes with bad keys'],
+      [true, 'done', 'I finished K-1 on agent/k1-bad-keys (acme/app#9). Two files changed.'],
+    ]);
+    assert.deepEqual(jobs.map((j) => [j.request.card, j.card, j.projectId]), [['K-1', cardText, projectId]]);
+    const [card] = await alice.sections(roadmap);
+    assert.equal(card?.text, cardText.replace('Status: Open.', 'Status: In progress on branch agent/k1-bad-keys (acme/app#9).'));
+    assert.equal(runs.running, null);
+    assert.equal((JSON.parse(await fs.readFile(botFile, 'utf8')) as { allow: string[] }).allow.join(), 'alice');
   });
 
   test('starts again from its file, and signs in again when its session ends', async () => {

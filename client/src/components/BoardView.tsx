@@ -2,7 +2,7 @@
 // a doc whose sections are cards. Cards are written in the section editor docs have, and keep its
 // locks and history. The board docs are created the first time someone adds a card.
 import { useEffect, useMemo, useState } from 'react';
-import type { ProjectDTO } from '../../../shared/types';
+import type { ProjectDTO, UserDTO } from '../../../shared/types';
 import {
   boardDocs,
   cardTemplate,
@@ -19,12 +19,12 @@ import {
   type Card,
   type CardKind,
 } from '../board';
-import { syncNow } from '../chat';
+import { requestRun, syncNow } from '../chat';
 import { beginEditing, createDoc, loadSections, markSeen, newSectionId, replaceSection, type Editing } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
 import { actions, senderName, store, useAppState } from '../store';
 import { HistoryDialog, SectionEditor } from './DocView';
-import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlusIcon, TrashIcon } from './icons';
+import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlayIcon, PlusIcon, TrashIcon } from './icons';
 import { Markdown } from './Markdown';
 
 export function BoardView({ project }: { project: ProjectDTO }) {
@@ -64,12 +64,16 @@ export function BoardView({ project }: { project: ProjectDTO }) {
   );
 }
 
+const NO_MEMBERS: number[] = [];
 const FILTERS = { all: 'All', R: 'Ideas', K: 'Issues' };
 type Filter = keyof typeof FILTERS;
 
 function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; projectId: number; doc: ChatDoc | undefined }) {
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
+  const memberIds = useAppState((s) => s.projects[projectId]?.memberIds ?? NO_MEMBERS);
+  // The coding agents in the project (R-027). A card can be handed to one that is online.
+  const agents = useMemo(() => memberIds.map((id) => users[id]).filter((u): u is UserDTO => !!u?.agent), [memberIds, users]);
   const [cards, setCards] = useState<Card[]>([]);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
@@ -135,6 +139,13 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
     await navigator.clipboard.writeText(columnMarkdown(column, cards));
     setNote('Copied');
     setTimeout(() => setNote(''), 2000);
+  }
+
+  async function handOver(card: Card, agent: UserDTO) {
+    if (!doc) return;
+    await requestRun(projectId, doc.id, card, agent);
+    setNote(`Asked ${agent.displayName}. Its reports show in #general.`);
+    setTimeout(() => setNote(''), 4000);
   }
 
   const kinds: CardKind[] = column === 'decisions' ? ['D'] : ['R', 'K'];
@@ -224,6 +235,21 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                           <button className="icon-button icon-button-small" onClick={() => setHistoryOf(card)} title="History" aria-label="Card history">
                             <HistoryIcon width={18} height={18} />
                           </button>
+                          {column === 'roadmap' && card.kind && !card.failed && agents.length > 0 && (
+                            <details className="run-menu">
+                              <summary className="icon-button icon-button-small" title="Run with an agent" aria-label="Run with an agent">
+                                <PlayIcon width={18} height={18} />
+                              </summary>
+                              <div className="run-menu-list">
+                                {agents.map((agent) => (
+                                  <button key={agent.id} onClick={() => run(handOver(card, agent))} disabled={!agent.online}>
+                                    {agent.displayName}
+                                    {!agent.online && <small> offline</small>}
+                                  </button>
+                                ))}
+                              </div>
+                            </details>
+                          )}
                           <button
                             className="icon-button icon-button-small"
                             onClick={() => run(remove(card))}

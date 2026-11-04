@@ -33,7 +33,7 @@ import {
   type IdentitySecrets,
   type MessageMeta,
 } from '../shared/e2ee.ts';
-import type { PullCardDTO } from '../shared/types.ts';
+import type { PullCardDTO, RunDTO } from '../shared/types.ts';
 
 // Fewer PBKDF2 rounds keep the suite fast; one test runs the real count.
 const FAST = 1000;
@@ -185,6 +185,30 @@ describe('end-to-end encryption', () => {
     const opened = await decryptContent(key, alice.identity.publicKeys.sign, meta, await encryptMessage(key, keyId, alice.identity.signPrivate, meta, elsewhere));
     assert.equal(opened.pull, undefined, 'the text stays, the card goes');
     assert.equal(opened.text, content.text);
+  });
+
+  test('a run request and its reports travel inside the envelope, and a malformed one is dropped (R-027)', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const keyId = newKeyId();
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'r1' };
+    const open = async (run: object) => {
+      const envelope = await encryptMessage(key, keyId, alice.identity.signPrivate, meta, { text: 'Run K-12', run: run as RunDTO });
+      return (await decryptContent(key, alice.identity.publicKeys.sign, meta, envelope)).run;
+    };
+    const request = { kind: 'request', card: 'K-12', title: 'Bad keys', docId: 'd'.repeat(22), section: 's'.repeat(11), runtime: 7 };
+    assert.deepEqual(await open(request), request);
+    const done = { kind: 'done', request: 42, branch: 'agent/k12-bad-keys', pull: { repo: 'acme/app', number: 9 }, note: 'Two files.' };
+    assert.deepEqual(await open(done), done);
+    assert.deepEqual(await open({ kind: 'failed', request: 42, pull: { repo: 'acme/app', number: 'nine' } }), { kind: 'failed', request: 42 });
+    for (const bad of [
+      { ...request, card: 'X-1' },
+      { ...request, runtime: 0 },
+      { ...request, docId: 'd'.repeat(65) },
+      { kind: 'started', request: 42 },
+      { kind: 'done', request: -1 },
+    ]) {
+      assert.equal(await open(bad), undefined, JSON.stringify(bad));
+    }
   });
 
   test('a card names who still has to review; a card from before reviewers keeps none, not an empty list', async () => {
