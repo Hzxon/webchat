@@ -1100,7 +1100,6 @@ Cost: each report counts as an unread message and alerts like one, so a chatty r
 reports stay sparse. A report whose request is not loaded on the page shows as its text. The
 request's message id is the server's, so a server that was changed could attach a report to
 another request; it could not forge either, and both texts name the card.
-moves it under `shared/`.
 
 ## Replies and reactions
 
