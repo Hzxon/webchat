@@ -332,8 +332,9 @@ the notes would show it nothing new. They should not count as unread.
 
 ### R-027: Run a card with a coding agent
 
-Status: Idea. Asked for by the owner on 2026-11-05, with
-[multica](https://github.com/multica-ai/multica) as the inspiration.
+Status: In progress on branch `claude/r027-headless-client` (#85, D-085): step 1 of 5, the
+headless client in `agent/`, with `npm run agent` to sign up, sign in and watch. Asked for by the
+owner on 2026-11-05, with [multica](https://github.com/multica-ai/multica) as the inspiration.
 
 Why: a team writes an issue or an idea as a card on the board (R-021), then one of them copies it
 into a terminal and asks Claude Code, Codex or Hermes to do it. The card does not say who is on
@@ -397,9 +398,9 @@ Constraints:
   other members. The CLI runs in the worktree with edits allowed and no push to main.
 - A request the daemon first sees more than 10 minutes after it was sent fails as missed, so an
   agent that comes online on Monday does not start Friday's run unasked.
-- The daemon is Node code in a new `agent/` folder with its own tsconfig, checked by `npm run
-  typecheck`. Its decisions, the agent as a member and the run field, are recorded with the
-  numbers reserved at the claim.
+- The daemon is Node code in a new `agent/` folder, typechecked with the tooling tsconfig by
+  `npm run typecheck`. Its decisions, the agent as a member and the run field, are recorded with
+  the numbers reserved at the claim.
 
 Build order, each its own pull request: the headless client, then the run messages and the card
 menu, then the Claude Code adapter, then the busy flag, then the other adapters. The headless
@@ -425,7 +426,19 @@ Open questions:
 
 ## Known issues
 
-None open.
+### K-40: The keyring logic exists twice, in the page and in the agent
+
+Status: Open. Found while building R-027 step 1 (#85).
+
+`agent/client.ts` ports `chatKey`, `keyFor`, the key cache, the pins and the signature checks
+from `client/src/e2ee/keyring.ts`, because that module reaches into IndexedDB and cannot load in
+Node. The two copies decide the same security questions: whether a member wrapped the chat key,
+that a replaced key never encrypts again, and whose changed keys to refuse (D-015, D-018). A fix
+in one copy is easy to forget in the other.
+
+Fix: move the pure logic into a module under `shared/` that takes the key lookup, a key cache
+and a pin store as arguments, with the page passing IndexedDB and the agent its account file.
+Until then, a change to either copy must be made in both.
 
 ## Open questions
 

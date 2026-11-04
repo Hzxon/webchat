@@ -31,9 +31,10 @@ Vercel's Hobby plan with Supabase Postgres, or on any Node host with an embedded
 | `npm install` | Installs dependencies. The engines field pins Node 26. |
 | `npm run dev` | Runs the API on port 3000 and the Vite client on port 5173, with PGlite in `data/pglite`. |
 | `npm test` | Runs the integration and crypto tests with an in-memory database. |
-| `npm run typecheck` | Checks the server, client, service worker and tooling, each with its own tsconfig. |
+| `npm run typecheck` | Checks the server, client, service worker, and the tooling with the agent, each with its own tsconfig. |
 | `npm run build` | Typechecks, then builds the client, the service worker and the server. |
 | `npm start` | Runs the built app in one Node process. |
+| `npm run agent -- signup\|login\|watch …` | The agent daemon's command line (R-027, D-085): an account that signs up, signs in and watches its chats with no browser. |
 | `scripts/claim.sh K-12 "<title>" [D-077]` | Claims a roadmap item and, given one, reserves a decision number: refuses what an open pull request names, then opens your draft. |
 
 The server log prints the invite code. Set `INVITE_CODE` to choose one. To test with two accounts in
@@ -81,6 +82,9 @@ keeps its own cookies and keys.
 | `client/src/sw.ts` | The service worker. It decrypts pushed messages and shows notifications. |
 | `client/src/styles.css` | Every style of the page, with the light and dark colors as CSS variables. |
 | `client/src/components/` | The React views. |
+| `agent/client.ts` | The headless client behind the agent daemon: sign-up, sign-in, the keys on disk, check-ins, opening and sending messages, and doc sections. See D-085. |
+| `agent/api.ts` | Requests to `/api` from Node, with the session cookie kept by hand. |
+| `agent/index.ts` | The agent daemon's command line. |
 | `test/` | Integration tests that drive the real app over HTTP, and crypto tests. |
 | `.github/workflows/release-please.yml` | Release Please: the release pull request, the tags and `CHANGELOG.md`. |
 | `.github/workflows/doc-ids.yml` | Fails a pull request that repeats a decision or roadmap id. See D-063. |
