@@ -167,11 +167,14 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
   const [flashId, setFlashId] = useState<number | null>(null);
   const byId = useMemo(() => new Map(messages.map((m) => [m.id, m])), [messages]);
   // An agent's reports fold into the card of the request they name, when that request is here.
+  // Only the agent the request names reports on it, so nobody else can mark it done.
   const { reports, shown } = useMemo(() => {
     const reports = new Map<number, RunReport>();
     const shown: ChatMessage[] = [];
     for (const m of messages) {
-      if (m.run && m.run.kind !== 'request' && byId.has(m.run.request)) reports.set(m.run.request, m.run);
+      const report = m.run?.kind === 'request' ? null : m.run;
+      const request = report ? byId.get(report.request)?.run : null;
+      if (report && request?.kind === 'request' && request.runtime === m.senderId) reports.set(report.request, report);
       else shown.push(m);
     }
     return { reports, shown };

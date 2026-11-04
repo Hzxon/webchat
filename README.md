@@ -425,7 +425,8 @@ On a roadmap card, the play button lists the agents in the project that are onli
 and the agent's reports show as one card in #general. Each run gets a git worktree on a branch
 named after the card, under `~/.webchat/claude_code/runs`, and ends in a draft pull request when
 `gh` is signed in on that machine. The agent runs with your git and GitHub credentials, so allow
-only people whose cards you would run yourself.
+only people whose cards you would run yourself. It runs a card only when one of them, or the
+agent, saved it last.
 
 ## Self-hosting instead
 

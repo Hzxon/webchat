@@ -79,6 +79,8 @@ export interface DocSection {
   id: string;
   text: string;
   pos: number;
+  /** Who saved this text last. */
+  authorId: number;
 }
 
 /** How often the daemon checks in. It has no push, so this is its whole delay (D-004). */
@@ -172,9 +174,14 @@ export class AgentClient {
     await fs.writeFile(this.filePath, JSON.stringify(this.file, null, 2) + '\n', { flag, mode: 0o600 });
   }
 
-  /** Whether this person's run requests are carried out. */
-  allows(username: string) {
-    return this.file.allow.includes(username);
+  /**
+   * Whether this account acts on what this person wrote: its own words, or those of someone its
+   * owner allowed. Usernames match in any case, as they do at sign-in.
+   */
+  trusts(userId: number | null) {
+    if (userId === this.id) return true;
+    const username = userId === null ? undefined : this.users.get(userId)?.username.toLowerCase();
+    return this.file.allow.some((name) => name.toLowerCase() === username);
   }
 
   /** Lets a person's run requests be carried out from now on. */
@@ -237,7 +244,8 @@ export class AgentClient {
         yield* await this.sync();
         failures = 0;
       } catch (error) {
-        if (error instanceof ApiError && error.status !== 0 && error.status < 500) throw error;
+        // A rate limit passes, like an outage; other refusals do not.
+        if (error instanceof ApiError && error.status !== 0 && error.status !== 429 && error.status < 500) throw error;
         failures++;
       }
       const delay = failures ? Math.min(60_000, intervalMs * 2 ** failures) : intervalMs;
@@ -270,11 +278,6 @@ export class AgentClient {
   keysOf(userId: number): PublicKeysDTO | null {
     if (userId === this.id) return this.identity.publicKeys;
     return this.changedKeys.has(userId) ? null : (this.users.get(userId)?.keys ?? null);
-  }
-
-  /** The project's #general channel, which it keeps as long as it exists (D-081). Names are unique in a project (D-027). */
-  general(projectId: number): ConversationDTO | undefined {
-    return [...this.conversations.values()].find((c) => c.type === 'channel' && c.projectId === projectId && c.title === 'general');
   }
 
   /** The chat's current key, for sealing. */
@@ -382,7 +385,7 @@ export class AgentClient {
     const sections: DocSection[] = [];
     revisions.forEach((revision, i) => {
       const content = contents[i];
-      if (content && !content.removed) sections.push({ id: revision.section, text: content.text, pos: content.pos ?? revision.createdAt });
+      if (content && !content.removed) sections.push({ id: revision.section, text: content.text, pos: content.pos ?? revision.createdAt, authorId: revision.authorId });
     });
     return sections.sort((a, b) => a.pos - b.pos);
   }
@@ -394,11 +397,16 @@ export class AgentClient {
     return encryptDoc(key, keyId, this.identity.signPrivate, meta, content);
   }
 
-  /** Replaces a section in one editing session: takes its lock, saves, and lets the lock go (D-081). */
-  async replaceSection(doc: DocDTO, section: string, content: DocContent) {
+  /**
+   * Edits a section in one editing session: takes its lock, reads the section as it is now, saves
+   * what `edit` makes of it, and lets the lock go (D-081). Reading under the lock keeps what others
+   * saved before it.
+   */
+  async editSection(doc: DocDTO, section: string, edit: (current: DocSection | undefined) => DocContent) {
     await this.request('POST', `/docs/${doc.id}/sections/${section}/lock`);
     try {
-      await this.request('PUT', `/docs/${doc.id}/sections/${section}`, { envelope: await this.sealDoc(doc, section, content) });
+      const current = (await this.sections(doc)).find((s) => s.id === section);
+      await this.request('PUT', `/docs/${doc.id}/sections/${section}`, { envelope: await this.sealDoc(doc, section, edit(current)) });
     } finally {
       await this.request('DELETE', `/docs/${doc.id}/sections/${section}/lock`).catch(() => undefined);
     }

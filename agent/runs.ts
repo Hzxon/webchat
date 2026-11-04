@@ -4,7 +4,7 @@
 // and puts the branch into the card's status line. Every report is a message of its own that
 // names the request, and pages fold them into one card.
 import type { DocDTO, RunReport, RunRequest } from '../shared/types.ts';
-import type { AgentClient, DocSection, OpenedMessage } from './client.ts';
+import type { AgentClient, OpenedMessage } from './client.ts';
 
 export interface RunResult {
   branch: string;
@@ -35,23 +35,31 @@ export class Runs {
     const report = (reply: Omit<RunReport, 'request'>, text: string) =>
       this.client.send(message.conversationId, { text, run: { ...reply, request: message.id } });
     const failed = (note: string) => report({ kind: 'failed', note }, `I could not run ${run.card}: ${note}`);
-    const sender = message.senderId === null ? null : this.client.users.get(message.senderId);
-    if (!sender || !this.client.allows(sender.username)) return failed(`${sender?.displayName ?? 'this account'} is not allowed to run cards here.`);
+    const nameOf = (userId: number | null, fallback: string) => (userId !== null && this.client.users.get(userId)?.displayName) || fallback;
+    if (!this.client.trusts(message.senderId)) return failed(`${nameOf(message.senderId, 'this account')} is not allowed to run cards here.`);
     if (Date.now() - message.createdAt > REQUEST_TTL_MS) return failed('The request is older than 10 minutes.');
     if (this.running) return failed(`I am busy with ${this.running.card}.`);
-    const projectId = this.client.conversations.get(message.conversationId)?.projectId;
-    const doc = this.client.docs.find((d) => d.id === run.docId);
-    const card = doc && (await this.client.sections(doc)).find((s) => s.id === run.section);
-    if (!projectId || !doc || !card) return failed('The card is not on the board.');
 
+    // Taken before the first wait, so a request from the same check-in finds the account busy.
     this.running = run;
     this.client.busy = true;
     try {
+      const projectId = this.client.conversations.get(message.conversationId)?.projectId;
+      // The card must be on the board of the project the request is in, whose repository the run uses.
+      const doc = this.client.docs.find((d) => d.id === run.docId && this.client.conversations.get(d.conversationId)?.projectId === projectId);
+      const card = doc && (await this.client.sections(doc)).find((s) => s.id === run.section);
+      if (!projectId || !doc || !card) throw new Error('The card is not on the board.');
+      // The card's text is the agent's prompt, so whoever saved it last must be allowed too.
+      if (!this.client.trusts(card.authorId)) throw new Error(`${nameOf(card.authorId, 'Someone')} changed the card last, and is not allowed to run cards here.`);
       await report({ kind: 'claimed' }, `I am on ${run.card}: ${run.title}`);
       const result = await this.runner({ request: run, card: card.text, projectId });
       const where = `${result.branch}${result.pull ? ` (${result.pull.repo}#${result.pull.number})` : ''}`;
-      await this.setStatus(doc, card, `In progress on branch ${where}`);
-      await report({ kind: 'done', ...result }, `I finished ${run.card} on ${where}.${result.note ? ` ${result.note}` : ''}`);
+      // The work is done whether or not the card's status line can be written now.
+      const unset = await this.setStatus(doc, card.id, `In progress on branch ${where}`).then(
+        () => '',
+        (error: unknown) => ` I could not update the card's status line: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      await report({ kind: 'done', ...result }, `I finished ${run.card} on ${where}.${result.note ? ` ${result.note}` : ''}${unset}`);
     } catch (error) {
       await failed(error instanceof Error ? error.message : String(error));
     } finally {
@@ -60,10 +68,18 @@ export class Runs {
     }
   }
 
-  /** Writes the card's status line, leaving the rest of its text as it is. A card without one gets it under its heading. */
-  private setStatus(doc: DocDTO, card: DocSection, status: string) {
+  /**
+   * Writes the card's status line into its text as it is now, leaving the rest as it is. A card
+   * without one gets it under its heading. Text from someone not allowed is left alone, so the
+   * agent never saves it as its own, which would let it run later.
+   */
+  private setStatus(doc: DocDTO, section: string, status: string) {
     const line = `Status: ${status}.`;
-    const text = /^Status:/m.test(card.text) ? card.text.replace(/^Status:.*$/m, line) : card.text.replace(/^(.*)$/m, `$1\n\n${line}`);
-    return this.client.replaceSection(doc, card.id, { text, pos: card.pos });
+    return this.client.editSection(doc, section, (card) => {
+      if (!card) throw new Error('the card is no longer on the board.');
+      if (!this.client.trusts(card.authorId)) throw new Error('someone who is not allowed changed it meanwhile.');
+      const text = /^Status:/m.test(card.text) ? card.text.replace(/^Status:.*$/m, line) : card.text.replace(/^(.*)$/m, `$1\n\n${line}`);
+      return { text, pos: card.pos };
+    });
   }
 }
