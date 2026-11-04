@@ -60,6 +60,27 @@ Cost: Vercel Hobby is for personal, non-commercial use. Supabase pauses a free p
 week without activity. Hobby cron jobs run only once a day (D-034). The free plan's limits are the
 reason for D-004.
 
+### D-083: A work tool's palette and type
+
+Proposed 2026-11-04 for R-022, the first step of the rebrand.
+
+The page drops WhatsApp's teal and green for neutral grays with one indigo accent (`#4f46e5` light,
+`#818cf8` dark). Success has its own green, `--ok`, so passed checks, added lines and the online dot
+no longer borrow the accent. The sidebar is tinted, and the content area is white, or near black in
+dark mode. The sidebar sets `--panel`, `--panel-2` and `--hover` to its own shades, so every row and
+field inside it follows without its own rule. Panels are flat: a 1px line, no shadow. Only what
+floats over the page casts one: dialogs, toasts and the reaction tray. Type is 14px with a 1.35 line
+height, code uses the `--mono` stack, and every corner, avatars included, has the 6px `--radius`.
+Small status dots stay round. The fonts stay the system's, so the page loads nothing from a font
+host.
+
+Why: the features are for project work, but the look said consumer messenger before anyone saw a
+project. Colors, type and shapes change in `styles.css` alone, so this step changes no behavior.
+
+Cost: people and projects now share one avatar shape. The favicon, the installed app's icon, the
+`theme-color` meta tag and one avatar color are still teal. R-026 replaces the icons. Bubbles stay
+until R-023.
+
 ## Architecture and hosting
 
 ### D-004: No open connections: check-ins and Web Push
