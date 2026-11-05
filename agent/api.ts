@@ -21,8 +21,10 @@ export class Api {
     public cookie = '',
   ) {
     // A sign-in sends the login key, so it never travels in the clear, except on this machine (K-47).
+    // Every name under .localhost is this machine too, such as alice.localhost in AGENTS.md (K-48).
     const { protocol, hostname } = new URL(baseUrl);
-    if (protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(hostname)) {
+    const local = ['localhost', '127.0.0.1', '[::1]'].includes(hostname) || hostname.endsWith('.localhost');
+    if (protocol !== 'https:' && !local) {
       throw new Error(`Use the https:// address of the server, not ${baseUrl}.`);
     }
   }
