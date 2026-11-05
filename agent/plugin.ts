@@ -18,7 +18,8 @@ import { pairingId } from '../shared/e2ee.ts';
 import { isRepoName, type RunRequest } from '../shared/types.ts';
 import { claudeArgs, claudeSettings } from './claude.ts';
 import { AgentClient, readPairing, type OpenedMessage, type TakenRequest } from './client.ts';
-import { ADAPTERS, addWorktree, decisionsOf, start } from './runner.ts';
+import { Conversations, type Answerer } from './conversations.ts';
+import { ADAPTERS, addWorktree, decisionsOf, fetchOrigin, start } from './runner.ts';
 import { messageOf, Runs, type Runner, type RunResult } from './runs.ts';
 
 const exec = promisify(execFile);
@@ -90,6 +91,13 @@ const ANSWER = {
   required: ['outcome', 'note'],
 };
 
+/** How a conversation's turn ends (D-102). */
+const REPLY = {
+  type: 'object',
+  properties: { reply: { type: 'string', description: 'Your answer to your owner, in Markdown.' } },
+  required: ['reply'],
+};
+
 interface PullView {
   state: string;
   isDraft: boolean;
@@ -110,6 +118,7 @@ export class Plugin {
   /** Why this session takes no runs, for the status tool. Empty while it takes them. */
   problem = 'Starting.';
   private runs: Runs | null = null;
+  private conversations: Conversations | null = null;
   /** The folders the background Claude must never read, and origin's address as configured. */
   private secrets: string[] = [];
   private origin = '';
@@ -179,6 +188,8 @@ export class Plugin {
     await fs.writeFile(this.file('claude.json'), JSON.stringify(claudeSettings({ secrets: this.secrets, npmCache, guard: this.options.guard, env: process.env })));
     this.origin = await exec('git', ['-C', projectDir, 'config', '--get', 'remote.origin.url']).then((r) => r.stdout.trim(), () => '');
     this.runs = new Runs(client, (job) => this.run(job), () => this.refusal());
+    this.conversations = new Conversations(client, this.file('conversations.json'), (job) => this.converse(job));
+    await this.conversations.load();
     this.watched = JSON.parse(await fs.readFile(this.file('pulls.json'), 'utf8').catch(() => '[]')) as Watched[];
     this.problem = '';
     return true;
@@ -197,14 +208,18 @@ export class Plugin {
   async loop() {
     const missed = await this.client!.sync().catch((error: unknown) => (log(error), []));
     await this.runs!.recover().catch(log);
+    await this.conversations!.recover().catch(log);
     missed.forEach((m) => this.handle(m));
-    setInterval(() => void this.pollPulls().catch(log), 60_000);
+    setInterval(() => {
+      void this.pollPulls().catch(log);
+      void this.conversations!.sweep().catch(log);
+    }, 60_000);
     for await (const message of this.client!.watch(new AbortController().signal)) this.handle(message);
   }
 
-  /** Acts on one message. A run takes long, so the loop does not wait for it: check-ins go on meanwhile. */
+  /** Acts on one message. A turn takes long, so the loop does not wait for it: check-ins go on meanwhile. */
   handle(message: OpenedMessage) {
-    return this.runs!.handle(message).catch(log);
+    return (message.content?.prompt ? this.conversations! : this.runs!).handle(message).catch(log);
   }
 
   /** A run, as Runs hands it over: a worktree inside the checkout, a turn of the background Claude there, then the draft. */
@@ -216,7 +231,7 @@ export class Plugin {
     ]);
     const place: Place = { branch, worktree: dir, base };
     const session = randomUUID();
-    const answer = await this.ask(place, session, false, runBrief(request.card, place, card, decisions), signal);
+    const answer = await this.work(place, session, false, runBrief(request.card, place, card, decisions), signal);
     const head = await this.push(place);
     const pull = await this.openDraft(place, answer, `${request.card}: ${request.title}`);
     this.watched.push({ ...place, taken, request, pull, head, session, fixes: 0, seenHead: '', seenNote: new Date().toISOString() });
@@ -224,17 +239,44 @@ export class Plugin {
     return { branch, pull, note: answer.note || undefined };
   }
 
-  /** One turn of the background Claude in the worktree: the message on stdin, the answer it ends with (D-097). */
-  private async ask(place: Place, session: string, resume: boolean, message: string, signal: AbortSignal) {
-    const args = claudeArgs({ settings: this.file('claude.json'), session, resume, answer: ANSWER });
-    const turn = await start(this.options.claude, args, place.worktree, signal, ADAPTERS.claude.result, message);
-    const answer = turn.answer as Answer | undefined;
-    if (turn.error || !answer) throw new Error(turn.text.trim().slice(0, 500) || 'Claude stopped without an answer.');
+  /** One turn of the background Claude in `cwd`: the message on stdin, the JSON answer `schema` asks for (D-097). */
+  private async ask(cwd: string, session: string, resume: boolean, message: string, schema: object, signal: AbortSignal) {
+    const args = claudeArgs({ settings: this.file('claude.json'), session, resume, answer: schema });
+    const turn = await start(this.options.claude, args, cwd, signal, ADAPTERS.claude.result, message);
+    if (turn.error || !turn.answer) throw new Error(turn.text.trim().slice(0, 500) || 'Claude stopped without an answer.');
+    // The owner may cancel while the turn ends; nothing is pushed or posted then.
+    if (signal.aborted) throw new Error('the owner cancelled the run.');
+    return turn.answer;
+  }
+
+  /** A turn on a card: done with a note, or failed with what blocks it. */
+  private async work(place: Place, session: string, resume: boolean, message: string, signal: AbortSignal) {
+    const answer = (await this.ask(place.worktree, session, resume, message, ANSWER, signal)) as Answer;
     const note = answer.note.trim().slice(0, 500);
     if (answer.outcome !== 'done') throw new Error(note || 'I gave up.');
-    // The owner may cancel while the turn ends; nothing is pushed then.
-    if (signal.aborted) throw new Error('the owner cancelled the run.');
     return { ...answer, note };
+  }
+
+  /**
+   * A conversation's turn: its scratch copy, then the background Claude there (D-102). The copy is
+   * a repository of its own, in the temp folder under a random name: it shares no refs or objects
+   * with the checkout, so a turn can move none of the owner's branches, and nothing there is pushed.
+   */
+  private async converse({ conversation, input, resume, signal }: Parameters<Answerer>[0]) {
+    const refused = await this.refusal();
+    if (refused) throw new Error(refused);
+    // A link swapped in for the folder would lead the turn elsewhere, so only a real folder counts.
+    if (!conversation.scratch || !(await fs.lstat(conversation.scratch).then((s) => s.isDirectory(), () => false))) {
+      const dir = path.join(os.tmpdir(), 'webchat-scratch', randomUUID());
+      const base = await fetchOrigin(this.options.projectDir);
+      await exec('git', ['init', '-q', dir]);
+      await exec('git', ['-C', dir, 'fetch', '-q', '--depth', '1', this.options.projectDir, `refs/remotes/${base}`]);
+      await exec('git', ['-C', dir, ...NO_HOOKS, 'checkout', '-q', '--detach', 'FETCH_HEAD']);
+      conversation.scratch = dir;
+    }
+    const message = resume ? `Your owner replies:\n\n${input}` : promptBrief(this.repo!, input);
+    const answer = (await this.ask(conversation.scratch, conversation.session, resume, message, REPLY, signal)) as { reply?: unknown };
+    return String(answer.reply ?? '');
   }
 
   /** Pushes the worktree's branch, never forced, and returns the commit it pushed. */
@@ -398,13 +440,13 @@ export class Plugin {
   /** A round of fixes: fetches here, since the shell reaches no GitHub, then resumes the run's Claude session. */
   private async fix(pull: Watched, why: { line: string; details: string }, signal: AbortSignal): Promise<RunResult> {
     const { projectDir } = this.options;
-    await exec('git', ['-C', projectDir, 'fetch', '-q', 'origin']);
+    await fetchOrigin(projectDir);
     // With hooks off: the branch the worktree checks out is the model's.
     if (!existsSync(pull.worktree)) await exec('git', ['-C', projectDir, ...NO_HOOKS, 'worktree', 'add', '-q', pull.worktree, pull.branch]);
     const place = { branch: pull.branch, worktree: pull.worktree, base: pull.head, pull: pull.pull };
     // A draft from before R-035 has no session to resume, so its first round starts one.
     const session = pull.session ?? randomUUID();
-    const answer = await this.ask(place, session, pull.session !== undefined, fixBrief(pull, why), signal);
+    const answer = await this.work(place, session, pull.session !== undefined, fixBrief(pull, why), signal);
     pull.session = session;
     pull.head = await this.push(place);
     await this.saveWatched();
@@ -442,6 +484,16 @@ function runBrief(cardId: string, place: Place, card: string, decisions: string)
     '',
     card.trim(),
     ...(decisions ? ['', '## The decisions the team made', '', decisions] : []),
+  ].join('\n');
+}
+
+function promptBrief(repo: string, input: string) {
+  return [
+    `Your owner asks you this through WebChat, about ${repo}. You are in a scratch copy of its default`,
+    'branch, with only its latest commit: nothing you change here is kept or pushed. Your shell reaches',
+    'only the npm registry, and you can search the web and read pages. Put your answer, in Markdown, in reply.',
+    '',
+    input,
   ].join('\n');
 }
 

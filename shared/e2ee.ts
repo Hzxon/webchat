@@ -22,6 +22,7 @@ import {
   type PublicKeysDTO,
   type PullCardDTO,
   type PullChecks,
+  type PromptDTO,
   type PullReview,
   type RunDTO,
   type RunReport,
@@ -331,6 +332,8 @@ export interface MessageContent {
   pull?: PullCardDTO;
   /** A card handed to a coding agent, or the agent's report on it. The text says the same in words. */
   run?: RunDTO;
+  /** A message of a conversation between an owner and their agent (D-102). */
+  prompt?: PromptDTO;
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -478,6 +481,15 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
   return run;
 }
 
+/** A conversation's message, if it has the right shape. */
+export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO | undefined {
+  if (raw?.kind === 'prompt') return typeof raw.repo === 'string' && isRepoName(raw.repo) && isId(raw.sentAt) ? { kind: 'prompt', repo: raw.repo, sentAt: raw.sentAt } : undefined;
+  const to = short(raw?.to, 64);
+  if (!raw || !to) return;
+  if (raw.kind === 'reply' || raw.kind === 'cancel') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt } : undefined;
+  if (raw.kind === 'answer' || raw.kind === 'failed') return { kind: raw.kind, to };
+}
+
 /** Keeps the parts of decrypted content that have the right shape. The sender signed it, so it is not tampered. */
 function readContent(value: unknown): MessageContent {
   const raw = value as {
@@ -486,6 +498,7 @@ function readContent(value: unknown): MessageContent {
     reaction?: { messageId?: unknown; emoji?: unknown };
     pull?: Partial<PullCardDTO>;
     run?: Record<string, unknown>;
+    prompt?: Record<string, unknown>;
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -501,6 +514,8 @@ function readContent(value: unknown): MessageContent {
   if (pull) content.pull = pull;
   const run = readRun(raw.run);
   if (run) content.run = run;
+  const prompt = readPrompt(raw.prompt);
+  if (prompt) content.prompt = prompt;
   return content;
 }
 

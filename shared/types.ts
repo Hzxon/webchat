@@ -528,6 +528,20 @@ export interface RunCancel {
 }
 
 /**
+ * The owner's conversation with their agent, in their direct chat (R-035, D-102): a prompt, the
+ * agent's answers, and the owner's replies and cancels. Each is a message of its own whose sealed
+ * field names the conversation by its prompt's client id, which the sender signs, unlike the
+ * server's message id. The text holds the words. The owner's page signs the send time into each of
+ * its own, so the agent can refuse an old one played again (K-42).
+ */
+export type PromptDTO =
+  | { kind: 'prompt'; repo: string; sentAt: number }
+  | { kind: 'reply'; to: string; sentAt: number }
+  | { kind: 'cancel'; to: string; sentAt: number }
+  | { kind: 'answer'; to: string }
+  | { kind: 'failed'; to: string };
+
+/**
  * A pull request shared into a chat: a snapshot of how it stood when it was shared. It travels
  * inside the message's envelope, so the server never sees which pull request was shared.
  */

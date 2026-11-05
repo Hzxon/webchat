@@ -13,13 +13,14 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { Api } from '../agent/api.ts';
 import { claudeArgs, claudeSettings } from '../agent/claude.ts';
 import { AgentClient, type OpenedMessage } from '../agent/client.ts';
+import { Conversations, parts, type Answerer } from '../agent/conversations.ts';
 import { guard, Plugin, restrictedSettings, sandboxProblem } from '../agent/plugin.ts';
 import { ADAPTERS, createRunner, start, type Final } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, wrapChatKey } from '../shared/e2ee.ts';
-import type { ChatKeyInput, CreateProjectResponse, DocDTO, PairingDTO, RunDTO, RunRequest, UserDTO } from '../shared/types.ts';
+import type { ChatKeyInput, CreateProjectResponse, DocDTO, PairingDTO, RunDTO, PromptDTO, RunRequest, UserDTO } from '../shared/types.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
 const KDF_ROUNDS = 1000;
@@ -672,6 +673,39 @@ describe('agent client (R-027)', () => {
         assert.deepEqual(JSON.parse(await fs.readFile(path.join(dataDir, 'repos', 'acme__app', 'pulls.json'), 'utf8')), []);
         assert.equal((await turns()).length, 2, 'two turns in all');
 
+        // Its owner's prompt in their direct chat is answered in a scratch repository of its own, never pushed (R-035).
+        const direct = (await alice.request<{ id: number }>('POST', '/conversations/direct', { userId: agent.id, key: await newChatKey(alice, [alice.id, agent.id]) })).id;
+        await alice.sync();
+        await plugin.client!.sync();
+        const branches = async () => (await sh('git', ['--git-dir', origin, 'branch', '--format=%(refname:short)'])).stdout.trim().split('\n').sort();
+        const before = await branches();
+        const refs = async () => (await git(project, 'for-each-ref')).stdout;
+        const refsBefore = await refs();
+        const tell = async (prompt: PromptDTO, text: string) => {
+          const sent = await alice.send(direct, { text, prompt });
+          await Promise.all((await plugin.client!.sync()).map((m) => plugin.handle(m)));
+          return sent.clientId!;
+        };
+        const answers = async () => (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'answer').map((m) => m.content?.text);
+        const prompted = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now() }, 'What does sum.js do?'));
+        const [chat] = (await turns()).slice(-1);
+        const scratch = chat!.cwd;
+        assert.ok(scratch.startsWith(path.join(await fs.realpath(os.tmpdir()), 'webchat-scratch')), 'the prompt runs in a scratch repository, not in the project');
+        assert.equal((await git(scratch, 'remote')).stdout.trim(), '', 'the scratch copy has no remote');
+        assert.ok(chat!.args.includes('--session-id'), 'the first turn starts a session');
+        assert.ok(chat!.input.includes('What does sum.js do?') && chat!.input.includes('scratch copy'), 'the brief holds the prompt');
+        assert.deepEqual(await answers(), ['It adds.']);
+        assert.equal((await git(scratch, 'rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim(), 'HEAD', 'the scratch copy is detached');
+        assert.equal((await git(scratch, 'rev-list', '--max-parents=0', 'HEAD')).stdout.trim(), (await git(project, 'rev-parse', 'refs/remotes/origin/main')).stdout.trim(), 'it starts at origin/main, and the fake Claude commits on top');
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Still adds."}' }, () => tell({ kind: 'reply', to: prompted, sentAt: Date.now() }, 'And sum.test.js?'));
+        const [again] = (await turns()).slice(-1);
+        assert.equal(again!.args[again!.args.indexOf('--resume') + 1], chat!.args[chat!.args.indexOf('--session-id') + 1], 'the reply resumes the session');
+        assert.equal(again!.cwd, scratch);
+        assert.ok(again!.input.includes('Your owner replies:') && again!.input.includes('And sum.test.js?'));
+        assert.deepEqual(await answers(), ['Still adds.']);
+        assert.deepEqual(await branches(), before, 'nothing of the conversation was pushed');
+        assert.equal(await refs(), refsBefore, 'the owner\'s checkout gained no branch or commit');
+
         // A second session in this repository waits until this one closes (D-094).
         const second = new Plugin({ ...options, code: '', dataDir, projectDir: project });
         void second.start();
@@ -711,6 +745,163 @@ describe('agent client (R-027)', () => {
       }
     },
   );
+
+  test('answers its owner\'s prompts in their direct chat, and resumes the conversation for each reply (R-035)', async () => {
+    // A fresh owner, since Alice's sends in the tests before count against the rate limit.
+    const owner = await AgentClient.signUp(path.join(home, 'erin.json'), { server: baseUrl, username: 'erin', password: PASSWORD, kdfIterations: KDF_ROUNDS }, 'Erin', 'friends-only');
+    const code = newPairingCode();
+    const pairing = AgentClient.pair(path.join(home, 'talker.json'), baseUrl, code, 10);
+    await approve(owner, code, 'Talker');
+    const agent = await pairing;
+    agent.repo = 'acme/app';
+    await owner.sync();
+    await carol.sync();
+    const open = async (person: AgentClient) =>
+      (await person.request<{ id: number }>('POST', '/conversations/direct', { userId: agent.id, key: await newChatKey(person, [person.id, agent.id]) })).id;
+    const direct = await open(owner);
+    const carols = await open(carol);
+    const group = (await owner.request<CreateProjectResponse>('POST', '/projects', { name: 'Talk', memberIds: [agent.id], key: await newChatKey(owner, [owner.id, agent.id]) })).channel.id;
+    await owner.sync();
+    await carol.sync();
+    await agent.sync();
+
+    const calls: { input: string; resume: boolean; session: string }[] = [];
+    // What the next call does; it gets the call's signal.
+    let next: (signal: AbortSignal) => Promise<string> | string = () => 'It adds.';
+    const answer: Answerer = ({ conversation, input, resume, signal }) => {
+      calls.push({ input, resume, session: conversation.session });
+      return Promise.resolve(next(signal));
+    };
+    const conversations = new Conversations(agent, path.join(home, 'talker-conversations.json'), answer);
+    const asks = (extra: Partial<Extract<PromptDTO, { kind: 'prompt' }>> = {}): PromptDTO => ({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), ...extra });
+    const hear = async () => {
+      const heard = await agent.sync();
+      for (const m of heard) await conversations.handle(m);
+      return heard;
+    };
+    const said = async () => (await owner.sync()).filter((m) => m.senderId === agent.id).map((m) => [m.content?.prompt, m.content?.text]);
+
+    const first = (await owner.send(direct, { text: 'What does sum.js do?', prompt: asks() })).clientId!;
+    await hear();
+    assert.deepEqual(calls, [{ input: 'What does sum.js do?', resume: false, session: calls[0]!.session }]);
+    assert.deepEqual(await said(), [[{ kind: 'answer', to: first }, 'It adds.']]);
+
+    await owner.send(direct, { text: 'And the test?', prompt: { kind: 'reply', to: first, sentAt: Date.now() } });
+    await hear();
+    assert.deepEqual(calls[1], { input: 'And the test?', resume: true, session: calls[0]!.session });
+    await said();
+
+    // None of these starts a conversation: nothing runs, and nothing is said.
+    await carol.send(carols, { text: 'Hi', prompt: asks() });
+    await owner.send(direct, { text: 'Elsewhere?', prompt: asks({ repo: 'acme/other' }) });
+    await owner.send(group, { text: 'In a channel', prompt: asks() });
+    const signed = await owner.send(direct, { text: 'Once', prompt: asks() });
+    const heard = await agent.sync();
+    for (const m of heard) if (m.id !== signed.id) await conversations.handle(m);
+    assert.equal(calls.length, 2, 'no turn ran for them');
+    assert.deepEqual(await said(), []);
+    const once = heard.find((m) => m.id === signed.id)!;
+    await conversations.handle(once);
+    assert.equal(calls.length, 3, 'the real one runs');
+    assert.equal((await said()).length, 1);
+    // The same signed message under a new id, as a server could post it again, runs nothing (K-47).
+    await conversations.handle({ ...once, id: once.id + 1000 });
+    assert.equal(calls.length, 3);
+    assert.deepEqual(await said(), []);
+
+    // A prompt signed 11 minutes ago is refused.
+    await owner.send(direct, { text: 'Old', prompt: asks({ sentAt: Date.now() - 11 * 60_000 }) });
+    await hear();
+    assert.equal(calls.length, 3);
+    assert.deepEqual((await said()).map((m) => m[1]), ['I got this more than 10 minutes after you sent it, so I skipped it. Send it again.']);
+
+    // A long answer comes as several messages, in order, each within the limit.
+    const long = Array.from({ length: 9 }, (_, i) => `${i}`.repeat(1000)).join('\n');
+    next = () => long;
+    await owner.send(direct, { text: 'Tell me everything', prompt: asks() });
+    await hear();
+    const pieces = (await said()).map((m) => m[1] as string);
+    assert.ok(pieces.length > 1 && pieces.every((text) => text.length <= 4000), 'each message is short enough');
+    assert.equal(pieces.join('\n'), long, 'in order, with nothing lost');
+
+    // A cancel stops the turn that waits.
+    next = (signal) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('Aborted.'))));
+    const slow = await owner.send(direct, { text: 'Think hard', prompt: asks() });
+    const waiting = hear();
+    for (let tries = 0; tries < 500 && calls.length < 5; tries++) await sleep(10);
+    assert.equal(calls.length, 5, 'the turn started');
+    await owner.send(direct, { text: 'Stop', prompt: { kind: 'cancel', to: slow.clientId!, sentAt: Date.now() } });
+    await hear();
+    await waiting;
+    assert.deepEqual(await said(), [[{ kind: 'failed', to: slow.clientId! }, 'I stopped, as you asked.']]);
+
+    // A turn that throws says why.
+    next = () => {
+      throw new Error('No luck.');
+    };
+    const broken = await owner.send(direct, { text: 'Try', prompt: asks() });
+    await hear();
+    assert.deepEqual(await said(), [[{ kind: 'failed', to: broken.clientId! }, 'I could not answer: No luck.']]);
+
+    // A first turn that throws, then a reply: it starts afresh with the prompt and the reply.
+    next = () => {
+      throw new Error('No luck.');
+    };
+    const retried = await owner.send(direct, { text: 'Try again', prompt: asks() });
+    await hear();
+    await said();
+    next = () => 'Now it works.';
+    await owner.send(direct, { text: 'Please?', prompt: { kind: 'reply', to: retried.clientId!, sentAt: Date.now() } });
+    await hear();
+    assert.deepEqual(calls.at(-1)!.resume, false);
+    assert.equal(calls.at(-1)!.input, 'Try again\n\nPlease?');
+    assert.deepEqual(await said(), [[{ kind: 'answer', to: retried.clientId! }, 'Now it works.']]);
+
+    // A prompt and its reply from one check-in give two turns, in order.
+    next = () => 'One.';
+    const together = await owner.send(direct, { text: 'First?', prompt: asks() });
+    await owner.send(direct, { text: 'Second?', prompt: { kind: 'reply', to: together.clientId!, sentAt: Date.now() } });
+    const pair = await agent.sync();
+    const started = calls.length;
+    await Promise.all(pair.map((m) => conversations.handle(m)));
+    assert.deepEqual(calls.slice(started).map((c) => [c.input, c.resume]), [['First?', false], ['Second?', true]]);
+    await said();
+
+    // A prompt and its cancel from one check-in stop the turn.
+    next = (signal) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('Aborted.'))));
+    const doomed = await owner.send(direct, { text: 'Think hard again', prompt: asks() });
+    await owner.send(direct, { text: 'Stop', prompt: { kind: 'cancel', to: doomed.clientId!, sentAt: Date.now() } });
+    await Promise.all((await agent.sync()).map((m) => conversations.handle(m)));
+    assert.deepEqual(await said(), [[{ kind: 'failed', to: doomed.clientId! }, 'I stopped, as you asked.']]);
+
+    // A conversation its owner left for a day ends, and a late reply hears so.
+    next = () => 'Fine.';
+    const old = await owner.send(direct, { text: 'Hello', prompt: asks() });
+    await hear();
+    await said();
+    await conversations.sweep(Date.now() + 23 * 60 * 60_000);
+    next = () => 'Still here.';
+    await owner.send(direct, { text: 'Hello still', prompt: { kind: 'reply', to: old.clientId!, sentAt: Date.now() } });
+    await hear();
+    assert.deepEqual(await said(), [[{ kind: 'answer', to: old.clientId! }, 'Still here.']]);
+    await conversations.sweep(Date.now() + 25 * 60 * 60_000);
+    await owner.send(direct, { text: 'Hello again', prompt: { kind: 'reply', to: old.clientId!, sentAt: Date.now() } });
+    const turns = calls.length;
+    await hear();
+    assert.equal(calls.length, turns);
+    assert.deepEqual(await said(), [[{ kind: 'failed', to: old.clientId! }, 'This conversation ended after a day with no reply. Start a new one.']]);
+
+    // A restart that cut a turn short says so, and the next turn starts afresh.
+    const file = path.join(home, 'talker-recover.json');
+    const cut = { root: randomUUID(), chat: direct, session: randomUUID(), answered: false, prompt: 'Cut short', working: true, last: Date.now() };
+    await fs.writeFile(file, JSON.stringify([cut]));
+    const restarted = new Conversations(agent, file, answer);
+    await restarted.load();
+    await restarted.recover();
+    assert.deepEqual(await said(), [[{ kind: 'failed', to: cut.root }, 'I stopped, because Claude Code closed on your laptop. Send it again.']]);
+    const [saved] = JSON.parse(await fs.readFile(file, 'utf8'));
+    assert.ok(!saved.working && saved.session !== cut.session, 'a fresh session');
+  });
 
   test('goes when its owner deletes their account (R-030)', async () => {
     const dave = await AgentClient.signUp(path.join(home, 'dave.json'), { server: baseUrl, username: 'dave', password: PASSWORD, kdfIterations: KDF_ROUNDS }, 'Dave', 'friends-only');
@@ -770,6 +961,17 @@ describe('agent client (R-027)', () => {
     const denied = claudeSettings({ secrets: [], npmCache: '', guard: '', env }).sandbox.credentials.envVars.map((v) => v.name);
     assert.deepEqual(denied, ['GH_TOKEN', 'DATABASE_URL', 'SSH_AUTH_SOCK', 'MY_VAR']);
   });
+});
+
+test('cuts an answer into messages at line breaks, never inside a surrogate pair', () => {
+  const line = 'x'.repeat(3900);
+  const [one, two] = parts(`${line}\n  ${'z'.repeat(200)}\n${'y'.repeat(300)}`);
+  assert.equal(one, line);
+  assert.ok(two!.startsWith(`  ${'z'.repeat(5)}`), 'the next line keeps its indentation');
+  const emoji = parts(`${'a'.repeat(3999)}\u{1F600} and more`);
+  assert.ok(emoji.length > 1);
+  for (const part of emoji) assert.ok(!/[\ud800-\udbff]$/.test(part), 'no part ends inside a pair');
+  assert.equal(emoji.join(''), `${'a'.repeat(3999)}\u{1F600} and more`);
 });
 
 // Claude Code's own behaviour, which the plugin relies on (R-035, D-097). It costs a few cents of
