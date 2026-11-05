@@ -28,6 +28,7 @@ import { notifyAddedToGroup, notifyAddedToProject, notifyNewMessage, ringUrgent 
 import type { Push, PushSubscriptionInput } from './push.js';
 import {
   isChannelName,
+  isRepoName,
   LIMITS,
   type AccountKeysInput,
   type BarkDTO,
@@ -42,6 +43,7 @@ import {
   type KeyLinkInput,
   type MessageDTO,
   type MessageKind,
+  type PairingInput,
   type ProjectReposDTO,
   type PushPayload,
   type RotatedChannelKeyInput,
@@ -364,18 +366,6 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     }
   }
 
-  /**
-   * The person a daemon names as its agent's owner (K-45, D-089), or null when it names nobody.
-   * Any client can name anyone, so it only decides whose menu offers the agent; the daemon itself
-   * runs only what the owner it pinned signed.
-   */
-  async function agentOwner(body: { owner?: unknown } | undefined) {
-    if (body?.owner === undefined) return null;
-    const owner = typeof body.owner === 'string' ? await db.findUserByUsername(body.owner.trim()) : undefined;
-    if (!owner) throw new HttpError(400, 'No account has the owner username.');
-    return owner.id;
-  }
-
   /** Marks the newest message from others in each chat as delivered to this user. */
   function markDeliveredFrom(userId: number, messages: MessageDTO[]) {
     const upTo = new Map<number, number>();
@@ -402,7 +392,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     if (!safeEqual(String(req.body?.inviteCode ?? '').trim(), inviteCode)) {
       throw new HttpError(403, 'Invite code is wrong. Ask the owner for it.');
     }
-    const user = await db.createUser(username, displayName, await hashPassword(authKey), keys, await agentOwner(req.body));
+    const user = await db.createUser(username, displayName, await hashPassword(authKey), keys);
     if (!user) throw new HttpError(409, 'That username is taken.');
     await db.returnRateLimit(authLimitKey(req));
     await startSession(req, res, user);
@@ -420,9 +410,6 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const valid = await verifyPassword(authKey, user?.password_hash ?? (await dummyPasswordHash()));
     if (!user || !valid) throw new HttpError(401, 'Wrong username or password.');
     await db.returnRateLimit(authLimitKey(req));
-    // The daemon names its owner at every sign-in, so any account can become someone's agent (K-41, K-45).
-    const owner = await agentOwner(req.body);
-    if (owner !== null) user.agent_owner = await db.setAgentOwner(user.id, owner);
     await startSession(req, res, user);
     inBackground(db.purgeExpired(), config.logger);
     const body: LoginResponse = { user: toUserDTO(user), backup: keyBackupOf(user) };
@@ -492,6 +479,48 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     res.status(204).end();
   });
 
+  /**
+   * A coding agent's half of a pairing (R-030, D-093), sent before it has an account. Its owner
+   * approves it from their page within 10 minutes. The login key is kept hashed, as a password is.
+   */
+  router.post('/pairings', async (req, res) => {
+    if (!(await db.takeRateLimit(`pair:${req.ip ?? 'unknown'}`, 10, 15 * 60_000))) {
+      throw new HttpError(429, 'Too many pairings. Try again in 15 minutes.');
+    }
+    const body = req.body as Partial<PairingInput> | undefined;
+    const input: PairingInput = {
+      id: base64url(body?.id, 'Pairing id', 43),
+      keys: { dh: base64url(body?.keys?.dh, 'Encryption key', 87), sign: base64url(body?.keys?.sign, 'Signing key', 87) },
+      proof: base64url(body?.proof, 'Pairing proof', 43),
+      authKey: loginKey(body),
+    };
+    if (!(await db.createPairing(input, await hashPassword(input.authKey)))) {
+      throw new HttpError(409, 'This pairing code was used already. Make a new one in WebChat.');
+    }
+    res.status(204).end();
+  });
+
+  /**
+   * A pairing, for the owner's page and for the agent, found by a hash of the code. It holds only
+   * public keys and proofs, so it needs no sign-in. None yet, or none any more, answers 204: the
+   * page asks every 2 seconds until the agent sends its half.
+   */
+  router.get('/pairings/:id', async (req, res) => {
+    const pairing = await db.pairing(String(req.params.id));
+    if (!pairing) return res.status(204).end();
+    res.json(pairing);
+  });
+
+  /** The owner approves a pairing their page checked: the agent gets an account of its own, theirs. */
+  router.post('/pairings/:id/approve', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    if (me.agent_owner !== null) throw new HttpError(403, 'An agent cannot pair another agent.');
+    const displayName = text(req.body?.displayName, 'Name', 1, LIMITS.displayNameLength);
+    const agent = await db.approvePairing(String(req.params.id), me.id, displayName, base64url(req.body?.proof, 'Pairing proof', 43));
+    if (!agent) throw new HttpError(404, 'This pairing code lapsed or was approved already.');
+    res.status(201).json(toUserDTO(agent));
+  });
+
   router.get('/bootstrap', requireAuth, async (_req, res) => {
     const me = currentUser(res);
     // The fingerprint first: a change that lands while the rest loads then makes the first
@@ -532,7 +561,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
 
     const editing = input.editing;
     await Promise.all([
-      db.checkIn(me.id, input.attentive === true, tabId, endpoint, input.busy === true),
+      db.checkIn(me.id, input.attentive === true, tabId, endpoint, input.busy === true, typeof input.repo === 'string' && isRepoName(input.repo) ? input.repo : null),
       typeof editing?.docId === 'string' && typeof editing.section === 'string'
         ? db.renewSectionLock(me.id, editing.docId.slice(0, 64), editing.section.slice(0, 64))
         : undefined,

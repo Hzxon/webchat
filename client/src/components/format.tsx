@@ -11,6 +11,9 @@ function startOfDay(ts: number): number {
 
 export const formatTime = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+/** When something began, inside a sentence: a time today, else a date. */
+export const formatSince = (ts: number) => (startOfDay(ts) === startOfDay(Date.now()) ? formatTime(ts) : new Date(ts).toLocaleDateString());
+
 /** Short time for the chat list: a time today, "Yesterday", a weekday this week, else a date. */
 export function formatListTime(ts: number): string {
   const days = Math.round((startOfDay(Date.now()) - startOfDay(ts)) / DAY);

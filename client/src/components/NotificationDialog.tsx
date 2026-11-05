@@ -11,7 +11,7 @@ import { VolumeIcon } from './icons';
 const BARK_APP_STORE = 'https://apps.apple.com/app/id1403753865';
 
 /** A value to type into another app, with a button that copies it. The text selects whole on a tap. */
-function CopyRow({ value, onCopied }: { value: string; onCopied: (note: string) => void }) {
+export function CopyRow({ value, onCopied }: { value: string; onCopied: (note: string) => void }) {
   async function copy() {
     try {
       await navigator.clipboard.writeText(value);

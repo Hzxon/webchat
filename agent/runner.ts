@@ -8,6 +8,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 import { promisify } from 'node:util';
+import type { RunRequest } from '../shared/types.ts';
 import type { AgentClient } from './client.ts';
 import type { Runner, RunResult } from './runs.ts';
 
@@ -129,33 +130,47 @@ export async function loadRunnerConfig(dir: string): Promise<RunnerConfig> {
   }
 }
 
+/**
+ * Adds a git worktree of `repo` for a run, under `runsDir`, on a new branch named after the card
+ * from origin's default branch, fetched first. Returns the branch, the folder and that base.
+ */
+export async function addWorktree(repo: string, request: RunRequest, runsDir: string) {
+  const git = (...args: string[]) => run('git', ['-C', repo, ...args]);
+  await git('fetch', '-q', 'origin');
+  const base = await git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD').then((r) => r.stdout.trim(), () => 'origin/main');
+  const slug = slugOf(`${request.card}-${request.title}`);
+  // A card run again gets a branch of its own, next to the one its earlier run left, here or on origin.
+  let branch = `agent/${slug}`;
+  for (let n = 2; await git('show-ref', '--quiet', `refs/heads/${branch}`, `refs/remotes/origin/${branch}`).then(() => true, () => false); n++) branch = `agent/${slug}-${n}`;
+  const dir = path.join(runsDir, `${slug}-${Date.now().toString(36)}`);
+  await fs.mkdir(runsDir, { recursive: true });
+  await git('worktree', 'add', '-q', '-b', branch, dir, base);
+  return { branch, dir, base };
+}
+
+/** Every member's decisions on the project's board, as Markdown: they are the team's, and the owner runs cards in this team (D-089). */
+export async function decisionsOf(client: AgentClient, projectId: number) {
+  const { decisions } = await client.boardDocs(projectId);
+  return decisions ? (await client.sections(decisions)).map((s) => s.text.trim()).join('\n\n') : '';
+}
+
 /** The runner for this machine. Runs go under `runsDir`, one folder each, which stay for a look afterwards. */
 export function createRunner(config: RunnerConfig, client: AgentClient, runsDir: string): Runner {
   const adapter = ADAPTERS[config.agent ?? 'claude'];
   const command = config.command ?? adapter.command;
 
-  return async ({ request, card, projectId }) => {
+  return async ({ request, card, projectId, signal }) => {
     const project = client.projects.find((p) => p.id === projectId);
     const repo = project && config.projects[project.name];
     if (!repo) throw new Error(`no repository is set for ${project?.name ?? 'this project'} in config.json.`);
-    const git = (...args: string[]) => run('git', ['-C', repo, ...args]);
-
-    await git('fetch', '-q', 'origin');
-    const main = await git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD').then((r) => r.stdout.trim(), () => 'origin/main');
-    const slug = slugOf(`${request.card}-${request.title}`);
-    // A card run again gets a branch of its own, next to the one its earlier run left, here or on origin.
-    let branch = `agent/${slug}`;
-    for (let n = 2; await git('show-ref', '--quiet', `refs/heads/${branch}`, `refs/remotes/origin/${branch}`).then(() => true, () => false); n++) branch = `agent/${slug}-${n}`;
-    const dir = path.join(runsDir, `${slug}-${Date.now().toString(36)}`);
-    await fs.mkdir(runsDir, { recursive: true });
-    await git('worktree', 'add', '-q', '-b', branch, dir, main);
+    const { branch, dir, base } = await addWorktree(repo, request, runsDir);
 
     const briefPath = `${dir}.brief.md`;
-    await fs.writeFile(briefPath, await briefFor(client, projectId, request.card, card, branch));
-    const last = await start(command, adapter, briefPath, dir);
+    await fs.writeFile(briefPath, briefFor(request.card, card, await decisionsOf(client, projectId), branch));
+    const last = await start(command, adapter, briefPath, dir, signal);
     if (last.error) throw new Error(last.text || 'the agent stopped with an error.');
 
-    const commits = (await run('git', ['-C', dir, 'log', '--oneline', `${main}..HEAD`])).stdout.trim();
+    const commits = (await run('git', ['-C', dir, 'log', '--oneline', `${base}..HEAD`])).stdout.trim();
     if (!commits) throw new Error('the agent left no commits.');
     // The agent's closing sentence, which the brief asks for last.
     const result: RunResult = { branch, note: last.text.trim().split('\n').at(-1)?.slice(0, 200) };
@@ -169,10 +184,11 @@ export function createRunner(config: RunnerConfig, client: AgentClient, runsDir:
   };
 }
 
-/** Starts the agent in the worktree and waits for its final word, or for it to go quiet for too long. */
-function start(command: string, adapter: Adapter, briefPath: string, cwd: string) {
+/** Starts the agent in the worktree and waits for its final word, or for it to go quiet for too long, or for the owner to cancel. */
+function start(command: string, adapter: Adapter, briefPath: string, cwd: string, signal: AbortSignal) {
   return new Promise<Final>((resolve, reject) => {
     const child = spawn(command, adapter.args(briefPath), { cwd, stdio: ['ignore', 'pipe', 'inherit'] });
+    signal.addEventListener('abort', () => (child.kill(), reject(new Error('the owner cancelled the run.'))), { once: true });
     let last: Final | undefined;
     let timer: NodeJS.Timeout;
     const arm = () => {
@@ -197,12 +213,7 @@ function start(command: string, adapter: Adapter, briefPath: string, cwd: string
 }
 
 /** What the agent is told: the card, the project's decisions, and how to finish. */
-async function briefFor(client: AgentClient, projectId: number, cardId: string, card: string, branch: string) {
-  const boards = await client.boardDocs(projectId);
-  // Every member's decisions: they are the team's, and the owner runs cards in this team (D-089).
-  const decisions = boards.decisions
-    ? (await client.sections(boards.decisions)).map((s) => s.text.trim()).join('\n\n')
-    : '';
+function briefFor(cardId: string, card: string, decisions: string, branch: string) {
   return [
     `You are working on card ${cardId} from the team's board. Implement or fix what it describes.`,
     'Read AGENTS.md or CLAUDE.md in this repository first if there is one, and follow it.',

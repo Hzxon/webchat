@@ -23,6 +23,8 @@ export interface UserDTO {
   agentOwner: number | null;
   /** An agent running a card now. The board offers a card only to agents that are not. */
   busy: boolean;
+  /** For an agent in a Claude Code session: the repository the session is open in, as "owner/name" (R-030). */
+  agentRepo: string | null;
   /** The account was deleted (R-028). It stays listed so its old messages keep their sender's name. */
   deleted: boolean;
 }
@@ -198,16 +200,42 @@ export interface RegisterInput {
   authKey: string;
   inviteCode: string;
   keys: AccountKeysInput;
-  /** For a coding agent's account: the username of the person it runs cards for (D-089). */
-  owner?: string;
 }
 
 export interface LoginInput {
   username: string;
-  /** Derived from the password in the browser or the daemon. */
+  /** Derived from the password in the browser, or for an agent, the random key it paired with. */
   authKey: string;
-  /** Sent by the daemon: the account is this person's coding agent, whenever it was made (K-41, D-089). */
-  owner?: string;
+}
+
+/**
+ * A coding agent's half of a pairing (R-030, D-093): the keys and login key of the account its
+ * owner is about to approve. The id and the proof come from the code the owner's page showed, so
+ * the server can match the two halves without learning the code.
+ */
+export interface PairingInput {
+  id: string;
+  keys: PublicKeysDTO;
+  /** HMAC of the agent's keys under the code. The owner's page checks it before approving. */
+  proof: string;
+  /** The agent's login key, random, since an agent has no password. */
+  authKey: string;
+}
+
+export interface PairingDTO {
+  keys: PublicKeysDTO;
+  proof: string;
+  /** Once the owner approved: the agent's new account, and the owner's keys bound to the code. */
+  approved: { user: UserDTO; owner: { id: number; keys: PublicKeysDTO }; proof: string } | null;
+}
+
+/** How long a pairing code works, from the page showing it to the owner's approval (R-030). */
+export const PAIRING_TTL_MS = 10 * 60_000;
+
+export interface ApprovePairingInput {
+  displayName: string;
+  /** HMAC of the owner's id and keys and the agent's keys under the code. The agent checks it. */
+  proof: string;
 }
 
 export interface LoginResponse {
@@ -241,6 +269,8 @@ export interface SyncRequest {
   editing?: { docId: string; section: string } | null;
   /** From an agent's daemon: it is running a card (R-027). */
   busy?: boolean;
+  /** From an agent in a Claude Code session: the repository the session is open in (R-030). */
+  repo?: string | null;
 }
 
 export type SyncResponse =
@@ -441,11 +471,11 @@ export interface PullRequestDTO {
 }
 
 /**
- * A board card handed to a coding agent (R-027, D-086), or the agent's report on the run. Both
- * travel inside a message's envelope, like a shared pull request, so the server sees messages
- * and nothing more. A report names the request's message.
+ * A board card handed to a coding agent (R-027, D-086), the agent's report on the run, or the
+ * owner's cancel. All travel inside a message's envelope, like a shared pull request, so the
+ * server sees messages and nothing more. A report or a cancel names the request's message.
  */
-export type RunDTO = RunRequest | RunReport;
+export type RunDTO = RunRequest | RunReport | RunCancel;
 
 export interface RunRequest {
   kind: 'request';
@@ -461,16 +491,28 @@ export interface RunRequest {
    * played again as new (K-42). The agent refuses a request without it, from before D-089.
    */
   sentAt?: number;
+  /**
+   * The repository the menu showed for the agent, as "owner/name". An agent in a Claude Code
+   * session runs the card only in a session open in it (R-030). Older pages send none.
+   */
+  repo?: string;
 }
 
 export interface RunReport {
-  kind: 'claimed' | 'done' | 'failed';
+  /** "fixing" starts another round on the run's pull request, after CI failed, a conflict or a review (R-030). */
+  kind: 'claimed' | 'done' | 'failed' | 'fixing';
   request: number;
   /** What happened, in a line. */
   note?: string;
   /** For a run that is done: the branch it left, and the pull request it opened. */
   branch?: string;
   pull?: { repo: string; number: number };
+}
+
+/** The owner stops a run, or the watching of its pull request (R-030). The agent heeds only its owner. */
+export interface RunCancel {
+  kind: 'cancel';
+  request: number;
 }
 
 /**
@@ -676,6 +718,9 @@ export const LIMITS = {
 const CHANNEL_NAME = /^[\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+(-[\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+)*$/u;
 
 export const isChannelName = (name: string) => name.length <= LIMITS.channelNameLength && CHANNEL_NAME.test(name);
+
+/** A GitHub repository as "owner/name". */
+export const isRepoName = (name: string) => name.length <= 200 && /^[\w.-]+\/[\w.-]+$/.test(name);
 
 /** Turns what someone types into a channel name, such as "Slides & Design" into "slides-design". */
 export const toChannelName = (value: string) =>

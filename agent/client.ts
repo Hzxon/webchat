@@ -1,8 +1,9 @@
-// A headless WebChat account for the agent daemon (R-027, D-085). It does what a browser tab does
-// with no page: signs up or in, keeps its keys in a file, checks in with POST /api/sync, opens chat
-// keys and messages, sends sealed messages, and edits doc sections under the section lock. The
-// logic follows client/src/e2ee/keyring.ts and client/src/chat.ts; what is browser-only there
-// (IndexedDB, push, alerts, the store) has no counterpart here.
+// A headless WebChat account for a coding agent (R-027, D-085), run by the daemon or the Claude
+// Code plugin (R-030). It does what a browser tab does with no page: pairs with its owner, keeps its
+// keys in a file, checks in with POST /api/sync, opens chat keys and messages, sends sealed
+// messages, and edits doc sections under the section lock. The logic follows
+// client/src/e2ee/keyring.ts and client/src/chat.ts; what is browser-only there (IndexedDB, push,
+// alerts, the store) has no counterpart here. Tests also sign people up with it.
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -16,9 +17,12 @@ import {
   encryptMessage,
   importIdentity,
   keyFingerprint,
-  openIdentity,
   openKeyLink,
+  pairingId,
+  pairingProof,
+  randomBytes,
   sealIdentity,
+  toBase64Url,
   unwrapChatKey,
   type DocContent,
   type DocMeta,
@@ -26,29 +30,32 @@ import {
   type IdentitySecrets,
   type MessageContent,
 } from '../shared/e2ee.ts';
-import type {
-  BootstrapDTO,
-  ConfigDTO,
-  ConversationDTO,
-  DocDTO,
-  DocRevisionDTO,
-  LoginResponse,
-  MessageDTO,
-  MessageKind,
-  ProjectDTO,
-  PublicKeysDTO,
-  SyncRequest,
-  SyncResponse,
-  UserDTO,
+import {
+  PAIRING_TTL_MS,
+  type BootstrapDTO,
+  type ConfigDTO,
+  type ConversationDTO,
+  type DocDTO,
+  type DocRevisionDTO,
+  type MessageDTO,
+  type MessageKind,
+  type PairingDTO,
+  type PairingInput,
+  type ProjectDTO,
+  type PublicKeysDTO,
+  type SyncRequest,
+  type SyncResponse,
+  type UserDTO,
 } from '../shared/types.ts';
 import { Api, ApiError } from './api.ts';
+import { REQUEST_TTL_MS } from './runs.ts';
 
 /** What the daemon keeps on disk for one account. Only its owner can read the file. */
 export interface AccountFile {
   server: string;
   username: string;
   userId: number;
-  /** The login key, so the daemon signs in again without the password when its session ends. */
+  /** The login key, so the daemon signs in again when its session ends. An agent's is random. */
   authKey: string;
   /** The private keys in the clear: Node has no key store that keeps them unexportable. */
   secrets: IdentitySecrets;
@@ -58,11 +65,14 @@ export interface AccountFile {
   /** The newest message id seen, so a restart picks up what arrived while the daemon was down. */
   cursor: number;
   /**
-   * The person whose run requests this account carries out, by user id, as the server named them at
-   * sign-up or sign-in (D-089). Their keys are pinned like anyone's. Null for an account that runs
-   * no cards.
+   * The person whose run requests this account carries out, by user id (D-089). Pairing pins their
+   * keys from the code (R-030). Null for an account that runs no cards.
    */
   owner: number | null;
+  /** The pairing that made the account, by its id, so a new code pairs again (R-030). */
+  pairing?: string;
+  /** Client ids of the run requests seen, with their send times, while a copy could still run (K-47). */
+  handled?: Record<string, number>;
   /**
    * The request being run, while one is. The cursor is past it already, so a daemon that stopped
    * mid-run finds it only here when it starts again, and reports it failed (K-46).
@@ -103,6 +113,7 @@ export interface DocSection {
 /** How often the daemon checks in. It has no push, so this is its whole delay (D-004). */
 export const SYNC_INTERVAL_MS = 15_000;
 
+
 export class AgentClient {
   readonly api: Api;
   readonly id: number;
@@ -125,6 +136,8 @@ export class AgentClient {
   private readonly changedKeys = new Set<number>();
   /** Said in every check-in while a card runs, so the board offers this account no other (R-027). */
   busy = false;
+  /** Said in every check-in from a Claude Code session: the repository it is open in (R-030). */
+  repo: string | null = null;
   /** The file's last write, which the next one waits for. */
   private written: Promise<void> = Promise.resolve();
 
@@ -144,11 +157,13 @@ export class AgentClient {
     return this.file.owner ?? null;
   }
 
-  /**
-   * Makes a new account and writes its file. The file must not exist yet. With an owner's username,
-   * the account is that person's coding agent.
-   */
-  static async signUp(filePath: string, credentials: Credentials, displayName: string, inviteCode: string, owner?: string) {
+  /** The pairing that made this account, by id. Accounts from before R-030 have none. */
+  get pairing() {
+    return this.file.pairing;
+  }
+
+  /** Makes a person's account, as a browser does, and writes its file. The file must not exist yet. */
+  static async signUp(filePath: string, credentials: Credentials, displayName: string, inviteCode: string) {
     const api = new Api(credentials.server);
     const { authKey, backupKey } = await secretsFor(api, credentials);
     const secrets = await createIdentity();
@@ -158,26 +173,40 @@ export class AgentClient {
       authKey,
       inviteCode,
       keys: { ...secrets.publicKeys, backup: await sealIdentity(secrets, backupKey) },
-      owner,
     });
-    const file = { server: credentials.server, username: credentials.username, userId: user.id, authKey, secrets, cookie: api.cookie, owner: user.agentOwner };
+    const file = { server: credentials.server, username: credentials.username, userId: user.id, authKey, secrets, cookie: api.cookie, owner: null, pins: {} };
     return AgentClient.create(filePath, file, 'wx');
   }
 
   /**
-   * Signs in to an existing account, opens its key backup with the password, and writes the file.
-   * With an owner's username, the account becomes that person's coding agent.
+   * Makes an agent's account by pairing with its owner (R-030, D-093). Files this half, with keys
+   * made here, then waits for the owner to approve on their page. The approval holds the owner's
+   * keys, proved with the code, so they are pinned before the first check-in. The code never leaves
+   * this machine. Overwrites the file, so a new code pairs again.
    */
-  static async signIn(filePath: string, credentials: Credentials, owner?: string) {
-    const api = new Api(credentials.server);
-    const { authKey, backupKey } = await secretsFor(api, credentials);
-    const { user, backup } = await api.request<LoginResponse>('POST', '/auth/login', { username: credentials.username, authKey, owner });
-    if (!backup) throw new Error('This account has no keys yet. Sign in once in a browser first.');
-    const secrets = await openIdentity(backup, backupKey);
-    if (user.keys?.dh !== secrets.publicKeys.dh || user.keys.sign !== secrets.publicKeys.sign) {
-      throw new Error('The keys the server lists for this account are not the ones in its backup.');
+  static async pair(filePath: string, server: string, code: string, pollMs = 2000) {
+    const api = new Api(server);
+    const secrets = await createIdentity();
+    const keys = secrets.publicKeys;
+    // Random: an agent has no password to derive it from.
+    const authKey = toBase64Url(randomBytes(32));
+    const id = await pairingId(code);
+    const half: PairingInput = { id, keys, proof: await pairingProof(code, keys), authKey };
+    await api.request('POST', '/pairings', half);
+    const until = Date.now() + PAIRING_TTL_MS;
+    let approved: PairingDTO['approved'] | undefined;
+    while (!(approved = (await api.request<PairingDTO | undefined>('GET', `/pairings/${id}`))?.approved)) {
+      if (Date.now() > until) throw new Error('Nobody approved the pairing within 10 minutes. Make a new code in WebChat.');
+      await sleep(pollMs);
     }
-    return AgentClient.create(filePath, { server: credentials.server, username: credentials.username, userId: user.id, authKey, secrets, cookie: api.cookie, owner: user.agentOwner });
+    const { user, owner, proof } = approved;
+    if (proof !== (await pairingProof(code, keys, owner))) {
+      throw new Error('The approval does not match the pairing code, so the server may have swapped keys. Make a new code.');
+    }
+    if (user.keys?.dh !== keys.dh || user.keys.sign !== keys.sign) throw new Error('The server made the account with other keys.');
+    await api.request('POST', '/auth/login', { username: user.username, authKey });
+    const pins = { [owner.id]: await keyFingerprint(owner.keys) };
+    return AgentClient.create(filePath, { server, username: user.username, userId: user.id, authKey, secrets, cookie: api.cookie, owner: owner.id, pins, pairing: id });
   }
 
   /** Opens the account an earlier sign-up or sign-in wrote. */
@@ -187,13 +216,13 @@ export class AgentClient {
   }
 
   /**
-   * Writes the account file: a sign-up must not overwrite one, a sign-in replaces it. Messages from
+   * Writes the account file: a sign-up must not overwrite one, a pairing replaces it. Messages from
    * before this moment are history, not news to act on.
    */
-  private static async create(filePath: string, data: Omit<AccountFile, 'pins' | 'cursor'>, flag?: string) {
+  private static async create(filePath: string, data: Omit<AccountFile, 'cursor'>, flag?: string) {
     const api = new Api(data.server, data.cookie);
     const { cursor } = await api.request<BootstrapDTO>('GET', '/bootstrap');
-    const file: AccountFile = { ...data, pins: {}, cursor };
+    const file: AccountFile = { ...data, cursor };
     const client = new AgentClient(file, filePath, await importIdentity(file.secrets));
     await client.save(flag);
     return client;
@@ -223,6 +252,22 @@ export class AgentClient {
     await this.save();
   }
 
+  /**
+   * Says whether a run request is new, by the client id its sender signed: a server can post a
+   * signed request again under a new message id (K-47). Checked and noted before any wait, so two
+   * copies in one check-in cannot both pass. Kept on disk while a copy could still run.
+   */
+  remember(clientId: string, sentAt: number) {
+    if (!clientId) return true;
+    const handled = (this.file.handled ??= {});
+    if (handled[clientId] !== undefined) return false;
+    handled[clientId] = sentAt;
+    const cutoff = Date.now() - REQUEST_TTL_MS;
+    for (const [id, at] of Object.entries(handled)) if (at < cutoff) delete handled[id];
+    this.save().catch(() => undefined);
+    return true;
+  }
+
   /** A request that signs in again once when the session has ended, then keeps the new cookie. */
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     try {
@@ -245,7 +290,7 @@ export class AgentClient {
     const fresh: MessageDTO[] = [];
     let dirty = false;
     for (let rounds = 0; rounds < 10; rounds++) {
-      const body: SyncRequest = { cursor: this.file.cursor, stamp: this.stamp, attentive: true, tabId: this.tabId, endpoint: null, busy: this.busy };
+      const body: SyncRequest = { cursor: this.file.cursor, stamp: this.stamp, attentive: true, tabId: this.tabId, endpoint: null, busy: this.busy, repo: this.repo };
       const answer = await this.request<SyncResponse>('POST', '/sync', body);
       dirty ||= answer.cursor !== this.file.cursor;
       this.file.cursor = answer.cursor;

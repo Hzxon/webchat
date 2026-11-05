@@ -19,3 +19,35 @@ jobs:
       # Pinned to a commit, because a moved tag would run other code with
       # write access to the repository.
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+
+  # Ships the Claude Code plugin on the `plugin` branch, which is its marketplace: the plugin folder
+  # with its program built from the release's tag (R-030). Each release adds one commit there.
+  plugin:
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - run: npm run build:plugin
+      - env:
+          TAG: ${{ needs.release-please.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch -q origin plugin; then git worktree add -q -B plugin ../dist FETCH_HEAD; else git worktree add -q --orphan -b plugin ../dist; fi
+          rsync -a --delete --exclude .git plugin/ ../dist/
+          cd ../dist
+          git add -A
+          git commit -q -m "build(plugin): Ship $TAG"
+          git push -q origin plugin

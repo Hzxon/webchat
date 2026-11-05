@@ -23,7 +23,9 @@ import { requestRun, syncNow } from '../chat';
 import { beginEditing, createDoc, loadSections, markSeen, newSectionId, replaceSection, type Editing } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
 import { actions, senderName, store, useAppState } from '../store';
+import { AgentDialog } from './AgentDialog';
 import { HistoryDialog, SectionEditor } from './DocView';
+import { formatSince } from './format';
 import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlayIcon, PlusIcon, TrashIcon } from './icons';
 import { Markdown } from './Markdown';
 
@@ -85,6 +87,7 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
     section: Editing;
   } | null>(null);
   const [historyOf, setHistoryOf] = useState<Card | null>(null);
+  const [connecting, setConnecting] = useState(false);
 
   // Every save grows the version, so the cards load again whenever anyone saves.
   useEffect(() => {
@@ -181,6 +184,11 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
               <PlusIcon width={16} height={16} /> {KIND_NAMES[kind]}
             </button>
           ))}
+          {column === 'roadmap' && (
+            <button className="button-secondary board-new" onClick={() => setConnecting(true)}>
+              <PlayIcon width={16} height={16} /> Connect agent
+            </button>
+          )}
         </div>
         {error && <p className="form-error">{error}</p>}
         {/* The card being edited shows here, whatever its group, so its editor keeps its text and its lock. */}
@@ -245,7 +253,12 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                                   // A card someone is editing would run as half of what they mean.
                                   <button key={agent.id} onClick={() => run(handOver(card, agent))} disabled={!agent.online || agent.busy || !!lock}>
                                     {agent.displayName}
-                                    {!agent.online ? <small> offline</small> : agent.busy && <small> busy</small>}
+                                    {agent.agentRepo && <small> in {agent.agentRepo}</small>}
+                                    {!agent.online ? (
+                                      <small> · asleep{agent.lastSeen ? ` since ${formatSince(agent.lastSeen)}` : ''}</small>
+                                    ) : (
+                                      agent.busy && <small> · busy</small>
+                                    )}
                                   </button>
                                 ))}
                               </div>
@@ -271,6 +284,7 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
           ))}
       </div>
       {historyOf && doc && <HistoryDialog doc={doc} section={historyOf} nameOf={nameOf} onClose={() => setHistoryOf(null)} />}
+      {connecting && <AgentDialog projectId={projectId} onClose={() => setConnecting(false)} />}
     </div>
   );
 }

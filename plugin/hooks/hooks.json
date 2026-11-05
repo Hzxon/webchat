@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Read|Edit|MultiEdit|Write|NotebookEdit|Glob|Grep|Bash|WebFetch|WebSearch|mcp__.*)$",
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/server.mjs\" guard" }]
+      }
+    ]
+  }
+}

@@ -2,6 +2,7 @@ import type {
   AccountKeysInput,
   AddGroupMembersInput,
   AddProjectMembersInput,
+  ApprovePairingInput,
   BarkDTO,
   BootstrapDTO,
   ChatKeyInput,
@@ -17,6 +18,7 @@ import type {
   GithubDTO,
   LoginResponse,
   MessageDTO,
+  PairingDTO,
   ProjectDTO,
   LinkRepoInput,
   ProjectReposDTO,
@@ -166,6 +168,8 @@ export const api = {
   github: (refresh = false) => request<GithubDTO>('GET', `/github${refresh ? '?refresh=1' : ''}`),
   setGithubNotify: (notify: boolean) => request<GithubDTO>('PATCH', '/github', { notify }),
   disconnectGithub: () => request<GithubDTO>('DELETE', '/github'),
+  pairing: (id: string) => request<PairingDTO | undefined>('GET', `/pairings/${id}`),
+  approvePairing: (id: string, input: ApprovePairingInput) => request<UserDTO>('POST', `/pairings/${id}/approve`, input),
 };
 
 /** Tells the server this tab closed. A beacon still gets sent while the page unloads. */
