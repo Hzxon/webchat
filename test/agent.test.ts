@@ -771,7 +771,7 @@ describe('agent client (R-027)', () => {
     let next: (signal: AbortSignal) => Promise<string> | string = () => 'It adds.';
     const answer: Answerer = ({ conversation, input, resume, signal }) => {
       calls.push({ input, resume, session: conversation.session });
-      return Promise.resolve(next(signal));
+      return Promise.resolve(next(signal)).then((reply) => ({ reply }));
     };
     const conversations = new Conversations(agent, path.join(home, 'talker-conversations.json'), answer);
     const asks = (extra: Partial<Extract<PromptDTO, { kind: 'prompt' }>> = {}): PromptDTO => ({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), ...extra });

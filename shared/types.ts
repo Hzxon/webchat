@@ -545,8 +545,20 @@ export type PromptDTO =
   | { kind: 'prompt'; repo: string; sentAt: number }
   | { kind: 'reply'; to: string; sentAt: number }
   | { kind: 'cancel'; to: string; sentAt: number }
-  | { kind: 'answer'; to: string }
+  | { kind: 'answer'; to: string; card?: CardDraftDTO }
   | { kind: 'failed'; to: string };
+
+/**
+ * A board card an agent drafted when its owner asked (D-104): a new idea or issue, or a change to
+ * the card it replaces, with a hash of that card's text as the agent saw it. It goes on the board
+ * only when the owner's page writes it.
+ */
+export interface CardDraftDTO {
+  kind: 'R' | 'K';
+  title: string;
+  body: string;
+  replaces?: { card: string; seen: string };
+}
 
 /**
  * A pull request shared into a chat: a snapshot of how it stood when it was shared. It travels
