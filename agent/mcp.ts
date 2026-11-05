@@ -1,12 +1,11 @@
 // The Claude Code plugin's program (R-030), bundled into plugin/server.mjs. With no argument it is
 // the MCP server Claude Code starts with each session, speaking JSON-RPC over stdin and stdout,
-// one message per line. With "guard" it is the PreToolUse hook: it reads the tool call on stdin
-// and prints a denial, or nothing. With "doorbell" it prints the doorbell of the repository the
-// session is open in, for the monitor to tail (D-094).
-import { mkdirSync, readFileSync } from 'node:fs';
-import path from 'node:path';
+// one message per line. It takes part only in a session started with WEBCHAT_AGENT=1 (D-098). With "guard" it is the PreToolUse hook: it reads the tool call on stdin
+// and prints a denial, or nothing. With "doorbell" it prints the session's doorbell in the folder of
+// the repository the session is open in, for the monitor to tail (D-094, D-098).
+import { readFileSync } from 'node:fs';
 import readline from 'node:readline';
-import { guard, markMonitor, originOf, Plugin, readRunStates, repoHome, secretDirs, type ToolUse } from './plugin.ts';
+import { doorbellOf, guard, markMonitor, originOf, Plugin, readRunStates, repoHome, secretDirs, startedForWebChat, type ToolUse } from './plugin.ts';
 import { messageOf } from './runs.ts';
 
 const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? '';
@@ -43,13 +42,14 @@ const TOOLS = [
   },
 ];
 
-function serve() {
+async function serve() {
   const plugin = new Plugin({
     server: process.env.WEBCHAT_SERVER ?? '',
     code: process.env.WEBCHAT_PAIRING_CODE ?? '',
     dataDir,
     projectDir: process.env.CLAUDE_PROJECT_DIR ?? process.cwd(),
     session: process.ppid,
+    forWebChat: await startedForWebChat(process.ppid),
   });
   // Exiting runs the exit handlers, which free the machine's watch.
   const quit = () => process.exit(0);
@@ -105,13 +105,13 @@ if (process.argv[2] === 'doorbell') {
   // A monitor gets no plugin variables, so the folder comes as an argument, then the session's
   // process id. Outside a GitHub repository nothing rings.
   const repo = await originOf(process.cwd());
-  const file = repo ? path.join(repoHome(process.argv[3]!, repo), 'doorbell') : '/dev/null';
-  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  if (repo) await markMonitor(path.dirname(file), Number(process.argv[4]));
-  process.stdout.write(file);
+  const session = Number(process.argv[4]);
+  const home = repo && repoHome(process.argv[3]!, repo);
+  if (home) await markMonitor(home, session);
+  process.stdout.write(home ? doorbellOf(home, session) : '/dev/null');
 } else if (process.argv[2] === 'guard') {
   const reason = guard(JSON.parse(readFileSync(0, 'utf8')) as ToolUse, secretDirs(dataDir), readRunStates(dataDir));
   if (reason) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
 } else {
-  serve();
+  await serve();
 }

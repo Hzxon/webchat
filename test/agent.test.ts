@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -10,7 +11,7 @@ import { after, before, describe, mock, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Api } from '../agent/api.ts';
 import { AgentClient, type OpenedMessage } from '../agent/client.ts';
-import { guard, markMonitor, Plugin, sandboxProblem, type RunState } from '../agent/plugin.ts';
+import { doorbellOf, guard, markMonitor, Plugin, sandboxProblem, startedForWebChat, type RunState } from '../agent/plugin.ts';
 import { ADAPTERS, createRunner } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
@@ -470,15 +471,19 @@ describe('agent client (R-027)', () => {
     await fs.writeFile(path.join(project, '.claude', 'settings.local.json'), JSON.stringify({ sandbox }));
     try {
       const code = newPairingCode();
+      // A session not started for WebChat stays unseen: it pairs with nothing and never checks in (D-098).
+      const unseen = new Plugin({ server: '', code: `${baseUrl}#${code}`, dataDir, projectDir: project, session: process.pid, forWebChat: false });
+      assert.equal(await unseen.start(), false);
+      assert.match(unseen.problem, /This session was not started for WebChat/);
       // A session whose monitor never started, as in the desktop app, would ring a doorbell nobody
       // hears, so it takes no runs and leaves them to a session whose monitor marked it (D-095).
-      const unheard = new Plugin({ server: '', code: `${baseUrl}#${code}`, dataDir, projectDir: project, session: process.ppid });
+      const unheard = new Plugin({ server: '', code: `${baseUrl}#${code}`, dataDir, projectDir: project, session: process.ppid, forWebChat: true });
       void unheard.start();
       for (let tries = 0; tries < 200 && !unheard.problem.includes('monitor'); tries++) await sleep(10);
       assert.match(unheard.problem, /This session runs no WebChat monitor/);
       await markMonitor(path.join(dataDir, 'repos', 'acme__app'), process.pid);
       // The page shows its address with the code, so the address setting stays empty (R-031).
-      const plugin = new Plugin({ server: '', code: `${baseUrl}#${code}`, dataDir, projectDir: project, session: process.pid });
+      const plugin = new Plugin({ server: '', code: `${baseUrl}#${code}`, dataDir, projectDir: project, session: process.pid, forWebChat: true });
       const starting = plugin.start();
       const agent = await approve(alice, code, 'Claude Code');
       assert.equal(await starting, true);
@@ -523,7 +528,8 @@ describe('agent client (R-027)', () => {
       };
       const reportsOn = async (request: number) =>
         (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.run?.kind !== 'request' && m.content?.run?.request === request).map((m) => m.content?.text);
-      const doorbell = path.join(dataDir, 'repos', 'acme__app', 'doorbell');
+      // Each session has its own doorbell, so another session in this checkout hears nothing (D-098).
+      const doorbell = doorbellOf(path.join(dataDir, 'repos', 'acme__app'), process.pid);
       const rang = async (times: number) => {
         for (let tries = 0; tries < 500; tries++) {
           const lines = (await fs.readFile(doorbell, 'utf8').catch(() => '')).split('\n').filter(Boolean);
@@ -598,7 +604,7 @@ describe('agent client (R-027)', () => {
       assert.equal((await fs.readFile(doorbell, 'utf8')).trim().split('\n').length, 4, 'three rings and the forged line');
 
       // A second session in this repository waits until this one closes (D-094).
-      const second = new Plugin({ server: '', code: '', dataDir, projectDir: project, session: process.pid });
+      const second = new Plugin({ server: '', code: '', dataDir, projectDir: project, session: process.pid, forWebChat: true });
       void second.start();
       for (let tries = 0; tries < 200 && !second.problem.startsWith('Another'); tries++) await sleep(10);
       assert.match(second.problem, /Another Claude Code session in acme\/app takes its runs/);
@@ -613,14 +619,14 @@ describe('agent client (R-027)', () => {
       await fs.mkdir(path.join(web, '.claude'));
       await fs.writeFile(path.join(web, '.claude', 'settings.local.json'), JSON.stringify({ sandbox }));
       await markMonitor(path.join(dataDir, 'repos', 'acme__web'), process.pid);
-      const webSession = new Plugin({ server: '', code: '', dataDir, projectDir: web, session: process.pid });
+      const webSession = new Plugin({ server: '', code: '', dataDir, projectDir: web, session: process.pid, forWebChat: true });
       assert.equal(await webSession.start(), true);
       await webSession.client!.sync();
       await alice.sync();
       assert.deepEqual(alice.users.get(agent.id)?.agentRepos.map((seat) => seat.repo), ['acme/app', 'acme/web']);
       const forWeb = (await ask(alice, { repo: 'acme/web' })).id;
       const [inApp, inWeb] = [await checkIn(), (await webSession.client!.sync()).map((m) => webSession.handle(m))];
-      const webBell = path.join(dataDir, 'repos', 'acme__web', 'doorbell');
+      const webBell = doorbellOf(path.join(dataDir, 'repos', 'acme__web'), process.pid);
       let webLine = '';
       for (let tries = 0; tries < 500 && !webLine.includes(' for card '); tries++) {
         webLine = (await fs.readFile(webBell, 'utf8').catch(() => '')).trim();
@@ -648,6 +654,21 @@ describe('agent client (R-027)', () => {
       }
     } finally {
       restore();
+    }
+  });
+
+  test('takes part only in a session started with WEBCHAT_AGENT=1, which project settings cannot fake (D-098)', async () => {
+    // Node, not sleep: macOS hides the environment of its own system programs.
+    const started = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30_000)'], { env: { ...process.env, WEBCHAT_AGENT: '1' } });
+    await once(started, 'spawn');
+    // Claude Code applies a project's settings.env inside its process; the environment it started with stays.
+    const restore = setEnv({ WEBCHAT_AGENT: '1' });
+    try {
+      assert.equal(await startedForWebChat(started.pid!), true);
+      assert.equal(await startedForWebChat(process.pid), false);
+    } finally {
+      restore();
+      started.kill();
     }
   });
 
