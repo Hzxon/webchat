@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS webchat.rate_limits (
 
 // Changes to tables that already exist. Each runs once, in order; webchat.meta's schema_version
 // row records how many have run.
-const MIGRATIONS = [
+export const MIGRATIONS = [
   // 1: end-to-end encryption.
   `
 -- 1: password_hash covers the raw password (accounts from before encryption).

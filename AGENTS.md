@@ -39,8 +39,10 @@ keeps its own cookies and keys.
 
 ## Rules that must hold
 
-These rules protect the product's promises. Breaking one is a bug even when every test passes. The
-decision behind each rule explains why it exists.
+These rules protect the product's promises. Rules 3, 6, 7 and 8 have a test that fails when they
+are broken, in `test/rules.test.ts`, `test/chat.test.ts` and `test/github.test.ts` (D-091). The
+others have no check, so breaking one is a bug even when every test passes. The decision behind
+each rule explains why it exists.
 
 1. The server never sees what users write. Text, quotes, reaction emoji and any future content are
    encrypted and signed in the browser. When a change makes new data visible to the server, list it

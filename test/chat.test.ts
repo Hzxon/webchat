@@ -716,6 +716,25 @@ describe('chat server', () => {
     assert.equal(decrypted, text);
   });
 
+  test('a push stays under 3,000 bytes for the longest message, and still carries no plain text (D-017)', async () => {
+    const watch = makeSubscription(`http://${pushService.host}/bob-watch`);
+    assert.equal((await bob.request('POST', '/push/subscribe', watch.json)).status, 204);
+    await bob.sync(false);
+
+    pushService.received.length = 0;
+    const text = 'Plain text that must never leave the device. '.repeat(LIMITS.messageLength).slice(0, LIMITS.messageLength);
+    await alice.send(directChat.id, text);
+    // The suite spends nearly all of Alice's 30 sends per 10 seconds; give this one back.
+    await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+    const pushes = await waitForPushes(pushService.received, 4);
+    const payload = watch.decrypt(pushes.find((p) => p.path === '/bob-watch')!.body);
+    const serialized = JSON.stringify(payload);
+    assert.ok(Buffer.byteLength(serialized) <= 3000, `a push payload is at most 3,000 bytes, this one is ${Buffer.byteLength(serialized)}`);
+    assert.equal(payload.envelope, null, 'a message that does not fit goes without its envelope');
+    assert.ok(!serialized.includes('never leave'), 'no plain text in the push');
+    await bob.request('POST', '/push/unsubscribe', { endpoint: watch.json.endpoint });
+  });
+
   test('an unread urgent message rings again, like an alarm, until it is read (D-079)', async () => {
     const alarm = makeSubscription(`http://${pushService.host}/bob-alarm`);
     assert.equal((await bob.request('POST', '/push/subscribe', alarm.json)).status, 204);

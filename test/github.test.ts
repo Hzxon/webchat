@@ -253,6 +253,8 @@ describe('GitHub connector', () => {
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
     });
     const text = await res.text();
+    // Rule 8: the GitHub token never reaches the browser (D-033), on any route this file calls.
+    for (const token of [TOKEN, APP_TOKEN]) assert.ok(!text.includes(token), `${method} ${path} answers with the GitHub token`);
     return { res, status: res.status, data: (text && /^[[{]/.test(text) ? JSON.parse(text) : undefined) as T };
   }
 
