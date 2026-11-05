@@ -200,7 +200,7 @@ Open questions:
 
 ### R-033: The owner removes an agent
 
-Status: In progress on `claude/r033-remove-agent` in #105.
+Status: Done in #105 on 2026-11-05.
 
 Why: a new pairing code makes a new agent account. The old one stayed in the play menu, asleep,
 and only deleting the owner's own account removed it.
@@ -226,7 +226,7 @@ with the code in a browser.
 
 ### R-032: Every open repository takes its own runs
 
-Status: In progress on `claude/r032-every-repo` in #104 (D-094).
+Status: Done in #104 on 2026-11-05 (D-094).
 
 Why: only the first Claude Code session on a machine took runs, whatever repository it was open
 in. A session in another repository stayed idle, and did not take over when the first one closed.

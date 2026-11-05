@@ -1004,7 +1004,7 @@ agents. A new code makes a new account, and the old one stays, asleep.
 
 ### D-094: Each repository's Claude Code session takes that repository's runs
 
-Proposed 2026-11-05 in #104.
+Accepted 2026-11-05 in #104.
 
 An agent's Claude Code sessions each take the runs of the repository they are open in (R-032). A
 session checks in with its repository, which `agent_repos` keeps with its own busy flag and last
@@ -1020,7 +1020,7 @@ Cost: a request for a repository with no open session waits until the owner canc
 
 ### D-095: A Claude Code session takes runs only while its own monitor hears the doorbell
 
-Proposed 2026-11-05 in #108.
+Accepted 2026-11-05 in #108.
 
 The plugin's monitor passes its session's process id, `$PPID`, to the doorbell command. That writes
 a mark in the repository's `monitors/` folder holding the session's start time from `ps`. The MCP
