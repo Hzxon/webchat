@@ -270,8 +270,46 @@ describe('agent client (R-027)', () => {
     await alice.send(generalId, { text: 'Run K-1 with Bot', run: runOf() });
     await alice.send(generalId, { text: 'Run K-1 with Bot again', run: runOf() });
     await Promise.all((await bot.sync()).map((m) => runs.handle(m)));
-    assert.deepEqual((await reports()).sort(), ['I am on K-1: Pushes with bad keys', 'I could not run K-1: I am busy with K-1.', 'I finished K-1 on agent/k1.']);
+    assert.deepEqual((await reports()).sort(), ['I am on K-1: Pushes with bad keys', 'I could not run K-1: K-1 is already running.', 'I finished K-1 on agent/k1.']);
     assert.equal(jobs, 1);
+  });
+
+  test('refuses a second request for the card it runs, however late it comes, and runs the card again once it ended (K-51)', async () => {
+    let started!: () => void;
+    const running = new Promise<void>((resolve) => (started = resolve));
+    let end!: () => void;
+    const gate = new Promise<void>((resolve) => (end = resolve));
+    let jobs = 0;
+    const runs = new Runs(bot, async () => {
+      jobs++;
+      started();
+      await gate;
+      throw new Error('Not today.');
+    });
+    const ask = async (run: RunDTO) => (await alice.send(generalId, { text: 'Run K-1 with Bot', run })).id;
+    const handle = async () => {
+      for (const m of await bot.sync()) await runs.handle(m);
+    };
+    const first = await ask(runOf());
+    const handled = Promise.all((await bot.sync()).map((m) => runs.handle(m)));
+    await running;
+    // Another tab or device sent these before it saw the first request's reports, a check-in later.
+    const twice = await ask(runOf());
+    const elsewhere = await ask(runOf({ card: 'K-2', section: 'other-card' }));
+    await handle();
+    end();
+    await handled;
+    // The run failed, so the owner runs the card again.
+    const again = await ask(runOf());
+    await handle();
+
+    const heard = await alice.sync();
+    const on = (id: number) => heard.filter((m) => m.content?.run?.kind !== 'request' && m.content?.run?.request === id).map((m) => m.content?.text);
+    assert.deepEqual(on(first), ['I am on K-1: Pushes with bad keys', 'I could not run K-1: Not today.']);
+    assert.deepEqual(on(twice), ['I could not run K-1: K-1 is already running.']);
+    assert.deepEqual(on(elsewhere), ['I could not run K-2: I am busy with K-1.']);
+    assert.deepEqual(on(again), ['I am on K-1: Pushes with bad keys', 'I could not run K-1: Not today.']);
+    assert.equal(jobs, 2);
   });
 
   test('runs a request once, however often the server posts it (K-47)', async () => {
@@ -526,8 +564,8 @@ describe('agent client (R-027)', () => {
         const heard: OpenedMessage[] = await plugin.client!.sync();
         return { heard, handled: Promise.all(heard.map((m) => plugin.handle(m))) };
       };
-      const reportsOn = async (request: number) =>
-        (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.run?.kind !== 'request' && m.content?.run?.request === request).map((m) => m.content?.text);
+      const reportsOn = async (request: number, reader = alice) =>
+        (await reader.sync()).filter((m) => m.senderId === agent.id && m.content?.run?.kind !== 'request' && m.content?.run?.request === request).map((m) => m.content?.text);
       // Each session has its own doorbell, so another session in this checkout hears nothing (D-098).
       const doorbell = doorbellOf(path.join(dataDir, 'repos', 'acme__app'), process.pid);
       const rang = async (times: number) => {
@@ -555,6 +593,12 @@ describe('agent client (R-027)', () => {
       const runId = idOf(await rang(2));
       // The same signed request under a new id, as a server could post it again, rings nothing (K-47).
       await plugin.handle({ ...heard[0]!, id: heard[0]!.id + 1000 });
+      // Another tab's request for the card the model holds fails at once and rings nothing (K-51).
+      // Carol reads the report, so Alice's next check-in still holds the run's own.
+      const twice = (await ask(alice)).id;
+      await (await checkIn()).handled;
+      assert.deepEqual(await reportsOn(twice, carol), ['I could not run K-7: K-7 is already running.']);
+      assert.equal((await fs.readFile(doorbell, 'utf8')).trim().split('\n').length, 2, 'only the run rang');
       // A line nobody filed gets nothing, whoever wrote it.
       await fs.appendFile(doorbell, 'WebChat run run-deadbeef for card K-7. Call the webchat start_run tool with this id.\n');
       await assert.rejects(plugin.call('start_run', { id: 'run-deadbeef' }), /No WebChat run or fix has this id/);

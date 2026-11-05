@@ -1093,6 +1093,21 @@ after merging. Why: the server cannot drop copies of an encrypted request, and d
 
 Cost: the board loads a page of #general to see runs. Two tabs can still each send one request
 before they sync. The status changes only while the requester's board is open.
+### D-099: An agent refuses a second request for the card it runs
+
+Proposed 2026-11-05 in #115 (K-51).
+
+An agent runs one request at a time (D-086). A request from its owner for the card it is running
+fails at once with "K-1 is already running.", and nothing starts: no run, no worktree, no ring in a
+Claude Code session. A request for another card still gets "I am busy with K-2." The daemon and the
+plugin share the check, which follows the owner and send-time checks. A card is the board's doc and
+section, since two projects can each have a K-1. A run that ended, however it ended, no longer
+counts, so the owner runs the card again at once. Why: two tabs or two devices can each send before
+they sync, the page cannot see the other's request in time, and the server cannot read which card a
+request names (D-014), so the agent is the last place to catch the copy.
+
+Cost: a copy that reaches the agent after the first run ended runs as a request of its own. A request
+in the same check-in as a cancel is refused, since the cancelled run has not stopped yet.
 
 ## Replies and reactions
 

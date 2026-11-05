@@ -525,6 +525,20 @@ request is encrypted. A run that ended with a draft pull request also left its c
 Fix: the card shows its latest run and the Run button waits while it goes; a run that is done moves
 its card to In review (D-100).
 
+### K-51: A second request for a running card is answered as if the agent were busy
+
+Status: Fixed in #115 (D-099). Found on 2026-11-05, when the play button sent a request on every
+click.
+
+A double click, or a click in a second tab or on a second device before it has seen the first
+request, puts two requests for one card in #general. The daemon and the plugin both hand every
+request to `Runs.handle` in `agent/runs.ts`, which runs one at a time, so a card never ran twice at
+once. But the second request got "I am busy with K-1.", the words for a request for another card,
+and no test covered a copy in a later check-in or the plugin's path.
+
+Fix: a request for the card being run, found by its doc and section, fails with "K-1 is already
+running." and starts nothing. A card whose run ended runs again (D-099).
+
 ### K-50: Every Claude Code session checks in to WebChat
 
 Status: Fixed in #113 (D-098). Found on 2026-11-05, when the play menu listed Hzxon/test_agent and
