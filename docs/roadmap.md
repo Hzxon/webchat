@@ -255,7 +255,8 @@ messages go. The menu has been tried in a browser with two accounts.
 
 ### R-035: An Agents pane where the owner talks with their agents
 
-Status: Planned (D-097). Designed in #112 on 2026-11-05, after K-49.
+Status: In progress (D-097). Designed in #112 on 2026-11-05, after K-49. Step 1, the spike, is
+#114 on branch `claude/r-035-implementation-f6ddc3`.
 
 Why: an agent only runs board cards, and only a terminal session whose monitor hears the doorbell
 starts them. Setup asks the owner to edit sandbox and permission settings by hand, and the sandbox
@@ -271,10 +272,10 @@ Scope:
   From it the owner prompts, replies, cancels, connects and removes agents. It works at 375 pixels.
 - A conversation is the owner's direct chat with the agent. A prompt is an encrypted message whose
   signed `prompt` field names the repository, and the card when there is one.
-- The plugin answers each conversation with a background `claude -p` under a settings file of its
-  own: a sandbox that blocks its keys and `gh`'s folder, with the webchat tools allowed. It posts
-  the answer, and the owner's reply resumes that session with `--resume`. The owner's own sessions
-  keep their settings, so `gh` works there.
+- The plugin answers each conversation with a background `claude -p --restricted` under a settings
+  file of its own: a sandbox that blocks its keys and `gh`'s folder. The turn ends in a JSON answer
+  that the plugin posts, and the owner's reply resumes that session with `--resume`. The owner's own
+  sessions keep their settings, so `gh` works there.
 - No doorbell and no monitor, so a session in the desktop app takes runs too. One session per
   repository still takes them (D-094). The owner edits no settings by hand.
 - A prompt may just answer, with no code. A card's conversation always uses a worktree, an
@@ -296,7 +297,10 @@ Scope:
 Order, one pull request each:
 
 1. A spike: `claude -p --settings` applies the sandbox and loads the guard hook headless, the
-   settings file reaches the plugin's sandbox check, and `--resume` continues a session.
+   settings file reaches the plugin's sandbox check, and `--resume` continues a session. It held on
+   Claude Code 2.1.318 (#114), with `--restricted`, no reads outside the working directories, a
+   cache of npm's own and a JSON answer (D-097). The guard resolves no link to a file not made yet
+   (K-55).
 2. The plugin runs cards in the background, and the doorbell goes. Cards work as before.
 3. Conversations: the `prompt` message, a Claude session per conversation, replies and resume.
 4. The Agents pane: the list, the conversations, the reply box and cancel.
@@ -315,6 +319,9 @@ Open questions:
 - A reply arrives at the next 15-second check-in. Is that fast enough, or does an open conversation
   need faster check-ins?
 - How long does a conversation wait for the owner before it fails? The proposal is 24 hours.
+- D-098 lets only a session started with `WEBCHAT_AGENT=1` take part, and the desktop app starts
+  none that way. How does a desktop session take part, as this item wants?
+- The shell reaches only the npm registry. Do projects on Yarn or pip need their registries too?
 
 ## Ideas
 

@@ -1050,21 +1050,22 @@ owner links it again. Whoever made a channel cannot delete it unless they own th
 
 ### D-097: An agent works in conversations with its owner, each run by a background Claude
 
-Proposed 2026-11-05 in #112 (R-035).
+Proposed 2026-11-05 in #112 (R-035). Its spike in #114 checked it on Claude Code 2.1.318.
 
 The owner talks with an agent in the Agents pane, in their direct chat. A prompt is an encrypted
 message whose signed field names the repository and, for a card, a hash of the brief the owner saw.
-The plugin answers each conversation with a background `claude -p` under a settings file of its
-own: a sandbox that blocks its keys and `gh`'s folder, the webchat tools allowed, web search on, and
-the shell limited to the package registry; a reply resumes that session. A card's conversation
-works in a worktree and opens a draft; a prompt may only answer. A fix round from another's review
-waits for the owner, and a card the agent drafts reaches the board only when the owner adds it, so
-no agent writes a card that then runs unread. Why: with no doorbell or monitor the desktop app
-works, the owner edits no settings, `gh` stays usable in the owner's sessions, and the owner can
-prompt from a phone.
+The plugin answers each turn with `claude -p --restricted`, which reads only managed settings and
+the plugin's settings file. That file requires the sandbox, blocks reads outside the working
+directories, keychain included, and lets the shell reach only the npm registry. The turn ends in a
+JSON answer that the plugin acts on; a reply resumes the session. A card's conversation works in a
+worktree and opens a draft; a prompt may only answer. A fix round from another's review waits for
+the owner, and a card the agent drafts reaches the board only when the owner adds it, so none runs
+unread. Why: a plain `-p` run loads the repository's hooks, and with no doorbell or monitor the
+desktop app works, the owner edits no settings and can prompt from a phone, and `gh` stays usable.
 
-Cost: a turn waits up to 15 seconds for a check-in, and nobody watches a run live. A page Claude
-reads could make it leak repository code. It replaces D-092's doorbell and D-095's monitor mark.
+Cost: nobody watches a run live, and a turn waits up to 15 seconds for a check-in. A page Claude
+reads could make it leak repository code. A settings value Claude Code stops accepting drops the
+sandbox without a word. It replaces D-092's doorbell and D-095's monitor mark.
 
 ### D-098: Only a session started for WebChat takes part
 

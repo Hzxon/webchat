@@ -24,10 +24,12 @@ export interface RunnerConfig {
   projects: Record<string, string>;
 }
 
-/** The agent's final word. */
-interface Final {
+/** The agent's final word. Claude Code also names its session, and gives the answer `--json-schema` asked for. */
+export interface Final {
   text: string;
   error: boolean;
+  session?: string;
+  answer?: unknown;
 }
 
 /** How a coding agent is started headless, given the file its brief is in, and how its last line is read. */
@@ -74,8 +76,9 @@ export const ADAPTERS = {
       'Grep',
     ],
     result: (line) => {
-      const event = parse(line) as { type?: string; result?: string; is_error?: boolean } | null;
-      return event?.type === 'result' ? { text: String(event.result ?? ''), error: event.is_error === true } : undefined;
+      const event = parse(line) as { type?: string; result?: string; is_error?: boolean; session_id?: string; structured_output?: unknown } | null;
+      if (event?.type !== 'result') return undefined;
+      return { text: String(event.result ?? ''), error: event.is_error === true, session: event.session_id, answer: event.structured_output };
     },
   } satisfies Adapter,
   codex: {
@@ -167,7 +170,7 @@ export function createRunner(config: RunnerConfig, client: AgentClient, runsDir:
 
     const briefPath = `${dir}.brief.md`;
     await fs.writeFile(briefPath, briefFor(request.card, card, await decisionsOf(client, projectId), branch));
-    const last = await start(command, adapter, briefPath, dir, signal);
+    const last = await start(command, adapter.args(briefPath), dir, signal, adapter.result);
     if (last.error) throw new Error(last.text || 'the agent stopped with an error.');
 
     const commits = (await run('git', ['-C', dir, 'log', '--oneline', `${base}..HEAD`])).stdout.trim();
@@ -184,10 +187,15 @@ export function createRunner(config: RunnerConfig, client: AgentClient, runsDir:
   };
 }
 
-/** Starts the agent in the worktree and waits for its final word, or for it to go quiet for too long, or for the owner to cancel. */
-function start(command: string, adapter: Adapter, briefPath: string, cwd: string, signal: AbortSignal) {
+/**
+ * Starts the agent in the worktree, with `input`, if any, on its stdin, and waits for its final word,
+ * as `read` finds it in its output lines, or for it to go quiet for too long, or for the owner to cancel.
+ */
+export function start(command: string, args: string[], cwd: string, signal: AbortSignal, read: (line: string) => Final | undefined, input?: string) {
   return new Promise<Final>((resolve, reject) => {
-    const child = spawn(command, adapter.args(briefPath), { cwd, stdio: ['ignore', 'pipe', 'inherit'] });
+    const child = spawn(command, args, { cwd, stdio: ['pipe', 'pipe', 'inherit'] });
+    // An agent that exits before it reads its input closes the pipe; its exit says why.
+    child.stdin.on('error', () => undefined).end(input);
     signal.addEventListener('abort', () => (child.kill(), reject(new Error('the owner cancelled the run.'))), { once: true });
     let last: Final | undefined;
     let timer: NodeJS.Timeout;
@@ -201,7 +209,7 @@ function start(command: string, adapter: Adapter, briefPath: string, cwd: string
     arm();
     readline.createInterface({ input: child.stdout }).on('line', (line) => {
       arm();
-      last = adapter.result(line) ?? last;
+      last = read(line) ?? last;
     });
     child.on('error', (error) => (clearTimeout(timer), reject(error)));
     child.on('close', (code) => {
