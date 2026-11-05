@@ -43,6 +43,7 @@ docs/decisions.md that explains it.
 - Run requests, reports and cancels are messages whose sealed `run` field names the card or the request's message id; a page folds only reports from the agent the request names, and an agent heeds only its owner's cancel (D-086, R-030).
 - A daemon runs a request only when its owner sent it, verified against the pinned keys, with a signed send time within 10 minutes of its own clock (D-089).
 - An agent acts on a request's signed client id once; it remembers ids on disk while a copy could still run (K-47, D-093).
+- An agent answers a second request for the card it is running with one failed report and starts nothing; a card is the board's doc and section, and a run that ended no longer counts (K-51, D-099).
 - The plugin runs a request only in a session whose origin is the request's signed `repo`, and only while the sandbox is on and `denyRead` covers its data folder and gh's; a session says nothing on another repository's request (D-092, D-093, D-094).
 - A plugin job nobody starts fails after 30 minutes; a started one fails after 2 hours with no tool call (D-094).
 - The plugin takes part only in a session whose launch environment, read with `ps eww`, holds `WEBCHAT_AGENT=1`; never read it from `process.env`, which a repository's settings can set (D-098).
