@@ -1047,6 +1047,23 @@ for short tasks, and only deleting the whole project took one away.
 Cost: a deleted channel cannot come back. A repository linked to it stops posting cards until the
 owner links it again. Whoever made a channel cannot delete it unless they own the project.
 
+### D-097: An agent works in conversations with its owner, each run by a background Claude
+
+Proposed 2026-11-05 in #112 (R-035).
+
+The owner talks with an agent in the Agents pane, in their direct chat. A prompt is an encrypted
+message whose signed field names the repository and, for a card, a hash of the brief the owner saw.
+The plugin answers each conversation with a background `claude -p` under a settings file of its
+own: a sandbox that blocks its keys and `gh`'s folder, the webchat tools allowed, web search on, and
+the shell limited to the package registry. A reply resumes that session. A card's conversation
+works in a worktree and opens a draft; a prompt may only answer. A fix round from anyone else's
+review waits for the owner. Why: with no doorbell or monitor the desktop app works, the owner edits
+no settings, `gh` stays usable in the owner's own sessions, and the owner can prompt from a phone.
+
+Cost: a turn waits for the next check-in, up to 15 seconds, and nobody watches a run live in a
+terminal. A page Claude reads could trick it into leaking repository code. Once built, it replaces
+the doorbell of D-092 and the monitor mark of D-095.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope

@@ -253,6 +253,63 @@ the channel go at their next check-in, with no push.
 Done when: a test shows that only the owner deletes a channel, never #general, and that its
 messages go. The menu has been tried in a browser with two accounts.
 
+### R-035: An Agents pane where the owner talks with their agents
+
+Status: Planned (D-097). Designed in #112 on 2026-11-05, after K-49.
+
+Why: an agent only runs board cards, and only a terminal session whose monitor hears the doorbell
+starts them. Setup asks the owner to edit sandbox and permission settings by hand, and the sandbox
+rule on `gh`'s folder stops `gh` in the owner's own sessions too. Students want all their agents in
+one place, to ask one anything from the phone, and to set nothing up by hand. Claude Code's Remote
+Control drives one laptop session from the Claude app; the pane holds every agent of the owner,
+beside the board, through WebChat's encryption.
+
+Scope:
+
+- An Agents pane beside the GitHub pane lists each agent its owner has: the repositories with a
+  session open, online, asleep or busy, and its conversations with their state and pull requests.
+  From it the owner prompts, replies, cancels, connects and removes agents. It works at 375 pixels.
+- A conversation is the owner's direct chat with the agent. A prompt is an encrypted message whose
+  signed `prompt` field names the repository, and the card when there is one.
+- The plugin answers each conversation with a background `claude -p` under a settings file of its
+  own: a sandbox that blocks its keys and `gh`'s folder, with the webchat tools allowed. It posts
+  the answer, and the owner's reply resumes that session with `--resume`. The owner's own sessions
+  keep their settings, so `gh` works there.
+- No doorbell and no monitor, so a session in the desktop app takes runs too. One session per
+  repository still takes them (D-094). The owner edits no settings by hand.
+- A prompt may just answer, with no code. A card's conversation always uses a worktree, an
+  `agent/*` branch and a draft pull request.
+- Web search and reading are on for prompts and cards. The shell reaches only the package registry,
+  and never the secrets.
+- The page signs a hash of the whole brief the owner saw, the card and the decisions, and the plugin
+  refuses a brief that changed since. The card shows what Markdown hides, such as HTML comments, and
+  the brief marks the text that others wrote.
+- A fix round that a review by anyone but the owner starts waits for the owner's go in the pane.
+  Failed CI and conflicts start one on their own.
+- Only the owner's messages count: a prompt, reply or cancel from anyone else, an agent included,
+  does nothing (D-089).
+
+Order, one pull request each:
+
+1. A spike: `claude -p --settings` applies the sandbox and loads the guard hook headless, the
+   settings file reaches the plugin's sandbox check, and `--resume` continues a session.
+2. The plugin runs cards in the background, and the doorbell goes. Cards work as before.
+3. Conversations: the `prompt` message, a Claude session per conversation, replies and resume.
+4. The Agents pane: the list, the conversations, the reply box and cancel.
+5. Cards through the pane: the play button opens a conversation, the card shows its state, the
+   brief hash and the review approval. The run messages in #general retire.
+
+Done when: the owner prompts from a phone and reads the answer in the pane; a card runs from a
+desktop app session with no settings edited; a prompt, reply or changed card from a teammate or
+their agent runs nothing; and the README's setup has no sandbox or permission step. Each change
+people see has been tried in a browser with two accounts, at 375 pixels, in light and dark mode.
+
+Open questions:
+
+- A reply arrives at the next 15-second check-in. Is that fast enough, or does an open conversation
+  need faster check-ins?
+- How long does a conversation wait for the owner before it fails? The proposal is 24 hours.
+
 ## Ideas
 
 ### R-004: Private channels
