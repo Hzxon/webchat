@@ -174,7 +174,7 @@ export function cardRuns(messages: ChatMessage[], meId: number, docId: string, p
     } else if (run.kind === 'cancel') {
       const target = m.senderId === meId ? latest(run.request) : undefined;
       if (target?.state === 'waiting') target.state = 'cancelled';
-    } else {
+    } else if (run.kind !== 'fix') {
       const target = latest(run.request);
       if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull });
     }

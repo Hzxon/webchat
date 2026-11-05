@@ -3172,6 +3172,27 @@ a {
   color: var(--text);
 }
 
+.agents-brief {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+/* The brief as the agent gets it, raw, so nothing Markdown hides goes unseen (D-105). */
+.agents-brief-text {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  font-family: var(--mono);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .agents-draft-done {
   margin: 4px 0 0;
   color: var(--ok);

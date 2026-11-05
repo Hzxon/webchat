@@ -5,12 +5,14 @@ export type Tone = 'ok' | 'danger' | 'warn' | 'info' | 'muted';
 
 export const Tag = ({ tone, children }: { tone: Tone; children: ReactNode }) => <span className={`tag tag-${tone}`}>{children}</span>;
 
-/** An agent's latest report on a run, in the chat and on the board (R-027). */
+/** An agent's latest report on a run, in the chat and on the board (R-027), in the pane's words (D-105). */
 export const RUN_TAGS: Record<RunReport['kind'], [Tone, string]> = {
-  claimed: ['info', 'Running'],
-  done: ['ok', 'Done'],
-  failed: ['danger', 'Failed'],
+  claimed: ['info', 'Working…'],
+  done: ['ok', 'Draft ready'],
+  failed: ['danger', 'Couldn’t finish'],
   fixing: ['info', 'Fixing'],
+  review: ['warn', 'Waiting for you'],
+  ended: ['muted', 'Done'],
 };
 
 const CHECKS: Record<NonNullable<PullChecks>, [Tone, string]> = {
