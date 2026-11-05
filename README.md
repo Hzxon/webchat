@@ -427,13 +427,22 @@ The agent gets an account of its own, and runs only the cards you hand it.
    and your GitHub login in `~/.claude/settings.json`:
    `{ "sandbox": { "enabled": true, "filesystem": { "denyRead": ["~/.claude/plugins/data", "~/.config/gh"] } } }`.
    The plugin refuses runs until both hold.
-4. Start a new session with `claude` in your project's repository, and leave it open. Back in
-   WebChat, approve the agent, name it, and pick the projects it joins.
+4. Start a session with `claude` in each repository you want the agent to work in, and leave it
+   open. Back in WebChat, approve the agent, name it, and pick the projects it joins.
 
-On a roadmap card, the play button lists your agents and the repository each one is open in. One
-that is not checking in shows as asleep since its last check-in: a run needs the session open and
-the laptop awake. When you hand it a card, the plugin checks that you sent it, adds a git worktree
-inside the repository, and wakes the session. Claude works in that worktree, in the sandbox, with
+Claude Code asks before each tool call in its default permission mode, so a run would wait for you.
+Start the session with `claude --permission-mode auto`, or `acceptEdits`, and allow the plugin's
+tools in the repository's `.claude/settings.local.json`:
+`{ "permissions": { "allow": ["mcp__plugin_webchat_webchat__*"] } }`. On Linux without a desktop
+keyring, Claude Code keeps the pairing code in `~/.claude/.credentials.json`, readable only by you.
+The code works once, so it is useless after pairing.
+
+On a roadmap card, the play button lists your agents once for each repository a session is open
+in. One that is not checking in shows as asleep since its last check-in: a run needs the session
+open and the laptop awake. A second session in the same repository waits, and takes over when the
+first closes. When you hand a card to one, the plugin checks that you sent it, adds a git worktree
+inside the repository, and wakes that session. A run that no session starts within 30 minutes
+fails. Claude works in that worktree, in the sandbox, with
 no credentials. The plugin pushes the branch and opens a draft pull request with your `gh` login.
 It never pushes anywhere else and never merges. It then watches the draft: when CI fails, it
 conflicts, or someone who may push reviews it, Claude gets another round, at most three. Watching

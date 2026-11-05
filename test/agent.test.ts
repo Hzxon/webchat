@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { after, before, describe, test } from 'node:test';
+import { after, before, describe, mock, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Api } from '../agent/api.ts';
 import { AgentClient, type OpenedMessage } from '../agent/client.ts';
@@ -476,7 +476,7 @@ describe('agent client (R-027)', () => {
       // Its check-ins say where it is open, so the menu names the repository.
       await plugin.client!.sync();
       await alice.sync();
-      assert.equal(alice.users.get(agent.id)?.agentRepo, 'acme/app');
+      assert.deepEqual(alice.users.get(agent.id)?.agentRepos.map((seat) => [seat.repo, seat.online]), [['acme/app', true]]);
 
       const key = await newChatKey(alice, [alice.id, agent.id, carol.id]);
       const general = (await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'App', memberIds: [agent.id, carol.id], key })).channel.id;
@@ -503,7 +503,7 @@ describe('agent client (R-027)', () => {
       };
       const reportsOn = async (request: number) =>
         (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.run?.kind !== 'request' && m.content?.run?.request === request).map((m) => m.content?.text);
-      const doorbell = path.join(dataDir, 'doorbell');
+      const doorbell = path.join(dataDir, 'repos', 'acme__app', 'doorbell');
       const rang = async (times: number) => {
         for (let tries = 0; tries < 500; tries++) {
           const lines = (await fs.readFile(doorbell, 'utf8').catch(() => '')).split('\n').filter(Boolean);
@@ -515,13 +515,14 @@ describe('agent client (R-027)', () => {
       const idOf = (line: string) => /^WebChat (?:run|fix) (\S+) for card K-7\./.exec(line)![1]!;
       assert.match(await rang(1), /paired/);
 
-      // A teammate's request, and one for another repository, ring nothing.
+      // A teammate's request rings nothing. One for another repository is the session there's, so
+      // this one says nothing either (D-094).
       const fromCarol = (await ask(carol)).id;
       await (await checkIn()).handled;
       assert.deepEqual(await reportsOn(fromCarol), ['I could not run K-7: Only Alice hands cards to me.']);
       const elsewhere = (await ask(alice, { repo: 'acme/other' })).id;
       await (await checkIn()).handled;
-      assert.deepEqual(await reportsOn(elsewhere), ['I could not run K-7: I am open in acme/app, not in acme/other.']);
+      assert.deepEqual(await reportsOn(elsewhere), []);
 
       const asked = (await ask(alice)).id;
       const { heard, handled } = await checkIn();
@@ -573,8 +574,57 @@ describe('agent client (R-027)', () => {
       await git(worktree, 'commit', '-q', '--allow-empty', '-m', 'By hand');
       await git(worktree, 'push', '-q', 'origin', `HEAD:${branch}`);
       await plugin.pollPulls();
-      assert.deepEqual(JSON.parse(await fs.readFile(path.join(dataDir, 'pulls.json'), 'utf8')), []);
+      assert.deepEqual(JSON.parse(await fs.readFile(path.join(dataDir, 'repos', 'acme__app', 'pulls.json'), 'utf8')), []);
       assert.equal((await fs.readFile(doorbell, 'utf8')).trim().split('\n').length, 4, 'three rings and the forged line');
+
+      // A second session in this repository waits until this one closes (D-094).
+      const second = new Plugin({ server: '', code: '', dataDir, projectDir: project });
+      void second.start();
+      for (let tries = 0; tries < 200 && !second.problem.startsWith('Another'); tries++) await sleep(10);
+      assert.match(second.problem, /Another Claude Code session in acme\/app takes its runs/);
+
+      // A session in another repository takes that repository's runs, with a copy of the account.
+      const webOrigin = path.join(home, 'web.git');
+      const web = path.join(home, 'web');
+      await sh('git', ['clone', '-q', '--bare', origin, webOrigin]);
+      await sh('git', ['clone', '-q', webOrigin, web]);
+      await git(web, 'remote', 'set-url', 'origin', 'https://github.com/acme/web.git');
+      await git(web, 'config', `url.${webOrigin}.insteadOf`, 'https://github.com/acme/web.git');
+      await fs.mkdir(path.join(web, '.claude'));
+      await fs.writeFile(path.join(web, '.claude', 'settings.local.json'), JSON.stringify({ sandbox }));
+      const webSession = new Plugin({ server: '', code: '', dataDir, projectDir: web });
+      assert.equal(await webSession.start(), true);
+      await webSession.client!.sync();
+      await alice.sync();
+      assert.deepEqual(alice.users.get(agent.id)?.agentRepos.map((seat) => seat.repo), ['acme/app', 'acme/web']);
+      const forWeb = (await ask(alice, { repo: 'acme/web' })).id;
+      const [inApp, inWeb] = [await checkIn(), (await webSession.client!.sync()).map((m) => webSession.handle(m))];
+      const webBell = path.join(dataDir, 'repos', 'acme__web', 'doorbell');
+      let webLine = '';
+      for (let tries = 0; tries < 500 && !webLine.includes(' for card '); tries++) {
+        webLine = (await fs.readFile(webBell, 'utf8').catch(() => '')).trim();
+        await sleep(10);
+      }
+      await webSession.call('finish', { id: idOf(webLine), outcome: 'failed', note: 'Not today.' });
+      await Promise.all([inApp.handled, ...inWeb]);
+      assert.deepEqual(await reportsOn(forWeb), ['I am on K-7: Sums are off by one', 'I could not run K-7: Not today.']);
+      assert.equal((await fs.readFile(doorbell, 'utf8')).trim().split('\n').length, 4, "the app's session heard nothing");
+
+      // A run nobody starts fails after 30 minutes, not 2 hours (D-094).
+      mock.timers.enable({ apis: ['setTimeout'] });
+      try {
+        const lapsed = (await ask(alice)).id;
+        const late = await checkIn();
+        while ((await fs.readFile(doorbell, 'utf8')).trim().split('\n').length < 5) await new Promise((resolve) => setImmediate(resolve));
+        mock.timers.tick(30 * 60_000);
+        await late.handled;
+        assert.deepEqual(await reportsOn(lapsed), [
+          'I am on K-7: Sums are off by one',
+          'I could not run K-7: Nobody started it within 30 minutes. Is a Claude Code session open in acme/app?',
+        ]);
+      } finally {
+        mock.timers.reset();
+      }
     } finally {
       restore();
     }
@@ -617,19 +667,19 @@ describe('agent client (R-027)', () => {
     const use = (tool_name: string, tool_input: Record<string, unknown> = {}, cwd = project) => ({ tool_name, tool_input, cwd });
     const run: RunState = { pid: process.pid, project, worktree };
     // Run or not, the file tools never reach the plugin's folder, not even through a link.
-    assert.match(guard(use('Read', { file_path: path.join(data, 'account.json') }), [data], null) ?? '', /secrets/);
-    assert.match(guard(use('Read', { file_path: 'link/account.json' }, worktree), [data], run) ?? '', /secrets/);
-    assert.equal(guard(use('Read', { file_path: 'README.md' }), [data], null), undefined);
+    assert.match(guard(use('Read', { file_path: path.join(data, 'account.json') }), [data], []) ?? '', /secrets/);
+    assert.match(guard(use('Read', { file_path: 'link/account.json' }, worktree), [data], [run]) ?? '', /secrets/);
+    assert.equal(guard(use('Read', { file_path: 'README.md' }), [data], []), undefined);
     // During a run: the worktree only, no web, no other MCP server, and the shell stays sandboxed.
-    assert.equal(guard(use('Edit', { file_path: path.join(worktree, 'sum.js') }), [data], run), undefined);
-    assert.match(guard(use('Edit', { file_path: path.join(project, 'sum.js') }), [data], run) ?? '', /Work inside/);
-    assert.match(guard(use('Grep', { pattern: 'sum' }), [data], run) ?? '', /Work inside/);
-    assert.match(guard(use('WebFetch', { url: 'https://example.com' }), [data], run) ?? '', /No web/);
-    assert.match(guard(use('mcp__github__create_issue'), [data], run) ?? '', /Only the webchat tools/);
-    assert.equal(guard(use('mcp__plugin_webchat_webchat__publish'), [data], run), undefined);
-    assert.match(guard(use('Bash', { command: 'ls', dangerouslyDisableSandbox: true }), [data], run) ?? '', /sandbox/);
+    assert.equal(guard(use('Edit', { file_path: path.join(worktree, 'sum.js') }), [data], [run]), undefined);
+    assert.match(guard(use('Edit', { file_path: path.join(project, 'sum.js') }), [data], [run]) ?? '', /Work inside/);
+    assert.match(guard(use('Grep', { pattern: 'sum' }), [data], [run]) ?? '', /Work inside/);
+    assert.match(guard(use('WebFetch', { url: 'https://example.com' }), [data], [run]) ?? '', /No web/);
+    assert.match(guard(use('mcp__github__create_issue'), [data], [run]) ?? '', /Only the webchat tools/);
+    assert.equal(guard(use('mcp__plugin_webchat_webchat__publish'), [data], [run]), undefined);
+    assert.match(guard(use('Bash', { command: 'ls', dangerouslyDisableSandbox: true }), [data], [run]) ?? '', /sandbox/);
     // A session open somewhere else works as usual.
-    assert.equal(guard(use('WebFetch', {}, dir), [data], run), undefined);
+    assert.equal(guard(use('WebFetch', {}, dir), [data], [run]), undefined);
 
     // Runs wait for a sandbox that keeps the shell from reading the secrets.
     const restore = setEnv({ CLAUDE_CONFIG_DIR: path.join(dir, 'claude') });

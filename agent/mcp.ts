@@ -1,10 +1,12 @@
 // The Claude Code plugin's program (R-030), bundled into plugin/server.mjs. With no argument it is
 // the MCP server Claude Code starts with each session, speaking JSON-RPC over stdin and stdout,
 // one message per line. With "guard" it is the PreToolUse hook: it reads the tool call on stdin
-// and prints a denial, or nothing.
-import { readFileSync } from 'node:fs';
+// and prints a denial, or nothing. With "doorbell" it prints the doorbell of the repository the
+// session is open in, for the monitor to tail (D-094).
+import { mkdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import readline from 'node:readline';
-import { guard, Plugin, readRunState, secretDirs, type ToolUse } from './plugin.ts';
+import { guard, originOf, Plugin, readRunStates, repoHome, secretDirs, type ToolUse } from './plugin.ts';
 import { messageOf } from './runs.ts';
 
 const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? '';
@@ -98,8 +100,15 @@ function serve() {
   lines.on('close', quit);
 }
 
-if (process.argv[2] === 'guard') {
-  const reason = guard(JSON.parse(readFileSync(0, 'utf8')) as ToolUse, secretDirs(dataDir), readRunState(dataDir));
+if (process.argv[2] === 'doorbell') {
+  // A monitor gets no plugin variables, so the folder comes as an argument. Outside a GitHub
+  // repository nothing rings.
+  const repo = await originOf(process.cwd());
+  const file = repo ? path.join(repoHome(process.argv[3]!, repo), 'doorbell') : '/dev/null';
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  process.stdout.write(file);
+} else if (process.argv[2] === 'guard') {
+  const reason = guard(JSON.parse(readFileSync(0, 'utf8')) as ToolUse, secretDirs(dataDir), readRunStates(dataDir));
   if (reason) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
 } else {
   serve();

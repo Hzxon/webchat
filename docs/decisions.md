@@ -1002,6 +1002,22 @@ it could run, across restarts (K-47). Why: no invite code, password or security 
 Cost: the server sees the repository an agent's session is in. Deleting an account deletes its
 agents. A new code makes a new account, and the old one stays, asleep.
 
+### D-094: Each repository's Claude Code session takes that repository's runs
+
+Proposed 2026-11-05 in #104.
+
+An agent's Claude Code sessions each take the runs of the repository they are open in (R-032). A
+session checks in with its repository, which `agent_repos` keeps with its own busy flag and last
+check-in, and the play menu lists one entry per repository. The plugin keeps a folder per repository
+in its data folder: a copy of the account, a lock, a doorbell and the watched pull requests, so no
+two sessions write one file. The monitor asks the plugin for its repository's doorbell, so a run
+wakes only that session, and a session says nothing on another repository's request. A second
+session in one repository takes over when the first closes. A run nobody starts fails after 30
+minutes. Why: students keep several repositories open, and the first session to start took all.
+
+Cost: a request for a repository with no open session waits until the owner cancels it. The
+`agent_repo` column of migration 17 is unused. A repository unseen for 30 days leaves the menu.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope
@@ -1280,17 +1296,18 @@ approve pull requests" must be on, and that pull request starts no other workflo
 
 ### D-058: Vercel skips builds that ship the same app
 
-Accepted 2026-11-02 in #30.
+Accepted 2026-11-02 in #30. `agent/` and `plugin/` joined the skipped paths in #103.
 
 Vercel builds every push to main (D-041). `scripts/ignore-build.sh`, the Ignored Build Step in
 `vercel.json`, skips a commit whose message starts with `chore(main): Release `. It also skips a
-commit when nothing outside `docs/`, `test/`, `.github/`, `scripts/` and Markdown files changed
-since the last deployment, whose commit Vercel names in `VERCEL_GIT_PREVIOUS_SHA`, so those deploys
-do not make every open tab check a new build (K-36). When that commit is unknown or not in Vercel's
-shallow clone, the build runs. The release pull request waits for the owner: it collects every
-`feat` and `fix` since the last release, so the owner merges it when a set of changes is worth a
-version. Merging it automatically would bump the minor at every `feat`, ship a wrong title type
-before `BEGIN_COMMIT_OVERRIDE` could fix it, and need a second Release Please run to tag.
+commit when nothing outside `docs/`, `test/`, `.github/`, `scripts/`, `agent/`, `plugin/` and
+Markdown files changed since the last deployment, whose commit Vercel names in
+`VERCEL_GIT_PREVIOUS_SHA`, so those deploys do not make every open tab check a new build (K-36).
+When that commit is unknown or not in Vercel's shallow clone, the build runs. The release pull
+request waits for the owner: it collects every `feat` and `fix` since the last release, so the owner
+merges it when a set of changes is worth a version. Merging it automatically would bump the minor at
+every `feat`, ship a wrong title type before `BEGIN_COMMIT_OVERRIDE` could fix it, and need a second
+Release Please run to tag.
 
 Cost: Vercel still clones the repository and records a canceled deployment for each release commit.
 Only Release Please may use a title that starts like a release commit. A file in a skipped path that
