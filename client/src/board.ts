@@ -104,8 +104,7 @@ export function duplicates(cards: Card[]): Set<string> {
 export const NEW_STATUS: Record<CardKind, string> = { D: 'Proposed', R: 'Idea', K: 'Open' };
 
 /** A card's text: the heading with its number and title, the status line, then what is under them. */
-export const cardText = (kind: CardKind, number: number, title: string, status: string, body: string) =>
-  `### ${kind}-${number}: ${title}\n\nStatus: ${status}.\n\n${body.trim()}`;
+export const cardText = (kind: CardKind, number: number, title: string, status: string, body: string) => `### ${kind}-${number}: ${title}\n\nStatus: ${status}.\n\n${body}`;
 
 /** What a new card starts with: the heading with its number, the status, and the fields of its kind. */
 export function cardTemplate(kind: CardKind, number: number): string {
@@ -114,7 +113,7 @@ export function cardTemplate(kind: CardKind, number: number): string {
     R: 'Why: who needs this, and what they do today instead.\n\nScope:\n\n- \n\nDone when: ',
     K: 'Seen: where and when, and how to make it happen again.\n\nCause: \n\nFix: ',
   }[kind];
-  return `### ${kind}-${number}: Title\n\nStatus: ${NEW_STATUS[kind]}.\n\n${body}`;
+  return cardText(kind, number, 'Title', NEW_STATUS[kind], body);
 }
 
 const kindOrder = (c: Card) => (c.kind ? 'DRK'.indexOf(c.kind) : 3);

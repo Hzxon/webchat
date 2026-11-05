@@ -16,6 +16,8 @@ import { createBoard } from './BoardView';
 import { formatSince } from './format';
 import { Markdown } from './Markdown';
 
+const paragraphsOf = (text: string) => text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+
 /** Why a change cannot go on: its card changed or went since the agent drafted it. */
 type Stale = { by: string; at: number } | 'deleted';
 
@@ -53,31 +55,31 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
     };
   }, [change, shared, thread.repo]);
 
-  // The board as it is now, again whenever its doc changes.
+  // The board as it is now, again whenever its doc changes, and whether a change's card still says
+  // what the agent saw. A draft already added needs neither.
   useEffect(() => {
-    let live = true;
-    if (!roadmap) setCards([]);
-    else void loadSections(roadmap).then((sections) => live && setCards(sections.map(parseCard)), () => live && setCards([]));
-    return () => {
-      live = false;
-    };
-  }, [roadmap?.id, roadmap?.version]);
-
-  const current = change ? cards?.find((c) => c.id === change.section) : undefined;
-  useEffect(() => {
-    if (!change || !cards || added) return;
+    if (added) return;
     let live = true;
     void (async () => {
-      if (!current) return live && setStale('deleted');
-      if ((await textHash(current.text.trim())) === change.seen) return live && setStale(null);
-      const [newest] = await sectionHistory(roadmap!, current.id);
-      const author = newest?.revision.authorId ?? null;
-      if (live) setStale({ by: author === meId ? 'You' : senderName(users, author, 'Someone'), at: newest?.revision.createdAt ?? Date.now() });
-    })();
+      const fresh = roadmap ? (await loadSections(roadmap)).map(parseCard) : [];
+      const card = change && fresh.find((c) => c.id === change.section);
+      let gone: Stale | null = null;
+      if (change && !card) gone = 'deleted';
+      else if (change && card && (await textHash(card.text.trim())) !== change.seen) {
+        const [newest] = await sectionHistory(roadmap!, card.id);
+        const author = newest?.revision.authorId ?? null;
+        gone = { by: author === meId ? 'You' : senderName(users, author, 'Someone'), at: newest?.revision.createdAt ?? Date.now() };
+      }
+      if (!live) return;
+      setCards(fresh);
+      setStale(gone);
+    })().catch(() => live && setCards([]));
     return () => {
       live = false;
     };
-  }, [change, cards, current, added, roadmap, users, meId]);
+  }, [roadmap?.id, roadmap?.version, added]);
+
+  const current = change ? cards?.find((c) => c.id === change.section) : undefined;
 
   async function add() {
     if (projectId === null) return;
@@ -90,13 +92,14 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
       let id: string;
       if (change) {
         const card = fresh.find((c) => c.id === change.section);
-        if (!card || (await textHash(card.text.trim())) !== change.seen) return setCards(fresh);
-        await replaceSection(doc, card.id, { text: cardText(card.kind!, card.number!, draft.title, card.status, draft.body), pos: card.pos });
+        // Changed since the page last looked: the next load says how.
+        if (!card || (await textHash(card.text.trim())) !== change.seen) return void syncNow();
+        await replaceSection(doc, card.id, { text: cardText(card.kind!, card.number!, draft.title, card.status, draft.body.trim()), pos: card.pos });
         id = change.card;
       } else {
         const number = nextNumber(fresh, draft.kind);
         const pos = Math.max(0, ...fresh.map((c) => c.pos)) + 1;
-        await replaceSection(doc, newSectionId(), { text: cardText(draft.kind, number, draft.title, NEW_STATUS[draft.kind], draft.body), pos });
+        await replaceSection(doc, newSectionId(), { text: cardText(draft.kind, number, draft.title, NEW_STATUS[draft.kind], draft.body.trim()), pos });
         id = `${draft.kind}-${number}`;
       }
       await noteAdded(thread.conversationId, thread.root, message.clientId!, id);
@@ -110,8 +113,7 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
 
   const kind = KIND_NAMES[draft.kind];
   // What the change adds or rewrites, marked so a small edit shows.
-  const now = new Set((current?.body ?? '').split(/\n\s*\n/).map((p) => p.trim()));
-  const paragraphs = draft.body.split(/\n\s*\n/).filter((p) => p.trim());
+  const now = new Set(paragraphsOf(current?.body ?? ''));
   const marked = (changed: boolean) => (change && changed ? 'agents-changed' : undefined);
 
   return (
@@ -128,8 +130,8 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
         </>
       )}
       <strong className={marked(current?.title !== draft.title)}>{change ? `${change.card}: ${draft.title}` : draft.title}</strong>
-      {paragraphs.map((p, i) => (
-        <div key={i} className={marked(!now.has(p.trim()))}>
+      {paragraphsOf(draft.body).map((p, i) => (
+        <div key={i} className={marked(!now.has(p))}>
           <Markdown text={p} />
         </div>
       ))}
