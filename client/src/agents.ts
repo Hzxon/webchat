@@ -17,7 +17,7 @@ export interface Thread {
   repo: string;
   /** The prompt first, then the messages that name it, in the chat's order, one per answer. */
   messages: ChatMessage[];
-  state: 'working' | 'answered' | 'failed' | 'ended';
+  state: 'working' | 'answered' | 'failed' | 'unsent' | 'ended';
   /** When its newest message was sent. */
   last: number;
 }
@@ -27,6 +27,7 @@ export const THREAD_STATE: Record<Thread['state'], { label: string; tone: Tone }
   working: { label: 'Working…', tone: 'info' },
   answered: { label: 'Answered', tone: 'ok' },
   failed: { label: 'Couldn’t answer', tone: 'danger' },
+  unsent: { label: 'Not sent', tone: 'danger' },
   ended: { label: 'Ended', tone: 'muted' },
 };
 
@@ -53,16 +54,18 @@ export const agentChats = (state: Pick<State, 'users' | 'me' | 'conversations'>)
 /**
  * A chat's conversations, newest first. Only the user's prompts start one, and only the user's and
  * the agent's signed messages count, as the agent heeds only its owner (D-089). An answer longer
- * than a message comes as several, which this joins into one (D-102).
+ * than a message comes as several, which this joins into one (D-102). A prompt or reply that did not
+ * send is no turn the agent works on: the conversation is Not sent until it is sent again.
  */
-export function threadsOf(messages: ChatMessage[], meId: number, agentId: number, now = Date.now()): Thread[] {
+export function threadsOf(messages: ChatMessage[], meId: number, agentId: number, pending: State['pending'] = {}, now = Date.now()): Thread[] {
   const threads = new Map<string, Thread>();
   for (const message of messages) {
     const prompt = message.prompt;
     if (!prompt || message.security !== 'encrypted') continue;
     if (prompt.kind === 'prompt') {
       if (message.senderId === meId && message.clientId) {
-        threads.set(message.clientId, { root: message.clientId, conversationId: message.conversationId, repo: prompt.repo, messages: [message], state: 'working', last: message.createdAt });
+        const state = pending[message.clientId] === 'failed' ? 'unsent' : 'working';
+        threads.set(message.clientId, { root: message.clientId, conversationId: message.conversationId, repo: prompt.repo, messages: [message], state, last: message.createdAt });
       }
       continue;
     }
@@ -74,7 +77,7 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     else thread.messages.push(message);
     thread.last = Math.max(thread.last, message.createdAt);
     // A cancel changes nothing until the agent says it stopped.
-    if (prompt.kind === 'reply') thread.state = 'working';
+    if (prompt.kind === 'reply') thread.state = pending[message.clientId ?? ''] === 'failed' ? 'unsent' : 'working';
     else if (prompt.kind === 'answer') thread.state = 'answered';
     else if (prompt.kind === 'failed') thread.state = 'failed';
   }
@@ -87,9 +90,10 @@ export function useAgentThreads() {
   const users = useAppState((s) => s.users);
   const me = useAppState((s) => s.me);
   const messages = useAppState((s) => s.messages);
+  const pending = useAppState((s) => s.pending);
   return useMemo(() => {
     const chats = agentChats({ users, me, conversations });
-    const threads = me ? chats.flatMap((chat) => threadsOf(messages[chat.id] ?? [], me.id, agentOf({ users, me }, chat)!.id)) : [];
+    const threads = me ? chats.flatMap((chat) => threadsOf(messages[chat.id] ?? [], me.id, agentOf({ users, me }, chat)!.id, pending)) : [];
     return { chats, threads: threads.sort((a, b) => b.last - a.last) };
-  }, [users, me, conversations, messages]);
+  }, [users, me, conversations, messages, pending]);
 }

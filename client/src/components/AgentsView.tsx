@@ -4,7 +4,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AGENT_LEVEL, LIMITS } from '../../../shared/types';
 import { ownAgents, ready, THREAD_STATE, useAgentThreads, type Seat, type Thread } from '../agents';
-import { askAgent, discardMessage, loadChat, retryMessage, saveDraft, tellAgent } from '../chat';
+import { askAgent, discardMessage, loadChat, loadOlder, retryMessage, saveDraft, tellAgent } from '../chat';
+import type { ChatConversation } from '../e2ee/keyring';
 import { actions, useAppState } from '../store';
 import { useAutoGrow, useDraft } from './ChatView';
 import { formatListTime, formatSince, formatTime } from './format';
@@ -68,7 +69,7 @@ export function AgentsView() {
           <span>{subtitle}</span>
         </div>
       </header>
-      {thread ? <ThreadView key={thread.root} thread={thread} seat={seatOf(thread)} /> : <ThreadList threads={threads} seats={seats} />}
+      {thread ? <ThreadView key={thread.root} thread={thread} seat={seatOf(thread)} /> : <ThreadList threads={threads} seats={seats} chats={chats} />}
     </section>
   );
 }
@@ -77,15 +78,16 @@ export function AgentsView() {
  * A message box that sends on Enter, as the chat's does, and grows with its text. While the agent
  * works, Send turns into Stop, and the text waits.
  */
-function Box(props: { name: string; placeholder: string; canSend: boolean; onSend: (text: string) => void; stop?: { stopping: boolean; onStop: () => void } }) {
+function Box(props: { name: string; placeholder: string; canSend: boolean; onSend: (text: string) => Promise<unknown>; stop?: { stopping: boolean; onStop: () => void } }) {
   const { name, placeholder, canSend, onSend, stop } = props;
   const [text, edit] = useDraft(name);
   const input = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(input, text);
   function send() {
     if (!text.trim() || !canSend) return;
-    onSend(text);
     edit('');
+    // Text that could not even be kept as an unsent message comes back into the box.
+    onSend(text).catch(() => edit(text));
   }
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -109,8 +111,12 @@ function Box(props: { name: string; placeholder: string; canSend: boolean; onSen
   );
 }
 
-function ThreadList({ threads, seats }: { threads: Thread[]; seats: Seat[] }) {
+function ThreadList({ threads, seats, chats }: { threads: Thread[]; seats: Seat[]; chats: ChatConversation[] }) {
   const [picked, setPicked] = useState('');
+  const messages = useAppState((s) => s.messages);
+  const complete = useAppState((s) => s.historyComplete);
+  // A chat loads its newest page first, so older conversations wait for a tap.
+  const older = chats.filter((c) => messages[c.id] && !complete[c.id]);
   // The repository picked, else the newest conversation's while it can answer, else the first that can.
   const seat = seats.find((s) => seatKey(s) === picked) ?? seats.find((s) => ready(s) && s.repo === threads[0]?.repo) ?? seats.find(ready) ?? seats[0];
   const several = new Set(seats.map((s) => s.agent.id)).size > 1;
@@ -121,6 +127,7 @@ function ThreadList({ threads, seats }: { threads: Thread[]; seats: Seat[] }) {
       actions.setAgentsOpen(true, await askAgent(seat!.agent.id, seat!.repo, text));
     } catch (err) {
       actions.addToast({ conversationId: null, title: 'Question not sent', body: (err as Error).message });
+      throw err;
     }
   }
 
@@ -144,7 +151,7 @@ function ThreadList({ threads, seats }: { threads: Thread[]; seats: Seat[] }) {
           seat && <p className="agents-repo">Asks in {short(seat.repo)}</p>
         )}
         {blocked && <p className="composer-blocked">{blocked}</p>}
-        <Box name="agents:ask" placeholder="Ask about your code" canSend={!blocked} onSend={(text) => void ask(text)} />
+        <Box name="agents:ask" placeholder="Ask about your code" canSend={!blocked} onSend={ask} />
         <p className="agents-hint">It reads your team’s code as it is on GitHub. After a push, ask a new question to see it.</p>
       </div>
       {threads.length > 0 ? (
@@ -168,6 +175,11 @@ function ThreadList({ threads, seats }: { threads: Thread[]; seats: Seat[] }) {
           reads the code on your laptop and answers here. To change the code, hand it a card on the board.
         </p>
       )}
+      {older.length > 0 && (
+        <button className="load-older" onClick={() => older.forEach((c) => void loadOlder(c.id))}>
+          Show earlier questions
+        </button>
+      )}
     </div>
   );
 }
@@ -177,7 +189,8 @@ function ThreadView({ thread, seat }: { thread: Thread; seat: Seat | undefined }
   const meId = useAppState((s) => s.me?.id);
   const list = useRef<HTMLDivElement>(null);
   const working = thread.state === 'working';
-  const stopping = working && thread.messages.at(-1)!.prompt?.kind === 'cancel';
+  const last = thread.messages.at(-1)!;
+  const stopping = working && last.prompt?.kind === 'cancel' && pending[last.clientId ?? ''] !== 'failed';
   // A turn can take long, so the time it has taken shows, a minute at a time.
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -205,15 +218,26 @@ function ThreadView({ thread, seat }: { thread: Thread; seat: Seat | undefined }
     <>
       <div className="messages" ref={list}>
         {thread.messages.map((message, i) => {
+          const status = message.clientId ? pending[message.clientId] : undefined;
+          const unsent = status === 'failed' && (
+            <div className="send-failed-row">
+              <button className="send-failed" onClick={() => retryMessage(message)}>
+                <AlertIcon width={14} height={14} /> Not sent. Tap to retry.
+              </button>
+              <button className="send-discard" onClick={() => discardMessage(message)}>
+                Remove
+              </button>
+            </div>
+          );
           if (message.prompt?.kind === 'cancel') {
             return (
-              <p key={message.clientId ?? message.id} className="agents-note">
-                You asked it to stop.
-              </p>
+              <div key={message.clientId ?? message.id}>
+                <p className="agents-note">You asked it to stop.</p>
+                {unsent}
+              </div>
             );
           }
           const mine = message.senderId === meId;
-          const status = message.clientId ? pending[message.clientId] : undefined;
           const first = thread.messages[i - 1]?.senderId !== message.senderId;
           return (
             <div key={message.clientId ?? message.id} className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}>
@@ -223,16 +247,7 @@ function ThreadView({ thread, seat }: { thread: Thread; seat: Seat | undefined }
                   <span className="bubble-meta">{status === 'sending' ? 'Sending…' : formatTime(message.createdAt)}</span>
                 </div>
               </div>
-              {status === 'failed' && (
-                <div className="send-failed-row">
-                  <button className="send-failed" onClick={() => retryMessage(message)}>
-                    <AlertIcon width={14} height={14} /> Not sent. Tap to retry.
-                  </button>
-                  <button className="send-discard" onClick={() => discardMessage(message)}>
-                    Remove
-                  </button>
-                </div>
-              )}
+              {unsent}
             </div>
           );
         })}
@@ -258,8 +273,8 @@ function ThreadView({ thread, seat }: { thread: Thread; seat: Seat | undefined }
             <Box
               name={`agents:${thread.root}`}
               placeholder="Reply"
-              canSend={!blocked}
-              onSend={(text) => void tellAgent(thread.conversationId, thread.root, 'reply', text)}
+              canSend={!blocked && !working}
+              onSend={(text) => tellAgent(thread.conversationId, thread.root, 'reply', text)}
               stop={working ? { stopping, onStop: () => void tellAgent(thread.conversationId, thread.root, 'cancel', 'Stop') } : undefined}
             />
           </>

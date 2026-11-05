@@ -320,8 +320,7 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
       const state = store.get();
       if (state.githubOpen) return '/?github=open';
       if (state.docOpen) return `/?doc=${state.docOpen}`;
-      const agentChat = state.agentsOpen ? agentChats(state)[0] : undefined;
-      if (agentChat) return `/?chat=${agentChat.id}`;
+      if (state.agentsOpen) return `/?agents=${encodeURIComponent(state.agentThread ?? '')}`;
       return state.activeId === null ? '/' : `/?chat=${state.activeId}`;
     }),
     attention.subscribe((attentive) => {
@@ -364,10 +363,15 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
     history.replaceState(null, '', '/');
     actions.setDocOpen(doc);
   }
+  const agents = query.get('agents');
+  if (agents !== null) {
+    history.replaceState(null, '', '/');
+    actions.setAgentsOpen(true, agents || null);
+  }
   // After the chat above, so the two never load the same history at once. The Coding agents row
   // shows the newest conversation, so the chats with agents load too (D-103).
-  void opening.catch(() => undefined).then(() => {
-    for (const chat of agentChats(store.get())) if (!store.get().messages[chat.id]) void loadOlder(chat.id).catch(() => undefined);
+  void opening.catch(() => undefined).then(async () => {
+    await Promise.all(agentChats(store.get()).map((chat) => (store.get().messages[chat.id] ? undefined : loadOlder(chat.id).catch(() => undefined))));
     return restoreUnsent(run);
   });
   return { status: 'ready' };
@@ -554,8 +558,10 @@ export async function openConversation(conversationId: number) {
   if (!agent) actions.setActive(conversationId);
   else actions.setAgentsOpen(true);
   await loadChat(conversationId);
-  // A notification is for the chat's newest message, so it opens that message's conversation.
-  if (agent) actions.setAgentsOpen(true, threadsOf(store.get().messages[conversationId] ?? [], meId, agent.id)[0]?.root ?? null);
+  // A notification is for the chat's newest message, so it opens that message's conversation, unless
+  // the user went elsewhere while it loaded.
+  const now = store.get();
+  if (agent && now.agentsOpen && now.agentThread === null) actions.setAgentsOpen(true, threadsOf(now.messages[conversationId] ?? [], meId, agent.id, now.pending)[0]?.root ?? null);
 }
 
 /** Loads a chat's newest messages when the page has none yet, and marks it read while the user looks. */
@@ -940,7 +946,8 @@ export function retryMessage(message: ChatMessage) {
   if (message.replyTo) content.replyTo = message.replyTo;
   if (message.pull) content.pull = message.pull;
   if (message.run) content.run = message.run;
-  if (message.prompt) content.prompt = message.prompt;
+  // A fresh send time, or the agent would refuse a retry made 10 minutes later. The client id still makes it one message (D-061, K-47).
+  if (message.prompt) content.prompt = 'sentAt' in message.prompt ? { ...message.prompt, sentAt: Date.now() } : message.prompt;
   void sendContent(message.conversationId, content, message.urgent, message.clientId!);
 }
 

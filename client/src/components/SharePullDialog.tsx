@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import type { PullRequestDTO } from '../../../shared/types';
+import { agentOf } from '../agents';
 import { openConversation, sharePull } from '../chat';
 import { chatTitle, useAppState } from '../store';
 import { Dialog } from './Dialog';
@@ -11,10 +12,12 @@ export function SharePullDialog({ pull, onClose }: { pull: PullRequestDTO; onClo
   const conversations = useAppState((s) => s.conversations);
   const users = useAppState((s) => s.users);
   const projects = useAppState((s) => s.projects);
-  const meId = useAppState((s) => s.me?.id);
+  const me = useAppState((s) => s.me);
+  const meId = me?.id;
+  // A chat with the user's own agent is the Coding agents pane's, where a card would show nowhere (D-103).
   const sorted = useMemo(
-    () => Object.values(conversations).sort((a, b) => b.updatedAt - a.updatedAt),
-    [conversations],
+    () => Object.values(conversations).filter((c) => !agentOf({ users, me }, c)).sort((a, b) => b.updatedAt - a.updatedAt),
+    [conversations, users, me],
   );
 
   async function pick(conversationId: number) {

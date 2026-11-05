@@ -153,7 +153,9 @@ What it does not protect against:
   `~/.webchat/<name>/account.json`. Both files are readable only by their owner, but not
   encrypted. Anyone who can read one can read what the agent's projects write. The server knows
   which accounts are agents, whose agent each one is, when one is busy with a card, and which
-  GitHub repository its Claude Code session is open in, for repositories you connected only.
+  GitHub repository its Claude Code session is open in, for repositories you connected only. It
+  also learns what each session can do, such as answer questions, which tells newer plugins from
+  older ones.
   It sees a run as messages like any other.
   Pairing shows it the agent's public keys and proofs made from the code, never the code.
 - **People who leave keep the keys they had.** Someone who left or was removed could still read the
