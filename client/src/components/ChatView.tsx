@@ -448,12 +448,16 @@ const RUN_TAGS: Record<RunReport['kind'], [Tone, string]> = {
 function RunCard({ run, state, users, onCancel }: { run: RunRequest; state: RunReport | null; users: State['users']; onCancel?: () => void }) {
   const [tone, label] = state ? RUN_TAGS[state.kind] : (['muted', 'Waiting for the agent'] as [Tone, string]);
   const going = !state || state.kind === 'claimed' || state.kind === 'fixing';
-  // Nothing runs while the agent checks in nowhere. A daemon that starts again reports the run (K-46).
-  const offline = going && !users[run.runtime]?.online;
+  // Nothing runs while the agent, or its session in the request's repository, checks in nowhere.
+  // A daemon that starts again reports the run (K-46).
+  const agent = users[run.runtime];
+  const seat = run.repo ? agent?.agentRepos.find((s) => s.repo === run.repo) : agent;
+  const offline = going && !seat?.online;
   return (
     <span className="pull-card">
       <span className="pull-card-head">
         {run.card} · {senderName(users, run.runtime)}
+        {run.repo && ` in ${run.repo}`}
       </span>
       <span className="pull-title">{run.title}</span>
       <span className="pull-tags">

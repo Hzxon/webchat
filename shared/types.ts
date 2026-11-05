@@ -23,10 +23,19 @@ export interface UserDTO {
   agentOwner: number | null;
   /** An agent running a card now. The board offers a card only to agents that are not. */
   busy: boolean;
-  /** For an agent in a Claude Code session: the repository the session is open in, as "owner/name" (R-030). */
-  agentRepo: string | null;
+  /** For an agent in Claude Code: a session per repository, each taking that repository's runs (R-032). */
+  agentRepos: AgentRepoDTO[];
   /** The account was deleted (R-028). It stays listed so its old messages keep their sender's name. */
   deleted: boolean;
+}
+
+/** An agent's Claude Code session, by the repository it is open in, as "owner/name" (R-032, D-094). */
+export interface AgentRepoDTO {
+  repo: string;
+  online: boolean;
+  lastSeen: number;
+  /** Running a card or fixing its pull request now. The menu offers this repository no other card. */
+  busy: boolean;
 }
 
 /** An encrypted, signed message. The server stores and relays it without being able to read it. */
