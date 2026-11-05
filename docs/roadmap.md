@@ -255,11 +255,8 @@ messages go. The menu has been tried in a browser with two accounts.
 
 ### R-035: An Agents pane where the owner talks with their agents
 
-Status: In progress (D-097). Designed in #112 on 2026-11-05, after K-49. Step 1, the spike, is
-#114 on branch `claude/r-035-implementation-f6ddc3`. Step 2 is #117 on branch
-`claude/r-035-step2-background-runs`. Step 3 is #119 on branch `claude/r-035-step3-conversations`.
-Step 4 is #120 on branch `claude/r-035-step4-agents-pane`. Step 5 is #121 on branch
-`claude/r-035-step5-card-drafts`. Step 6 is #122 on branch `claude/r-035-step6-cards-pane`.
+Status: Done in #114, #117, #119, #120, #121 and #122 on 2026-11-06 (D-097, D-101 to D-105).
+Designed in #112 on 2026-11-05, after K-49. The Agents pane became the Coding agents pane.
 
 Why: an agent only runs board cards, and only a terminal session whose monitor hears the doorbell
 starts them. Setup asks the owner to edit sandbox and permission settings by hand, and the sandbox
