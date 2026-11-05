@@ -970,7 +970,7 @@ credentials. The `agent` column of migration 13 is unused. A teammate's agent is
 
 ### D-092: An agent can run as a Claude Code plugin whose server rings a doorbell
 
-Accepted 2026-11-05 in #100, proposed in #99.
+Accepted 2026-11-05 in #100, proposed in #99. The sandbox check grew in #118 (K-53, K-54, K-56).
 
 An agent can run inside Claude Code as the plugin in `plugin/` (R-030). Its MCP server,
 `agent/plugin.ts`, is the trusted part: it keeps the agent's keys in the plugin's data folder, uses
@@ -978,9 +978,9 @@ the owner's `gh` login, checks requests as D-089 says, adds a worktree under `.c
 and pushes only that `agent/*` branch, never forced. A monitor tails a file the server writes, with
 ids only; `start_run` refuses an id the server did not file. The model works sandboxed with no
 credentials. A guard hook keeps file tools from the secrets, and in the worktree with no web during
-a run. Runs wait until the sandbox is on and `denyRead` covers the secrets. A draft gets three
-rounds of fixes for failed CI, conflicts and reviews by writers. Why: one install, and channels
-need a flag on every start.
+a run. Runs wait until the sandbox is on with `failIfUnavailable` and `denyRead` covers the
+secrets, gh's macOS keychain and `session-env` included. A draft gets three rounds of fixes for
+failed CI, conflicts and reviews by writers. Why: one install; channels need a flag on every start.
 
 Cost: the session must stay open, and one per machine watches. `experimental.monitors` may change.
 A teammate's card runs with the owner's credentials; the owner reviews the draft.
