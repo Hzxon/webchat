@@ -91,8 +91,9 @@ export function AgentDialog({ projectId, onClose }: { projectId: number; onClose
       ) : !keys ? (
         <>
           <p className="dialog-intro">
-            Paste this code into the WebChat plugin in Claude Code, or into <code>npm run agent -- pair</code>. It works
-            once, within 10 minutes. The agent becomes yours, and runs only the cards you hand to it.
+            Paste this code into the WebChat plugin in Claude Code, then type <code>/webchat:connect</code> in a session
+            open in a repository. Or paste it into <code>npm run agent -- pair</code>. It works once, within 10 minutes.
+            The agent becomes yours, and runs only the cards you hand to it.
           </p>
           {/* The address rides along so nobody types it (R-031). After `#`, a browser would never send the code. */}
           <CopyRow value={`${location.origin}#${code}`} onCopied={setNote} />

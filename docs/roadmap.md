@@ -256,7 +256,8 @@ messages go. The menu has been tried in a browser with two accounts.
 ### R-035: An Agents pane where the owner talks with their agents
 
 Status: In progress (D-097). Designed in #112 on 2026-11-05, after K-49. Step 1, the spike, is
-#114 on branch `claude/r-035-implementation-f6ddc3`.
+#114 on branch `claude/r-035-implementation-f6ddc3`. Step 2 is #117 on branch
+`claude/r-035-step2-background-runs`.
 
 Why: an agent only runs board cards, and only a terminal session whose monitor hears the doorbell
 starts them. Setup asks the owner to edit sandbox and permission settings by hand, and the sandbox
@@ -299,9 +300,10 @@ Order, one pull request each:
 1. A spike: `claude -p --settings` applies the sandbox and loads the guard hook headless, the
    settings file reaches the plugin's sandbox check, and `--resume` continues a session. It held on
    Claude Code 2.1.318 (#114), with `--restricted`, no reads outside the working directories, a
-   cache of npm's own and a JSON answer (D-097). The guard resolves no link to a file not made yet
+   cache of npm's own and a JSON answer (D-097). The guard resolved no link to a file not made yet
    (K-55).
-2. The plugin runs cards in the background, and the doorbell goes. Cards work as before.
+2. The plugin runs cards in the background, and the doorbell goes. Cards work as before. A session
+   takes part once its owner connected the repository with `/webchat:connect` (D-101).
 3. Conversations: the `prompt` message, a Claude session per conversation, replies and resume.
 4. The Agents pane: the list, the conversations, the reply box and cancel.
 5. Card drafts: a card draft reply, the Add to board button, and the before and after of a change.
@@ -319,8 +321,6 @@ Open questions:
 - A reply arrives at the next 15-second check-in. Is that fast enough, or does an open conversation
   need faster check-ins?
 - How long does a conversation wait for the owner before it fails? The proposal is 24 hours.
-- D-098 lets only a session started with `WEBCHAT_AGENT=1` take part, and the desktop app starts
-  none that way. How does a desktop session take part, as this item wants?
 - The shell reaches only the npm registry. Do projects on Yarn or pip need their registries too?
 
 ## Ideas
@@ -728,6 +728,9 @@ no upgrade within 1.x needs a step from the person who runs it. Decide what must
 example the task board (R-001) and an upgrade path that people who self-host can trust.
 
 ### Q-5: Does a resumed Claude Code session hear the plugin's doorbell?
+
+Status: Answered in #117. The doorbell and the monitor are gone. A resumed session starts the
+plugin's server again, which takes runs as any session does.
 
 The plugin's monitor tails the doorbell for as long as the session runs (R-030). Claude Code's docs
 say a resumed session does not restore background tasks, and do not say whether a plugin's monitor

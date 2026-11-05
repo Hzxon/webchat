@@ -1,7 +1,7 @@
 {
   "name": "webchat",
   "version": "0.4.0",
-  "description": "Runs the WebChat board cards you hand to Claude Code, and fixes their draft pull requests.",
+  "description": "Runs the WebChat board cards you hand to Claude Code in a sandboxed background Claude, and fixes their draft pull requests.",
   "author": {
     "name": "Hzxon"
   },
@@ -32,14 +32,5 @@
         "WEBCHAT_PAIRING_CODE": "${user_config.pairing_code}"
       }
     }
-  },
-  "experimental": {
-    "monitors": [
-      {
-        "name": "doorbell",
-        "command": "f=$(node \"${CLAUDE_PLUGIN_ROOT}/server.mjs\" doorbell \"${CLAUDE_PLUGIN_DATA}\" \"$PPID\") && touch \"$f\" && exec tail -n 0 -F \"$f\"",
-        "description": "Runs and pull request fixes that WebChat hands to the repository this session is open in"
-      }
-    ]
   }
 }

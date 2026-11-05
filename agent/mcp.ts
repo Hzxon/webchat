@@ -1,55 +1,66 @@
 // The Claude Code plugin's program (R-030), bundled into plugin/server.mjs. With no argument it is
 // the MCP server Claude Code starts with each session, speaking JSON-RPC over stdin and stdout,
-// one message per line. It takes part only in a session started with WEBCHAT_AGENT=1 (D-098). With "guard" it is the PreToolUse hook: it reads the tool call on stdin
-// and prints a denial, or nothing. With "doorbell" it prints the session's doorbell in the folder of
-// the repository the session is open in, for the monitor to tail (D-094, D-098).
-import { readFileSync } from 'node:fs';
+// one message per line. It takes part only in a repository its owner connected (D-101). With
+// "guard" it is the PreToolUse hook: it reads the tool call on stdin and prints a denial, or nothing.
+import { execFile } from 'node:child_process';
+import { constants, readFileSync } from 'node:fs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import readline from 'node:readline';
-import { doorbellOf, guard, markMonitor, originOf, Plugin, readRunStates, repoHome, secretDirs, startedForWebChat, type ToolUse } from './plugin.ts';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { guard, Plugin, secretDirs, type ToolUse } from './plugin.ts';
 import { messageOf } from './runs.ts';
 
-const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? '';
+const none = { type: 'object', properties: {} };
 
-const id = { id: { type: 'string', description: 'The id the WebChat line named.' } };
+/**
+ * The session's own `claude`, by its absolute path: this server's parent, which the desktop app keeps
+ * outside the PATH. Else the first on the PATH, from absolute folders only, since the background
+ * Claude starts in a worktree whose files the model writes. Empty when there is none (D-097).
+ */
+async function claudeProgram() {
+  const parent =
+    process.platform === 'linux'
+      ? await fs.readlink(`/proc/${process.ppid}/exe`).catch(() => '')
+      : await promisify(execFile)('ps', ['-o', 'comm=', '-p', String(process.ppid)]).then((r) => r.stdout.trim(), () => '');
+  if (path.isAbsolute(parent) && path.basename(parent) === 'claude') return parent;
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d))) {
+    const file = path.join(dir, 'claude');
+    if (await fs.access(file, constants.X_OK).then(() => true, () => false)) return file;
+  }
+  return '';
+}
 const TOOLS = [
   {
     name: 'status',
-    description: 'Says whether this session is paired with WebChat and takes runs, and what stops it if not.',
-    inputSchema: { type: 'object', properties: {} },
+    description: 'Says whether the repository this session is open in is connected to WebChat and takes runs, and what stops it if not.',
+    inputSchema: none,
   },
   {
-    name: 'start_run',
-    description: 'Starts a run or fix that a WebChat line named. Returns the card or what to fix, and the worktree to work in.',
-    inputSchema: { type: 'object', properties: id, required: ['id'] },
+    name: 'connect',
+    description: 'Connects the repository this session is open in to WebChat, so the cards its owner hands to the agent for it run here. Only when the user asks for it.',
+    inputSchema: none,
+    // Claude Code asks the owner on every call, whatever their permission settings, so no repository's files can connect it (D-101).
+    _meta: { 'anthropic/requiresUserInteraction': true },
   },
   {
-    name: 'publish',
-    description: "Pushes the run's branch to GitHub and, the first time, opens a draft pull request with this title and body.",
-    inputSchema: {
-      type: 'object',
-      properties: { ...id, title: { type: 'string' }, body: { type: 'string' } },
-      required: ['id'],
-    },
-  },
-  {
-    name: 'finish',
-    description: 'Reports the run or fix in WebChat: done after publish, or failed with what blocks it.',
-    inputSchema: {
-      type: 'object',
-      properties: { ...id, outcome: { type: 'string', enum: ['done', 'failed'] }, note: { type: 'string', description: 'One or two sentences.' } },
-      required: ['id', 'outcome', 'note'],
-    },
+    name: 'disconnect',
+    description: 'Disconnects the repository this session is open in from WebChat, so it takes no more runs.',
+    inputSchema: none,
   },
 ];
 
 async function serve() {
+  const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? '';
   const plugin = new Plugin({
     server: process.env.WEBCHAT_SERVER ?? '',
     code: process.env.WEBCHAT_PAIRING_CODE ?? '',
     dataDir,
     projectDir: process.env.CLAUDE_PROJECT_DIR ?? process.cwd(),
-    session: process.ppid,
-    forWebChat: await startedForWebChat(process.ppid),
+    claude: await claudeProgram(),
+    // The folder goes as an argument, since the background Claude's hooks get no plugin variables.
+    guard: `"${process.execPath}" "${fileURLToPath(import.meta.url)}" guard "${dataDir}"`,
   });
   // Exiting runs the exit handlers, which free the machine's watch.
   const quit = () => process.exit(0);
@@ -74,7 +85,7 @@ async function serve() {
         return { tools: TOOLS };
       case 'tools/call':
         try {
-          return { content: [{ type: 'text', text: await plugin.call(String(params.name), params.arguments ?? {}) }] };
+          return { content: [{ type: 'text', text: await plugin.call(String(params.name)) }] };
         } catch (error) {
           return { content: [{ type: 'text', text: messageOf(error) }], isError: true };
         }
@@ -101,16 +112,8 @@ async function serve() {
   lines.on('close', quit);
 }
 
-if (process.argv[2] === 'doorbell') {
-  // A monitor gets no plugin variables, so the folder comes as an argument, then the session's
-  // process id. Outside a GitHub repository nothing rings.
-  const repo = await originOf(process.cwd());
-  const session = Number(process.argv[4]);
-  const home = repo && repoHome(process.argv[3]!, repo);
-  if (home) await markMonitor(home, session);
-  process.stdout.write(home ? doorbellOf(home, session) : '/dev/null');
-} else if (process.argv[2] === 'guard') {
-  const reason = guard(JSON.parse(readFileSync(0, 'utf8')) as ToolUse, secretDirs(dataDir), readRunStates(dataDir));
+if (process.argv[2] === 'guard') {
+  const reason = guard(JSON.parse(readFileSync(0, 'utf8')) as ToolUse, secretDirs(process.argv[3] ?? process.env.CLAUDE_PLUGIN_DATA ?? ''));
   if (reason) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
 } else {
   await serve();
