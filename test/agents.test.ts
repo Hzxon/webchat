@@ -54,6 +54,17 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.equal(threadsOf([prompt, answer, reply], ME, AGENT, { r1: 'failed' }, 100)[0].state, 'unsent');
   });
 
+  test('a card draft stays a message of its own, and only the owner notes it was added (D-104)', () => {
+    const prompt = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'p1');
+    const answer = { ...say(AGENT, { kind: 'answer', to: 'p1' }), text: 'Here it is.' };
+    const draft = { ...say(AGENT, { kind: 'answer', to: 'p1', card: { kind: 'K', title: 'Bug', body: 'Seen: here.' } }, 'd1'), text: 'Card draft: Bug' };
+    const theirs = { ...say(AGENT, {}), prompt: null, added: { to: 'p1', draft: 'd1', card: 'K-9' } };
+    const mine = { ...say(ME, {}), prompt: null, added: { to: 'p1', draft: 'd1', card: 'K-3' } };
+    const [thread] = threadsOf([prompt, answer, draft, theirs, mine], ME, AGENT, {}, 100);
+    assert.deepEqual(thread.messages, [prompt, answer, draft]);
+    assert.deepEqual(thread.added, { d1: 'K-3' });
+  });
+
   test('only the owner starts or replies, only the agent answers, and only signed messages count', () => {
     const prompt = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'p1');
     const fake = say(ME, { kind: 'answer', to: 'p1' });

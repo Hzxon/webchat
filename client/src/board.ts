@@ -100,17 +100,20 @@ export function duplicates(cards: Card[]): Set<string> {
   return new Set(cards.filter((c) => c.kind && count.get(`${c.kind}-${c.number}`)! > 1).map((c) => c.id));
 }
 
+/** The status a new card of each kind starts with. */
+export const NEW_STATUS: Record<CardKind, string> = { D: 'Proposed', R: 'Idea', K: 'Open' };
+
+/** A card's text: the heading with its number and title, the status line, then what is under them. */
+export const cardText = (kind: CardKind, number: number, title: string, status: string, body: string) => `### ${kind}-${number}: ${title}\n\nStatus: ${status}.\n\n${body}`;
+
 /** What a new card starts with: the heading with its number, the status, and the fields of its kind. */
 export function cardTemplate(kind: CardKind, number: number): string {
-  const heading = `### ${kind}-${number}: Title\n\n`;
-  switch (kind) {
-    case 'D':
-      return `${heading}Status: Proposed.\n\nWhat was decided, in one or two sentences.\n\nWhy: the reason, and what else was considered.\n\nCost: what this makes harder or rules out.`;
-    case 'R':
-      return `${heading}Status: Idea.\n\nWhy: who needs this, and what they do today instead.\n\nScope:\n\n- \n\nDone when: `;
-    case 'K':
-      return `${heading}Status: Open.\n\nSeen: where and when, and how to make it happen again.\n\nCause: \n\nFix: `;
-  }
+  const body = {
+    D: 'What was decided, in one or two sentences.\n\nWhy: the reason, and what else was considered.\n\nCost: what this makes harder or rules out.',
+    R: 'Why: who needs this, and what they do today instead.\n\nScope:\n\n- \n\nDone when: ',
+    K: 'Seen: where and when, and how to make it happen again.\n\nCause: \n\nFix: ',
+  }[kind];
+  return cardText(kind, number, 'Title', NEW_STATUS[kind], body);
 }
 
 const kindOrder = (c: Card) => (c.kind ? 'DRK'.indexOf(c.kind) : 3);

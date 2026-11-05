@@ -19,7 +19,7 @@ import { ADAPTERS, createRunner, start, type Final } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
-import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, wrapChatKey } from '../shared/e2ee.ts';
+import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, textHash, wrapChatKey } from '../shared/e2ee.ts';
 import type { ChatKeyInput, CreateProjectResponse, DocDTO, PairingDTO, RunDTO, PromptDTO, RunRequest, UserDTO } from '../shared/types.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
@@ -583,7 +583,8 @@ describe('agent client (R-027)', () => {
         assert.equal((await plugin.call('status')).split('\n')[0], `Taking the cards that Alice hands to this agent in acme/app, on ${baseUrl}.`);
 
         const key = await newChatKey(alice, [alice.id, agent.id, carol.id]);
-        const general = (await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'App', memberIds: [agent.id, carol.id], key })).channel.id;
+        const app = await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'App', memberIds: [agent.id, carol.id], key });
+        const general = app.channel.id;
         await alice.sync();
         await carol.sync();
         const board = { id: newKeyId(), conversationId: general };
@@ -688,7 +689,8 @@ describe('agent client (R-027)', () => {
           return sent.clientId!;
         };
         const answers = async () => (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'answer').map((m) => m.content?.text);
-        const prompted = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now() }, 'What does sum.js do?'));
+        // The board Alice's page picked goes in the brief, and no other (D-104).
+        const prompted = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id }, 'What does sum.js do?'));
         const [chat] = (await turns()).slice(-1);
         const scratch = chat!.cwd;
         assert.ok(scratch.startsWith(path.join(await fs.realpath(os.tmpdir()), 'webchat-scratch')), 'the prompt runs in a scratch repository, not in the project');
@@ -704,6 +706,15 @@ describe('agent client (R-027)', () => {
         assert.equal(again!.cwd, scratch);
         assert.ok(again!.input.includes('Your owner replies:') && again!.input.includes('And sum.test.js?'));
         assert.deepEqual(await answers(), ['Still adds.']);
+        // A draft that changes a card names it, with the hash of the text the brief held (D-104).
+        assert.ok(chat!.input.includes('### K-7: Sums are off by one') && chat!.input.includes("TEAMMATES' CARDS START"), 'the brief holds the board, fenced');
+        const card = { kind: 'issue', title: 'Sums are off by two', body: 'Seen: in the tests.', replaces: 'K-7' };
+        await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ reply: 'Here is the change.', card }), FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'reply', to: prompted, sentAt: Date.now() }, 'Draft a change to K-7.'));
+        const seen = await textHash('### K-7: Sums are off by one\n\nStatus: Open.');
+        assert.deepEqual((await alice.sync()).filter((m) => m.senderId === agent.id).map((m) => [m.content?.text, m.content?.prompt]), [
+          ['Here is the change.', { kind: 'answer', to: prompted }],
+          ['Card draft: Sums are off by two', { kind: 'answer', to: prompted, card: { kind: 'K', title: 'Sums are off by two', body: 'Seen: in the tests.', replaces: { card: 'K-7', doc: board.id, section, seen } } }],
+        ]);
         assert.deepEqual(await branches(), before, 'nothing of the conversation was pushed');
         assert.equal(await refs(), refsBefore, 'the owner\'s checkout gained no branch or commit');
 
@@ -771,7 +782,7 @@ describe('agent client (R-027)', () => {
     let next: (signal: AbortSignal) => Promise<string> | string = () => 'It adds.';
     const answer: Answerer = ({ conversation, input, resume, signal }) => {
       calls.push({ input, resume, session: conversation.session });
-      return Promise.resolve(next(signal));
+      return Promise.resolve(next(signal)).then((reply) => ({ reply }));
     };
     const conversations = new Conversations(agent, path.join(home, 'talker-conversations.json'), answer);
     const asks = (extra: Partial<Extract<PromptDTO, { kind: 'prompt' }>> = {}): PromptDTO => ({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), ...extra });

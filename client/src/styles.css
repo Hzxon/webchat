@@ -3130,6 +3130,54 @@ a {
   position: relative;
 }
 
+.agents-draft {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agents-draft-head,
+.agents-draft-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agents-draft-label {
+  margin-top: 6px;
+}
+
+/* A paragraph the change adds or rewrites. */
+.agents-changed {
+  margin: 0 -6px;
+  padding: 0 6px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+
+.agents-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.agents-draft-actions select {
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.agents-draft-done {
+  margin: 4px 0 0;
+  color: var(--ok);
+  font-weight: 600;
+}
+
 /* Answers hold code, so they take more of the width, and a long line scrolls inside its block. */
 .agents-pane .bubble-line {
   max-width: min(92%, 760px);

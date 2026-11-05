@@ -17,6 +17,7 @@
 import {
   isRepoName,
   LIMITS,
+  type CardDraftDTO,
   type EnvelopeDTO,
   type MessageKind,
   type PublicKeysDTO,
@@ -334,6 +335,11 @@ export interface MessageContent {
   run?: RunDTO;
   /** A message of a conversation between an owner and their agent (D-102). */
   prompt?: PromptDTO;
+  /**
+   * The owner's note that their page added the card draft it names to the board, so every device of
+   * theirs knows (D-104). Outside `prompt`, which the agent would take as a reply.
+   */
+  added?: { to: string; draft: string; card: string };
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -483,11 +489,30 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
 
 /** A conversation's message, if it has the right shape. */
 export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO | undefined {
-  if (raw?.kind === 'prompt') return typeof raw.repo === 'string' && isRepoName(raw.repo) && isId(raw.sentAt) ? { kind: 'prompt', repo: raw.repo, sentAt: raw.sentAt } : undefined;
+  if (raw?.kind === 'prompt') {
+    if (typeof raw.repo !== 'string' || !isRepoName(raw.repo) || !isId(raw.sentAt)) return;
+    return { kind: 'prompt', repo: raw.repo, sentAt: raw.sentAt, ...(isId(raw.project) && { project: raw.project }) };
+  }
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
   if (raw.kind === 'reply' || raw.kind === 'cancel') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt } : undefined;
-  if (raw.kind === 'answer' || raw.kind === 'failed') return { kind: raw.kind, to };
+  if (raw.kind === 'failed') return { kind: 'failed', to };
+  if (raw.kind !== 'answer') return;
+  const card = readDraft(raw.card as Record<string, unknown> | undefined);
+  return card ? { kind: 'answer', to, card } : { kind: 'answer', to };
+}
+
+/** A card draft in an agent's answer, if it has the right shape (D-104). */
+function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | undefined {
+  const title = short(raw?.title, LIMITS.docTitleLength);
+  const body = short(raw?.body, LIMITS.messageLength);
+  // A line break in the title would write a status line of its own into the card.
+  if (!raw || (raw.kind !== 'R' && raw.kind !== 'K') || !title || /[\r\n]/.test(title) || body === undefined) return;
+  const replaces = raw.replaces as Record<string, unknown> | undefined;
+  if (!replaces) return { kind: raw.kind, title, body };
+  const card = typeof replaces.card === 'string' && /^[RK]-\d{1,6}$/.test(replaces.card) ? replaces.card : undefined;
+  const [doc, section, seen] = [short(replaces.doc, 64), short(replaces.section, 64), short(replaces.seen, 64)];
+  return card && doc && section && seen ? { kind: raw.kind, title, body, replaces: { card, doc, section, seen } } : undefined;
 }
 
 /** Keeps the parts of decrypted content that have the right shape. The sender signed it, so it is not tampered. */
@@ -499,6 +524,7 @@ function readContent(value: unknown): MessageContent {
     pull?: Partial<PullCardDTO>;
     run?: Record<string, unknown>;
     prompt?: Record<string, unknown>;
+    added?: Record<string, unknown>;
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -516,6 +542,8 @@ function readContent(value: unknown): MessageContent {
   if (run) content.run = run;
   const prompt = readPrompt(raw.prompt);
   if (prompt) content.prompt = prompt;
+  const [to, draft, card] = [short(raw.added?.to, 64), short(raw.added?.draft, 64), short(raw.added?.card, 16)];
+  if (to && draft && card) content.added = { to, draft, card };
   return content;
 }
 
@@ -601,6 +629,11 @@ export async function decryptDoc(chatKey: CryptoKey, authorSignPublic: string, m
 
 // ---------------------------------------------------------------------------------------------
 // Verification
+
+/** A text's SHA-256, such as a card's as an agent saw it, so a page can tell it changed since (D-104). */
+export async function textHash(text: string): Promise<string> {
+  return toBase64Url(await sha('SHA-256', utf8(text)));
+}
 
 /** Hex SHA-256 of a user's public keys. Changes if and only if their keys change. */
 export async function keyFingerprint(keys: PublicKeysDTO): Promise<string> {

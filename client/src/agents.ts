@@ -20,6 +20,8 @@ export interface Thread {
   state: 'working' | 'answered' | 'failed' | 'unsent' | 'ended';
   /** When its newest message was sent. */
   last: number;
+  /** The cards its drafts became on the board, by the draft's client id (D-104). */
+  added: Record<string, string>;
 }
 
 /** A conversation's state, in words, wherever the page names it. */
@@ -61,11 +63,17 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
   const threads = new Map<string, Thread>();
   for (const message of messages) {
     const prompt = message.prompt;
-    if (!prompt || message.security !== 'encrypted') continue;
+    if (message.security !== 'encrypted') continue;
+    if (message.added && message.senderId === meId) {
+      const thread = threads.get(message.added.to);
+      if (thread) thread.added[message.added.draft] = message.added.card;
+      continue;
+    }
+    if (!prompt) continue;
     if (prompt.kind === 'prompt') {
       if (message.senderId === meId && message.clientId) {
         const state = pending[message.clientId] === 'failed' ? 'unsent' : 'working';
-        threads.set(message.clientId, { root: message.clientId, conversationId: message.conversationId, repo: prompt.repo, messages: [message], state, last: message.createdAt });
+        threads.set(message.clientId, { root: message.clientId, conversationId: message.conversationId, repo: prompt.repo, messages: [message], state, last: message.createdAt, added: {} });
       }
       continue;
     }
@@ -73,7 +81,9 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     const fromMe = prompt.kind === 'reply' || prompt.kind === 'cancel';
     if (!thread || message.senderId !== (fromMe ? meId : agentId)) continue;
     const previous = thread.messages.at(-1)!;
-    if (prompt.kind === 'answer' && previous.prompt?.kind === 'answer') thread.messages[thread.messages.length - 1] = { ...previous, text: previous.text + message.text };
+    // A card draft stays a message of its own (D-104).
+    const part = (m: ChatMessage) => m.prompt?.kind === 'answer' && !m.prompt.card;
+    if (part(message) && part(previous)) thread.messages[thread.messages.length - 1] = { ...previous, text: previous.text + message.text };
     else thread.messages.push(message);
     thread.last = Math.max(thread.last, message.createdAt);
     // A cancel changes nothing until the agent says it stopped.

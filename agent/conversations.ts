@@ -6,7 +6,7 @@
 // conversation by its prompt's signed client id, as run reports name their request (D-086).
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { LIMITS } from '../shared/types.ts';
+import { LIMITS, type CardDraftDTO } from '../shared/types.ts';
 import type { AgentClient, OpenedMessage } from './client.ts';
 import { messageOf, REQUEST_TTL_MS } from './runs.ts';
 
@@ -30,10 +30,14 @@ export interface Conversation {
   /** When it last moved. */
   last: number;
   ended?: boolean;
+  /** The board its owner's page picked for the prompt, the only one its briefs hold (D-104). */
+  project?: number;
+  /** Each roadmap card in the brief, by its id, with its place and hash, so a draft that changes one names what it saw (D-104). */
+  seen?: Record<string, { doc: string; section: string; hash: string }>;
 }
 
-/** One turn: the owner's words in, the answer out. Where the background Claude runs. */
-export type Answerer = (job: { conversation: Conversation; input: string; resume: boolean; signal: AbortSignal }) => Promise<string>;
+/** One turn: the owner's words in, the answer out, with a card draft when they asked for one. Where the background Claude runs. */
+export type Answerer = (job: { conversation: Conversation; input: string; resume: boolean; signal: AbortSignal }) => Promise<{ reply: string; card?: CardDraftDTO }>;
 
 export class Conversations {
   private list: Conversation[] = [];
@@ -78,7 +82,7 @@ export class Conversations {
     const conversation =
       prompt.kind === 'prompt'
         ? prompt.repo === this.client.repo && message.clientId
-          ? { root: message.clientId, chat: message.conversationId, session: randomUUID(), answered: false, prompt: text, last: Date.now() }
+          ? { root: message.clientId, chat: message.conversationId, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project }
           : undefined
         : this.list.find((c) => c.root === prompt.to && c.chat === message.conversationId);
     // A copy the server posted again under a new id does nothing (K-47).
@@ -115,10 +119,12 @@ export class Conversations {
         await this.save();
         // Until a turn has answered, each turn starts afresh with the prompt and what came since.
         const words = conversation.answered || input === conversation.prompt ? input : `${conversation.prompt}\n\n${input}`;
-        const reply = await this.answer({ conversation, input: words, resume: conversation.answered, signal: stop.signal });
+        const { reply, card } = await this.answer({ conversation, input: words, resume: conversation.answered, signal: stop.signal });
         conversation.answered = true;
         delete conversation.prompt;
         for (const part of parts(reply)) await this.say(conversation, 'answer', part);
+        // A message of its own, so the answer's parts and the draft each fit in one (D-104).
+        if (card) await this.client.send(conversation.chat, { text: `Card draft: ${card.title}`, prompt: { kind: 'answer', to: conversation.root, card } });
       } catch (error) {
         // Claude may have kept the session it started, so a turn that starts afresh takes a new one.
         if (!conversation.answered) conversation.session = randomUUID();

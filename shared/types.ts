@@ -542,11 +542,23 @@ export interface RunCancel {
  * its own, so the agent can refuse an old one played again (K-42).
  */
 export type PromptDTO =
-  | { kind: 'prompt'; repo: string; sentAt: number }
+  | { kind: 'prompt'; repo: string; sentAt: number; project?: number }
   | { kind: 'reply'; to: string; sentAt: number }
   | { kind: 'cancel'; to: string; sentAt: number }
-  | { kind: 'answer'; to: string }
+  | { kind: 'answer'; to: string; card?: CardDraftDTO }
   | { kind: 'failed'; to: string };
+
+/**
+ * A board card an agent drafted when its owner asked (D-104): a new idea or issue, or a change to
+ * the card it replaces, named by its doc and section, with a hash of the text the agent saw. It goes
+ * on the board only when the owner's page writes it.
+ */
+export interface CardDraftDTO {
+  kind: 'R' | 'K';
+  title: string;
+  body: string;
+  replaces?: { card: string; doc: string; section: string; seen: string };
+}
 
 /**
  * A pull request shared into a chat: a snapshot of how it stood when it was shared. It travels

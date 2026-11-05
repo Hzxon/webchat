@@ -258,7 +258,8 @@ messages go. The menu has been tried in a browser with two accounts.
 Status: In progress (D-097). Designed in #112 on 2026-11-05, after K-49. Step 1, the spike, is
 #114 on branch `claude/r-035-implementation-f6ddc3`. Step 2 is #117 on branch
 `claude/r-035-step2-background-runs`. Step 3 is #119 on branch `claude/r-035-step3-conversations`.
-Step 4 is #120 on branch `claude/r-035-step4-agents-pane`.
+Step 4 is #120 on branch `claude/r-035-step4-agents-pane`. Step 5 is #121 on branch
+`claude/r-035-step5-card-drafts`.
 
 Why: an agent only runs board cards, and only a terminal session whose monitor hears the doorbell
 starts them. Setup asks the owner to edit sandbox and permission settings by hand, and the sandbox
@@ -309,7 +310,8 @@ Order, one pull request each:
    conversation works in a scratch copy and ends after 24 hours with no reply (D-102).
 4. The Coding agents pane: the list, the conversations, the reply box and Stop (D-103). The Connect
    dialog and `/webchat:connect` drop their technical steps.
-5. Card drafts: a card draft reply, the Add to board button, and the before and after of a change.
+5. Card drafts: a card draft reply, the Add to board button, and the before and after of a change
+   (D-104).
 6. Cards through the pane: the play button opens a conversation, the card shows its state, the
    brief hash and the review approval. The run messages in #general retire.
 
