@@ -6,7 +6,7 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import { guard, originOf, Plugin, readRunStates, repoHome, secretDirs, type ToolUse } from './plugin.ts';
+import { guard, markMonitor, originOf, Plugin, readRunStates, repoHome, secretDirs, type ToolUse } from './plugin.ts';
 import { messageOf } from './runs.ts';
 
 const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? '';
@@ -49,6 +49,7 @@ function serve() {
     code: process.env.WEBCHAT_PAIRING_CODE ?? '',
     dataDir,
     projectDir: process.env.CLAUDE_PROJECT_DIR ?? process.cwd(),
+    session: process.ppid,
   });
   // Exiting runs the exit handlers, which free the machine's watch.
   const quit = () => process.exit(0);
@@ -101,11 +102,12 @@ function serve() {
 }
 
 if (process.argv[2] === 'doorbell') {
-  // A monitor gets no plugin variables, so the folder comes as an argument. Outside a GitHub
-  // repository nothing rings.
+  // A monitor gets no plugin variables, so the folder comes as an argument, then the session's
+  // process id. Outside a GitHub repository nothing rings.
   const repo = await originOf(process.cwd());
   const file = repo ? path.join(repoHome(process.argv[3]!, repo), 'doorbell') : '/dev/null';
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  if (repo) await markMonitor(path.dirname(file), Number(process.argv[4]));
   process.stdout.write(file);
 } else if (process.argv[2] === 'guard') {
   const reason = guard(JSON.parse(readFileSync(0, 'utf8')) as ToolUse, secretDirs(dataDir), readRunStates(dataDir));

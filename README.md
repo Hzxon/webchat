@@ -427,8 +427,9 @@ The agent gets an account of its own, and runs only the cards you hand it.
    and your GitHub login in `~/.claude/settings.json`:
    `{ "sandbox": { "enabled": true, "filesystem": { "denyRead": ["~/.claude/plugins/data", "~/.config/gh"] } } }`.
    The plugin refuses runs until both hold.
-4. Start a session with `claude` in each repository you want the agent to work in, and leave it
-   open. Back in WebChat, approve the agent, name it, and pick the projects it joins.
+4. Start a session with `claude` in a terminal, in each repository you want the agent to work in,
+   and leave it open. The Claude desktop app starts no plugin monitor, so its sessions take no
+   runs. Back in WebChat, approve the agent, name it, and pick the projects it joins.
 
 Claude Code asks before each tool call in its default permission mode, so a run would wait for you.
 Start the session with `claude --permission-mode auto`, or `acceptEdits`, and allow the plugin's
@@ -447,6 +448,9 @@ no credentials. The plugin pushes the branch and opens a draft pull request with
 It never pushes anywhere else and never merges. It then watches the draft: when CI fails, it
 conflicts, or someone who may push reviews it, Claude gets another round, at most three. Watching
 stops when someone else pushes to it, or it is closed, merged or marked ready.
+
+After you update the plugin, quit every Claude Code session and start new ones. A session that
+keeps running can keep the old plugin's server or monitor.
 
 ### With the daemon
 

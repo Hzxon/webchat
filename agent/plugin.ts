@@ -41,6 +41,8 @@ export interface PluginOptions {
   dataDir: string;
   /** The checkout the session is open in. */
   projectDir: string;
+  /** The Claude Code session's process id: this server's parent, and the parent of the monitor's shell. */
+  session: number;
 }
 
 /** Where a run's work happens. */
@@ -137,6 +139,13 @@ export class Plugin {
     }
     this.home = repoHome(dataDir, this.repo);
     await fs.mkdir(this.home, { recursive: true, mode: 0o700 });
+    // A session whose monitor never started, as in the desktop app, or one left with the monitor of
+    // an older plugin, would ring a doorbell nobody hears. Only a session its monitor marked takes runs (D-095).
+    while (!(await heard(this.home, this.options.session))) {
+      this.problem =
+        'This session runs no WebChat monitor, so it takes no runs. Start a new session with claude in a terminal: the desktop app starts no monitor, and a plugin update reaches the monitor only in a new session.';
+      await sleep(5_000, undefined, { ref: false });
+    }
     // Two sessions in one repository would both claim its runs (D-085). The second takes over when the first closes.
     while (!(await takeLock(this.file('watch.lock')))) {
       this.problem = `Another Claude Code session in ${this.repo} takes its runs. This one takes over when that one closes.`;
@@ -244,7 +253,10 @@ export class Plugin {
     const owner = this.client?.users.get(this.client.owner!)?.displayName;
     const sandbox = await sandboxProblem(this.options.projectDir, secretDirs(this.options.dataDir));
     return [
-      this.problem || `Taking the cards that ${owner ?? 'your owner'} hands to this agent in ${this.repo}, on ${this.options.server}.`,
+      this.problem ||
+        (sandbox
+          ? 'Every card fails at once until you fix this:'
+          : `Taking the cards that ${owner ?? 'your owner'} hands to this agent in ${this.repo}, on ${this.client!.api.baseUrl}.`),
       sandbox ?? 'The sandbox keeps the shell away from the secrets.',
       ...[...this.jobs.keys()].map((id) => `Working on ${id}.`),
       `Watching ${this.watched.length} draft pull requests.`,
@@ -478,6 +490,22 @@ async function takeLock(file: string) {
 
 /** A repository's folder in the plugin's, such as `repos/acme__app` (D-094). */
 export const repoHome = (dataDir: string, repo: string) => path.join(dataDir, 'repos', repo.replace('/', '__'));
+
+/** When a process started, as ps prints it, so a later process under a reused id never passes for it. */
+const startedAt = (pid: number) => exec('ps', ['-o', 'lstart=', '-p', String(pid)]).then((r) => r.stdout.trim(), () => '');
+const monitorMark = (home: string, session: number) => path.join(home, 'monitors', String(session));
+
+/** Marks that a monitor of this Claude Code session tails the repository's doorbell (D-095). */
+export async function markMonitor(home: string, session: number) {
+  await fs.mkdir(path.dirname(monitorMark(home, session)), { recursive: true, mode: 0o700 });
+  await fs.writeFile(monitorMark(home, session), await startedAt(session));
+}
+
+/** Whether a monitor of this session marked the doorbell. A mark left by an ended session never counts. */
+async function heard(home: string, session: number) {
+  const mark = await fs.readFile(monitorMark(home, session), 'utf8').catch(() => '');
+  return mark !== '' && mark === (await startedAt(session));
+}
 
 /** The jobs running on this machine, one per repository at most, while the servers that filed them live. */
 export function readRunStates(dataDir: string): RunState[] {

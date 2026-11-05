@@ -10,7 +10,7 @@ import { after, before, describe, mock, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Api } from '../agent/api.ts';
 import { AgentClient, type OpenedMessage } from '../agent/client.ts';
-import { guard, Plugin, sandboxProblem, type RunState } from '../agent/plugin.ts';
+import { guard, markMonitor, Plugin, sandboxProblem, type RunState } from '../agent/plugin.ts';
 import { ADAPTERS, createRunner } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
@@ -470,8 +470,15 @@ describe('agent client (R-027)', () => {
     await fs.writeFile(path.join(project, '.claude', 'settings.local.json'), JSON.stringify({ sandbox }));
     try {
       const code = newPairingCode();
+      // A session whose monitor never started, as in the desktop app, would ring a doorbell nobody
+      // hears, so it takes no runs and leaves them to a session whose monitor marked it (D-095).
+      const unheard = new Plugin({ server: '', code: `${baseUrl}#${code}`, dataDir, projectDir: project, session: process.ppid });
+      void unheard.start();
+      for (let tries = 0; tries < 200 && !unheard.problem.includes('monitor'); tries++) await sleep(10);
+      assert.match(unheard.problem, /This session runs no WebChat monitor/);
+      await markMonitor(path.join(dataDir, 'repos', 'acme__app'), process.pid);
       // The page shows its address with the code, so the address setting stays empty (R-031).
-      const plugin = new Plugin({ server: '', code: `${baseUrl}#${code}`, dataDir, projectDir: project });
+      const plugin = new Plugin({ server: '', code: `${baseUrl}#${code}`, dataDir, projectDir: project, session: process.pid });
       const starting = plugin.start();
       const agent = await approve(alice, code, 'Claude Code');
       assert.equal(await starting, true);
@@ -479,6 +486,17 @@ describe('agent client (R-027)', () => {
       await plugin.client!.sync();
       await alice.sync();
       assert.deepEqual(alice.users.get(agent.id)?.agentRepos.map((seat) => [seat.repo, seat.online]), [['acme/app', true]]);
+      // The status names the address that came with the code. While the shell could read a secret,
+      // every card fails, and the status leads with that (K-49).
+      const status = async () => (await plugin.call('status', {})).split('\n');
+      assert.equal((await status())[0], `Taking the cards that Alice hands to this agent in acme/app, on ${baseUrl}.`);
+      const settings = path.join(project, '.claude', 'settings.local.json');
+      await fs.writeFile(settings, JSON.stringify({ sandbox: { enabled: true } }));
+      assert.deepEqual((await status()).slice(0, 2), [
+        'Every card fails at once until you fix this:',
+        `My sandboxed shell can read ${dataDir}. Add it to sandbox.filesystem.denyRead in ~/.claude/settings.json.`,
+      ]);
+      await fs.writeFile(settings, JSON.stringify({ sandbox }));
 
       const key = await newChatKey(alice, [alice.id, agent.id, carol.id]);
       const general = (await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'App', memberIds: [agent.id, carol.id], key })).channel.id;
@@ -580,7 +598,7 @@ describe('agent client (R-027)', () => {
       assert.equal((await fs.readFile(doorbell, 'utf8')).trim().split('\n').length, 4, 'three rings and the forged line');
 
       // A second session in this repository waits until this one closes (D-094).
-      const second = new Plugin({ server: '', code: '', dataDir, projectDir: project });
+      const second = new Plugin({ server: '', code: '', dataDir, projectDir: project, session: process.pid });
       void second.start();
       for (let tries = 0; tries < 200 && !second.problem.startsWith('Another'); tries++) await sleep(10);
       assert.match(second.problem, /Another Claude Code session in acme\/app takes its runs/);
@@ -594,7 +612,8 @@ describe('agent client (R-027)', () => {
       await git(web, 'config', `url.${webOrigin}.insteadOf`, 'https://github.com/acme/web.git');
       await fs.mkdir(path.join(web, '.claude'));
       await fs.writeFile(path.join(web, '.claude', 'settings.local.json'), JSON.stringify({ sandbox }));
-      const webSession = new Plugin({ server: '', code: '', dataDir, projectDir: web });
+      await markMonitor(path.join(dataDir, 'repos', 'acme__web'), process.pid);
+      const webSession = new Plugin({ server: '', code: '', dataDir, projectDir: web, session: process.pid });
       assert.equal(await webSession.start(), true);
       await webSession.client!.sync();
       await alice.sync();
