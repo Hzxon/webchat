@@ -126,6 +126,78 @@ Scope:
 Done when: a teammate's request runs on the owner's machine only after the owner let them in, and a
 test covers a request from someone who was not let in.
 
+### R-030: Run cards from a Claude Code plugin
+
+Status: Planned. Designed on 2026-11-05 in #99 (D-092). A spike showed that a plugin monitor
+wakes an idle session and that a forged line gets nothing.
+
+Why: an agent today is a second program. Its owner clones WebChat, signs the agent up with an
+invite code and a password, adds it to the project, compares a security code, writes
+`config.json`, and keeps `npm run agent -- watch` running beside Claude Code (R-027). Students
+want one install in the coding agent they already use, and a run they can start from the phone.
+
+How it works:
+
+- The plugin holds an MCP server, a monitor, hooks and a skill. Claude Code starts them with the
+  session, so the owner runs only `claude` in the repository and leaves it open.
+- The MCP server is the trusted part. It holds the agent's keys and uses the owner's `gh` login.
+  It checks in every 15 seconds and checks requests as D-089 says. It claims, pushes `agent/*`
+  branches, opens draft pull requests and reports.
+- The monitor runs `tail -F` on a file the MCP server writes. Each line reaches Claude as a
+  notification. A line holds a run id and a card id, never text a teammate wrote.
+- The model calls `start_run` for the card and the decisions, works in a worktree, then calls
+  `publish` and `finish`. It holds no credentials.
+- PR watching: CI failures, conflicts, and review comments from the owner or the repository's
+  writers ring the same doorbell, only for pull requests the plugin opened. A pull request gets
+  at most 3 fix attempts. Watching stops when someone else pushes to it, or it is closed, merged
+  or marked ready.
+- Pairing replaces sign-up. The owner clicks "Connect coding agent" in WebChat, pastes the code
+  into the plugin's setup dialog, and approves on the page. The page creates the agent account,
+  pins its keys and adds it to the projects the owner picks. The plugin pins the owner's keys.
+  No invite code, password or security code.
+- While the session is closed or the laptop sleeps, the play button shows the agent as asleep.
+  Claude Code on an always-on server keeps it awake.
+
+Security:
+
+- The model never sees a secret: not the agent's keys or login token, the pairing code or the
+  `gh` token. The pairing code reaches the MCP server through a sensitive `userConfig` field.
+- The model's shell runs in the Claude Code sandbox, with the network open only to the package
+  registry and the plugin's data folder unreadable. Plugin hooks keep the file tools inside the
+  run's worktree and deny web fetches during a run. A plugin cannot turn the sandbox on, so the
+  MCP server refuses runs while it is off.
+- Only the MCP server talks to WebChat and GitHub. It pushes only the run's branch, never forces
+  a push and never merges.
+- The pairing code holds 128 bits, so a server that sees the proof cannot guess it offline. It
+  works once and lapses after 10 minutes.
+- The plugin logs no decrypted text, since its error output lands in Claude Code's log files.
+- One session per machine watches for an agent, under a lock file. A run goes to the session
+  whose `origin` matches the request's signed `repo`.
+- The plugin ships as one bundled file built from a tagged release, with a pinned `version`.
+
+WebChat changes:
+
+- Pairing routes: create without a sign-in, rate-limited and lapsing in 10 minutes; approve, by
+  the owner; collect, by the plugin. An agent signs in with a token whose hash the server keeps,
+  and has no password and no key backup. Deleting an account deletes its agents.
+- `RunRequest` gains a signed `repo`, added so old requests still verify (rule 2). Reports gain
+  kinds for PR watching, and the owner can send a signed cancel.
+- The play button names an offline agent "asleep since" the time it last checked in.
+- `npm run agent` stays for runs without Claude Code, and pairs the same way.
+
+Done when: typecheck, tests and build pass. A test drives pairing, a run and a CI fix against the
+real app with a fake model. A teammate's request, a replayed request and a forged doorbell line
+each do nothing. The pairing screen and the asleep label have been tried in a browser (D-037).
+
+Open questions:
+
+- The spike ran in auto mode only. Do other permission modes stop for the plugin's tools? What
+  happens to a run when the laptop sleeps, or the session compacts?
+- `experimental.monitors` may change shape in Claude Code. Does a pinned plugin version shield
+  the owner?
+- Does Claude Code's secure storage work on a Linux server without a desktop keyring, and how does
+  the owner paste a new code to pair again?
+
 ## Ideas
 
 ### R-004: Private channels
@@ -322,6 +394,21 @@ Open questions:
   leaving? A member's runtime loses the project's key when they leave (D-044).
 
 ## Known issues
+
+### K-47: The agent runs a replayed request, and signs up over plain HTTP
+
+Status: Open. Found while designing R-030 on 2026-11-05.
+
+A run request is signed with its client id, and the database refuses a repeated one
+(`messages_by_client_id`). Only an honest server holds to that. `Runs.handle` in `agent/runs.ts`
+remembers no request it ran. So a server can post the same signed request again within its 10
+minutes, and once the first run has ended, the daemon runs it again.
+
+`Api` in `agent/api.ts` takes any server address. A sign-up to an `http://` address sends the
+login key in the clear.
+
+Fix: keep the client ids of the requests the daemon handled for 10 minutes, and refuse a repeat.
+Refuse a server address that is not `https://`, except for `localhost`.
 
 ### K-44: A reply or reaction follows the message id, which no signature covers
 

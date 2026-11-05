@@ -969,6 +969,23 @@ Cost: the owner vouches for card and decisions by clicking; a teammate's text ru
 credentials. Any client can name any owner, so a stranger's agent can show in a menu; it can read
 only what a member reads. The `agent` column of migration 13 is unused. A teammate's agent is R-029.
 
+### D-092: An agent can run as a Claude Code plugin whose server rings a doorbell
+
+Proposed 2026-11-05 in #99.
+
+An agent can run inside Claude Code as a plugin, instead of a daemon beside it (R-030). Its MCP
+server is the trusted part. It holds the agent's keys, uses the owner's `gh` login, checks requests
+as D-089 says, pushes `agent/*` branches, and watches the draft pull requests' CI, conflicts and
+reviews. It wakes the session through a plugin monitor that tails a file it writes: one line per
+event, with ids only. The model fetches the card with a tool, works sandboxed with no credentials,
+and asks the server to publish. The agent keeps its own account (D-085), created by pairing: the
+owner pastes a code from WebChat into the plugin's setup dialog and approves on the page, and both
+sides pin keys bound to the code. Once built, pairing replaces the sign-up of D-085 and the owner
+naming of D-089. Why: one install, and channels need a research-preview flag on every start.
+
+Cost: the session must stay open, interactive and sandboxed. `experimental.monitors` may change. A
+teammate's card still runs with the owner's credentials, and the owner reviews the draft.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope
