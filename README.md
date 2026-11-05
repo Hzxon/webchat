@@ -421,7 +421,8 @@ The agent gets an account of its own, and runs only the cards you hand it.
 2. In WebChat, open a project's board and choose **Connect agent**. Paste the code it shows into
    the plugin's dialog. The code starts with your WebChat's address, so the plugin knows where to
    connect. It works once, within 10 minutes. To pair again later, run
-   `/plugin configure webchat@webchat` and paste a new code.
+   `/plugin configure webchat@webchat` and paste a new code. The old agent stays, asleep, until you
+   remove it under **Connect agent**.
 3. Turn on Claude Code's sandbox with `/sandbox`, and keep the shell away from the plugin's keys
    and your GitHub login in `~/.claude/settings.json`:
    `{ "sandbox": { "enabled": true, "filesystem": { "denyRead": ["~/.claude/plugins/data", "~/.config/gh"] } } }`.

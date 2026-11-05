@@ -752,6 +752,12 @@ export function cancelRun(request: ChatMessage & { run: RunRequest }) {
   return sendContent(request.conversationId, { text, run: { kind: 'cancel', request: request.id } }, false);
 }
 
+/** Removes one of the user's agents for good (R-033). Its chats get new keys, as when anyone leaves. */
+export async function removeAgent(agent: UserDTO) {
+  await api.removeAgent(agent.id);
+  void syncNow();
+}
+
 /**
  * The coding agent's half of a pairing, once it sent one: its keys, which the code proves (R-030,
  * D-093). Null while it has not. The code stays in this page: the server sees only a hash of it.

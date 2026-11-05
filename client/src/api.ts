@@ -170,6 +170,7 @@ export const api = {
   disconnectGithub: () => request<GithubDTO>('DELETE', '/github'),
   pairing: (id: string) => request<PairingDTO | undefined>('GET', `/pairings/${id}`),
   approvePairing: (id: string, input: ApprovePairingInput) => request<UserDTO>('POST', `/pairings/${id}/approve`, input),
+  removeAgent: (id: number) => request<void>('DELETE', `/agents/${id}`),
 };
 
 /** Tells the server this tab closed. A beacon still gets sent while the page unloads. */

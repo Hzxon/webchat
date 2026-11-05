@@ -198,6 +198,19 @@ Open questions:
 - Does Claude Code's secure storage work on a Linux server without a desktop keyring? A new code
   pasted with `/plugin configure webchat@webchat` pairs again at the next session start.
 
+### R-033: The owner removes an agent
+
+Status: In progress on `claude/r033-remove-agent` in #105.
+
+Why: a new pairing code makes a new agent account. The old one stayed in the play menu, asleep,
+and only deleting the owner's own account removed it.
+
+Scope: Connect agent lists the owner's agents, each with a Remove button. Removing deletes the
+agent's account the way account deletion does (D-088): it leaves every chat, which gets a new key.
+It also loses its owner, so no menu offers it again. Its sessions stop at their next check-in.
+
+Done when: a test removes an agent, and a teammate cannot. The list has been tried in a browser.
+
 ### R-031: The pairing code carries the WebChat address
 
 Status: In progress on `claude/r031-pairing-address` in #101 (D-093).

@@ -1121,6 +1121,21 @@ export async function openDb(sql: Sql) {
       });
     },
 
+    /**
+     * Deletes an agent its owner removes (R-033): it leaves every chat as a deleted account does, and
+     * loses its owner, so no menu offers it again. False when it is not this owner's.
+     */
+    removeAgent: (ownerId: number, agentId: number) =>
+      sql.transaction(async (tx) => {
+        const agent = await one(
+          tx.query<UserRow>('SELECT * FROM webchat.users WHERE id = $1 AND agent_owner = $2 AND deleted_at IS NULL FOR UPDATE', [agentId, ownerId]),
+        );
+        if (!agent) return false;
+        if (!(await removeAccount(tx, agentId))) throw new Error(`Agent ${agentId} owns a project or group with others in it.`);
+        await tx.query('UPDATE webchat.users SET agent_owner = NULL WHERE id = $1', [agentId]);
+        return true;
+      }),
+
     /** Files the agent's half of a pairing (R-030). False when the code was used already. */
     createPairing: async (input: PairingInput, loginHash: string) =>
       (
