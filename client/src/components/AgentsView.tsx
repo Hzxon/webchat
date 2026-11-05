@@ -263,7 +263,8 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
             <div key={message.clientId ?? message.id} className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}>
               <div className="bubble-line">
                 <div className={`bubble ${message.prompt?.kind === 'failed' || message.run?.kind === 'failed' ? 'agents-failed' : ''}`}>
-                  {mine ? (
+                  {/* A review is teammates' text that would run with the owner's login, so nothing of it hides in Markdown. */}
+                  {mine || message.run?.kind === 'review' ? (
                     <span className="bubble-text">{message.text}</span>
                   ) : message.prompt?.kind === 'answer' && message.prompt.card ? (
                     <AgentDraft message={message} draft={message.prompt.card} thread={thread} agentId={agentId} />
@@ -280,7 +281,7 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
               </div>
               {message === review && !notNow && (
                 <div className="agents-draft-actions">
-                  <button className="button-primary" onClick={() => void askFix(thread.conversationId, request!.id, '')}>
+                  <button className="button-primary" disabled={!!blocked} onClick={() => void askFix(thread.conversationId, request!.id, '', review.id)}>
                     Let the agent fix it
                   </button>
                   <button className="button-secondary" onClick={() => setNotNow(true)}>
@@ -322,7 +323,8 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
               name={`agents:${thread.root}`}
               placeholder={request ? 'Ask for changes to the draft' : 'Reply'}
               canSend={!blocked && !working}
-              onSend={(text) => (request ? askFix(thread.conversationId, request.id, text) : tellAgent(thread.conversationId, thread.root, 'reply', text))}
+              // While a review waits, a reply is the go for it too, unless the owner said Not now.
+              onSend={(text) => (request ? askFix(thread.conversationId, request.id, text, notNow ? undefined : review?.id) : tellAgent(thread.conversationId, thread.root, 'reply', text))}
               stop={working ? { stopping, onStop: stop } : undefined}
             />
           </>

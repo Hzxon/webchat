@@ -83,8 +83,9 @@ export const agentChats = (state: Pick<State, 'users' | 'me' | 'conversations'>)
  */
 export function threadsOf(messages: ChatMessage[], meId: number, agentId: number, pending: State['pending'] = {}, now = Date.now()): Thread[] {
   const threads = new Map<string, Thread>();
-  // A card's thread by its request's message id, which the reports name.
+  // A card's thread by its request's message id, which the reports name, and those with a draft.
   const requests = new Map<number, Thread>();
+  const drafted = new Set<Thread>();
   for (const message of messages) {
     const prompt = message.prompt;
     if (message.security !== 'encrypted') continue;
@@ -109,7 +110,12 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
       if (!thread || message.senderId !== (fromMe ? meId : agentId)) continue;
       thread.messages.push(message);
       thread.last = Math.max(thread.last, message.createdAt);
-      thread.state = RUN_STATE[run.kind] ?? thread.state;
+      if (run.kind === 'done') drafted.add(thread);
+      let state = RUN_STATE[run.kind];
+      // A round that failed leaves the draft it worked on; a go that did not send is no round.
+      if (run.kind === 'failed' && drafted.has(thread)) state = 'draft';
+      if (fromMe && pending[message.clientId ?? ''] === 'failed') state = 'unsent';
+      thread.state = state ?? thread.state;
       continue;
     }
     if (!prompt) continue;
@@ -166,3 +172,6 @@ export const runSignature = (state: State) =>
     .join();
 
 export const seatKey = (seat: Seat) => `${seat.agent.id}:${seat.repo}`;
+
+/** Messages of several chats in the order they were sent: by id, then those still sending, as the store keeps them. */
+export const inOrder = (messages: ChatMessage[]) => [...messages.filter((m) => m.id > 0).sort((a, b) => a.id - b.id), ...messages.filter((m) => m.id < 0)];

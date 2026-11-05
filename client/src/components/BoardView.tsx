@@ -22,7 +22,7 @@ import {
   type CardKind,
   type CardRun,
 } from '../board';
-import { useAgentChats } from '../agents';
+import { inOrder, useAgentChats } from '../agents';
 import { syncNow } from '../chat';
 import { beginEditing, createDoc, loadSections, markSeen, newSectionId, replaceSection, type Editing } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
@@ -113,7 +113,8 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
   const messages = useAppState((s) => s.messages);
   // A card's runs are messages in the user's chats with their agents, which load at start (D-105).
   const chats = useAgentChats();
-  const agentMessages = useMemo(() => chats.flatMap((c) => messages[c.id] ?? []), [chats, messages]);
+  // In id order across chats, so the newest request of a card is the one that counts.
+  const agentMessages = useMemo(() => inOrder(chats.flatMap((c) => messages[c.id] ?? [])), [chats, messages]);
   // Read on every render, so a request nobody answered stops blocking once its time is up.
   const runs = doc && meId && column === 'roadmap' ? cardRuns(agentMessages, meId, doc.id, pending, Date.now()) : null;
   const canRun = column === 'roadmap' && !!doc && choices.length > 0;

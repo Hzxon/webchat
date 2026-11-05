@@ -774,9 +774,11 @@ export async function requestRun(docId: string, card: Card, runtime: UserDTO, re
 }
 
 /** The owner's go for another round on a run's draft, after a review or with their own words (D-105). */
-export function askFix(conversationId: number, request: number, note: string) {
+export function askFix(conversationId: number, request: number, note: string, review?: number) {
   const fix: RunDTO = { kind: 'fix', request, sentAt: Date.now() };
   if (note.trim()) fix.note = note.trim();
+  // The review it approves, so only the text the owner saw runs (D-105).
+  if (review !== undefined) fix.review = review;
   return sendContent(conversationId, { text: note.trim() || 'Let the agent fix it.', run: fix }, false);
 }
 
@@ -970,7 +972,7 @@ export function retryMessage(message: ChatMessage) {
   const content: MessageContent = { text: message.text };
   if (message.replyTo) content.replyTo = message.replyTo;
   if (message.pull) content.pull = message.pull;
-  if (message.run) content.run = message.run;
+  if (message.run) content.run = 'sentAt' in message.run ? { ...message.run, sentAt: Date.now() } : message.run;
   // A fresh send time, or the agent would refuse a retry made 10 minutes later. The client id still makes it one message (D-061, K-47).
   if (message.prompt) content.prompt = 'sentAt' in message.prompt ? { ...message.prompt, sentAt: Date.now() } : message.prompt;
   if (message.added) content.added = message.added;

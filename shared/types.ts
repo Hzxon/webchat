@@ -555,6 +555,8 @@ export interface RunCancel {
 export interface RunFix {
   kind: 'fix';
   request: number;
+  /** The review report it approves: only the text that report showed runs, never what came after. */
+  review?: number;
   note?: string;
   sentAt: number;
 }

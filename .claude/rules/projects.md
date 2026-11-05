@@ -57,4 +57,4 @@ docs/decisions.md that explains it.
 - A conversation's brief holds only the board its owner's page named in the signed prompt, never every project the agent is in: anyone can add an agent to their project (D-104).
 - In the plugin only the server pushes: the run's `agent/*` branch, never forced, and it never merges. Its git in a worktree runs with hooks off, since the worktree's files are the model's (D-092).
 - A plugin's worktree is under `.claude/worktrees`, where the sandboxed shell may write. A run never pushes to main and fails after 2 hours of silence or with no commits (D-092).
-- A review by anyone but the owner waits for the owner's `fix` message; the owner's own rounds count toward no limit, and the daemon takes no cards (D-105).
+- A review by anyone but the owner waits for the owner's `fix` message, which names the review's report: only the text that report showed runs, so nothing posted after the owner looked rides along. The owner's own rounds count toward no limit, and the daemon takes no cards (D-105).

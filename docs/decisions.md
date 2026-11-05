@@ -1169,10 +1169,11 @@ holds, without the superseded ones, raw, each teammate's passage marked with the
 that the agent follows it with the owner's GitHub login. Start sends the request in the owner's
 direct chat with the agent, with the hash of that brief and the card's status; the agent refuses one
 without the hash or whose brief changed. Plugin sessions name `AGENT_LEVEL.cards` only while `gh` is
-signed in. A review by anyone but the owner waits for the owner's go, its comments in full; CI,
-conflicts and the owner's reviews start a round on their own, and the owner's rounds count toward no
-limit. Watching outlasts Ready for review and ends with a report. The daemon takes no cards. Why:
-text teammates wrote runs with the owner's login, so the owner sees it first.
+signed in. A review by anyone but the owner waits for the owner's go, which names the review's
+report; only the text that report showed runs. CI, conflicts and the owner's reviews start a round
+on their own, and the owner's rounds count toward no limit. Watching outlasts Ready for review and
+ends with a report. The daemon takes no cards. Why: text teammates wrote runs with the owner's
+login, so the owner sees it first.
 
 Cost: a card edited between the brief and the claim must be started again. Codex and Hermes no
 longer run cards.

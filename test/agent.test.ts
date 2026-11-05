@@ -620,8 +620,10 @@ describe('agent client (R-027)', () => {
         await fs.writeFile(ghState, JSON.stringify({ ...gh, pulls: [{ ...gh.pulls[0], view: reviewed }] }));
         await plugin.pollPulls();
         assert.equal((await turns()).length, 2, 'nothing runs before the go');
-        assert.deepEqual(await reportsOn(asked), ['bob asked for changes on acme/app#1:\n\n- bob: Please rename sum.']);
-        await alice.send(general, { text: 'Let the agent fix it', run: { kind: 'fix', request: asked, note: 'Call it add.', sentAt: Date.now() } });
+        const [review] = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.run?.kind === 'review');
+        assert.equal(review?.content?.text, 'bob asked for changes on acme/app#1:\n\n- bob: Please rename sum.');
+        // A go without the review runs only Alice's words, and none of Bob's text she did not approve.
+        await alice.send(general, { text: 'Let the agent fix it', run: { kind: 'fix', request: asked, review: review!.id, note: 'Call it add.', sentAt: Date.now() } });
         await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'done', note: 'Renamed.' }) }, async () => (await checkIn()).handled);
         const [, , go] = await turns();
         assert.ok(go!.input.includes('Please rename sum.') && go!.input.includes('Call it add.'), "the round has the review and Alice's words");

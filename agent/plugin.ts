@@ -71,10 +71,13 @@ interface Watched extends Place {
   seenUpdate?: string;
   /** The background Claude session that made it, which each round of fixes resumes. None before R-035. */
   session?: string;
-  /** A review by someone other than the owner, waiting for the owner's go (D-105). */
-  waiting?: { line: string; details: string };
-  /** The owner's go, with their own words or none, which the next look at the pull requests takes up. */
-  go?: string;
+  /**
+   * Reviews by others than the owner, each waiting for the owner's go by the id of the report that
+   * showed it, with exactly the text that report showed (D-105).
+   */
+  waiting?: Array<{ report: number; line: string; details: string }>;
+  /** The owner's go, with the review it approves and their own words, which the next look takes up. */
+  go?: { review?: number; note: string };
 }
 
 /** How a background Claude's turn ends (D-097). */
@@ -261,15 +264,17 @@ export class Plugin {
 
   /** The owner's go for another round on a draft: after a review waits, or with their own words (D-105). */
   private async go(message: OpenedMessage, fix: RunFix) {
-    // Only the owner's, once, and fresh, as for a request (D-089, K-47, K-42).
-    if (message.security !== 'encrypted' || message.senderId !== this.client!.owner || Math.abs(Date.now() - fix.sentAt) > REQUEST_TTL_MS) return;
-    if (!this.client!.remember(message.clientId ?? '', fix.sentAt)) return;
+    // Only the owner's, once, as for a request (D-089, K-47). Every repository's session hears it,
+    // so only the one watching the draft acts or answers.
+    if (message.security !== 'encrypted' || message.senderId !== this.client!.owner || !this.client!.remember(message.clientId ?? '', fix.sentAt)) return;
     const pull = this.watched.find((w) => w.taken.message === fix.request);
-    if (!pull) {
-      const text = 'I am no longer watching that draft, so there is nothing to change. Start the card again.';
-      return void (await this.client!.send(message.conversationId, { text, run: { kind: 'failed', request: fix.request, note: text } }));
+    if (!pull) return;
+    // A signed time, so an old go is not played again (K-42).
+    if (Math.abs(Date.now() - fix.sentAt) > REQUEST_TTL_MS) {
+      const text = 'I got this more than 10 minutes after you sent it. Ask again.';
+      return void (await this.runs!.report(pull.taken, { kind: 'failed', note: text }, text));
     }
-    pull.go = fix.note ?? '';
+    pull.go = { review: fix.review, note: fix.note ?? '' };
     await this.saveWatched();
     await this.pollPulls();
   }
@@ -437,12 +442,14 @@ export class Plugin {
           await this.runs.report(pull.taken, { kind: 'ended', note: ended, pull: pull.pull }, `I stopped watching ${pull.pull.repo}#${pull.pull.number}: ${ended}.`);
           continue;
         }
-        if (pull.go !== undefined) {
-          const asked = pull.waiting ?? { line: 'you asked for changes', details: '' };
-          const why = { line: asked.line, details: [asked.details, pull.go && `Your owner asks:\n\n${pull.go}`].filter(Boolean).join('\n\n') };
+        if (pull.go) {
+          // Only the review the owner approved, as it showed it, and their words; a reply alone runs only those.
+          const asked = pull.go.review === undefined ? undefined : pull.waiting?.find((w) => w.report === pull.go!.review);
+          const why = { line: asked?.line ?? 'you asked for changes', details: [asked?.details, pull.go.note && `Your owner asks:\n\n${pull.go.note}`].filter(Boolean).join('\n\n') };
+          pull.waiting = pull.waiting?.filter((w) => w !== asked);
           delete pull.go;
-          delete pull.waiting;
           await this.saveWatched();
+          if (!why.details) continue;
           await this.runs.follow(pull.taken, pull.request, why.line, { branch: pull.branch, pull: pull.pull }, (signal) => this.fix(pull, why, signal));
           continue;
         }
@@ -500,10 +507,11 @@ export class Plugin {
     const others = notes.filter((n) => n.author !== login);
     if (others.length) {
       const names = [...new Set(others.map((n) => n.author))].join(', ');
-      pull.waiting = { line: `review from ${names}`, details: list(others) };
-      await this.saveWatched();
       const text = `${names} asked for changes on ${pull.pull.repo}#${pull.pull.number}:\n\n${list(others)}`.slice(0, LIMITS.messageLength);
-      await this.runs!.report(pull.taken, { kind: 'review', note: `${names} asked for changes`, pull: pull.pull }, text);
+      const shown = await this.runs!.report(pull.taken, { kind: 'review', note: `${names} asked for changes`, pull: pull.pull }, text);
+      // The go runs this text, as the report showed it, cut where it was cut.
+      pull.waiting = [...(pull.waiting ?? []), { report: shown.id, line: `review from ${names}`, details: text }];
+      await this.saveWatched();
     }
     return why.length ? { line: why.join('; '), details: details.join('\n\n') } : null;
   }

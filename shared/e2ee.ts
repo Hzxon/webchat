@@ -480,7 +480,7 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
   if (raw.kind === 'fix') {
     if (!isId(raw.request) || !isId(raw.sentAt)) return;
     const note = short(raw.note, LIMITS.messageLength);
-    return { kind: 'fix', request: raw.request, sentAt: raw.sentAt, ...(note && { note }) };
+    return { kind: 'fix', request: raw.request, sentAt: raw.sentAt, ...(note && { note }), ...(isId(raw.review) && { review: raw.review }) };
   }
   const kind = REPORT_KINDS.find((k) => k === raw.kind);
   if (!kind || !isId(raw.request)) return;
