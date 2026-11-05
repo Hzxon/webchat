@@ -7,6 +7,7 @@ import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import type { RunRequest } from '../shared/types.ts';
 import type { AgentClient } from './client.ts';
@@ -139,8 +140,7 @@ export async function loadRunnerConfig(dir: string): Promise<RunnerConfig> {
  */
 export async function addWorktree(repo: string, request: RunRequest, runsDir: string) {
   const git = (...args: string[]) => run('git', ['-C', repo, ...args]);
-  await git('fetch', '-q', 'origin');
-  const base = await git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD').then((r) => r.stdout.trim(), () => 'origin/main');
+  const base = await fetchOrigin(repo);
   const slug = slugOf(`${request.card}-${request.title}`);
   // A card run again gets a branch of its own, next to the one its earlier run left, here or on origin.
   let branch = `agent/${slug}`;
@@ -149,6 +149,16 @@ export async function addWorktree(repo: string, request: RunRequest, runsDir: st
   await fs.mkdir(runsDir, { recursive: true });
   await git('worktree', 'add', '-q', '-b', branch, dir, base);
   return { branch, dir, base };
+}
+
+/** Fetches origin, and returns its default branch, such as `origin/main`. */
+export async function fetchOrigin(repo: string) {
+  // Two fetches at once in one repository fail one of them on a ref lock; a second try gets through.
+  await run('git', ['-C', repo, 'fetch', '-q', 'origin']).catch(async () => {
+    await sleep(1_000);
+    await run('git', ['-C', repo, 'fetch', '-q', 'origin']);
+  });
+  return run('git', ['-C', repo, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).then((r) => r.stdout.trim(), () => 'origin/main');
 }
 
 /** Every member's decisions on the project's board, as Markdown: they are the team's, and the owner runs cards in this team (D-089). */

@@ -257,7 +257,7 @@ messages go. The menu has been tried in a browser with two accounts.
 
 Status: In progress (D-097). Designed in #112 on 2026-11-05, after K-49. Step 1, the spike, is
 #114 on branch `claude/r-035-implementation-f6ddc3`. Step 2 is #117 on branch
-`claude/r-035-step2-background-runs`.
+`claude/r-035-step2-background-runs`. Step 3 is #119 on branch `claude/r-035-step3-conversations`.
 
 Why: an agent only runs board cards, and only a terminal session whose monitor hears the doorbell
 starts them. Setup asks the owner to edit sandbox and permission settings by hand, and the sandbox
@@ -304,7 +304,8 @@ Order, one pull request each:
    (K-55).
 2. The plugin runs cards in the background, and the doorbell goes. Cards work as before. A session
    takes part once its owner connected the repository with `/webchat:connect` (D-101).
-3. Conversations: the `prompt` message, a Claude session per conversation, replies and resume.
+3. Conversations: the `prompt` message, a Claude session per conversation, replies and resume. Each
+   conversation works in a scratch copy and ends after 24 hours with no reply (D-102).
 4. The Agents pane: the list, the conversations, the reply box and cancel.
 5. Card drafts: a card draft reply, the Add to board button, and the before and after of a change.
 6. Cards through the pane: the play button opens a conversation, the card shows its state, the
@@ -320,7 +321,6 @@ Open questions:
 
 - A reply arrives at the next 15-second check-in. Is that fast enough, or does an open conversation
   need faster check-ins?
-- How long does a conversation wait for the owner before it fails? The proposal is 24 hours.
 - The shell reaches only the npm registry. Do projects on Yarn or pip need their registries too?
 
 ## Ideas

@@ -1103,6 +1103,24 @@ Cost: the owner connects each repository once. A session in an unconnected repos
 mark every 5 seconds. A disconnected repository stays in the play menu,
 shown asleep, for 30 days after its last check-in (D-094).
 
+### D-102: A conversation is a prompt and the messages that name it
+
+Proposed 2026-11-06 in #119 (R-035).
+
+The owner talks with their agent in their direct chat. A prompt is a message whose sealed `prompt`
+field names the repository. Replies, cancels, answers and failures name the prompt's client id,
+which its sender signs, unlike the server's message id. The agent heeds only its owner's prompts,
+replies and cancels, in that direct chat, with a signed send time within 10 minutes, once each
+(D-089, K-47). The session open in the named repository answers. Each conversation is one background
+Claude session in a scratch copy: a repository of its own in the temp folder, holding only the
+latest commit of origin's default branch, so a turn moves none of the owner's branches and nothing
+from it is pushed. A reply resumes the session; turns run one at a time, and a cancel stops them. A
+long answer comes as messages of at most 4,000 characters. A conversation left for 24 hours ends,
+and its copy goes. Why: the owner asks from a phone, and the chat keeps it encrypted.
+
+Cost: an answer waits up to 15 seconds for a check-in, plus the turn. Each conversation fetches a
+copy of the default branch. An answer cut inside a code block shows as two messages.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope
