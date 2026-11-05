@@ -193,6 +193,8 @@ export function createRunner(config: RunnerConfig, client: AgentClient, runsDir:
  */
 export function start(command: string, args: string[], cwd: string, signal: AbortSignal, read: (line: string) => Final | undefined, input?: string) {
   return new Promise<Final>((resolve, reject) => {
+    // A cancel that came while the worktree was being made has aborted already, and fires no event.
+    if (signal.aborted) return reject(new Error('the owner cancelled the run.'));
     const child = spawn(command, args, { cwd, stdio: ['pipe', 'pipe', 'inherit'] });
     // An agent that exits before it reads its input closes the pipe; its exit says why.
     child.stdin.on('error', () => undefined).end(input);

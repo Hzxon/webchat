@@ -153,7 +153,7 @@ What it does not protect against:
   `~/.webchat/<name>/account.json`. Both files are readable only by their owner, but not
   encrypted. Anyone who can read one can read what the agent's projects write. The server knows
   which accounts are agents, whose agent each one is, when one is busy with a card, and which
-  GitHub repository its Claude Code session is open in, for sessions started for WebChat only.
+  GitHub repository its Claude Code session is open in, for repositories you connected only.
   It sees a run as messages like any other.
   Pairing shows it the agent's public keys and proofs made from the code, never the code.
 - **People who leave keep the keys they had.** Someone who left or was removed could still read the
@@ -425,37 +425,43 @@ The agent gets an account of its own, and runs only the cards you hand it.
    connect. It works once, within 10 minutes. To pair again later, run
    `/plugin configure webchat@webchat` and paste a new code. The old agent stays, asleep, until you
    remove it under **Connect agent**.
-3. Turn on Claude Code's sandbox with `/sandbox`, and keep the shell away from the plugin's keys
-   and your GitHub login in `~/.claude/settings.json`:
-   `{ "sandbox": { "enabled": true, "filesystem": { "denyRead": ["~/.claude/plugins/data", "~/.config/gh"] } } }`.
-   The plugin refuses runs until both hold.
-4. Start a session with `WEBCHAT_AGENT=1 claude` in a terminal, in each repository you want the
-   agent to work in, and leave it open. Only such a session pairs, checks in or hears a run. Your
-   other sessions, in any repository, stay unseen by WebChat, even with the plugin on. A
-   repository's `.claude/settings.json` cannot turn this on: the plugin reads the environment the
-   session started with. The Claude desktop app starts no plugin monitor, so its sessions take no
-   runs. Back in WebChat, approve the agent, name it, and pick the projects it joins.
+3. In Claude Code, open a session in each repository you want the agent to work in, and type
+   `/webchat:connect`. Approve the `connect` tool: Claude Code asks about it on every call. The
+   plugin remembers the repository, so later sessions in it take part too. Sessions in other
+   repositories stay unseen by WebChat, even with the plugin on. This works in the terminal and in
+   the Claude desktop app. To undo it, ask Claude to disconnect WebChat. Back in WebChat, approve
+   the agent, name it, and pick the projects it joins.
 
-Claude Code asks before each tool call in its default permission mode, so a run would wait for you.
-Start the session with `claude --permission-mode auto`, or `acceptEdits`, and allow the plugin's
-tools in the repository's `.claude/settings.local.json`:
-`{ "permissions": { "allow": ["mcp__plugin_webchat_webchat__*"] } }`. On Linux without a desktop
-keyring, Claude Code keeps the pairing code in `~/.claude/.credentials.json`, readable only by you.
-The code works once, so it is useless after pairing.
+On Linux without a desktop keyring, Claude Code keeps the pairing code in
+`~/.claude/.credentials.json`, readable only by you. The code works once, so it is useless after
+pairing.
 
 On a roadmap card, the play button lists your agents once for each repository a session is open
-in. One that is not checking in shows as asleep since its last check-in: a run needs the session
+in. One that is not checking in shows as asleep since its last check-in: a run needs a session
 open and the laptop awake. A second session in the same repository waits, and takes over when the
 first closes. When you hand a card to one, the plugin checks that you sent it, adds a git worktree
-inside the repository, and wakes that session. A run that no session starts within 30 minutes
-fails. Claude works in that worktree, in the sandbox, with
-no credentials. The plugin pushes the branch and opens a draft pull request with your `gh` login.
-It never pushes anywhere else and never merges. It then watches the draft: when CI fails, it
-conflicts, or someone who may push reviews it, Claude gets another round, at most three. Watching
-stops when someone else pushes to it, or it is closed, merged or marked ready.
+inside the repository, and starts a background Claude there. It runs apart from your own sessions,
+which keep their settings. It reads none of your Claude Code settings and none of the repository's
+hooks or `.mcp.json`.
+
+The background Claude runs in a sandbox that fails closed: if the sandbox cannot start, the run
+does not. Its shell reaches only the npm registry. It cannot read the plugin's keys, the folder of
+`gh`, the macOS keychain, Claude Code's `session-env` folder or the rest of your home folder. The
+`session-env` folder is where SessionStart hooks leave the environment, tokens included. The shell
+can read the repository, its `.git` and temporary folders. So the plugin refuses a run when
+origin's https address holds a login. The shell gets no environment variable named like a token,
+secret, password, API key, access key, private key, credential or auth. It gets none that holds a
+known token prefix or a password in a URL. It can search the web and read pages, so a page it reads
+could make it leak the repository's code. The card goes in on stdin, and the turn ends with a JSON answer.
+
+The plugin then pushes the `agent/*` branch, never forced, and opens a draft pull request with your
+`gh` login. It never pushes anywhere else and never merges. It then watches the draft: when CI
+fails, it conflicts, or someone who may push reviews it, the same background Claude session gets
+another round, at most three. Watching stops when someone else pushes to it, or it is closed,
+merged or marked ready.
 
 After you update the plugin, quit every Claude Code session and start new ones. A session that
-keeps running can keep the old plugin's server or monitor.
+keeps running can keep the old plugin's server.
 
 ### With the daemon
 
@@ -529,7 +535,7 @@ server/   Express API, Postgres queries, Web Push sender, alerts through Bark
 client/   React app (Vite), the service worker (client/src/sw.ts), and the key store (client/src/e2ee)
 shared/   Types and the end-to-end encryption code shared by server, client, and service worker
 agent/    The coding agent's account, daemon (npm run agent) and Claude Code plugin server
-plugin/   The Claude Code plugin: manifest, monitor, guard hook and skill, around agent/mcp.ts
+plugin/   The Claude Code plugin: manifest, guard hook and connect skill, around agent/mcp.ts
 test/     Integration tests (node:test)
 scripts/  Icon generator (npm run icons) and the Vercel build skip for release commits
 docs/     Decisions and roadmap, the source of truth for anyone changing the code

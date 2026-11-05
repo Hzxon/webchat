@@ -968,22 +968,21 @@ status. Why: a username allow list trusts the server (K-42, K-45).
 Cost: the owner vouches for card and decisions by clicking; a teammate's text runs with the owner's
 credentials. The `agent` column of migration 13 is unused. A teammate's agent is R-029.
 
-### D-092: An agent can run as a Claude Code plugin whose server rings a doorbell
+### D-092: An agent can run as a Claude Code plugin
 
-Accepted 2026-11-05 in #100, proposed in #99.
+Accepted 2026-11-05 in #100, proposed in #99. Its runs moved to a background Claude in #117.
 
 An agent can run inside Claude Code as the plugin in `plugin/` (R-030). Its MCP server,
 `agent/plugin.ts`, is the trusted part: it keeps the agent's keys in the plugin's data folder, uses
 the owner's `gh` login, checks requests as D-089 says, adds a worktree under `.claude/worktrees`
-and pushes only that `agent/*` branch, never forced. A monitor tails a file the server writes, with
-ids only; `start_run` refuses an id the server did not file. The model works sandboxed with no
-credentials. A guard hook keeps file tools from the secrets, and in the worktree with no web during
-a run. Runs wait until the sandbox is on and `denyRead` covers the secrets. A draft gets three
-rounds of fixes for failed CI, conflicts and reviews by writers. Why: one install, and channels
-need a flag on every start.
+and pushes only that `agent/*` branch, never forced and with git hooks off. The model works in a
+background Claude with no credentials (D-097), and the owner's own sessions keep their settings. A
+guard hook keeps every session's file tools from the secrets. A draft gets three rounds of fixes
+for failed CI, conflicts and reviews by writers, each a turn of the run's Claude session. Why: one
+install, and channels need a flag on every start.
 
-Cost: the session must stay open, and one per machine watches. `experimental.monitors` may change.
-A teammate's card runs with the owner's credentials; the owner reviews the draft.
+Cost: a session must stay open in the repository. A teammate's card runs with the owner's
+credentials; the owner reviews the draft.
 
 ### D-093: An agent pairs through a one-time code, and runs only in the repository its owner signed
 
@@ -999,39 +998,25 @@ name the GitHub repository its session is open in; the page signs the one its me
 request, and the plugin runs it only there. An agent remembers each request's signed client id while
 it could run, across restarts (K-47). Why: no invite code, password or security code to compare.
 
-Cost: the server sees the repository an agent's session is in, for sessions started for WebChat
-(D-098). Deleting an account deletes its
-agents. A new code makes a new account, and the old one stays, asleep.
+Cost: the server sees the repository an agent's session is in, for repositories its owner
+connected (D-101). Deleting an account deletes its agents. A new code makes a new account, and the old one stays, asleep.
 
 ### D-094: Each repository's Claude Code session takes that repository's runs
 
-Accepted 2026-11-05 in #104.
+Accepted 2026-11-05 in #104. The doorbell went in #117 (D-097).
 
-An agent's Claude Code sessions each take the runs of the repository they are open in (R-032). A
-session checks in with its repository, which `agent_repos` keeps with its own busy flag and last
-check-in, and the play menu lists one entry per repository. The plugin keeps a folder per repository
-in its data folder: a copy of the account, a lock, a doorbell and the watched pull requests, so no
-two sessions write one file. The monitor asks the plugin for its repository's doorbell, so a run
-wakes only that session, and a session says nothing on another repository's request. A second
-session in one repository takes over when the first closes. A run nobody starts fails after 30
-minutes. Why: students keep several repositories open, and the first session to start took all.
+An agent's Claude Code sessions each take the runs of the repository they are open in (R-032), once
+its owner connected it (D-101). A session checks in with its repository, which `agent_repos` keeps
+with its own busy flag and last check-in, and the play menu lists one entry per repository. The
+plugin keeps a folder per repository in its data folder: the connected mark, a copy of the account,
+a lock, its Claude's settings and the watched pull requests, so no two sessions write one file. A
+session says nothing on another repository's request. A second session in one repository takes over
+when the first closes. Why: students keep several repositories open, and the first session to start
+took all.
 
-Cost: a request for a repository with no open session waits until the owner cancels it. The
-`agent_repo` column of migration 17 is unused. A repository unseen for 30 days leaves the menu.
-
-### D-095: A Claude Code session takes runs only while its own monitor hears the doorbell
-
-Accepted 2026-11-05 in #108.
-
-The plugin's monitor passes its session's process id, `$PPID`, to the doorbell command. That writes
-a mark in the repository's `monitors/` folder holding the session's start time from `ps`. The MCP
-server, a child of the same session, takes the repository's lock only once it finds its session's
-mark (K-49). Why: the Claude desktop app starts no plugin monitor, and a session updated in place
-keeps the monitor it started with, which may tail an old doorbell. Both took the lock, so their runs
-rang where nobody heard and failed after 30 minutes, while a terminal session there waited.
-
-Cost: Claude Code must start the monitor's shell and the MCP server as direct children of the
-session. A mark stays after its session ends; the start time keeps it from counting.
+Cost: a request for a repository with no open session goes unanswered, and the board stops waiting
+on it after 30 minutes. The `agent_repo` column of migration 17 is unused. A repository unseen for
+30 days leaves the menu.
 
 ### D-096: The owner deletes a channel, but never #general
 
@@ -1050,44 +1035,33 @@ owner links it again. Whoever made a channel cannot delete it unless they own th
 
 ### D-097: An agent works in conversations with its owner, each run by a background Claude
 
-Proposed 2026-11-05 in #112 (R-035). Its spike in #114 checked it on Claude Code 2.1.318.
+Proposed 2026-11-05 in #112 (R-035). Its spike in #114 checked it on Claude Code 2.1.318. Card runs
+moved to it in #117.
 
 The owner talks with an agent in the Agents pane, in their direct chat. A prompt is an encrypted
 message whose signed field names the repository and, for a card, a hash of the brief the owner saw.
 The plugin answers each turn with `claude -p --restricted`, which reads only managed settings and
 the plugin's settings file. That file requires the sandbox, blocks reads outside the working
-directories, keychain included, and lets the shell reach only the npm registry. The turn ends in a
-JSON answer that the plugin acts on; a reply resumes the session. A card's conversation works in a
-worktree and opens a draft; a prompt may only answer. A fix round from another's review waits for
-the owner, and a card the agent drafts reaches the board only when the owner adds it, so none runs
-unread. Why: a plain `-p` run loads the repository's hooks, and with no doorbell or monitor the
-desktop app works, the owner edits no settings and can prompt from a phone, and `gh` stays usable.
+directories, keychain and `session-env` included, lets the shell reach only the npm registry, and
+denies each credential variable by name: Claude Code's own scrub makes every sandboxed command ask.
+The turn ends in a JSON answer that the plugin acts on; a reply resumes the session. A card's
+conversation works in a worktree and opens a draft; a prompt may only answer. A fix round from
+another's review waits for the owner, and a card the agent drafts reaches the board only when the
+owner adds it. Why: a plain `-p` run loads the repository's hooks, and with no doorbell or monitor
+the desktop app works, the owner edits no settings and can prompt from a phone, and `gh` stays
+usable.
 
 Cost: nobody watches a run live, and a turn waits up to 15 seconds for a check-in. A page Claude
-reads could make it leak repository code. A settings value Claude Code stops accepting drops the
-sandbox without a word. It replaces D-092's doorbell and D-095's monitor mark.
-
-### D-098: Only a session started for WebChat takes part
-
-Proposed 2026-11-05 in #113 (K-50).
-
-The plugin's server takes part only when its session started with `WEBCHAT_AGENT=1` in its
-environment. It reads that environment with `ps eww`, which shows what a process started with, so
-the `env` of a repository's `.claude/settings.json` cannot turn it on. Any other session never
-pairs, checks in or takes the lock, and `status` says how to start one. Each session has its own
-doorbell, `doorbell-<pid>`, so another session in the same checkout never hears a ring. Why: with
-the plugin on, every session in every repository checked in, and the play menu listed them all.
-
-Cost: the owner types the variable, or keeps an alias. macOS hides the environment of its own
-system programs, so this needs a `claude` that is not one. Old `doorbell` files stay unused.
+reads could make it leak repository code, and a secret whose name and value do not look like one
+still reaches the shell. A settings value Claude Code stops accepting drops the sandbox without a
+word. It replaces D-092's doorbell and D-095's monitor mark.
 
 ### D-099: An agent refuses a second request for the card it runs
 
 Proposed 2026-11-05 in #115 (K-51).
 
 An agent runs one request at a time (D-086). A request from its owner for the card it is running
-fails at once with "K-1 is already running.", and nothing starts: no run, no worktree, no ring in a
-Claude Code session. A request for another card still gets "I am busy with K-2." The daemon and the
+fails at once with "K-1 is already running.", and nothing starts: no run and no worktree. A copy starts no run. A request for another card still gets "I am busy with K-2." The daemon and the
 plugin share the check, which follows the owner and send-time checks. A card is the board's doc and
 section, since two projects can each have a K-1. A run that ended, however it ended, no longer
 counts, so the owner runs the card again at once. Why: two tabs or two devices can each send before
@@ -1103,14 +1077,31 @@ Proposed 2026-11-05 in #116 (K-52).
 
 The board folds the user's run messages in #general into each roadmap card: Sending, Waiting for the
 agent, Running, Done or Failed. While a run may still go, the Run menu is a disabled button, so a
-second click asks nothing. A request no agent answers in 30 minutes stops blocking, the time a plugin
-job waits. When the agent reports done, the requester's page sets the card's status to `In review:
+second click asks nothing. A request no agent answers in 30 minutes stops blocking. When the agent reports done, the requester's page sets the card's status to `In review:
 repo#PR`, once per request, which a new In review group shows. The owner moves it to Done or Fixed
 after merging. Why: the server cannot drop copies of an encrypted request, and done means a draft.
 
 Cost: the board loads a page of #general to see runs. Two tabs can still each send one request
 before they sync; the agent refuses the second (D-099). The status changes only while the
 requester's board is open.
+
+### D-101: A repository takes part once its owner connects it
+
+Proposed 2026-11-06 in #117 (R-035). It replaces D-098, and with D-097 it replaces D-095.
+
+The plugin's server takes part only in a repository whose folder in the plugin's data holds a
+`connected` mark. The owner sets it by typing `/webchat:connect` in a session there, in a terminal
+or the desktop app; the skill only the user can start calls the `connect` tool. That tool carries
+`requiresUserInteraction`, so Claude Code asks the owner on every call, even when they allowed the
+plugin's tools or bypass permissions, and a repository's files cannot connect it. Every session in
+a connected repository may take part, and the lock still gives its runs to one (D-094). A session
+anywhere else never pairs, checks in or takes a lock. `disconnect` removes the mark, and runs and
+fix rounds stop from then on. Why: the desktop app starts no session with `WEBCHAT_AGENT=1`, and the server should
+still learn only the repositories the owner chose.
+
+Cost: the owner connects each repository once. A session in an unconnected repository looks for the
+mark every 5 seconds. A disconnected repository stays in the play menu,
+shown asleep, for 30 days after its last check-in (D-094).
 
 ## Replies and reactions
 
@@ -1538,3 +1529,31 @@ R-023 is dropped. Was: Proposed 2026-11-05 in #78, step 2 of the move to a Slack
 
 Messages would render in one column with an avatar gutter, with no colored own-message bubble. The
 change was reverted, so messages stay in bubbles and no decision replaced it.
+
+### D-095: A Claude Code session takes runs only while its own monitor hears the doorbell
+
+Superseded by D-097, with D-101, in #117. Accepted 2026-11-05 in #108.
+
+The plugin's monitor passes its session's process id, `$PPID`, to the doorbell command. That writes
+a mark in the repository's `monitors/` folder holding the session's start time from `ps`. The MCP
+server, a child of the same session, takes the repository's lock only once it finds its session's
+mark (K-49). Why: the Claude desktop app starts no plugin monitor, and a session updated in place
+keeps the monitor it started with, which may tail an old doorbell. Both took the lock, so their runs
+rang where nobody heard and failed after 30 minutes, while a terminal session there waited.
+
+Cost: Claude Code must start the monitor's shell and the MCP server as direct children of the
+session. A mark stays after its session ends; the start time keeps it from counting.
+
+### D-098: Only a session started for WebChat takes part
+
+Superseded by D-101 in #117. Accepted 2026-11-05 in #113 (K-50).
+
+The plugin's server takes part only when its session started with `WEBCHAT_AGENT=1` in its
+environment. It reads that environment with `ps eww`, which shows what a process started with, so
+the `env` of a repository's `.claude/settings.json` cannot turn it on. Any other session never
+pairs, checks in or takes the lock, and `status` says how to start one. Each session has its own
+doorbell, `doorbell-<pid>`, so another session in the same checkout never hears a ring. Why: with
+the plugin on, every session in every repository checked in, and the play menu listed them all.
+
+Cost: the owner types the variable, or keeps an alias. macOS hides the environment of its own
+system programs, so this needs a `claude` that is not one. Old `doorbell` files stay unused.

@@ -241,7 +241,7 @@ export interface PairingDTO {
 /** How long a pairing code works, from the page showing it to the owner's approval (R-030). */
 export const PAIRING_TTL_MS = 10 * 60_000;
 
-/** A plugin job nobody starts in this long fails; the board stops waiting on its request then (D-094). */
+/** The board stops waiting on a request that no agent answers in this long (D-100). */
 export const RUN_PICKUP_MS = 30 * 60_000;
 
 export interface ApprovePairingInput {

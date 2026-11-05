@@ -10,16 +10,23 @@ const REGISTRY = 'registry.npmjs.org';
 /** Its tools. A restricted run has only those it names, and keeps its file tools in its folder. */
 const TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
 
+/** Whether a variable holds a credential: by its name, by a known token's prefix, or by a password in a URL. */
+const isCredential = ([name, value = '']: [string, string | undefined]) =>
+  /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL|AUTH/i.test(name) ||
+  /^(gh[opsur]_|github_pat_|npm_|sk-|xox[abprs]-|glpat-|AKIA)|:\/\/[^/\s:@]+:[^/\s@]+@/.test(value);
+
 /**
  * The plugin's settings file for it. The shell never runs outside the sandbox, not even where the
  * sandbox cannot start. It reads nothing outside its working directories but what toolchains need:
  * not the secrets, and not the macOS keychain, where gh keeps the owner's token (K-54). npm reads
  * no config of the owner's, which may hold a publish token, and keeps a cache of its own: the
  * sandbox cannot write the owner's, and a shared one would let it poison the owner's installs. Web
- * search and reading run outside the sandbox, as Claude Code's own tools. The guard hook keeps the
- * file tools from the secrets, and Claude Code refuses a write through a link out of the folder.
+ * search and reading run outside the sandbox, as Claude Code's own tools. The shell gets no variable
+ * of `env`, the environment it starts with, that holds a credential, while Claude Code keeps them for
+ * its own login. The guard hook keeps the file tools from the secrets, and Claude Code refuses a
+ * write through a link out of the folder.
  */
-export function claudeSettings({ secrets, npmCache, guard }: { secrets: string[]; npmCache: string; guard: string }) {
+export function claudeSettings({ secrets, npmCache, guard, env }: { secrets: string[]; npmCache: string; guard: string; env: NodeJS.ProcessEnv }) {
   return {
     sandbox: {
       enabled: true,
@@ -27,6 +34,9 @@ export function claudeSettings({ secrets, npmCache, guard }: { secrets: string[]
       allowUnsandboxedCommands: false,
       filesystem: { denyRead: secrets, allowWrite: [npmCache] },
       network: { allowedDomains: [REGISTRY] },
+      // Named one by one: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB makes every sandboxed command ask first,
+      // and nobody is there to answer.
+      credentials: { envVars: Object.entries(env).filter(isCredential).map(([name]) => ({ name, mode: 'deny' })) },
     },
     permissions: { allow: ['WebSearch', 'WebFetch'], blockReadsOutsideWorkingDirectories: true },
     env: { npm_config_cache: npmCache, npm_config_userconfig: '/dev/null' },
