@@ -30,8 +30,8 @@ export interface Conversation {
   /** When it last moved. */
   last: number;
   ended?: boolean;
-  /** The hash of each roadmap card in the brief, by its id, so a draft that changes one names what it saw (D-104). */
-  seen?: Record<string, string>;
+  /** Each roadmap card in the brief, by its id, with its place and hash, so a draft that changes one names what it saw (D-104). */
+  seen?: Record<string, { doc: string; section: string; hash: string }>;
 }
 
 /** One turn: the owner's words in, the answer out, with a card draft when they asked for one. Where the background Claude runs. */

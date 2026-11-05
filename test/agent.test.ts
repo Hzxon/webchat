@@ -19,7 +19,7 @@ import { ADAPTERS, createRunner, start, type Final } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
-import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, wrapChatKey } from '../shared/e2ee.ts';
+import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, textHash, wrapChatKey } from '../shared/e2ee.ts';
 import type { ChatKeyInput, CreateProjectResponse, DocDTO, PairingDTO, RunDTO, PromptDTO, RunRequest, UserDTO } from '../shared/types.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
@@ -704,6 +704,15 @@ describe('agent client (R-027)', () => {
         assert.equal(again!.cwd, scratch);
         assert.ok(again!.input.includes('Your owner replies:') && again!.input.includes('And sum.test.js?'));
         assert.deepEqual(await answers(), ['Still adds.']);
+        // A draft that changes a card names it, with the hash of the text the brief held (D-104).
+        assert.ok(chat!.input.includes('### K-7: Sums are off by one') && chat!.input.includes('Teammates wrote these'), 'the brief holds the board, marked');
+        const card = { kind: 'issue', title: 'Sums are off by two', body: 'Seen: in the tests.', replaces: 'K-7' };
+        await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ reply: 'Here is the change.', card }), FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'reply', to: prompted, sentAt: Date.now() }, 'Draft a change to K-7.'));
+        const seen = await textHash('### K-7: Sums are off by one\n\nStatus: Open.');
+        assert.deepEqual((await alice.sync()).filter((m) => m.senderId === agent.id).map((m) => [m.content?.text, m.content?.prompt]), [
+          ['Here is the change.', { kind: 'answer', to: prompted }],
+          ['Card draft: Sums are off by two', { kind: 'answer', to: prompted, card: { kind: 'K', title: 'Sums are off by two', body: 'Seen: in the tests.', replaces: { card: 'K-7', doc: board.id, section, seen } } }],
+        ]);
         assert.deepEqual(await branches(), before, 'nothing of the conversation was pushed');
         assert.equal(await refs(), refsBefore, 'the owner\'s checkout gained no branch or commit');
 

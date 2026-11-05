@@ -1139,6 +1139,23 @@ every state says what to do in plain words.
 Cost: each page load fetches a page of every agent chat. Messages in an agent chat without a
 `prompt` field no longer show. The level, a number later steps raise, costs a migration.
 
+### D-104: An agent drafts cards, and its owner's page adds them
+
+Proposed 2026-11-06 in #121 (R-035).
+
+When its owner asks, an agent's answer may carry a card draft: a new idea or issue, or a change to a
+roadmap card, named by its doc and section with the hash of the text the agent saw. Each turn's
+brief holds the board's cards as teammates' text, and a reply shows the cards that changed since.
+Nothing reaches the board until the owner presses the draft's button. Their page then writes it as
+them: a new card with the next free number of its kind at that moment, or the change, only while the
+card still has the text the agent saw; otherwise it says who changed it. A new card goes to the
+project the agent shares with the owner, preselected by a linked repository when there are several.
+A note outside `prompt` tells the owner's other devices it was added. Why: the agent needs no write
+access to the board, and nothing it drafts lands unseen.
+
+Cost: each turn reads the board. An agent in two projects that share a card id cannot change that
+card.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope

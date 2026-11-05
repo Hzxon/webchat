@@ -550,14 +550,14 @@ export type PromptDTO =
 
 /**
  * A board card an agent drafted when its owner asked (D-104): a new idea or issue, or a change to
- * the card it replaces, with a hash of that card's text as the agent saw it. It goes on the board
- * only when the owner's page writes it.
+ * the card it replaces, named by its doc and section, with a hash of the text the agent saw. It goes
+ * on the board only when the owner's page writes it.
  */
 export interface CardDraftDTO {
   kind: 'R' | 'K';
   title: string;
   body: string;
-  replaces?: { card: string; seen: string };
+  replaces?: { card: string; doc: string; section: string; seen: string };
 }
 
 /**

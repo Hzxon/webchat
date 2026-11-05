@@ -10,6 +10,7 @@ import { actions, useAppState } from '../store';
 import { useAutoGrow, useDraft } from './ChatView';
 import { formatListTime, formatSince, formatTime } from './format';
 import { AlertIcon, BackIcon, SendIcon, TerminalIcon } from './icons';
+import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
 import { Tag } from './PullTags';
 
@@ -69,7 +70,11 @@ export function AgentsView() {
           <span>{subtitle}</span>
         </div>
       </header>
-      {thread ? <ThreadView key={thread.root} thread={thread} seat={seatOf(thread)} /> : <ThreadList threads={threads} seats={seats} chats={chats} />}
+      {thread ? (
+        <ThreadView key={thread.root} thread={thread} seat={seatOf(thread)} agentId={conversations[thread.conversationId]?.members.find((m) => m.userId !== meId)?.userId ?? 0} />
+      ) : (
+        <ThreadList threads={threads} seats={seats} chats={chats} />
+      )}
     </section>
   );
 }
@@ -184,7 +189,7 @@ function ThreadList({ threads, seats, chats }: { threads: Thread[]; seats: Seat[
   );
 }
 
-function ThreadView({ thread, seat }: { thread: Thread; seat: Seat | undefined }) {
+function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | undefined; agentId: number }) {
   const pending = useAppState((s) => s.pending);
   const meId = useAppState((s) => s.me?.id);
   const list = useRef<HTMLDivElement>(null);
@@ -243,7 +248,13 @@ function ThreadView({ thread, seat }: { thread: Thread; seat: Seat | undefined }
             <div key={message.clientId ?? message.id} className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}>
               <div className="bubble-line">
                 <div className={`bubble ${message.prompt?.kind === 'failed' ? 'agents-failed' : ''}`}>
-                  {mine ? <span className="bubble-text">{message.text}</span> : <Markdown text={message.text} />}
+                  {mine ? (
+                    <span className="bubble-text">{message.text}</span>
+                  ) : message.prompt?.kind === 'answer' && message.prompt.card ? (
+                    <AgentDraft message={message} draft={message.prompt.card} thread={thread} agentId={agentId} />
+                  ) : (
+                    <Markdown text={message.text} />
+                  )}
                   <span className="bubble-meta">{status === 'sending' ? 'Sending…' : formatTime(message.createdAt)}</span>
                 </div>
               </div>

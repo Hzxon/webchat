@@ -348,7 +348,7 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
 }
 
 /** Makes the doc behind a column, empty. Its first card is the section written right after. */
-async function createBoard(projectId: number, column: BoardColumn): Promise<ChatDoc> {
+export async function createBoard(projectId: number, column: BoardColumn): Promise<ChatDoc> {
   const id = await createDoc(projectId, COLUMN_TITLES[column], [], column);
   return store.get().docs[id]!;
 }

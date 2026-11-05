@@ -791,6 +791,11 @@ export function tellAgent(conversationId: number, to: string, kind: 'reply' | 'c
   return sendContent(conversationId, { text: text.trim(), prompt: { kind, to, sentAt: Date.now() } }, false);
 }
 
+/** Tells the user's other devices that their page put an agent's card draft on the board (D-104). The agent ignores it. */
+export function noteAdded(conversationId: number, to: string, draft: string, card: string) {
+  return sendContent(conversationId, { text: `Added ${card} to the board.`, added: { to, draft, card } }, false);
+}
+
 /** Stops a run the user handed to an agent (R-030). The agent heeds only the person who sent the request. */
 export function cancelRun(request: ChatMessage & { run: RunRequest }) {
   const text = `Cancel ${request.run.card} with ${senderName(store.get().users, request.run.runtime)}`;
@@ -872,6 +877,7 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     github: null,
     run: entry.content.run ?? null,
     prompt: entry.content.prompt ?? null,
+    added: entry.content.added ?? null,
     security: 'encrypted',
   };
 }
@@ -948,6 +954,7 @@ export function retryMessage(message: ChatMessage) {
   if (message.run) content.run = message.run;
   // A fresh send time, or the agent would refuse a retry made 10 minutes later. The client id still makes it one message (D-061, K-47).
   if (message.prompt) content.prompt = 'sentAt' in message.prompt ? { ...message.prompt, sentAt: Date.now() } : message.prompt;
+  if (message.added) content.added = message.added;
   void sendContent(message.conversationId, content, message.urgent, message.clientId!);
 }
 
