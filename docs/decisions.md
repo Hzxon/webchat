@@ -1280,17 +1280,18 @@ approve pull requests" must be on, and that pull request starts no other workflo
 
 ### D-058: Vercel skips builds that ship the same app
 
-Accepted 2026-11-02 in #30.
+Accepted 2026-11-02 in #30. `agent/` and `plugin/` joined the skipped paths in #103.
 
 Vercel builds every push to main (D-041). `scripts/ignore-build.sh`, the Ignored Build Step in
 `vercel.json`, skips a commit whose message starts with `chore(main): Release `. It also skips a
-commit when nothing outside `docs/`, `test/`, `.github/`, `scripts/` and Markdown files changed
-since the last deployment, whose commit Vercel names in `VERCEL_GIT_PREVIOUS_SHA`, so those deploys
-do not make every open tab check a new build (K-36). When that commit is unknown or not in Vercel's
-shallow clone, the build runs. The release pull request waits for the owner: it collects every
-`feat` and `fix` since the last release, so the owner merges it when a set of changes is worth a
-version. Merging it automatically would bump the minor at every `feat`, ship a wrong title type
-before `BEGIN_COMMIT_OVERRIDE` could fix it, and need a second Release Please run to tag.
+commit when nothing outside `docs/`, `test/`, `.github/`, `scripts/`, `agent/`, `plugin/` and
+Markdown files changed since the last deployment, whose commit Vercel names in
+`VERCEL_GIT_PREVIOUS_SHA`, so those deploys do not make every open tab check a new build (K-36).
+When that commit is unknown or not in Vercel's shallow clone, the build runs. The release pull
+request waits for the owner: it collects every `feat` and `fix` since the last release, so the owner
+merges it when a set of changes is worth a version. Merging it automatically would bump the minor at
+every `feat`, ship a wrong title type before `BEGIN_COMMIT_OVERRIDE` could fix it, and need a second
+Release Please run to tag.
 
 Cost: Vercel still clones the repository and records a canceled deployment for each release commit.
 Only Release Please may use a title that starts like a release commit. A file in a skipped path that

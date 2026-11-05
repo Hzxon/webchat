@@ -31,8 +31,8 @@ describe("Vercel's Ignored Build Step in scripts/ignore-build.sh (D-058)", () =>
   git('init', '-q');
   const deployed = commit('client/src/main.tsx');
 
-  test('skips commits that change only the docs, the tests, the CI and the scripts (K-36)', () => {
-    for (const file of ['docs/roadmap.md', 'test/chat.test.ts', '.github/workflows/ci.yml', 'scripts/claim.sh', 'README.md']) {
+  test('skips commits that change only the docs, the tests, the CI, the scripts and the agent (K-36)', () => {
+    for (const file of ['docs/roadmap.md', 'test/chat.test.ts', '.github/workflows/ci.yml', 'scripts/claim.sh', 'README.md', 'agent/plugin.ts', 'plugin/hooks/hooks.json']) {
       commit(file);
     }
     assert.equal(skips(deployed), true);
