@@ -999,7 +999,8 @@ name the GitHub repository its session is open in; the page signs the one its me
 request, and the plugin runs it only there. An agent remembers each request's signed client id while
 it could run, across restarts (K-47). Why: no invite code, password or security code to compare.
 
-Cost: the server sees the repository an agent's session is in. Deleting an account deletes its
+Cost: the server sees the repository an agent's session is in, for sessions started for WebChat
+(D-098). Deleting an account deletes its
 agents. A new code makes a new account, and the old one stays, asleep.
 
 ### D-094: Each repository's Claude Code session takes that repository's runs
@@ -1046,6 +1047,20 @@ for short tasks, and only deleting the whole project took one away.
 
 Cost: a deleted channel cannot come back. A repository linked to it stops posting cards until the
 owner links it again. Whoever made a channel cannot delete it unless they own the project.
+
+### D-098: Only a session started for WebChat takes part
+
+Proposed 2026-11-05 in #113 (K-50).
+
+The plugin's server takes part only when its session started with `WEBCHAT_AGENT=1` in its
+environment. It reads that environment with `ps eww`, which shows what a process started with, so
+the `env` of a repository's `.claude/settings.json` cannot turn it on. Any other session never
+pairs, checks in or takes the lock, and `status` says how to start one. Each session has its own
+doorbell, `doorbell-<pid>`, so another session in the same checkout never hears a ring. Why: with
+the plugin on, every session in every repository checked in, and the play menu listed them all.
+
+Cost: the owner types the variable, or keeps an alias. macOS hides the environment of its own
+system programs, so this needs a `claude` that is not one. Old `doorbell` files stay unused.
 
 ## Replies and reactions
 

@@ -153,7 +153,8 @@ What it does not protect against:
   `~/.webchat/<name>/account.json`. Both files are readable only by their owner, but not
   encrypted. Anyone who can read one can read what the agent's projects write. The server knows
   which accounts are agents, whose agent each one is, when one is busy with a card, and which
-  GitHub repository its Claude Code session is open in. It sees a run as messages like any other.
+  GitHub repository its Claude Code session is open in, for sessions started for WebChat only.
+  It sees a run as messages like any other.
   Pairing shows it the agent's public keys and proofs made from the code, never the code.
 - **People who leave keep the keys they had.** Someone who left or was removed could still read the
   messages from before, if they got them another way, for example from a copy of the database.
@@ -428,8 +429,11 @@ The agent gets an account of its own, and runs only the cards you hand it.
    and your GitHub login in `~/.claude/settings.json`:
    `{ "sandbox": { "enabled": true, "filesystem": { "denyRead": ["~/.claude/plugins/data", "~/.config/gh"] } } }`.
    The plugin refuses runs until both hold.
-4. Start a session with `claude` in a terminal, in each repository you want the agent to work in,
-   and leave it open. The Claude desktop app starts no plugin monitor, so its sessions take no
+4. Start a session with `WEBCHAT_AGENT=1 claude` in a terminal, in each repository you want the
+   agent to work in, and leave it open. Only such a session pairs, checks in or hears a run. Your
+   other sessions, in any repository, stay unseen by WebChat, even with the plugin on. A
+   repository's `.claude/settings.json` cannot turn this on: the plugin reads the environment the
+   session started with. The Claude desktop app starts no plugin monitor, so its sessions take no
    runs. Back in WebChat, approve the agent, name it, and pick the projects it joins.
 
 Claude Code asks before each tool call in its default permission mode, so a run would wait for you.

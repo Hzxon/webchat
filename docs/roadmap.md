@@ -450,6 +450,18 @@ Open questions:
 
 ## Known issues
 
+### K-50: Every Claude Code session checks in to WebChat
+
+Status: Fixed in #113 (D-098). Found on 2026-11-05, when the play menu listed Hzxon/test_agent and
+Hzxon/webchat, though only one session was meant for WebChat.
+
+With the plugin on, each Claude Code session paired, checked in with its repository and marked its
+monitor, whatever the owner opened it for. The server learned every repository the owner worked
+in, and a session in the same checkout heard the rings meant for the one taking runs.
+
+Fix: only a session started with `WEBCHAT_AGENT=1` takes part, read from the environment it started
+with, and each session has its own doorbell (D-098).
+
 ### K-49: A session that cannot hear the doorbell takes its repository's runs
 
 Status: Fixed in #108 (D-095). Found on 2026-11-05, when card K-1 failed in Hzxon/test_agent.

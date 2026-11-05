@@ -1,8 +1,8 @@
 // The trusted half of the Claude Code plugin (R-030, D-092): the MCP server Claude Code starts with
-// the session. It holds the agent's keys and uses the owner's `gh` login. It checks in for the
+// the session. In a session not started for WebChat it does nothing (D-098). It holds the agent's keys and uses the owner's `gh` login. It checks in for the
 // repository the session is open in, and takes that repository's run requests, checked as the
 // daemon checks them (D-089, D-094). For each run it adds a worktree inside the checkout and rings
-// that repository's doorbell: a file the plugin's monitor tails, whose lines hold only ids. The model takes
+// the session's doorbell: a file the plugin's monitor tails, whose lines hold only ids. The model takes
 // the card with start_run, works in the sandbox, and asks this server to publish and finish. The
 // server then watches the draft pull request, and rings again when CI fails on it, it conflicts, or
 // someone who may push reviews it.
@@ -43,6 +43,8 @@ export interface PluginOptions {
   projectDir: string;
   /** The Claude Code session's process id: this server's parent, and the parent of the monitor's shell. */
   session: number;
+  /** Whether the owner started the session for WebChat. Any other session never pairs or checks in (D-098). */
+  forWebChat: boolean;
 }
 
 /** Where a run's work happens. */
@@ -125,6 +127,10 @@ export class Plugin {
    */
   async start(): Promise<boolean> {
     const { dataDir, projectDir } = this.options;
+    if (!this.options.forWebChat) {
+      this.problem = 'This session was not started for WebChat, so WebChat cannot see it. To take cards here, start one with WEBCHAT_AGENT=1 claude.';
+      return false;
+    }
     const { server, code } = this.options.code ? readPairing(this.options.code, this.options.server) : this.options;
     this.repo = await originOf(projectDir);
     if (!this.repo) {
@@ -143,7 +149,7 @@ export class Plugin {
     // an older plugin, would ring a doorbell nobody hears. Only a session its monitor marked takes runs (D-095).
     while (!(await heard(this.home, this.options.session))) {
       this.problem =
-        'This session runs no WebChat monitor, so it takes no runs. Start a new session with claude in a terminal: the desktop app starts no monitor, and a plugin update reaches the monitor only in a new session.';
+        'This session runs no WebChat monitor, so it takes no runs. Start a new session with WEBCHAT_AGENT=1 claude in a terminal: the desktop app starts no monitor, and a plugin update reaches the monitor only in a new session.';
       await sleep(5_000, undefined, { ref: false });
     }
     // Two sessions in one repository would both claim its runs (D-085). The second takes over when the first closes.
@@ -225,7 +231,7 @@ export class Plugin {
   }
 
   private ring(line: string) {
-    return fs.appendFile(this.file('doorbell'), `${line}\n`);
+    return fs.appendFile(doorbellOf(this.home, this.options.session), `${line}\n`);
   }
 
   /** Runs a tool the model called. Returns what the model reads; throws what it reads as an error. */
@@ -490,6 +496,16 @@ async function takeLock(file: string) {
 
 /** A repository's folder in the plugin's, such as `repos/acme__app` (D-094). */
 export const repoHome = (dataDir: string, repo: string) => path.join(dataDir, 'repos', repo.replace('/', '__'));
+
+/** A session's doorbell, so a ring wakes only the session whose server filed the job (D-098). */
+export const doorbellOf = (home: string, session: number) => path.join(home, `doorbell-${session}`);
+
+/**
+ * Whether a process started with WEBCHAT_AGENT=1. ps prints the environment a process started with,
+ * so a repository's .claude/settings.json, whose env Claude Code applies later, cannot set it (D-098).
+ */
+export const startedForWebChat = (pid: number) =>
+  exec('ps', ['eww', '-o', 'command=', '-p', String(pid)]).then((r) => /\sWEBCHAT_AGENT=1(\s|$)/.test(r.stdout), () => false);
 
 /** When a process started, as ps prints it, so a later process under a reused id never passes for it. */
 const startedAt = (pid: number) => exec('ps', ['-o', 'lstart=', '-p', String(pid)]).then((r) => r.stdout.trim(), () => '');

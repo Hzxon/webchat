@@ -45,6 +45,8 @@ docs/decisions.md that explains it.
 - An agent acts on a request's signed client id once; it remembers ids on disk while a copy could still run (K-47, D-093).
 - The plugin runs a request only in a session whose origin is the request's signed `repo`, and only while the sandbox is on and `denyRead` covers its data folder and gh's; a session says nothing on another repository's request (D-092, D-093, D-094).
 - A plugin job nobody starts fails after 30 minutes; a started one fails after 2 hours with no tool call (D-094).
+- The plugin takes part only in a session whose launch environment, read with `ps eww`, holds `WEBCHAT_AGENT=1`; never read it from `process.env`, which a repository's settings can set (D-098).
+- Each session rings only its own `doorbell-<pid>` (D-098).
 - A plugin session takes runs only once its monitor marked it: the monitor passes its shell's `$PPID` and the server checks its own parent, so both must stay direct children of the session (D-095).
 - Doorbell lines hold only a kind, a random id and a card id; text a teammate wrote reaches the model only through `start_run` (D-092).
 - In the plugin only the server pushes: the run's `agent/*` branch, never forced, and it never merges (D-092).
