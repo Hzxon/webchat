@@ -958,6 +958,27 @@ describe('agent client (R-027)', () => {
     assert.match(guard(use('Read', { file_path: path.join(data, 'account.json') }), [data]) ?? '', /secrets/);
     assert.match(guard(use('Read', { file_path: 'link/account.json' }, worktree), [data]) ?? '', /secrets/);
     assert.equal(guard(use('Read', { file_path: 'README.md' }), [data]), undefined);
+    // Nor through a link to a file not made yet, which Write would make in the folder (K-55).
+    await fs.symlink(path.join(data, 'new.json'), path.join(worktree, 'new.json'));
+    await fs.symlink('loop', path.join(worktree, 'loop'));
+    await fs.mkdir(path.join(data, 'inner'));
+    await fs.writeFile(path.join(data, 'account.json'), '{}');
+    await fs.symlink(path.join(data, 'inner'), path.join(worktree, 'inner'));
+    await fs.symlink('inner/../account.json', path.join(worktree, 'up.json'));
+    await fs.symlink('inner/../made.json', path.join(worktree, 'up-new.json'));
+    await fs.mkdir(path.join(worktree, 'a', 'b'), { recursive: true });
+    await fs.symlink(path.join(worktree, 'a', 'b'), path.join(worktree, 'hop'));
+    await fs.symlink(path.relative(path.join(worktree, 'a', 'b'), path.join(data, 'far.json')), path.join(worktree, 'a', 'b', 'far.json'));
+    const caseBlind = await fs.access(path.join(dir, 'DATA')).then(() => true, () => false);
+    assert.match(guard(use('Write', { file_path: 'new.json' }, worktree), [data]) ?? '', /secrets/);
+    assert.equal(guard(use('Write', { file_path: 'loop' }, worktree), [data]), undefined, 'a loop of links ends');
+    // Paths resolve as the kernel resolves them: `..` after a link goes up from its target, and other
+    // letter case names the folder where the disk ignores case, as macOS's does by default.
+    assert.match(guard(use('Read', { file_path: 'up.json' }, worktree), [data]) ?? '', /secrets/);
+    assert.match(guard(use('Write', { file_path: 'up-new.json' }, worktree), [data]) ?? '', /secrets/);
+    // A relative link counts from its real folder, not from the linked folder that named it.
+    assert.match(guard(use('Write', { file_path: 'hop/far.json' }, worktree), [data]) ?? '', /secrets/);
+    assert.equal(guard(use('Read', { file_path: path.join(dir, 'DATA', 'account.json') }), [data]) !== undefined, caseBlind);
 
     // A background Claude reads only managed settings and the plugin's file, so the project cannot reopen the secrets (R-035).
     await fs.writeFile(path.join(project, '.claude', 'settings.json'), JSON.stringify({ sandbox: { filesystem: { allowRead: [data] } } }));
@@ -969,6 +990,10 @@ describe('agent client (R-027)', () => {
     const off = path.join(dir, 'off.json');
     await fs.writeFile(off, '{}');
     assert.match((await sandboxProblem(project, [data], restrictedSettings(off))) ?? '', /turn its sandbox off/);
+    // Where the sandbox cannot start, Claude Code would run the shell without it unless told to fail (K-53).
+    const unsafe = path.join(dir, 'unsafe.json');
+    await fs.writeFile(unsafe, JSON.stringify({ sandbox: { failIfUnavailable: false } }));
+    assert.match((await sandboxProblem(project, [data], [[unsafe, dir], [file, dir]])) ?? '', /unsandboxed/);
     // Managed settings come first and can reopen a folder; the narrower rule decides, as in Claude Code.
     const managed = path.join(dir, 'managed.json');
     await fs.writeFile(managed, JSON.stringify({ sandbox: { filesystem: { allowRead: [path.join(data, 'keys')] } } }));

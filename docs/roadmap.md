@@ -524,36 +524,62 @@ Open questions:
 
 ## Known issues
 
+### K-56: A card's model can read the tokens that SessionStart hooks leave for the shell
+
+Status: Fixed in #118. Found in R-035's step 2 (#117) on 2026-11-06.
+
+Claude Code keeps the variables that SessionStart hooks set for each session in
+`~/.claude/session-env`, or under `CLAUDE_CONFIG_DIR` when that is set. On the owner's machine it
+had 297 entries, and 205 of its files mentioned TOKEN. A sandboxed shell could list and read it,
+even with reads outside the working directories blocked. The plugin's check did not ask for it.
+
+Fix: the plugin refuses runs until `denyRead` covers `session-env`, and the README's settings deny
+it. With that deny, the sandboxed shell cannot list the folder, and a hook's variable still reaches
+its commands.
+
 ### K-55: The guard lets the file tools write through a link to a file not made yet
 
-Status: Open. Found in the review of the R-035 spike (#114) on 2026-11-06.
+Status: Fixed in #118. Found in the review of the R-035 spike (#114) on 2026-11-06.
 
 The guard checks the real path of each file the file tools name (D-092). For a link whose target
-does not exist yet, `realpathSync` fails, so it checks the link's own path. The sandboxed shell can
+did not exist yet, `realpathSync` failed, so it checked the link's own path. The sandboxed shell can
 make such a link into a secret folder, and Write would create a file there. In the spike, Claude
-Code itself refused that write under `--restricted`, so only the second layer is missing.
+Code itself refused that write under `--restricted`, so only the second layer was missing.
+
+Fixing it showed two more ways past the guard, which let Read reach the agent's keys. Node's
+`realpathSync` applies `..` in a link's target before the links, so a link to
+`inner/../account.json`, with `inner` a link into the plugin's folder, passed. And on macOS, whose
+disks ignore letter case by default, a path in other case passed, such as `~/.CLAUDE/plugins/data`.
+
+Fix: the guard resolves paths with `realpathSync.native`, as the kernel does. It reads a link to a
+file not made yet with `readlinkSync` and checks its target, for at most 40 links, so a loop ends.
 
 ### K-54: A card's model can find the owner's GitHub token in the macOS keychain
 
-Status: Open. Found in the R-035 spike (#114) on 2026-11-06. R-035's step 2 fixes it for its runs.
+Status: Fixed in #118. Found in the R-035 spike (#114) on 2026-11-06.
 
 On macOS, `gh` keeps its token in the login keychain unless it was logged in with
 `--insecure-storage`, so the `~/.config/gh` that the sandbox denies (D-092) holds none. A sandboxed
-shell with the settings the README gives still found gh's keychain item in the spike. Reading it
+shell with the settings the README gave still found gh's keychain item in the spike. Reading it
 takes `security find-generic-password -w`, which the spike did not run, and a card could then have
 the model commit the token to the draft that teammates read. Denying `~/Library/Keychains` hid the
-item, and so did blocking reads outside the working directories. The plugin's check asks for
-neither. Until step 2, an owner on macOS adds `~/Library/Keychains` to `sandbox.filesystem.denyRead`.
+item, and so did blocking reads outside the working directories. The plugin's check asked for
+neither.
+
+Fix: on macOS the plugin refuses runs until the sandbox denies `~/Library/Keychains` or blocks reads
+outside the working directories. The README's settings deny it.
 
 ### K-53: The plugin takes runs where the sandbox cannot start
 
-Status: Open. Found in the R-035 spike (#114) on 2026-11-06. R-035's step 2 fixes it (D-097).
+Status: Fixed in #118. Found in the R-035 spike (#114) on 2026-11-06.
 
-The plugin takes runs once the owner's settings turn the sandbox on and deny reading its secrets
+The plugin took runs once the owner's settings turned the sandbox on and denied reading its secrets
 (D-092). Where the sandbox cannot start, such as on Linux without bubblewrap, Claude Code runs
-commands unsandboxed unless `sandbox.failIfUnavailable` is true, and the check still passes. The
-model's shell could then read the owner's `gh` token. Until step 2, an owner on Linux adds
-`"failIfUnavailable": true` to the `sandbox` settings.
+commands unsandboxed unless `sandbox.failIfUnavailable` is true, and the check still passed. The
+model's shell could then read the owner's `gh` token.
+
+Fix: the plugin refuses runs until `sandbox.failIfUnavailable` is true, and the README's settings
+set it.
 
 ### K-52: Run gives no feedback, and each click runs the card again
 
