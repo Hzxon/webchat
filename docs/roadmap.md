@@ -513,6 +513,18 @@ Open questions:
 
 ## Known issues
 
+### K-52: Run gives no feedback, and each click runs the card again
+
+Status: In progress on branch `claude/k52-run-card-feedback` (D-100). Found on 2026-11-05, when a
+double click posted several run cards to #general and the agent ran K-1 more than once.
+
+The Run menu stayed open after a pick and the only answer was a note at the top of the column, so
+people clicked again. Each click sent another request. The server cannot drop the copies, because a
+request is encrypted. A run that ended with a draft pull request also left its card under Open.
+
+Fix: the card shows its latest run and the Run button waits while it goes; a run that is done moves
+its card to In review (D-100).
+
 ### K-51: A second request for a running card is answered as if the agent were busy
 
 Status: Fixed in #115 (D-099). Found on 2026-11-05, when the play button sent a request on every

@@ -1,10 +1,12 @@
 // A project's board (R-021): the Decisions column and the Roadmap column of ideas and issues, each
 // a doc whose sections are cards. Cards are written in the section editor docs have, and keep its
 // locks and history. The board docs are created the first time someone adds a card.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProjectDTO, UserDTO } from '../../../shared/types';
 import {
   boardDocs,
+  cardRuns,
+  GOING,
   cardTemplate,
   columnMarkdown,
   COLUMN_TITLES,
@@ -18,16 +20,19 @@ import {
   type BoardColumn,
   type Card,
   type CardKind,
+  type CardRun,
+  withStatus,
 } from '../board';
-import { requestRun, syncNow } from '../chat';
+import { loadOlder, openConversation, requestRun, syncNow } from '../chat';
 import { beginEditing, createDoc, loadSections, markSeen, newSectionId, replaceSection, type Editing } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
-import { actions, senderName, store, useAppState } from '../store';
+import { actions, generalOf, senderName, store, useAppState } from '../store';
 import { AgentDialog } from './AgentDialog';
 import { HistoryDialog, SectionEditor } from './DocView';
 import { formatSince } from './format';
 import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlayIcon, PlusIcon, TrashIcon } from './icons';
 import { Markdown } from './Markdown';
+import { RUN_TAGS, Tag, type Tone } from './PullTags';
 
 export function BoardView({ project }: { project: ProjectDTO }) {
   const docs = useAppState((s) => s.docs);
@@ -67,6 +72,13 @@ export function BoardView({ project }: { project: ProjectDTO }) {
 }
 
 const NO_MEMBERS: number[] = [];
+const RUN_STATES: Record<CardRun['state'], [Tone, string]> = {
+  ...RUN_TAGS,
+  sending: ['muted', 'Sending…'],
+  waiting: ['muted', 'Waiting for the agent'],
+  unanswered: ['warn', 'No answer'],
+  cancelled: ['muted', 'Cancelled'],
+};
 const FILTERS = { all: 'All', R: 'Ideas', K: 'Issues' };
 type Filter = keyof typeof FILTERS;
 
@@ -98,6 +110,17 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
   } | null>(null);
   const [historyOf, setHistoryOf] = useState<Card | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const general = useAppState((s) => generalOf(s, projectId));
+  const generalMessages = useAppState((s) => (general ? s.messages[general.id] : undefined));
+  const pending = useAppState((s) => s.pending);
+  // Read on every render, so a request nobody answered stops blocking once its time is up.
+  const runs = doc && meId && generalMessages && column === 'roadmap' ? cardRuns(generalMessages, meId, doc.id, pending, Date.now()) : null;
+
+  // A card's runs are messages in #general, which loads only when it opens; the Run buttons need them first.
+  const canRun = column === 'roadmap' && !!doc && choices.length > 0;
+  useEffect(() => {
+    if (canRun && general && !store.get().messages[general.id]) loadOlder(general.id).catch(() => undefined);
+  }, [canRun, general?.id]);
 
   // Every save grows the version, so the cards load again whenever anyone saves.
   useEffect(() => {
@@ -128,6 +151,21 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
     work.catch((err: Error) => setError(err.message));
   }
 
+  // A run that is done opened a draft pull request, which its owner still readies and merges, so
+  // their page moves the card to In review: once per request, and not under someone else's lock.
+  const moved = useRef(new Set<number>());
+  useEffect(() => {
+    if (!doc || !runs) return;
+    for (const card of cards) {
+      const done = runs.get(card.id);
+      if (done?.state !== 'done' || moved.current.has(done.request) || card.failed || lockOf(card.id) || editing?.section.id === card.id) continue;
+      if (['In review', 'Done'].includes(GROUPS.roadmap[groupOf('roadmap', card.status)]!.name)) continue;
+      moved.current.add(done.request);
+      const status = done.pull ? `In review: ${done.pull.repo}#${done.pull.number}` : 'In review';
+      run(replaceSection(doc, card.id, { text: withStatus(card.text, status), pos: card.pos }).then(syncNow));
+    }
+  }, [doc, runs, cards, editing]);
+
   async function edit(target: ChatDoc, id: string, saved: string, pos: number, isNew = false, start = saved) {
     setEditing({
       doc: target,
@@ -152,13 +190,6 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
     await navigator.clipboard.writeText(columnMarkdown(column, cards));
     setNote('Copied');
     setTimeout(() => setNote(''), 2000);
-  }
-
-  async function handOver(card: Card, agent: UserDTO, repo: string | undefined) {
-    if (!doc) return;
-    await requestRun(projectId, doc.id, card, agent, repo);
-    setNote(`Asked ${agent.displayName}. Its reports show in #general.`);
-    setTimeout(() => setNote(''), 4000);
   }
 
   const kinds: CardKind[] = column === 'decisions' ? ['D'] : ['R', 'K'];
@@ -225,6 +256,8 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                 if (editing?.section.id === card.id) return null;
                 const lock = lockOf(card.id);
                 const isOpen = open === card.id;
+                const cardRun = runs?.get(card.id);
+                const [runTone, runLabel] = RUN_STATES[cardRun?.state ?? 'waiting'];
                 return (
                   <article key={card.id} className={`board-card ${lock ? 'is-locked' : ''} ${isOpen ? 'is-open' : ''}`}>
                     <button className="board-card-head" onClick={() => setOpen(isOpen ? null : card.id)} aria-expanded={isOpen}>
@@ -235,6 +268,7 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                       )}
                       <strong>{card.failed ? 'This card could not be decrypted.' : card.title || 'Untitled'}</strong>
                       {card.status && <span className="board-card-status">{card.status}</span>}
+                      {cardRun && !isOpen && <Tag tone={runTone}>{runLabel}</Tag>}
                     </button>
                     {same.has(card.id) && <p className="board-card-warn">Another card has this number. Renumber one of them.</p>}
                     {isOpen && (
@@ -253,7 +287,12 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                           <button className="icon-button icon-button-small" onClick={() => setHistoryOf(card)} title="History" aria-label="Card history">
                             <HistoryIcon width={18} height={18} />
                           </button>
-                          {column === 'roadmap' && card.kind && !card.failed && choices.length > 0 && (
+                          {canRun && card.kind && !card.failed && (cardRun && GOING.has(cardRun.state) ? (
+                            // Picking an agent swaps the menu for this, so a second click asks nothing.
+                            <button className="icon-button icon-button-small" disabled title={`${runLabel} · ${nameOf(cardRun.runtime)}`} aria-label={`${runLabel} with ${nameOf(cardRun.runtime)}`}>
+                              <PlayIcon width={18} height={18} />
+                            </button>
+                          ) : (
                             <details className="run-menu">
                               <summary className="icon-button icon-button-small" title="Run with an agent" aria-label="Run with an agent">
                                 <PlayIcon width={18} height={18} />
@@ -261,7 +300,7 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                               <div className="run-menu-list">
                                 {choices.map(({ agent, repo, online, busy, lastSeen }) => (
                                   // A card someone is editing would run as half of what they mean.
-                                  <button key={`${agent.id} ${repo}`} onClick={() => run(handOver(card, agent, repo))} disabled={!online || busy || !!lock}>
+                                  <button key={`${agent.id} ${repo}`} onClick={() => run(requestRun(projectId, doc.id, card, agent, repo))} disabled={!online || busy || !!lock}>
                                     {agent.displayName}
                                     {repo && <small> in {repo}</small>}
                                     {!online ? <small> · asleep{lastSeen ? ` since ${formatSince(lastSeen)}` : ''}</small> : busy && <small> · busy</small>}
@@ -269,7 +308,7 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                                 ))}
                               </div>
                             </details>
-                          )}
+                          ))}
                           <button
                             className="icon-button icon-button-small"
                             onClick={() => run(remove(card))}
@@ -280,6 +319,19 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                             <TrashIcon width={18} height={18} />
                           </button>
                         </div>
+                        {cardRun && general && (
+                          <p className="board-card-run">
+                            <Tag tone={runTone}>{runLabel}</Tag>
+                            <span>
+                              {nameOf(cardRun.runtime)}
+                              {cardRun.repo && ` in ${cardRun.repo}`}
+                              {cardRun.note && ` · ${cardRun.note}`}
+                            </span>
+                            <button className="board-card-run-link" onClick={() => void openConversation(general.id)}>
+                              Open #{general.title ?? 'general'}
+                            </button>
+                          </p>
+                        )}
                         {card.body ? <Markdown text={card.body} /> : <p className="doc-note">Nothing more.</p>}
                       </div>
                     )}

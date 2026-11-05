@@ -1096,6 +1096,21 @@ request names (D-014), so the agent is the last place to catch the copy.
 Cost: a copy that reaches the agent after the first run ended runs as a request of its own. A request
 in the same check-in as a cancel is refused, since the cancelled run has not stopped yet.
 
+### D-100: A card shows its latest run, and a done run moves it to In review
+
+Proposed 2026-11-05 in #116 (K-52).
+
+The board folds the user's run messages in #general into each roadmap card: Sending, Waiting for the
+agent, Running, Done or Failed. While a run may still go, the Run menu is a disabled button, so a
+second click asks nothing. A request no agent answers in 30 minutes stops blocking, the time a plugin
+job waits. When the agent reports done, the requester's page sets the card's status to `In review:
+repo#PR`, once per request, which a new In review group shows. The owner moves it to Done or Fixed
+after merging. Why: the server cannot drop copies of an encrypted request, and done means a draft.
+
+Cost: the board loads a page of #general to see runs. Two tabs can still each send one request
+before they sync; the agent refuses the second (D-099). The status changes only while the
+requester's board is open.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope

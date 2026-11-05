@@ -3,8 +3,10 @@
 // starts with "### D-3: Title" and a "Status:" line. This module only reads and writes that text,
 // so the tests run it without a browser.
 import type { DocContent } from '../../shared/e2ee';
+import { RUN_PICKUP_MS, type RunReport } from '../../shared/types';
 import type { DocSection } from './docs';
-import type { ChatConversation, ChatDoc } from './e2ee/keyring';
+import type { ChatConversation, ChatDoc, ChatMessage } from './e2ee/keyring';
+import type { PendingStatus } from './store';
 
 export type BoardColumn = NonNullable<DocContent['board']>;
 /** Decisions are D-n. Ideas, R-n, and issues, K-n, share the Roadmap column. */
@@ -63,6 +65,8 @@ export const GROUPS: Record<BoardColumn, Array<{ name: string; statuses: string[
   ],
   roadmap: [
     { name: 'In progress', statuses: ['In progress'] },
+    // A run that ended in a draft pull request waits here for its owner to review and merge it.
+    { name: 'In review', statuses: ['In review'] },
     { name: 'Next', statuses: ['Next', 'Planned'] },
     { name: 'Open', statuses: ['Idea', 'Open'] },
     { name: 'Done', statuses: ['Done', 'Fixed', 'Dropped'], folded: true },
@@ -72,7 +76,18 @@ export const GROUPS: Record<BoardColumn, Array<{ name: string; statuses: string[
 /** The group a status belongs to. A status outside the list goes with the open items. */
 export function groupOf(column: BoardColumn, status: string): number {
   const found = GROUPS[column].findIndex((g) => g.statuses.some((s) => status.toLowerCase().startsWith(s.toLowerCase())));
-  return found >= 0 ? found : column === 'decisions' ? 0 : 2;
+  return found >= 0 ? found : column === 'decisions' ? 0 : 3;
+}
+
+/** The card's text with this status line under its heading, replacing the one it has. */
+export function withStatus(text: string, status: string): string {
+  const lines = text.split('\n');
+  const heading = lines.findIndex((l) => l.trim() !== '');
+  const next = lines.findIndex((l, i) => i > heading && l.trim() !== '');
+  const line = `Status: ${status}.`;
+  if (next >= 0 && STATUS.test(lines[next]!)) lines[next] = line;
+  else lines.splice(heading + 1, 0, '', line);
+  return lines.join('\n');
 }
 
 /** The next free number of a kind among these cards. */
@@ -115,4 +130,51 @@ export function boardDocs(docs: Record<string, ChatDoc>, conversations: Record<n
     if (!have || d.createdAt < have.createdAt || (d.createdAt === have.createdAt && d.id < have.id)) found[d.board] = d;
   }
   return found;
+}
+
+/** Where the user's latest run of a card stands, as the run messages in #general tell it (R-027, R-030). */
+export interface CardRun {
+  /** The request's message id, negative while it is being sent. */
+  request: number;
+  runtime: number;
+  repo?: string;
+  state: 'sending' | 'waiting' | 'unanswered' | 'cancelled' | RunReport['kind'];
+  note?: string;
+  /** The pull request a run that is done opened. */
+  pull?: RunReport['pull'];
+}
+
+/** The states in which a run may still go, so the page asks for no second one. */
+export const GOING = new Set<CardRun['state']>(['sending', 'waiting', 'claimed', 'fixing']);
+
+/**
+ * The user's latest run of each card of a board doc, by section id. A request that failed to send
+ * asked nothing, and a cancel ends a request no agent took. Only the agent a request names reports
+ * on it, as in the chat.
+ */
+export function cardRuns(messages: ChatMessage[], meId: number, docId: string, pending: Record<string, PendingStatus>, now: number) {
+  const runs = new Map<string, CardRun>();
+  const sections = new Map<number, string>();
+  const latest = (request: number) => {
+    const run = runs.get(sections.get(request) ?? '');
+    return run?.request === request ? run : undefined;
+  };
+  for (const m of messages) {
+    const run = m.run;
+    if (!run) continue;
+    if (run.kind === 'request') {
+      const status = m.clientId ? pending[m.clientId] : undefined;
+      if (m.senderId !== meId || run.docId !== docId || status === 'failed') continue;
+      sections.set(m.id, run.section);
+      const state = status === 'sending' ? 'sending' : now - (run.sentAt ?? 0) < RUN_PICKUP_MS ? 'waiting' : 'unanswered';
+      runs.set(run.section, { request: m.id, runtime: run.runtime, repo: run.repo, state });
+    } else if (run.kind === 'cancel') {
+      const target = m.senderId === meId ? latest(run.request) : undefined;
+      if (target?.state === 'waiting') target.state = 'cancelled';
+    } else {
+      const target = latest(run.request);
+      if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull });
+    }
+  }
+  return runs;
 }
