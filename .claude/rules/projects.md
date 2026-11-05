@@ -54,5 +54,6 @@ docs/decisions.md that explains it.
 - A conversation's turns run in a scratch repository of its own in the temp folder, never a worktree of the owner's checkout, whose `.git` it would share; nothing from it is pushed (D-102).
 - The page asks only a session whose check-in names `AGENT_LEVEL.answers` or above: older plugins check in but ignore prompts, so the pane tells their owner how to update instead (D-103).
 - An agent never writes the board: its card drafts reach it only when the owner's page writes them, and a change only while the card's text still has the hash the draft names (D-104).
+- A conversation's brief holds only the board its owner's page named in the signed prompt, never every project the agent is in: anyone can add an agent to their project (D-104).
 - In the plugin only the server pushes: the run's `agent/*` branch, never forced, and it never merges. Its git in a worktree runs with hooks off, since the worktree's files are the model's (D-092).
 - A daemon's run uses a worktree and a brief outside the repository; a plugin's worktree is under `.claude/worktrees`, where the sandboxed shell may write. A run never pushes to main and fails after 2 hours of silence or with no commits (D-087, D-092).

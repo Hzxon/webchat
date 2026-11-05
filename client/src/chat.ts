@@ -786,11 +786,23 @@ export function askFix(conversationId: number, request: number, note: string) {
  * open in that repository answers. Returns the conversation, by the prompt's client id.
  */
 export async function askAgent(agentId: number, repo: string, question: string) {
-  const conversationId = await startDirectChat(agentId);
+  const [conversationId, project] = await Promise.all([startDirectChat(agentId), boardFor(agentId, repo)]);
   const clientId = newClientId();
   // The message shows as sending at once, so the pane can open its conversation.
-  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', repo, sentAt: Date.now() } }, false, clientId);
+  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', repo, sentAt: Date.now(), ...(project && { project }) } }, false, clientId);
   return clientId;
+}
+
+/**
+ * The board a question is about, which alone goes in the agent's brief (D-104): the project the user
+ * shares with the agent, or of several, the one whose channel links the repository. None otherwise.
+ */
+async function boardFor(agentId: number, repo: string) {
+  const shared = Object.values(store.get().projects).filter((p) => p.memberIds.includes(meId) && p.memberIds.includes(agentId));
+  if (shared.length < 2) return shared[0]?.id;
+  const linked = await Promise.all(shared.map((p) => api.projectRepos(p.id).then((v) => (v.repos.some((r) => r.repo === repo) ? p.id : null), () => null)));
+  const ids = linked.filter((id) => id !== null);
+  return ids.length === 1 ? ids[0] : undefined;
 }
 
 /** Replies in a conversation with an agent, or stops its turn. Both name the prompt's client id (D-102). */

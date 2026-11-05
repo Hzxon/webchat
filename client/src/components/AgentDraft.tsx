@@ -6,17 +6,30 @@ import { useEffect, useMemo, useState } from 'react';
 import { textHash } from '../../../shared/e2ee';
 import type { CardDraftDTO } from '../../../shared/types';
 import type { Thread } from '../agents';
-import { api } from '../api';
 import { boardDocs, cardText, KIND_NAMES, NEW_STATUS, nextNumber, parseCard, type Card } from '../board';
 import { noteAdded, syncNow, tellAgent } from '../chat';
-import { loadSections, newSectionId, replaceSection, sectionHistory } from '../docs';
+import { loadSections, newSectionId, replaceSection, rewriteSection, sectionHistory } from '../docs';
 import type { ChatMessage } from '../e2ee/keyring';
 import { actions, senderName, useAppState } from '../store';
 import { createBoard } from './BoardView';
 import { formatSince } from './format';
 import { Markdown } from './Markdown';
 
-const paragraphsOf = (text: string) => text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+/** A text's paragraphs, split at blank lines outside code fences, so a block of code stays whole. */
+function paragraphsOf(text: string) {
+  const out: string[] = [];
+  let current: string[] = [];
+  let fenced = false;
+  for (const line of text.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+    if (!fenced && !line.trim()) {
+      if (current.length) out.push(current.join('\n').trim());
+      current = [];
+    } else current.push(line);
+  }
+  if (current.length) out.push(current.join('\n').trim());
+  return out.filter(Boolean);
+}
 
 /** Why a change cannot go on: its card changed or went since the agent drafted it. */
 type Stale = { by: string; at: number } | 'deleted';
@@ -29,31 +42,22 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
   const meId = useAppState((s) => s.me?.id);
   const change = draft.replaces;
   const added = thread.added[message.clientId ?? ''];
-  // A new card goes to a project the agent shares with the user; a change, to its card's board.
+  // A new card goes to the board the question was about, else one the agent shares with the user;
+  // a change, to its card's board.
   const shared = useMemo(
     () => Object.values(projects).filter((p) => meId !== undefined && p.memberIds.includes(meId) && p.memberIds.includes(agentId)),
     [projects, meId, agentId],
   );
-  const [picked, setPicked] = useState<number | null>(shared.length === 1 ? shared[0]!.id : null);
-  const projectId = change ? (conversations[docs[change.doc]?.conversationId ?? 0]?.projectId ?? null) : picked;
+  const [picked, setPicked] = useState<number | null>(null);
+  const asked = thread.messages[0]!.prompt;
+  const board = asked?.kind === 'prompt' && shared.some((p) => p.id === asked.project) ? asked.project! : shared.length === 1 ? shared[0]!.id : null;
+  const projectId = change ? (conversations[docs[change.doc]?.conversationId ?? 0]?.projectId ?? null) : (picked ?? board);
+  const [redone, setRedone] = useState(false);
   const roadmap = projectId === null ? undefined : boardDocs(docs, conversations, projectId).roadmap;
   const [cards, setCards] = useState<Card[] | null>(null);
   const [stale, setStale] = useState<Stale | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-
-  // With several boards, the one whose channel links the conversation's repository is the likely one.
-  useEffect(() => {
-    if (change || shared.length < 2) return;
-    let live = true;
-    void Promise.all(shared.map((p) => api.projectRepos(p.id).then((v) => (v.repos.some((r) => r.repo === thread.repo) ? p.id : null), () => null))).then((ids) => {
-      const linked = ids.filter((id) => id !== null);
-      if (live && linked.length === 1) setPicked((current) => current ?? linked[0]!);
-    });
-    return () => {
-      live = false;
-    };
-  }, [change, shared, thread.repo]);
 
   // The board as it is now, again whenever its doc changes, and whether a change's card still says
   // what the agent saw. A draft already added needs neither.
@@ -91,10 +95,14 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
       const fresh = (await loadSections(doc)).map(parseCard);
       let id: string;
       if (change) {
-        const card = fresh.find((c) => c.id === change.section);
+        // Read and written under the card's lock, so nobody's save lands in between.
+        const written = await rewriteSection(doc, change.section, async (section) => {
+          const card = section && parseCard(section);
+          if (!card || (await textHash(card.text.trim())) !== change.seen) return null;
+          return { text: cardText(card.kind!, card.number!, draft.title, card.status, draft.body.trim()), pos: card.pos };
+        });
         // Changed since the page last looked: the next load says how.
-        if (!card || (await textHash(card.text.trim())) !== change.seen) return void syncNow();
-        await replaceSection(doc, card.id, { text: cardText(card.kind!, card.number!, draft.title, card.status, draft.body.trim()), pos: card.pos });
+        if (!written) return void syncNow();
         id = change.card;
       } else {
         const number = nextNumber(fresh, draft.kind);
@@ -153,7 +161,11 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
           </p>
           <button
             className="button-secondary"
-            onClick={() => void tellAgent(thread.conversationId, thread.root, 'reply', `${change.card} changed on the board since your draft. Draft the change again from what it says now.`)}
+            disabled={redone || thread.state === 'working' || thread.state === 'ended'}
+            onClick={() => {
+              setRedone(true);
+              void tellAgent(thread.conversationId, thread.root, 'reply', `${change.card} changed on the board since your draft. Draft the change again from what it says now.`);
+            }}
           >
             Ask it to redo this
           </button>
@@ -170,6 +182,7 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
               ))}
             </select>
           )}
+          {!change && shared.length === 0 && <p className="composer-blocked">Add your agent to a project first, under the project’s people.</p>}
           <button className="button-primary" disabled={busy || cards === null || projectId === null || (!!change && !current)} onClick={() => void add()}>
             {change ? `Update ${change.card}` : `Add as ${kind} ${draft.kind}-${nextNumber(cards ?? [], draft.kind)}`}
           </button>
