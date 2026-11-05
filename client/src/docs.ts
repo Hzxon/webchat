@@ -15,6 +15,8 @@ export interface DocSection {
   pos: number;
   /** Its revision did not decrypt, or its signature did not check. */
   failed: boolean;
+  /** Who wrote its newest revision, for the brief that marks teammates' text (D-105). */
+  authorId?: number;
 }
 
 export const newSectionId = () => toBase64Url(randomBytes(8));
@@ -59,6 +61,7 @@ export async function loadSections(doc: ChatDoc): Promise<DocSection[]> {
       // A section that does not open keeps its place among the others by when it was written.
       pos: content?.pos ?? revision.createdAt,
       failed: !content,
+      authorId: revision.authorId,
     }))
     .sort((a, b) => a.pos - b.pos);
 }

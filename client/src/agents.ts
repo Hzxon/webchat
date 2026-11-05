@@ -2,7 +2,7 @@
 // D-102, D-103). A conversation is a prompt and the messages whose `prompt` field names the
 // prompt's client id, all in the user's direct chat with the agent.
 import { useMemo } from 'react';
-import { AGENT_LEVEL, type AgentRepoDTO, type UserDTO } from '../../shared/types';
+import { AGENT_LEVEL, type AgentRepoDTO, type RunDTO, type UserDTO } from '../../shared/types';
 import type { Tone } from './components/PullTags';
 import type { ChatConversation, ChatMessage } from './e2ee/keyring';
 import { otherMemberId, useAppState, type State } from './store';
@@ -11,13 +11,17 @@ import { otherMemberId, useAppState, type State } from './store';
 export const THREAD_TTL_MS = 24 * 60 * 60_000;
 
 export interface Thread {
-  /** The prompt's client id, which every later message names. */
+  /** A question, or a card the owner handed the agent from its brief (D-105). */
+  kind: 'question' | 'card';
+  /** The prompt's or the run request's client id. */
   root: string;
+  /** For a card: its request's message id, which the agent's reports name. */
+  request?: number;
   conversationId: number;
   repo: string;
   /** The prompt first, then the messages that name it, in the chat's order, one per answer. */
   messages: ChatMessage[];
-  state: 'working' | 'answered' | 'failed' | 'unsent' | 'ended';
+  state: 'working' | 'answered' | 'failed' | 'unsent' | 'ended' | 'draft' | 'waiting' | 'unfinished' | 'done';
   /** When its newest message was sent. */
   last: number;
   /** The cards its drafts became on the board, by the draft's client id (D-104). */
@@ -31,12 +35,30 @@ export const THREAD_STATE: Record<Thread['state'], { label: string; tone: Tone }
   failed: { label: 'Couldn’t answer', tone: 'danger' },
   unsent: { label: 'Not sent', tone: 'danger' },
   ended: { label: 'Ended', tone: 'muted' },
+  draft: { label: 'Draft ready', tone: 'ok' },
+  waiting: { label: 'Waiting for you', tone: 'warn' },
+  unfinished: { label: 'Couldn’t finish', tone: 'danger' },
+  done: { label: 'Done', tone: 'muted' },
+};
+
+/** What each run message makes of its card's conversation; a cancel changes nothing until the agent says it stopped. */
+const RUN_STATE: Partial<Record<RunDTO['kind'], Thread['state']>> = {
+  claimed: 'working',
+  fixing: 'working',
+  fix: 'working',
+  done: 'draft',
+  review: 'waiting',
+  failed: 'unfinished',
+  ended: 'done',
 };
 
 /** A Claude Code session of the user's agent, by the repository it is open in (D-094). */
 export interface Seat extends AgentRepoDTO {
   agent: UserDTO;
 }
+
+/** A repository by its name alone, as students know it: "capstone-app" for "team/capstone-app". */
+export const short = (repo: string) => repo.slice(repo.indexOf('/') + 1);
 
 /** The user's own coding agents (D-089). */
 export const ownAgents = (users: State['users'], meId: number | undefined) => Object.values(users).filter((u) => u.agentOwner === meId && !u.deleted);
@@ -61,6 +83,9 @@ export const agentChats = (state: Pick<State, 'users' | 'me' | 'conversations'>)
  */
 export function threadsOf(messages: ChatMessage[], meId: number, agentId: number, pending: State['pending'] = {}, now = Date.now()): Thread[] {
   const threads = new Map<string, Thread>();
+  // A card's thread by its request's message id, which the reports name, and those with a draft.
+  const requests = new Map<number, Thread>();
+  const drafted = new Set<Thread>();
   for (const message of messages) {
     const prompt = message.prompt;
     if (message.security !== 'encrypted') continue;
@@ -69,11 +94,35 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
       if (thread) thread.added[message.added.draft] = message.added.card;
       continue;
     }
+    const run = message.run;
+    if (run?.kind === 'request') {
+      if (message.senderId === meId && message.clientId) {
+        const state = pending[message.clientId] === 'failed' ? 'unsent' : 'working';
+        const thread: Thread = { kind: 'card', root: message.clientId, request: message.id, conversationId: message.conversationId, repo: run.repo ?? '', messages: [message], state, last: message.createdAt, added: {} };
+        threads.set(message.clientId, thread);
+        requests.set(message.id, thread);
+      }
+      continue;
+    }
+    if (run) {
+      const thread = requests.get(run.request);
+      const fromMe = run.kind === 'cancel' || run.kind === 'fix';
+      if (!thread || message.senderId !== (fromMe ? meId : agentId)) continue;
+      thread.messages.push(message);
+      thread.last = Math.max(thread.last, message.createdAt);
+      if (run.kind === 'done') drafted.add(thread);
+      let state = RUN_STATE[run.kind];
+      // A round that failed leaves the draft it worked on; a go that did not send is no round.
+      if (run.kind === 'failed' && drafted.has(thread)) state = 'draft';
+      if (fromMe && pending[message.clientId ?? ''] === 'failed') state = 'unsent';
+      thread.state = state ?? thread.state;
+      continue;
+    }
     if (!prompt) continue;
     if (prompt.kind === 'prompt') {
       if (message.senderId === meId && message.clientId) {
         const state = pending[message.clientId] === 'failed' ? 'unsent' : 'working';
-        threads.set(message.clientId, { root: message.clientId, conversationId: message.conversationId, repo: prompt.repo, messages: [message], state, last: message.createdAt, added: {} });
+        threads.set(message.clientId, { kind: 'question', root: message.clientId, conversationId: message.conversationId, repo: prompt.repo, messages: [message], state, last: message.createdAt, added: {} });
       }
       continue;
     }
@@ -91,19 +140,38 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     else if (prompt.kind === 'answer') thread.state = 'answered';
     else if (prompt.kind === 'failed') thread.state = 'failed';
   }
-  return [...threads.values()].map((t) => (now - t.last > THREAD_TTL_MS ? { ...t, state: 'ended' as const } : t)).sort((a, b) => b.last - a.last);
+  // A card's conversation lasts as long as its draft is watched, so only a question ends.
+  return [...threads.values()].map((t) => (t.kind === 'question' && now - t.last > THREAD_TTL_MS ? { ...t, state: 'ended' as const } : t)).sort((a, b) => b.last - a.last);
+}
+
+/** The user's chats with their agents. */
+export function useAgentChats() {
+  const conversations = useAppState((s) => s.conversations);
+  const users = useAppState((s) => s.users);
+  const me = useAppState((s) => s.me);
+  return useMemo(() => agentChats({ users, me, conversations }), [users, me, conversations]);
 }
 
 /** The user's chats with their agents, and every conversation in them, newest first. */
 export function useAgentThreads() {
-  const conversations = useAppState((s) => s.conversations);
+  const chats = useAgentChats();
   const users = useAppState((s) => s.users);
   const me = useAppState((s) => s.me);
   const messages = useAppState((s) => s.messages);
   const pending = useAppState((s) => s.pending);
   return useMemo(() => {
-    const chats = agentChats({ users, me, conversations });
     const threads = me ? chats.flatMap((chat) => threadsOf(messages[chat.id] ?? [], me.id, agentOf({ users, me }, chat)!.id, pending)) : [];
     return { chats, threads: threads.sort((a, b) => b.last - a.last) };
-  }, [users, me, conversations, messages, pending]);
+  }, [chats, users, me, messages, pending]);
 }
+
+/** Every run message in the user's chats with their agents, as one string that changes when a run moves. */
+export const runSignature = (state: State) =>
+  agentChats(state)
+    .flatMap((c) => (state.messages[c.id] ?? []).filter((m) => m.run).map((m) => `${m.id}:${m.run!.kind}`))
+    .join();
+
+export const seatKey = (seat: Seat) => `${seat.agent.id}:${seat.repo}`;
+
+/** Messages of several chats in the order they were sent: by id, then those still sending, as the store keeps them. */
+export const inOrder = (messages: ChatMessage[]) => [...messages.filter((m) => m.id > 0).sort((a, b) => a.id - b.id), ...messages.filter((m) => m.id < 0)];

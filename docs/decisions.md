@@ -918,24 +918,26 @@ logic is ported, not shared, until K-40.
 
 ### D-086: A run is a request message and the reports that name it
 
-Accepted 2026-11-05 in #86.
+Accepted 2026-11-05 in #86, changed in #122.
 
-Handing a card to an agent (R-027) sends an ordinary message of kind "message" into #general. Its
-sealed content carries a `run` field, as a pull request carries `pull` (D-042): the card's id and
-title, its doc and section, and the agent's account. It names the card, not its text: the daemon
-reads the card from the board when it claims, with its member key. It runs one request at a time
-(D-089 says whose). It answers with messages whose `run` field names the request's message id and
-says claimed, done or failed, with a note, a branch and a pull request if any; the text says the
+Handing a card to an agent (R-027) sends an ordinary message of kind "message" into the owner's
+direct chat with the agent, once #general until D-105. Its sealed content carries a `run` field, as
+a pull request carries `pull` (D-042): the card's id and title, its doc and section, the agent's
+account and the brief's hash. It names the card, not its text: the agent reads the card from the
+board when it claims, with its member key. It runs one request at a time (D-089 says whose). It
+answers with messages whose `run` field names the request's message id and says claimed, done,
+failed, fixing, review or ended, with a note, a branch and a pull request if any; the text says the
 same. A page folds reports into the request's card and shows the latest, only from the agent the
-request names. An older page shows the texts. Why: the signature proves who asked (D-016), and
-separate report messages stay immutable and signed by their author.
+request names. Why: the signature proves who asked (D-016), and separate report messages stay
+immutable and signed by their author.
 
 Cost: each report is an unread message that alerts, so keep them sparse. The request's id is the
 server's, so a changed server could attach a report to another request, but could forge neither.
 
 ### D-087: A run is a worktree, a brief and a headless coding agent
 
-Accepted 2026-11-05 in #87.
+Accepted 2026-11-05 in #87. Superseded by D-105 in #122: the daemon takes no cards, and its
+adapters are gone. The worktree and branch naming stay, for the plugin's runs.
 
 The daemon runs a card in the project's repository on its owner's machine. `config.json` next to the
 account file maps each project name to a local checkout and picks the agent. A run fetches `origin`,
@@ -1071,19 +1073,21 @@ request names (D-014), so the agent is the last place to catch the copy.
 Cost: a copy that reaches the agent after the first run ended runs as a request of its own. A request
 in the same check-in as a cancel is refused, since the cancelled run has not stopped yet.
 
-### D-100: A card shows its latest run, and a done run moves it to In review
+### D-100: A card shows its latest run, and its status line follows the run
 
-Proposed 2026-11-05 in #116 (K-52).
+Proposed 2026-11-05 in #116 (K-52), changed in #122.
 
-The board folds the user's run messages in #general into each roadmap card: Sending, Waiting for the
-agent, Running, Done or Failed. While a run may still go, the Run menu is a disabled button, so a
-second click asks nothing. A request no agent answers in 30 minutes stops blocking. When the agent reports done, the requester's page sets the card's status to `In review:
-repo#PR`, once per request, which a new In review group shows. The owner moves it to Done or Fixed
-after merging. Why: the server cannot drop copies of an encrypted request, and done means a draft.
+The board folds the user's run messages, in their chats with their agents, into each roadmap card.
+While a run may still go, the play button is disabled, so a second click asks nothing. A request no
+agent answers in 30 minutes stops blocking, on the board and in the chat. Teammates see no run
+messages, so the status line tells them: any open page of the requester's sets it to `In progress:
+Ann's agent` once the agent claims, to `In review: repo#PR` when it is done, and back to what it was
+when the run fails, once per request and state, under the card's lock. The owner moves it to Done or
+Fixed after merging. Why: the server cannot drop copies of an encrypted request, and done means a
+draft.
 
-Cost: the board loads a page of #general to see runs. Two tabs can still each send one request
-before they sync; the agent refuses the second (D-099). The status changes only while the
-requester's board is open.
+Cost: the status changes only while a page of the requester's is open. Two tabs can still each send
+one request before they sync; the agent refuses the second (D-099).
 
 ### D-101: A repository takes part once its owner connects it
 
@@ -1155,6 +1159,24 @@ board, and nothing it drafts lands unseen.
 
 Cost: each turn reads the board. An agent in two projects that share a card id cannot change that
 card.
+
+### D-105: A card runs from a brief its owner saw and signed
+
+Proposed 2026-11-06 in #122 (R-035).
+
+A card's play button opens its brief in the Coding agents pane: the card and the decisions the team
+holds, without the superseded ones, raw, each teammate's passage marked with their name, and a line
+that the agent follows it with the owner's GitHub login. Start sends the request in the owner's
+direct chat with the agent, with the hash of that brief and the card's status; the agent refuses one
+without the hash or whose brief changed. Plugin sessions name `AGENT_LEVEL.cards` only while `gh` is
+signed in. A review by anyone but the owner waits for the owner's go, which names the review's
+report; only the text that report showed runs. CI, conflicts and the owner's reviews start a round
+on their own, and the owner's rounds count toward no limit. Watching outlasts Ready for review and
+ends with a report. The daemon takes no cards. Why: text teammates wrote runs with the owner's
+login, so the owner sees it first.
+
+Cost: a card edited between the brief and the claim must be started again. Codex and Hermes no
+longer run cards.
 
 ## Replies and reactions
 

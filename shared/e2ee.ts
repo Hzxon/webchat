@@ -451,7 +451,7 @@ export function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | u
 }
 
 const CARD_ID = /^[DRK]-\d{1,6}$/;
-const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed', 'fixing'];
+const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed', 'fixing', 'review', 'ended'];
 const short = (value: unknown, max: number) => (typeof value === 'string' && value.length <= max ? value : undefined);
 
 /** A run request or report, if it has the right shape. A pull request is named by repository and number only. */
@@ -472,9 +472,16 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
       runtime: raw.runtime,
       ...(isId(raw.sentAt) && { sentAt: raw.sentAt }),
       ...(typeof raw.repo === 'string' && isRepoName(raw.repo) && { repo: raw.repo }),
+      ...(short(raw.hash, 64) && { hash: raw.hash as string }),
+      ...(short(raw.was, LIMITS.runNoteLength) !== undefined && { was: raw.was as string }),
     };
   }
   if (raw.kind === 'cancel') return isId(raw.request) ? { kind: 'cancel', request: raw.request } : undefined;
+  if (raw.kind === 'fix') {
+    if (!isId(raw.request) || !isId(raw.sentAt)) return;
+    const note = short(raw.note, LIMITS.messageLength);
+    return { kind: 'fix', request: raw.request, sentAt: raw.sentAt, ...(note && { note }), ...(isId(raw.review) && { review: raw.review }) };
+  }
   const kind = REPORT_KINDS.find((k) => k === raw.kind);
   if (!kind || !isId(raw.request)) return;
   const run: RunReport = { kind, request: raw.request };

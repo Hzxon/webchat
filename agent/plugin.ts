@@ -15,12 +15,12 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
-import { AGENT_LEVEL, isRepoName, LIMITS, type CardDraftDTO, type RunRequest } from '../shared/types.ts';
+import { AGENT_LEVEL, isRepoName, LIMITS, type CardDraftDTO, type RunFix, type RunRequest } from '../shared/types.ts';
 import { claudeArgs, claudeSettings } from './claude.ts';
 import { AgentClient, readPairing, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
-import { ADAPTERS, addWorktree, decisionsOf, fetchOrigin, start } from './runner.ts';
-import { messageOf, Runs, type Runner, type RunResult } from './runs.ts';
+import { addWorktree, claudeResult, fetchOrigin, start } from './runner.ts';
+import { messageOf, REQUEST_TTL_MS, Runs, type Runner, type RunResult } from './runs.ts';
 
 const exec = promisify(execFile);
 const gh = (args: string[]) => exec('gh', args, { maxBuffer: 32 * 1024 * 1024 }).then((r) => r.stdout.trim());
@@ -71,6 +71,13 @@ interface Watched extends Place {
   seenUpdate?: string;
   /** The background Claude session that made it, which each round of fixes resumes. None before R-035. */
   session?: string;
+  /**
+   * Reviews by others than the owner, each waiting for the owner's go by the id of the report that
+   * showed it, with exactly the text that report showed (D-105).
+   */
+  waiting?: Array<{ report: number; line: string; details: string }>;
+  /** The owner's go, with the review it approves and their own words, which the next look takes up. */
+  go?: { review?: number; note: string };
 }
 
 /** How a background Claude's turn ends (D-097). */
@@ -148,6 +155,8 @@ export class Plugin {
   private home = '';
   private watched: Watched[] = [];
   private polling = false;
+  /** The owner's GitHub login, whose own reviews start a round on their own (D-105). */
+  private login?: string;
   /** Whether a GitHub login may push to a repository, by "repo login". */
   private readonly writers = new Map<string, boolean>();
 
@@ -222,13 +231,13 @@ export class Plugin {
     if (process.platform === 'win32') return 'Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.';
     if (!this.options.claude) return 'I cannot find Claude Code on this laptop.';
     // The background Claude's shell reads the repository's .git, where an https address can hold a login.
-    if (/^https?:\/\/[^/]*@/i.test(this.origin)) return "origin's address holds a login, which my shell could read. Use an address without one.";
+    if (/^https?:\/\/[^/]*@/i.test(this.origin)) return 'Your repository’s address on this laptop holds a password, which I must not see. Ask Claude Code there to take the login out of the address of origin.';
     return sandboxProblem(this.options.projectDir, this.secrets, restrictedSettings(this.file('claude.json')));
   }
 
   /** Why its runs fail before they start, which Runs asks before each claim: they also push and open drafts with this laptop's GitHub login (D-092). */
   private async cardRefusal() {
-    return (await this.refusal()) ?? ((await signedIn()) ? undefined : GITHUB);
+    return (await this.refusal()) ?? ((await signedIn()) ? undefined : 'Cards need a GitHub sign-in on this laptop. In Claude Code there, type /webchat:connect, and it helps you sign in.');
   }
 
   /** Checks in every 15 seconds and looks at the pull requests every minute, until the session ends the process. */
@@ -237,8 +246,10 @@ export class Plugin {
     await this.runs!.recover().catch(log);
     await this.conversations!.recover().catch(log);
     missed.forEach((m) => this.handle(m));
+    const level = async () => (this.client!.protocol = (await signedIn()) ? AGENT_LEVEL.cards : AGENT_LEVEL.answers);
+    await level();
     setInterval(() => {
-      void this.pollPulls().catch(log);
+      void level().then(() => this.pollPulls()).catch(log);
       void this.conversations!.sweep().catch(log);
     }, 60_000);
     for await (const message of this.client!.watch(new AbortController().signal)) this.handle(message);
@@ -246,16 +257,32 @@ export class Plugin {
 
   /** Acts on one message. A turn takes long, so the loop does not wait for it: check-ins go on meanwhile. */
   handle(message: OpenedMessage) {
+    const run = message.content?.run;
+    if (run?.kind === 'fix') return this.go(message, run).catch(log);
     return (message.content?.prompt ? this.conversations! : this.runs!).handle(message).catch(log);
   }
 
+  /** The owner's go for another round on a draft: after a review waits, or with their own words (D-105). */
+  private async go(message: OpenedMessage, fix: RunFix) {
+    // Only the owner's, once, as for a request (D-089, K-47). Every repository's session hears it,
+    // so only the one watching the draft acts or answers.
+    if (message.security !== 'encrypted' || message.senderId !== this.client!.owner || !this.client!.remember(message.clientId ?? '', fix.sentAt)) return;
+    const pull = this.watched.find((w) => w.taken.message === fix.request);
+    if (!pull) return;
+    // A signed time, so an old go is not played again (K-42).
+    if (Math.abs(Date.now() - fix.sentAt) > REQUEST_TTL_MS) {
+      const text = 'I got this more than 10 minutes after you sent it. Ask again.';
+      return void (await this.runs!.report(pull.taken, { kind: 'failed', note: text }, text));
+    }
+    pull.go = { review: fix.review, note: fix.note ?? '' };
+    await this.saveWatched();
+    await this.pollPulls();
+  }
+
   /** A run, as Runs hands it over: a worktree inside the checkout, a turn of the background Claude there, then the draft. */
-  private async run({ request, taken, card, projectId, signal }: Parameters<Runner>[0]): Promise<RunResult> {
+  private async run({ request, taken, card, decisions, signal }: Parameters<Runner>[0]): Promise<RunResult> {
     const { projectDir } = this.options;
-    const [{ branch, dir, base }, decisions] = await Promise.all([
-      addWorktree(projectDir, request, path.join(projectDir, '.claude', 'worktrees')),
-      decisionsOf(this.client!, projectId),
-    ]);
+    const { branch, dir, base } = await addWorktree(projectDir, request, path.join(projectDir, '.claude', 'worktrees'));
     const place: Place = { branch, worktree: dir, base };
     const session = randomUUID();
     const answer = await this.work(place, session, false, runBrief(request.card, place, card, decisions), signal);
@@ -269,7 +296,7 @@ export class Plugin {
   /** One turn of the background Claude in `cwd`: the message on stdin, the JSON answer `schema` asks for (D-097). */
   private async ask(cwd: string, session: string, resume: boolean, message: string, schema: object, signal: AbortSignal) {
     const args = claudeArgs({ settings: this.file('claude.json'), session, resume, answer: schema });
-    const turn = await start(this.options.claude, args, cwd, signal, ADAPTERS.claude.result, message);
+    const turn = await start(this.options.claude, args, cwd, signal, claudeResult, message);
     if (turn.error || !turn.answer) throw new Error(turn.text.trim().slice(0, 500) || 'Claude stopped without an answer.');
     // The owner may cancel while the turn ends; nothing is pushed or posted then.
     if (signal.aborted) throw new Error('the owner cancelled the run.');
@@ -397,10 +424,10 @@ export class Plugin {
   }
 
   /**
-   * Looks at each draft pull request this server opened. When CI failed on its last push, it
-   * conflicts, or someone who may push reviewed it, the model gets another round, at most three.
-   * Watching stops when someone else pushes, it is closed, merged or marked ready, or the owner
-   * cancels its run.
+   * Looks at each pull request this server opened. When CI failed on its last push, it conflicts, or
+   * its owner reviewed it, the model gets another round, at most three. A review by someone else who
+   * may push waits for the owner's go, and the owner's own rounds count toward no limit (D-105).
+   * Watching stops when someone else pushes, it is closed or merged, or the owner cancels its run.
    */
   async pollPulls() {
     if (this.polling || !this.runs || (await this.refusal())) return;
@@ -409,8 +436,21 @@ export class Plugin {
       for (const pull of [...this.watched]) {
         if (this.runs.running) return;
         const view = JSON.parse(await gh(['pr', 'view', String(pull.pull.number), '--repo', pull.pull.repo, '--json', PULL_FIELDS])) as PullView;
-        if (this.runs.cancelled.has(pull.taken.message) || view.state !== 'OPEN' || !view.isDraft || view.headRefOid !== pull.head) {
+        const ended = this.endOf(pull, view);
+        if (ended) {
           await this.unwatch(pull);
+          await this.runs.report(pull.taken, { kind: 'ended', note: ended, pull: pull.pull }, `I stopped watching ${pull.pull.repo}#${pull.pull.number}: ${ended}.`);
+          continue;
+        }
+        if (pull.go) {
+          // Only the review the owner approved, as it showed it, and their words; a reply alone runs only those.
+          const asked = pull.go.review === undefined ? undefined : pull.waiting?.find((w) => w.report === pull.go!.review);
+          const why = { line: asked?.line ?? 'you asked for changes', details: [asked?.details, pull.go.note && `Your owner asks:\n\n${pull.go.note}`].filter(Boolean).join('\n\n') };
+          pull.waiting = pull.waiting?.filter((w) => w !== asked);
+          delete pull.go;
+          await this.saveWatched();
+          if (!why.details) continue;
+          await this.runs.follow(pull.taken, pull.request, why.line, { branch: pull.branch, pull: pull.pull }, (signal) => this.fix(pull, why, signal));
           continue;
         }
         const why = await this.whatToFix(pull, view);
@@ -427,6 +467,14 @@ export class Plugin {
     } finally {
       this.polling = false;
     }
+  }
+
+  /** Why watching a pull request stops, or '' while it goes on. */
+  private endOf(pull: Watched, view: PullView) {
+    if (this.runs!.cancelled.has(pull.taken.message)) return 'you stopped it';
+    if (view.state === 'MERGED') return 'it was merged';
+    if (view.state !== 'OPEN') return 'it was closed';
+    return view.headRefOid !== pull.head ? 'someone else pushed to it' : '';
   }
 
   /** What is new to fix: CI that failed on the head, a conflict, or review notes from people who may push. */
@@ -446,10 +494,24 @@ export class Plugin {
       if (why.length) pull.seenHead = view.headRefOid;
     }
     const notes = await this.reviewNotes(pull, view);
-    if (notes.length) {
-      why.push(`review from ${[...new Set(notes.map((n) => n.author))].join(', ')}`);
-      details.push(notes.map((n) => `- ${n.author}: ${n.text}`).join('\n'));
-      pull.seenNote = notes.map((n) => n.at).sort().at(-1)!;
+    if (notes.length) pull.seenNote = notes.map((n) => n.at).sort().at(-1)!;
+    // A lookup that failed is tried again next time; until then every review waits for the go.
+    const login = (this.login ??= await gh(['api', 'user', '--jq', '.login']).catch(() => undefined));
+    const list = (from: typeof notes) => from.map((n) => `- ${n.author}: ${n.text}`).join('\n');
+    const own = notes.filter((n) => n.author === login);
+    if (own.length) {
+      why.push('your review');
+      details.push(list(own));
+    }
+    // Text others wrote runs with the owner's login, so it waits for their go, shown in full (D-105).
+    const others = notes.filter((n) => n.author !== login);
+    if (others.length) {
+      const names = [...new Set(others.map((n) => n.author))].join(', ');
+      const text = `${names} asked for changes on ${pull.pull.repo}#${pull.pull.number}:\n\n${list(others)}`.slice(0, LIMITS.messageLength);
+      const shown = await this.runs!.report(pull.taken, { kind: 'review', note: `${names} asked for changes`, pull: pull.pull }, text);
+      // The go runs this text, as the report showed it, cut where it was cut.
+      pull.waiting = [...(pull.waiting ?? []), { report: shown.id, line: `review from ${names}`, details: text }];
+      await this.saveWatched();
     }
     return why.length ? { line: why.join('; '), details: details.join('\n\n') } : null;
   }

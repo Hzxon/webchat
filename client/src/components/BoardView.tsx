@@ -1,7 +1,7 @@
 // A project's board (R-021): the Decisions column and the Roadmap column of ideas and issues, each
 // a doc whose sections are cards. Cards are written in the section editor docs have, and keep its
 // locks and history. The board docs are created the first time someone adds a card.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ProjectDTO, UserDTO } from '../../../shared/types';
 import {
   boardDocs,
@@ -21,15 +21,14 @@ import {
   type Card,
   type CardKind,
   type CardRun,
-  withStatus,
 } from '../board';
-import { loadOlder, openConversation, requestRun, syncNow } from '../chat';
+import { inOrder, useAgentChats } from '../agents';
+import { syncNow } from '../chat';
 import { beginEditing, createDoc, loadSections, markSeen, newSectionId, replaceSection, type Editing } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
-import { actions, generalOf, senderName, store, useAppState } from '../store';
+import { actions, senderName, store, useAppState } from '../store';
 import { AgentDialog } from './AgentDialog';
 import { HistoryDialog, SectionEditor } from './DocView';
-import { formatSince } from './format';
 import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlayIcon, PlusIcon, TrashIcon } from './icons';
 import { Markdown } from './Markdown';
 import { RUN_TAGS, Tag, type Tone } from './PullTags';
@@ -110,17 +109,15 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
   } | null>(null);
   const [historyOf, setHistoryOf] = useState<Card | null>(null);
   const [connecting, setConnecting] = useState(false);
-  const general = useAppState((s) => generalOf(s, projectId));
-  const generalMessages = useAppState((s) => (general ? s.messages[general.id] : undefined));
   const pending = useAppState((s) => s.pending);
+  const messages = useAppState((s) => s.messages);
+  // A card's runs are messages in the user's chats with their agents, which load at start (D-105).
+  const chats = useAgentChats();
+  // In id order across chats, so the newest request of a card is the one that counts.
+  const agentMessages = useMemo(() => inOrder(chats.flatMap((c) => messages[c.id] ?? [])), [chats, messages]);
   // Read on every render, so a request nobody answered stops blocking once its time is up.
-  const runs = doc && meId && generalMessages && column === 'roadmap' ? cardRuns(generalMessages, meId, doc.id, pending, Date.now()) : null;
-
-  // A card's runs are messages in #general, which loads only when it opens; the Run buttons need them first.
+  const runs = doc && meId && column === 'roadmap' ? cardRuns(agentMessages, meId, doc.id, pending, Date.now()) : null;
   const canRun = column === 'roadmap' && !!doc && choices.length > 0;
-  useEffect(() => {
-    if (canRun && general && !store.get().messages[general.id]) loadOlder(general.id).catch(() => undefined);
-  }, [canRun, general?.id]);
 
   // Every save grows the version, so the cards load again whenever anyone saves.
   useEffect(() => {
@@ -150,21 +147,6 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
     setError('');
     work.catch((err: Error) => setError(err.message));
   }
-
-  // A run that is done opened a draft pull request, which its owner still readies and merges, so
-  // their page moves the card to In review: once per request, and not under someone else's lock.
-  const moved = useRef(new Set<number>());
-  useEffect(() => {
-    if (!doc || !runs) return;
-    for (const card of cards) {
-      const done = runs.get(card.id);
-      if (done?.state !== 'done' || moved.current.has(done.request) || card.failed || lockOf(card.id) || editing?.section.id === card.id) continue;
-      if (['In review', 'Done'].includes(GROUPS.roadmap[groupOf('roadmap', card.status)]!.name)) continue;
-      moved.current.add(done.request);
-      const status = done.pull ? `In review: ${done.pull.repo}#${done.pull.number}` : 'In review';
-      run(replaceSection(doc, card.id, { text: withStatus(card.text, status), pos: card.pos }).then(syncNow));
-    }
-  }, [doc, runs, cards, editing]);
 
   async function edit(target: ChatDoc, id: string, saved: string, pos: number, isNew = false, start = saved) {
     setEditing({
@@ -287,28 +269,18 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                           <button className="icon-button icon-button-small" onClick={() => setHistoryOf(card)} title="History" aria-label="Card history">
                             <HistoryIcon width={18} height={18} />
                           </button>
-                          {canRun && card.kind && !card.failed && (cardRun && GOING.has(cardRun.state) ? (
-                            // Picking an agent swaps the menu for this, so a second click asks nothing.
-                            <button className="icon-button icon-button-small" disabled title={`${runLabel} · ${nameOf(cardRun.runtime)}`} aria-label={`${runLabel} with ${nameOf(cardRun.runtime)}`}>
+                          {canRun && card.kind && !card.failed && (
+                            // The brief says what the agent will follow and who wrote it, and starts it (D-105).
+                            <button
+                              className="icon-button icon-button-small"
+                              disabled={!!cardRun && GOING.has(cardRun.state)}
+                              onClick={() => actions.openBrief({ projectId, docId: doc!.id, section: card.id })}
+                              title={cardRun && GOING.has(cardRun.state) ? `${runLabel} · ${nameOf(cardRun.runtime)}` : 'Run with your agent'}
+                              aria-label="Run with your agent"
+                            >
                               <PlayIcon width={18} height={18} />
                             </button>
-                          ) : (
-                            <details className="run-menu">
-                              <summary className="icon-button icon-button-small" title="Run with an agent" aria-label="Run with an agent">
-                                <PlayIcon width={18} height={18} />
-                              </summary>
-                              <div className="run-menu-list">
-                                {choices.map(({ agent, repo, online, busy, lastSeen }) => (
-                                  // A card someone is editing would run as half of what they mean.
-                                  <button key={`${agent.id} ${repo}`} onClick={() => run(requestRun(projectId, doc.id, card, agent, repo))} disabled={!online || busy || !!lock}>
-                                    {agent.displayName}
-                                    {repo && <small> in {repo}</small>}
-                                    {!online ? <small> · asleep{lastSeen ? ` since ${formatSince(lastSeen)}` : ''}</small> : busy && <small> · busy</small>}
-                                  </button>
-                                ))}
-                              </div>
-                            </details>
-                          ))}
+                          )}
                           <button
                             className="icon-button icon-button-small"
                             onClick={() => run(remove(card))}
@@ -319,7 +291,7 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                             <TrashIcon width={18} height={18} />
                           </button>
                         </div>
-                        {cardRun && general && (
+                        {cardRun && (
                           <p className="board-card-run">
                             <Tag tone={runTone}>{runLabel}</Tag>
                             <span>
@@ -327,8 +299,11 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                               {cardRun.repo && ` in ${cardRun.repo}`}
                               {cardRun.note && ` · ${cardRun.note}`}
                             </span>
-                            <button className="board-card-run-link" onClick={() => void openConversation(general.id)}>
-                              Open #{general.title ?? 'general'}
+                            <button
+                              className="board-card-run-link"
+                              onClick={() => actions.setAgentsOpen(true, agentMessages.find((m) => m.id === cardRun.request)?.clientId ?? null)}
+                            >
+                              Open the conversation
                             </button>
                           </p>
                         )}

@@ -2,21 +2,19 @@
 // reads its answers. It takes the chat's place, with a back button on phones. A conversation is a
 // prompt and the messages that name it, in the user's direct chat with the agent (D-102).
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { AGENT_LEVEL, LIMITS } from '../../../shared/types';
-import { ownAgents, ready, THREAD_STATE, useAgentThreads, type Seat, type Thread } from '../agents';
-import { askAgent, discardMessage, loadChat, loadOlder, retryMessage, saveDraft, tellAgent } from '../chat';
-import type { ChatConversation } from '../e2ee/keyring';
+import { AGENT_LEVEL, LIMITS, type RunRequest } from '../../../shared/types';
+import { ownAgents, ready, seatKey, short, THREAD_STATE, useAgentThreads, type Seat, type Thread } from '../agents';
+import { askAgent, askFix, cancelRun, discardMessage, loadChat, loadOlder, retryMessage, saveDraft, tellAgent } from '../chat';
+import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { actions, useAppState } from '../store';
 import { useAutoGrow, useDraft } from './ChatView';
 import { formatListTime, formatSince, formatTime } from './format';
 import { AlertIcon, BackIcon, SendIcon, TerminalIcon } from './icons';
+import { AgentBrief } from './AgentBrief';
 import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
 import { Tag } from './PullTags';
 
-/** A repository by its name alone, as students know it: "capstone-app" for "team/capstone-app". */
-const short = (repo: string) => repo.slice(repo.indexOf('/') + 1);
-const seatKey = (seat: Seat) => `${seat.agent.id}:${seat.repo}`;
 const asleep = (seat: Seat) => `${short(seat.repo)} is asleep${seat.lastSeen ? ` since ${formatSince(seat.lastSeen)}` : ''}`;
 
 /** Why a question or reply cannot go to a session now, in plain words, or '' when it can. */
@@ -33,6 +31,7 @@ export function AgentsView() {
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
   const open = useAppState((s) => s.agentThread);
+  const brief = useAppState((s) => s.agentBrief);
   const { chats, threads } = useAgentThreads();
   const seats = useMemo(() => ownAgents(users, meId).flatMap((agent) => agent.agentRepos.map((repo): Seat => ({ ...repo, agent }))), [users, meId]);
   const thread = threads.find((t) => t.root === open);
@@ -46,14 +45,15 @@ export function AgentsView() {
   }, [ids]);
 
   let subtitle = 'Not connected to a repository yet';
-  if (thread) subtitle = `Asked in ${short(thread.repo)} · ${THREAD_STATE[thread.state].label}`;
+  if (thread) subtitle = `${thread.kind === 'card' ? 'Runs' : 'Asked'} in ${short(thread.repo)} · ${THREAD_STATE[thread.state].label}`;
+  else if (brief) subtitle = 'Before it starts';
   else if (seats.length === 1) subtitle = seats[0]!.online ? `${short(seats[0]!.repo)} is online` : asleep(seats[0]!);
   else if (seats.length > 1) subtitle = `${seats.filter((s) => s.online).length} of ${seats.length} repositories online`;
 
   return (
     <section className="chat agents-pane">
       <header className="chat-header">
-        {thread ? (
+        {thread || brief ? (
           <button className="icon-button" onClick={() => actions.setAgentsOpen(true)} aria-label="Back to questions">
             <BackIcon />
           </button>
@@ -72,6 +72,8 @@ export function AgentsView() {
       </header>
       {thread ? (
         <ThreadView key={thread.root} thread={thread} seat={seatOf(thread)} agentId={conversations[thread.conversationId]?.members.find((m) => m.userId !== meId)?.userId ?? 0} />
+      ) : brief ? (
+        <AgentBrief brief={brief} seats={seats} />
       ) : (
         <ThreadList threads={threads} seats={seats} chats={chats} />
       )}
@@ -189,13 +191,26 @@ function ThreadList({ threads, seats, chats }: { threads: Thread[]; seats: Seat[
   );
 }
 
+const isCancel = (m: ChatMessage) => m.prompt?.kind === 'cancel' || m.run?.kind === 'cancel';
+
 function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | undefined; agentId: number }) {
   const pending = useAppState((s) => s.pending);
   const meId = useAppState((s) => s.me?.id);
+  const docs = useAppState((s) => s.docs);
+  const conversations = useAppState((s) => s.conversations);
   const list = useRef<HTMLDivElement>(null);
+  const [notNow, setNotNow] = useState(false);
   const working = thread.state === 'working';
   const last = thread.messages.at(-1)!;
-  const stopping = working && last.prompt?.kind === 'cancel' && pending[last.clientId ?? ''] !== 'failed';
+  const stopping = working && isCancel(last) && pending[last.clientId ?? ''] !== 'failed';
+  // A card's conversation: its request, which a stop and the owner's go name (D-105).
+  const request = thread.kind === 'card' ? (thread.messages[0] as ChatMessage & { run: RunRequest }) : undefined;
+  const review = thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'review') : undefined;
+  const stop = () => void (request ? cancelRun(request) : tellAgent(thread.conversationId, thread.root, 'cancel', 'Stop'));
+  const again = () => {
+    const projectId = conversations[docs[request!.run.docId]?.conversationId ?? 0]?.projectId;
+    if (projectId) actions.openBrief({ projectId, docId: request!.run.docId, section: request!.run.section });
+  };
   // A turn can take long, so the time it has taken shows, a minute at a time.
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -215,7 +230,7 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
   else if (!seat?.online) {
     waiting = `Your laptop isn’t answering, so no answer can come yet. Open ${short(thread.repo)} in Claude Code on your laptop and keep it awake. If this waits more than 10 minutes, your agent will ask you to send it again.`;
   } else {
-    const minutes = Math.floor((now - thread.messages.findLast((m) => m.senderId === meId && m.prompt?.kind !== 'cancel')!.createdAt) / 60_000);
+    const minutes = Math.floor((now - thread.messages.findLast((m) => m.senderId === meId && !isCancel(m))!.createdAt) / 60_000);
     waiting = minutes > 0 ? `Working… ${minutes} min` : 'Working…';
   }
 
@@ -234,7 +249,7 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
               </button>
             </div>
           );
-          if (message.prompt?.kind === 'cancel') {
+          if (isCancel(message)) {
             return (
               <div key={message.clientId ?? message.id}>
                 <p className="agents-note">You asked it to stop.</p>
@@ -247,17 +262,33 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
           return (
             <div key={message.clientId ?? message.id} className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}>
               <div className="bubble-line">
-                <div className={`bubble ${message.prompt?.kind === 'failed' ? 'agents-failed' : ''}`}>
-                  {mine ? (
+                <div className={`bubble ${message.prompt?.kind === 'failed' || message.run?.kind === 'failed' ? 'agents-failed' : ''}`}>
+                  {/* A review is teammates' text that would run with the owner's login, so nothing of it hides in Markdown. */}
+                  {mine || message.run?.kind === 'review' ? (
                     <span className="bubble-text">{message.text}</span>
                   ) : message.prompt?.kind === 'answer' && message.prompt.card ? (
                     <AgentDraft message={message} draft={message.prompt.card} thread={thread} agentId={agentId} />
                   ) : (
                     <Markdown text={message.text} />
                   )}
+                  {!mine && message.run && 'pull' in message.run && message.run.pull && message.run.kind === 'done' && (
+                    <a href={`https://github.com/${message.run.pull.repo}/pull/${message.run.pull.number}`} target="_blank" rel="noopener noreferrer">
+                      Open the draft on GitHub
+                    </a>
+                  )}
                   <span className="bubble-meta">{status === 'sending' ? 'Sending…' : formatTime(message.createdAt)}</span>
                 </div>
               </div>
+              {message === review && !notNow && (
+                <div className="agents-draft-actions">
+                  <button className="button-primary" disabled={!!blocked} onClick={() => void askFix(thread.conversationId, request!.id, '', review.id)}>
+                    Let the agent fix it
+                  </button>
+                  <button className="button-secondary" onClick={() => setNotNow(true)}>
+                    Not now
+                  </button>
+                </div>
+              )}
               {unsent}
             </div>
           );
@@ -278,15 +309,23 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
               Ask again
             </button>
           </div>
-        ) : (
+        ) : thread.state === 'unfinished' ? (
+          <div className="agents-ended">
+            <p className="composer-blocked">It stopped before a draft was ready.</p>
+            <button className="button-secondary" onClick={again}>
+              Start again
+            </button>
+          </div>
+        ) : thread.state === 'done' || (request && thread.state === 'unsent') ? null : (
           <>
             {!working && blocked && <p className="composer-blocked">{blocked}</p>}
             <Box
               name={`agents:${thread.root}`}
-              placeholder="Reply"
+              placeholder={request ? 'Ask for changes to the draft' : 'Reply'}
               canSend={!blocked && !working}
-              onSend={(text) => tellAgent(thread.conversationId, thread.root, 'reply', text)}
-              stop={working ? { stopping, onStop: () => void tellAgent(thread.conversationId, thread.root, 'cancel', 'Stop') } : undefined}
+              // While a review waits, a reply is the go for it too, unless the owner said Not now.
+              onSend={(text) => (request ? askFix(thread.conversationId, request.id, text, notNow ? undefined : review?.id) : tellAgent(thread.conversationId, thread.root, 'reply', text))}
+              stop={working ? { stopping, onStop: stop } : undefined}
             />
           </>
         )}

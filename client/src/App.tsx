@@ -19,6 +19,8 @@ import { Sidebar } from './components/Sidebar';
 import { UnlockScreen } from './components/UnlockScreen';
 import { BellRingIcon } from './components/icons';
 import { fitToVisualViewport } from './viewport';
+import { runSignature } from './agents';
+import { followRuns } from './runStatus';
 
 type Phase = 'loading' | 'signed-out' | 'locked' | 'signed-in' | 'error';
 
@@ -92,6 +94,9 @@ function ChatLayout() {
   const showMembers = (target: MembersTarget) => setDialog({ kind: 'members', target });
 
   useEffect(fitToVisualViewport, []);
+  // A card's status line follows its run from any page of its owner's (D-105).
+  const runs = useAppState(runSignature);
+  useEffect(() => void followRuns().catch(() => undefined), [runs]);
 
   return (
     <div className={`layout ${activeId !== null || githubOpen || agentsOpen || doc || board ? 'has-active' : ''}`}>

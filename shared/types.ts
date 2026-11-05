@@ -40,8 +40,11 @@ export interface AgentRepoDTO {
   protocol: number;
 }
 
-/** What a plugin session can do, by the level its check-ins name (D-103): 1 answers the owner's questions. */
-export const AGENT_LEVEL = { answers: 1 } as const;
+/**
+ * What a plugin session can do, by the level its check-ins name (D-103): 1 answers the owner's
+ * questions; 2 also runs cards from the pane, which it names only while `gh` is signed in (D-105).
+ */
+export const AGENT_LEVEL = { answers: 1, cards: 2 } as const;
 
 /** An encrypted, signed message. The server stores and relays it without being able to read it. */
 export interface EnvelopeDTO {
@@ -494,7 +497,7 @@ export interface PullRequestDTO {
  * owner's cancel. All travel inside a message's envelope, like a shared pull request, so the
  * server sees messages and nothing more. A report or a cancel names the request's message.
  */
-export type RunDTO = RunRequest | RunReport | RunCancel;
+export type RunDTO = RunRequest | RunReport | RunCancel | RunFix;
 
 export interface RunRequest {
   kind: 'request';
@@ -515,11 +518,22 @@ export interface RunRequest {
    * session runs the card only in a session open in it (R-030). Older pages send none.
    */
   repo?: string;
+  /**
+   * The hash of the brief the owner saw before pressing Start: the card and the decisions, as
+   * briefText makes it (D-105). The agent refuses a request without it, or whose brief changed.
+   */
+  hash?: string;
+  /** The card's status when the owner pressed Start, which their page puts back if the run fails. */
+  was?: string;
 }
 
 export interface RunReport {
-  /** "fixing" starts another round on the run's pull request, after CI failed, a conflict or a review (R-030). */
-  kind: 'claimed' | 'done' | 'failed' | 'fixing';
+  /**
+   * "fixing" starts another round on the run's pull request, after CI failed, a conflict or a review
+   * (R-030). "review" says someone other than the owner reviewed it, and the round waits for the
+   * owner's go; its text holds their comments. "ended" says the watching stopped (D-105).
+   */
+  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended';
   request: number;
   /** What happened, in a line. */
   note?: string;
@@ -533,6 +547,34 @@ export interface RunCancel {
   kind: 'cancel';
   request: number;
 }
+
+/**
+ * The owner's go for another round on a run's draft (D-105): after a review waits, or with their own
+ * words in `note`, as when they reply after the draft is ready. The agent heeds only its owner.
+ */
+export interface RunFix {
+  kind: 'fix';
+  request: number;
+  /** The review report it approves: only the text that report showed runs, never what came after. */
+  review?: number;
+  note?: string;
+  sentAt: number;
+}
+
+/** A board card's status line, without "Status:" and its final period (D-082). */
+export const cardStatus = (text: string) => /^Status:\s*(.*?)\.?\s*$/.exec(text.split('\n').filter((l) => l.trim())[1] ?? '')?.[1] ?? '';
+
+/**
+ * The brief a card's run follows, as the owner's page shows it and both sides hash it (D-105): the
+ * card, then the decisions the team holds, without the superseded ones.
+ */
+export const briefText = (card: string, decisions: string[]) => [card.trim(), ...heldDecisions(decisions)].join('\n\n');
+
+/** Whether the team holds a decision still, so a run follows it: every one but the superseded. */
+export const isHeld = (decision: string) => !cardStatus(decision).toLowerCase().startsWith('superseded');
+
+/** The decisions a run follows, each trimmed. */
+export const heldDecisions = (decisions: string[]) => decisions.filter(isHeld).map((d) => d.trim());
 
 /**
  * The owner's conversation with their agent, in their direct chat (R-035, D-102): a prompt, the

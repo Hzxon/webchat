@@ -67,6 +67,8 @@ export interface State {
   agentsOpen: boolean;
   /** The conversation that pane shows, by its prompt's client id, or null for the list. */
   agentThread: string | null;
+  /** The card whose brief that pane shows before its owner presses Start (D-105). */
+  agentBrief: { projectId: number; docId: string; section: string } | null;
 }
 
 const initialState: State = {
@@ -94,6 +96,7 @@ const initialState: State = {
   docsSeen: {},
   agentsOpen: false,
   agentThread: null,
+  agentBrief: null,
 };
 
 let state = initialState;
@@ -391,7 +394,10 @@ export const actions = {
 
   /** Shows the Coding agents pane in place of the open chat, at a conversation or at the list, or closes it. */
   setAgentsOpen: (open: boolean, agentThread: string | null = null) =>
-    store.set((s) => (open ? show(s, { agentsOpen: true, agentThread }) : { ...s, agentsOpen: false })),
+    store.set((s) => (open ? show(s, { agentsOpen: true, agentThread, agentBrief: null }) : { ...s, agentsOpen: false })),
+
+  /** Shows a card's brief in the Coding agents pane, which runs it once its owner presses Start (D-105). */
+  openBrief: (agentBrief: NonNullable<State['agentBrief']>) => store.set((s) => show(s, { agentsOpen: true, agentThread: null, agentBrief })),
 
   setReposFor: (reposFor: number | null) => store.set((s) => ({ ...s, reposFor })),
 

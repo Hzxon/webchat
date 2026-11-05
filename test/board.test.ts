@@ -88,3 +88,12 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.equal(runs([{ ...ask(1, 'a'), senderId: 3 }, ask(2, 'b', { docId: 'other' })]).size, 0, 'only my requests on this doc');
   });
 });
+
+test('a run brief is the card, then the decisions the team holds, without the superseded ones (D-105)', async () => {
+  const { briefText, cardStatus } = await import('../shared/types.ts');
+  const card = '### K-1: Bad keys\n\nStatus: Open.\n\nSeen: on a phone.\n';
+  const held = '### D-1: Keys rotate\n\nStatus: Accepted.';
+  const gone = '### D-2: Keys never rotate\n\nStatus: Superseded by D-1.';
+  assert.equal(cardStatus(gone), 'Superseded by D-1');
+  assert.equal(briefText(card, [held, gone]), `${card.trim()}\n\n${held}`);
+});

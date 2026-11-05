@@ -1,9 +1,11 @@
 // Runs a board card when the agent's owner asks for it (R-027, D-086, D-089). A request is a sealed
-// message in the project's #general whose `run` field names the card and this account. The agent
-// claims it, hands the card to the runner, which is where the coding agent runs, then reports done
-// or failed. Every report is a message of its own that names the request, and pages fold them
-// into one card. The owner can cancel a request the same way (R-030).
-import type { RunReport, RunRequest } from '../shared/types.ts';
+// message, in the owner's direct chat with this account (D-105), whose `run` field names the card,
+// with the hash of the brief the owner saw. The agent claims it, hands the card to the runner, which
+// is where the coding agent runs, then reports done or failed. Every report is a message of its own
+// that names the request, and pages fold them into one card. The owner can cancel a request the
+// same way (R-030).
+import { textHash } from '../shared/e2ee.ts';
+import { briefText, heldDecisions, type RunReport, type RunRequest } from '../shared/types.ts';
 import type { AgentClient, OpenedMessage, TakenRequest } from './client.ts';
 
 export interface RunResult {
@@ -13,8 +15,8 @@ export interface RunResult {
   note?: string;
 }
 
-/** Does the work of one run, given the card as Markdown. Where the coding agent runs. It stops when the signal aborts. */
-export type Runner = (job: { request: RunRequest; taken: TakenRequest; card: string; projectId: number; signal: AbortSignal }) => Promise<RunResult>;
+/** Does the work of one run, given the card and the decisions it follows as Markdown. Where the coding agent runs. It stops when the signal aborts. */
+export type Runner = (job: { request: RunRequest; taken: TakenRequest; card: string; decisions: string; projectId: number; signal: AbortSignal }) => Promise<RunResult>;
 
 /** A request older than this when the daemon first sees it is not run: nobody is waiting for it. */
 export const REQUEST_TTL_MS = 10 * 60_000;
@@ -73,24 +75,29 @@ export class Runs {
       return failed(`Only ${this.client.users.get(this.client.owner!)?.displayName ?? 'my owner'} hands cards to me.`);
     }
     // The time the owner's page signed, not the server's, which could play an old request again (K-42).
-    if (!run.sentAt || Math.abs(Date.now() - run.sentAt) > REQUEST_TTL_MS) return failed('The request was not sent in the last 10 minutes.');
+    if (!run.sentAt || Math.abs(Date.now() - run.sentAt) > REQUEST_TTL_MS) return failed('I got this more than 10 minutes after you sent it. Open the card again and press Start.');
+    // A page from before D-105 signs no brief, so nothing tells the agent what its owner saw.
+    if (!run.hash) return failed('Reload WebChat, then open the card again and press Start.');
     // Two tabs or two devices can each send a request before either has seen the other's, and the
     // server cannot tell them apart (D-014). The card runs once; the copy hears that, not "busy" (K-51).
     if (this.running) {
       const same = this.running.docId === run.docId && this.running.section === run.section;
       return failed(same ? `${run.card} is already running.` : `I am busy with ${this.running.card}.`);
     }
-    const projectId = this.client.conversations.get(message.conversationId)?.projectId;
     return this.execute(taken, run, async (signal) => {
       const refused = await this.refuse(run);
       if (refused) throw new Error(refused);
-      // The card must be on the board of the project the request is in, whose repository the run uses.
-      // Whoever wrote it, the owner chose to run it.
-      const doc = this.client.docs.find((d) => d.id === run.docId && this.client.conversations.get(d.conversationId)?.projectId === projectId);
+      // The card must be on a board of a project this account is in, and its brief the one its owner
+      // saw and signed. Whoever wrote them, the owner chose to run them (D-105).
+      const doc = this.client.docs.find((d) => d.id === run.docId);
+      const projectId = doc && this.client.conversations.get(doc.conversationId)?.projectId;
       const card = doc && (await this.client.sections(doc)).find((s) => s.id === run.section);
-      if (!projectId || !card) throw new Error('The card is not on the board.');
+      if (!projectId || !card) throw new Error('I can’t find that card on the board anymore. Open it again and press Start.');
+      const { decisions } = await this.client.boardDocs(projectId);
+      const held = decisions ? (await this.client.sections(decisions)).map((s) => s.text) : [];
+      if ((await textHash(briefText(card.text, held))) !== run.hash) throw new Error('The card or a decision changed since you opened it. Open the card again and press Start.');
       await this.report(taken, { kind: 'claimed' }, `I am on ${run.card}: ${run.title}`);
-      return this.runner({ request: run, taken, card: card.text, projectId, signal });
+      return this.runner({ request: run, taken, card: card.text, decisions: heldDecisions(held).join('\n\n'), projectId, signal });
     });
   }
 
@@ -138,7 +145,7 @@ export class Runs {
     return this.report(taken, { kind: 'done', ...result }, `I finished ${taken.card} on ${where}.${result.note ? ` ${result.note}` : ''}`);
   }
 
-  private report(taken: TakenRequest, reply: Omit<RunReport, 'request'>, text: string) {
+  report(taken: TakenRequest, reply: Omit<RunReport, 'request'>, text: string) {
     return this.client.send(taken.conversation, { text, run: { ...reply, request: taken.message } });
   }
 }

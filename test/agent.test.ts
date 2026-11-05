@@ -15,28 +15,18 @@ import { claudeArgs, claudeSettings } from '../agent/claude.ts';
 import { AgentClient, type OpenedMessage } from '../agent/client.ts';
 import { Conversations, parts, type Answerer } from '../agent/conversations.ts';
 import { guard, Plugin, restrictedSettings, sandboxProblem } from '../agent/plugin.ts';
-import { ADAPTERS, createRunner, start, type Final } from '../agent/runner.ts';
+import { addWorktree, claudeResult, start, type Final } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, textHash, wrapChatKey } from '../shared/e2ee.ts';
-import type { ChatKeyInput, CreateProjectResponse, DocDTO, PairingDTO, RunDTO, PromptDTO, RunRequest, UserDTO } from '../shared/types.ts';
+import { briefText, type ChatKeyInput, type CreateProjectResponse, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type UserDTO } from '../shared/types.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
 const KDF_ROUNDS = 1000;
 const sh = promisify(execFile);
 const git = (dir: string, ...args: string[]) => sh('git', ['-C', dir, '-c', 'user.name=Claude', '-c', 'user.email=claude@example.com', ...args]);
 
-/** Stands in for a coding agent: keeps the brief it was given as a commit, and prints a result line. */
-const FAKE_AGENT = `#!/usr/bin/env node
-import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
-fs.writeFileSync('BRIEF.md', fs.readFileSync(/in (\\S+) and/.exec(process.argv[process.argv.indexOf('-p') + 1])[1]));
-execFileSync('git', ['add', 'BRIEF.md']);
-execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-q', '-m', 'Keep the brief']);
-console.log(JSON.stringify({ type: 'system', subtype: 'init' }));
-console.log(JSON.stringify({ type: 'result', result: process.env.FAKE_FAIL ? 'I gave up.' : 'I kept the brief.\\nIn one file.', is_error: !!process.env.FAKE_FAIL }));
-`;
 /**
  * Stands in for GitHub's command line: opens pull requests into a JSON file, and answers for them
  * with what the test put there, the head commit read from the bare repository.
@@ -76,7 +66,8 @@ const id = args[args.indexOf(resume ? '--resume' : '--session-id') + 1];
 while (process.env.FAKE_CLAUDE_GATE && !fs.existsSync(process.env.FAKE_CLAUDE_GATE)) await new Promise((resolve) => setTimeout(resolve, 20));
 if (process.env.FAKE_CLAUDE_COMMIT !== '0') {
   const file = resume ? 'sum.test.js' : 'sum.js';
-  fs.writeFileSync(file, file + '\\n');
+  // A change of its own each turn, so a later round has something to commit.
+  fs.writeFileSync(file, file + ' ' + Date.now() + '\\n');
   execFileSync('git', ['add', file]);
   execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-q', '-m', 'Change ' + file]);
 }
@@ -147,7 +138,8 @@ describe('agent client (R-027)', () => {
   let cardId: string;
   const cardText = '### K-1: Pushes with bad keys\n\nStatus: Open.\n\nSeen: on a phone.';
   /** A request for K-1, as the owner's page sends it. */
-  const runOf = (extra: Partial<RunRequest> = {}): RunDTO => ({
+  // The hash of the brief the owner saw: the card as it is now, and this board has no decisions (D-105).
+  const runOf = async (extra: Partial<RunRequest> = {}): Promise<RunDTO> => ({
     kind: 'request',
     card: 'K-1',
     title: 'Pushes with bad keys',
@@ -155,6 +147,7 @@ describe('agent client (R-027)', () => {
     section: cardId,
     runtime: bot.id,
     sentAt: Date.now(),
+    hash: await textHash(briefText((await alice.sections(roadmap)).find((c) => c.id === cardId)?.text ?? '', [])),
     ...extra,
   });
 
@@ -278,14 +271,14 @@ describe('agent client (R-027)', () => {
     await carol.sync();
     await carol.editSection(roadmap, cardId, () => ({ text: written, pos: 1 }));
 
-    assert.deepEqual(await ask(carol, runOf()), [['failed', 'I could not run K-1: Only Alice hands cards to me.']]);
-    const stale = [['failed', 'I could not run K-1: The request was not sent in the last 10 minutes.']];
+    assert.deepEqual(await ask(carol, await runOf()), [['failed', 'I could not run K-1: Only Alice hands cards to me.']]);
+    const stale = [['failed', 'I could not run K-1: I got this more than 10 minutes after you sent it. Open the card again and press Start.']];
     // Without the time the page signed, as from a page before D-089, or with an old one.
-    assert.deepEqual(await ask(alice, runOf({ sentAt: 0 })), stale);
-    assert.deepEqual(await ask(alice, runOf({ sentAt: Date.now() - REQUEST_TTL_MS - 1000 })), stale);
+    assert.deepEqual(await ask(alice, await runOf({ sentAt: 0 })), stale);
+    assert.deepEqual(await ask(alice, await runOf({ sentAt: Date.now() - REQUEST_TTL_MS - 1000 })), stale);
     assert.equal(jobs.length, 0);
 
-    assert.deepEqual(await ask(alice, runOf()), [
+    assert.deepEqual(await ask(alice, await runOf()), [
       ['claimed', 'I am on K-1: Pushes with bad keys'],
       ['done', 'I finished K-1 on agent/k1-bad-keys (acme/app#9). Two files changed.'],
     ]);
@@ -304,8 +297,8 @@ describe('agent client (R-027)', () => {
       return { branch: 'agent/k1' };
     });
     // Two requests in one check-in.
-    await alice.send(generalId, { text: 'Run K-1 with Bot', run: runOf() });
-    await alice.send(generalId, { text: 'Run K-1 with Bot again', run: runOf() });
+    await alice.send(generalId, { text: 'Run K-1 with Bot', run: await runOf() });
+    await alice.send(generalId, { text: 'Run K-1 with Bot again', run: await runOf() });
     await Promise.all((await bot.sync()).map((m) => runs.handle(m)));
     assert.deepEqual((await reports()).sort(), ['I am on K-1: Pushes with bad keys', 'I could not run K-1: K-1 is already running.', 'I finished K-1 on agent/k1.']);
     assert.equal(jobs, 1);
@@ -327,17 +320,17 @@ describe('agent client (R-027)', () => {
     const handle = async () => {
       for (const m of await bot.sync()) await runs.handle(m);
     };
-    const first = await ask(runOf());
+    const first = await ask(await runOf());
     const handled = Promise.all((await bot.sync()).map((m) => runs.handle(m)));
     await running;
     // Another tab or device sent these before it saw the first request's reports, a check-in later.
-    const twice = await ask(runOf());
-    const elsewhere = await ask(runOf({ card: 'K-2', section: 'other-card' }));
+    const twice = await ask(await runOf());
+    const elsewhere = await ask(await runOf({ card: 'K-2', section: 'other-card' }));
     await handle();
     end();
     await handled;
     // The run failed, so the owner runs the card again.
-    const again = await ask(runOf());
+    const again = await ask(await runOf());
     await handle();
 
     const heard = await alice.sync();
@@ -352,7 +345,7 @@ describe('agent client (R-027)', () => {
   test('runs a request once, however often the server posts it (K-47)', async () => {
     let jobs = 0;
     const runs = new Runs(bot, async () => (jobs++, { branch: 'agent/k1' }));
-    await alice.send(generalId, { text: 'Run K-1 with Bot', run: runOf() });
+    await alice.send(generalId, { text: 'Run K-1 with Bot', run: await runOf() });
     const [request] = await bot.sync();
     await runs.handle(request!);
     // The same signed message under a new id, as a server that keeps no promises could post it.
@@ -371,7 +364,7 @@ describe('agent client (R-027)', () => {
       started();
       return new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('the owner cancelled the run.'))));
     });
-    const id = (await alice.send(generalId, { text: 'Run K-1 with Bot', run: runOf() })).id;
+    const id = (await alice.send(generalId, { text: 'Run K-1 with Bot', run: await runOf() })).id;
     const handled = Promise.all((await bot.sync()).map((m) => runs.handle(m)));
     await running;
     await carol.send(generalId, { text: 'Cancel K-1 with Bot', run: { kind: 'cancel', request: id } });
@@ -395,7 +388,7 @@ describe('agent client (R-027)', () => {
       return { branch: 'agent/k1' };
     });
     assert.equal(alice.users.get(bot.id)?.busy, false);
-    await alice.send(generalId, { text: 'Run K-1 with Bot', run: runOf() });
+    await alice.send(generalId, { text: 'Run K-1 with Bot', run: await runOf() });
     for (const m of await bot.sync()) await runs.handle(m);
     await bot.sync();
     await alice.sync();
@@ -403,7 +396,7 @@ describe('agent client (R-027)', () => {
   });
 
   test('reports a run that a restart cut short as failed (K-46)', async () => {
-    const id = (await alice.send(generalId, { text: 'Run K-1 with Bot', run: runOf() })).id;
+    const id = (await alice.send(generalId, { text: 'Run K-1 with Bot', run: await runOf() })).id;
     // The daemon stops mid-run: its runner never returns.
     let started!: () => void;
     const running = new Promise<void>((resolve) => (started = resolve));
@@ -430,7 +423,7 @@ describe('agent client (R-027)', () => {
     ]);
   });
 
-  test('runs a card with the coding agent in a worktree of the project repository', async () => {
+  test("names each run's branch after its card, apart from the branches here and on origin", async () => {
     // A repository with a remote, as a student's checkout has.
     const origin = path.join(home, 'origin.git');
     const repo = path.join(home, 'repo');
@@ -441,71 +434,23 @@ describe('agent client (R-027)', () => {
     await git('add', 'README.md');
     await git('commit', '-q', '-m', 'Start');
     await git('push', '-q', '-u', 'origin', 'main');
-    const fake = path.join(home, 'fake-agent.mjs');
-    await fs.writeFile(fake, FAKE_AGENT, { mode: 0o755 });
     const runsDir = path.join(home, 'runs');
-    const runs = new Runs(bot, createRunner({ command: fake, projects: { Capstone: repo } }, bot, runsDir));
-    // A decision Carol wrote goes into the brief too: decisions are the team's (D-089).
-    const decisions = { id: newKeyId(), conversationId: generalId };
-    const decision = newKeyId().slice(0, 11);
-    await carol.request('POST', '/docs', {
-      ...decisions,
-      revisions: [
-        { section: 'title', envelope: await carol.sealDoc(decisions, 'title', { text: 'Decisions', board: 'decisions' }) },
-        { section: decision, envelope: await carol.sealDoc(decisions, decision, { text: '### D-1: Keys rotate when someone leaves', pos: 1 }) },
-      ],
-    });
-
-    const request = async () => {
-      const id = (await alice.send(generalId, { text: 'Run K-1 with Bot', run: runOf() })).id;
-      for (const m of await bot.sync()) await runs.handle(m);
-      const heard = await alice.sync();
-      return heard.filter((m) => m.content?.run?.kind !== 'request' && m.content?.run?.request === id).map((m) => m.content?.text);
-    };
-    assert.deepEqual(await request(), ['I am on K-1: Pushes with bad keys', 'I finished K-1 on agent/k-1-pushes-with-bad-keys. In one file.']);
-    const { stdout: brief } = await git('show', 'agent/k-1-pushes-with-bad-keys:BRIEF.md');
-    assert.ok(brief.includes('### K-1: Pushes with bad keys'), 'the brief holds the card');
-    assert.ok(brief.includes('### D-1: Keys rotate when someone leaves'), "the brief holds a teammate's decision");
-    assert.ok(brief.includes('`agent/k-1-pushes-with-bad-keys`'), 'the brief names the branch');
-    assert.ok(brief.includes('gh pr create --draft'), 'the brief says how to finish');
-    assert.deepEqual((await fs.readdir(runsDir)).filter((f) => f.endsWith('.brief.md')).length, 1);
-
-    // A run that fails reports so. The card run again gets a branch of its own.
-    process.env.FAKE_FAIL = '1';
-    try {
-      assert.deepEqual(await request(), ['I am on K-1: Pushes with bad keys', 'I could not run K-1: I gave up.']);
-      // A branch pushed from another machine is taken too.
-      await git('push', '-q', 'origin', 'main:refs/heads/agent/k-1-pushes-with-bad-keys-3');
-      assert.deepEqual(await request(), ['I am on K-1: Pushes with bad keys', 'I could not run K-1: I gave up.']);
-    } finally {
-      delete process.env.FAKE_FAIL;
-    }
-    const { stdout: branches } = await git('branch', '--list', '--format=%(refname:short)', 'agent/*');
-    assert.deepEqual(branches.trim().split('\n').sort(), ['agent/k-1-pushes-with-bad-keys', 'agent/k-1-pushes-with-bad-keys-2', 'agent/k-1-pushes-with-bad-keys-4']);
+    const request = (await runOf()) as RunRequest;
+    const branches = [(await addWorktree(repo, request, runsDir)).branch, (await addWorktree(repo, request, runsDir)).branch];
+    // A branch pushed from another machine is taken too.
+    await git('push', '-q', 'origin', 'main:refs/heads/agent/k-1-pushes-with-bad-keys-3');
+    branches.push((await addWorktree(repo, request, runsDir)).branch);
+    assert.deepEqual(branches, ['agent/k-1-pushes-with-bad-keys', 'agent/k-1-pushes-with-bad-keys-2', 'agent/k-1-pushes-with-bad-keys-4']);
   });
 
-  test('reads the final word of each coding agent from its own output lines', () => {
-    const last = (agent: keyof typeof ADAPTERS, lines: string[]) =>
-      lines.reduce<Final | undefined>((kept, line) => ADAPTERS[agent].result(line) ?? kept, undefined);
-    assert.deepEqual(last('claude', ['not json', '{"type":"system"}', '{"type":"result","result":"Done.","is_error":false,"session_id":"s-1","structured_output":{"reply":"Hi"}}']), {
+  test("reads Claude Code's final word from its output lines", () => {
+    const last = (lines: string[]) => lines.reduce<Final | undefined>((kept, line) => claudeResult(line) ?? kept, undefined);
+    assert.deepEqual(last(['not json', '{"type":"system"}', '{"type":"result","result":"Done.","is_error":false,"session_id":"s-1","structured_output":{"reply":"Hi"}}']), {
       text: 'Done.',
       error: false,
       session: 's-1',
       answer: { reply: 'Hi' },
     });
-    assert.deepEqual(
-      last('codex', [
-        '{"type":"item.completed","item":{"type":"reasoning","text":"hmm"}}',
-        '{"type":"item.completed","item":{"type":"agent_message","text":"Pushed."}}',
-        '{"type":"turn.completed"}',
-      ]),
-      { text: 'Pushed.', error: false },
-    );
-    assert.deepEqual(last('codex', ['{"type":"turn.failed","error":{"message":"Out of credit."}}']), { text: 'Out of credit.', error: true });
-    assert.deepEqual(last('hermes', ['{"type":"result","exit_code":2,"text":"Partial."}']), { text: 'Partial.', error: true });
-    for (const agent of Object.keys(ADAPTERS) as Array<keyof typeof ADAPTERS>) {
-      assert.ok(ADAPTERS[agent].args('/tmp/brief.md').some((a) => a.includes('/tmp/brief.md')), `${agent} is told where the brief is`);
-    }
   });
 
   test('starts again from its file, and signs in again when its session ends', async () => {
@@ -596,10 +541,12 @@ describe('agent client (R-027)', () => {
             { section, envelope: await alice.sealDoc(board, section, { text: '### K-7: Sums are off by one\n\nStatus: Open.', pos: 1 }) },
           ],
         });
+        // The hash of the brief Alice saw: the card, and no decisions on this board (D-105).
+        const brief = await textHash(briefText('### K-7: Sums are off by one\n\nStatus: Open.', []));
         const ask = (from: AgentClient, extra: Partial<RunRequest> = {}) =>
           from.send(general, {
             text: 'Run K-7 with Claude Code',
-            run: { kind: 'request', card: 'K-7', title: 'Sums are off by one', docId: board.id, section, runtime: agent.id, sentAt: Date.now(), repo: 'acme/app', ...extra },
+            run: { kind: 'request', card: 'K-7', title: 'Sums are off by one', docId: board.id, section, runtime: agent.id, sentAt: Date.now(), repo: 'acme/app', hash: brief, ...extra },
           });
         // A check-in of the plugin's, which hands each message on as its loop does.
         const checkIn = async () => {
@@ -668,12 +615,27 @@ describe('agent client (R-027)', () => {
         assert.deepEqual(await reportsOn(asked), ['I am fixing K-7: CI failed: test', `I finished K-7 on ${branch} (acme/app#1). The test passes.`]);
         assert.equal(JSON.parse(await fs.readFile(ghState, 'utf8')).pulls.length, 1, 'the fix went to the same pull request');
 
+        // A teammate's review waits for Alice's go, with the comments in full (D-105).
+        const reviewed = { reviews: [{ author: { login: 'bob' }, body: 'Please rename sum.', submittedAt: new Date().toISOString() }], updatedAt: new Date().toISOString() };
+        await fs.writeFile(ghState, JSON.stringify({ ...gh, pulls: [{ ...gh.pulls[0], view: reviewed }] }));
+        await plugin.pollPulls();
+        assert.equal((await turns()).length, 2, 'nothing runs before the go');
+        const [review] = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.run?.kind === 'review');
+        assert.equal(review?.content?.text, 'bob asked for changes on acme/app#1:\n\n- bob: Please rename sum.');
+        // A go without the review runs only Alice's words, and none of Bob's text she did not approve.
+        await alice.send(general, { text: 'Let the agent fix it', run: { kind: 'fix', request: asked, review: review!.id, note: 'Call it add.', sentAt: Date.now() } });
+        await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'done', note: 'Renamed.' }) }, async () => (await checkIn()).handled);
+        const [, , go] = await turns();
+        assert.ok(go!.input.includes('Please rename sum.') && go!.input.includes('Call it add.'), "the round has the review and Alice's words");
+        assert.deepEqual(await reportsOn(asked), ['I am fixing K-7: review from bob', `I finished K-7 on ${branch} (acme/app#1). Renamed.`]);
+
         // Someone else pushes to it: it is theirs now, and Claude runs no more.
         await git(worktree, 'commit', '-q', '--allow-empty', '-m', 'By hand');
         await git(worktree, 'push', '-q', 'origin', `HEAD:${branch}`);
         await plugin.pollPulls();
         assert.deepEqual(JSON.parse(await fs.readFile(path.join(dataDir, 'repos', 'acme__app', 'pulls.json'), 'utf8')), []);
-        assert.equal((await turns()).length, 2, 'two turns in all');
+        assert.deepEqual(await reportsOn(asked), ['I stopped watching acme/app#1: someone else pushed to it.']);
+        assert.equal((await turns()).length, 3, 'three turns in all');
 
         // Its owner's prompt in their direct chat is answered in a scratch repository of its own, never pushed (R-035).
         const direct = (await alice.request<{ id: number }>('POST', '/conversations/direct', { userId: agent.id, key: await newChatKey(alice, [alice.id, agent.id]) })).id;
@@ -1071,7 +1033,7 @@ test(
         [...claudeArgs({ settings, session, resume, answer }), '--model', 'haiku', '--max-budget-usd', '1'],
         worktree,
         AbortSignal.timeout(5 * 60_000),
-        (line) => (lines.push(line), ADAPTERS.claude.result(line)),
+        (line) => (lines.push(line), claudeResult(line)),
         input,
       );
     const first = await turn(

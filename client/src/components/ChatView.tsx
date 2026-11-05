@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
 import type { QuotedMessage } from '../../../shared/e2ee';
 import { githubCardEvent } from '../../../shared/github';
-import { LIMITS, type GithubCardDTO, type PullCardDTO, type PullEvent, type RunReport, type RunRequest } from '../../../shared/types';
+import { LIMITS, RUN_PICKUP_MS, type GithubCardDTO, type PullCardDTO, type PullEvent, type RunReport, type RunRequest } from '../../../shared/types';
 import { holdReloadWhile } from '../build';
 import { cancelRun, discardMessage, loadDraft, loadOlder, quoteOf, react, retryMessage, saveDraft, sendMessage } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
@@ -172,7 +172,7 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
     const reports = new Map<number, RunReport>();
     const shown: ChatMessage[] = [];
     for (const m of messages) {
-      const report = m.run?.kind === 'request' || m.run?.kind === 'cancel' ? null : m.run;
+      const report = m.run?.kind === 'request' || m.run?.kind === 'cancel' || m.run?.kind === 'fix' ? null : m.run;
       const request = report ? byId.get(report.request)?.run : null;
       if (report && request?.kind === 'request' && request.runtime === m.senderId) reports.set(report.request, report);
       else shown.push(m);
@@ -439,8 +439,10 @@ const EVENT_TAGS: Record<Exclude<PullEvent, 'opened'>, [Tone, string]> = {
  * sender can cancel it while it runs (R-030); the agent's report then says so.
  */
 function RunCard({ run, state, users, onCancel }: { run: RunRequest; state: RunReport | null; users: State['users']; onCancel?: () => void }) {
-  const [tone, label] = state ? RUN_TAGS[state.kind] : (['muted', 'Waiting for the agent'] as [Tone, string]);
-  const going = !state || state.kind === 'claimed' || state.kind === 'fixing';
+  // A request nobody took in time waits no more, as on the board (D-100).
+  const unanswered = !state && Date.now() - (run.sentAt ?? 0) > RUN_PICKUP_MS;
+  const [tone, label] = state ? RUN_TAGS[state.kind] : ((['muted', unanswered ? 'No answer' : 'Waiting for the agent']) as [Tone, string]);
+  const going = (!state && !unanswered) || state?.kind === 'claimed' || state?.kind === 'fixing';
   // Nothing runs while the agent, or its session in the request's repository, checks in nowhere.
   // A daemon that starts again reports the run (K-46).
   const agent = users[run.runtime];

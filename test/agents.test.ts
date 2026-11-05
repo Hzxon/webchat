@@ -65,6 +65,30 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.deepEqual(thread.added, { d1: 'K-3' });
   });
 
+  test("a card's run makes a conversation of its own, whose state follows the agent's reports (D-105)", () => {
+    const sayRun = (senderId: number, run: object, createdAt = ++id) => ({ ...say(senderId, {}, `r${id}`, createdAt), prompt: null, run });
+    const request = sayRun(ME, { kind: 'request', card: 'K-7', title: 'Sums', docId: 'd', section: 's', runtime: AGENT, repo: 'team/app', sentAt: 1, hash: 'h' });
+    const state = (...rest: object[]) => threadsOf([request, ...rest], ME, AGENT, {}, 100)[0];
+    assert.deepEqual([state().kind, state().state, state().repo, state().request], ['card', 'working', 'team/app', request.id]);
+    const claimed = sayRun(AGENT, { kind: 'claimed', request: request.id });
+    const done = sayRun(AGENT, { kind: 'done', request: request.id, pull: { repo: 'team/app', number: 4 } });
+    const review = sayRun(AGENT, { kind: 'review', request: request.id, note: 'Bob asked for changes' });
+    const go = sayRun(ME, { kind: 'fix', request: request.id, sentAt: 2 });
+    const ended = sayRun(AGENT, { kind: 'ended', request: request.id, note: 'it was merged' });
+    assert.equal(state(claimed, done).state, 'draft');
+    assert.equal(state(claimed, done, review).state, 'waiting');
+    assert.equal(state(claimed, done, review, go).state, 'working');
+    assert.equal(state(claimed, done, ended).state, 'done');
+    assert.equal(state(claimed, sayRun(AGENT, { kind: 'failed', request: request.id })).state, 'unfinished');
+    // A round that failed on a draft leaves the draft, and a go that did not send starts nothing.
+    assert.equal(state(claimed, done, sayRun(AGENT, { kind: 'failed', request: request.id })).state, 'draft');
+    const unsentGo = sayRun(ME, { kind: 'fix', request: request.id, sentAt: 3 });
+    assert.equal(threadsOf([request, claimed, done, unsentGo], ME, AGENT, { [unsentGo.clientId]: 'failed' }, 100)[0].state, 'unsent');
+    // Only the agent reports, and a card's conversation does not end after a day.
+    assert.equal(state(sayRun(ME, { kind: 'done', request: request.id })).state, 'working');
+    assert.equal(threadsOf([request], ME, AGENT, {}, 1 + THREAD_TTL_MS + 1)[0].state, 'working');
+  });
+
   test('only the owner starts or replies, only the agent answers, and only signed messages count', () => {
     const prompt = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'p1');
     const fake = say(ME, { kind: 'answer', to: 'p1' });

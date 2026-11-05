@@ -445,11 +445,13 @@ On Linux without a desktop keyring, Claude Code keeps the pairing code in
 `~/.claude/.credentials.json`, readable only by you. The code works once, so it is useless after
 pairing.
 
-On a roadmap card, the play button lists your agents once for each repository a session is open
-in. One that is not checking in shows as asleep since its last check-in: a run needs a session
-open and the laptop awake. A second session in the same repository waits, and takes over when the
-first closes. When you hand a card to one, the plugin checks that you sent it, adds a git worktree
-inside the repository, and starts a background Claude there. It runs apart from your own sessions,
+On a roadmap card, the play button opens the card's brief under **Coding agents**: the card and the
+decisions it follows, as your agent will get them, with each passage a teammate wrote marked. Pick
+the repository and press **Start**. When it cannot start, the brief says why: the laptop is asleep,
+Claude Code there needs a GitHub sign-in, it is busy with another card, or someone is editing the
+card. A second session in the same repository waits, and takes over when the first closes. When you
+start a card, the plugin checks that you sent it and that its brief is still the one you saw, adds a
+git worktree inside the repository, and starts a background Claude there. It runs apart from your own sessions,
 which keep their settings. It reads none of your Claude Code settings and none of the repository's
 hooks or `.mcp.json`.
 
@@ -465,32 +467,24 @@ could make it leak the repository's code. The card goes in on stdin, and the tur
 
 The plugin then pushes the `agent/*` branch, never forced, and opens a draft pull request with your
 `gh` login. It never pushes anywhere else and never merges. It then watches the draft: when CI
-fails, it conflicts, or someone who may push reviews it, the same background Claude session gets
-another round, at most three. Watching stops when someone else pushes to it, or it is closed,
-merged or marked ready.
+fails, it conflicts, or you review it, the same background Claude session gets another round, at
+most three. A review by anyone else waits for you: the card's conversation shows the comments, and
+**Let the agent fix it** starts the round. A reply there asks for changes in your own words.
+Watching goes on after the draft is marked ready, and stops when someone else pushes to it, or it
+is closed or merged.
 
 After you update the plugin, quit every Claude Code session and start new ones. A session that
 keeps running can keep the old plugin's server.
 
-### With the daemon
+The request and the agent's reports show in the card's conversation under **Coding agents**, where
+you can stop a run. The card's status line tells your team: `In progress: Ann's agent` while it
+works, `In review: repo#12` once its draft is open, and what it was before if the run fails. Your
+page writes it while it is open. The agent reads the card as it is on the board, whoever wrote it,
+and the board's decisions. It works with your git and GitHub credentials, so run only cards you
+would do yourself.
 
-For other coding agents, or without Claude Code, run the daemon from a checkout of WebChat on the
-machine that holds your project's repository.
-
-1. Choose **Connect coding agent** on the board, then pair with the code it shows:
-   `npm run agent -- pair <code> claude_code`. Its keys stay in
-   `~/.webchat/claude_code/account.json`, which only you can read.
-2. Name the project's repository in `~/.webchat/claude_code/config.json`:
-   `{ "projects": { "Capstone": "/home/you/dev/capstone" } }`. Add `"agent": "codex"` or
-   `"agent": "hermes"` there to run one of those instead of Claude Code.
-3. Keep it running: `npm run agent -- watch claude_code`. It lists your projects and the
-   repository it found for each. Each run gets a git worktree under `~/.webchat/claude_code/runs`.
-
-Either way, the request and the agent's reports show as one card in #general, so your team sees
-who is on what, and you can cancel a run there. A run cut short when the agent stopped is reported
-failed when it starts again. The agent reads the card as it is on the board, whoever wrote it, and
-the board's decisions. It works with your git and GitHub credentials, so run only cards you would
-do yourself. Handing a card to a teammate's agent comes later (R-029).
+`npm run agent` no longer takes cards: they run through the plugin, in its sandbox, from a brief
+you saw.
 
 ## Self-hosting instead
 

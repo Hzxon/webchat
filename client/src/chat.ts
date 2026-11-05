@@ -17,6 +17,7 @@ import {
   type PullRequestDTO,
   type MessageDTO,
   type PublicKeysDTO,
+  type RunDTO,
   type RunRequest,
   type SendMessageInput,
   type SyncResponse,
@@ -41,7 +42,7 @@ import { disablePushHere, forgetPushOnServer, getPushState, showLocalNotificatio
 import type { Card } from './board';
 import { keyedQueue } from './queue';
 import { agentChats, agentOf, threadsOf } from './agents';
-import { actions, chatTitle, generalOf, localEditCount, senderName, store, type State } from './store';
+import { actions, chatTitle, localEditCount, senderName, store, type State } from './store';
 
 const newClientId = () =>
   typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -757,20 +758,28 @@ export function sendMessage(conversationId: number, body: string, urgent: boolea
 }
 
 /**
- * Hands a board card to the user's coding agent (R-027, D-089): a message in the project's #general
- * whose `run` field names the card and the agent's account, and when it was sent. It signs the
- * repository the menu showed, whose Claude Code session runs it (R-030, D-094). The agent answers
- * with reports that name this message, and pages fold them into its card. The text says the same in
- * words for older pages.
+ * Hands a board card to the user's coding agent (R-027, D-089, D-105): a message in their direct
+ * chat with it whose `run` field names the card, the agent's account, the repository whose Claude
+ * Code session runs it (D-094), when it was sent, and the hash of the brief the owner saw. The agent
+ * answers with reports that name this message, which the pane and the board fold into the card. The
+ * text says the same in words. Returns the conversation, by the request's client id.
  */
-export async function requestRun(projectId: number, docId: string, card: Card, runtime: UserDTO, repo: string | undefined) {
-  const general = generalOf(store.get(), projectId);
-  if (!general) throw new Error('Project not found.');
+export async function requestRun(docId: string, card: Card, runtime: UserDTO, repo: string, hash: string) {
+  const conversationId = await startDirectChat(runtime.id);
   const id = `${card.kind}-${card.number}`;
-  const run: RunRequest = { kind: 'request', card: id, title: card.title.slice(0, LIMITS.runNoteLength), docId, section: card.id, runtime: runtime.id, sentAt: Date.now() };
-  if (repo) run.repo = repo;
-  const where = run.repo ? ` in ${run.repo}` : '';
-  await sendContent(general.id, { text: `Run ${id} with ${runtime.displayName}${where}: ${card.title}`, run }, false);
+  const run: RunRequest = { kind: 'request', card: id, title: card.title.slice(0, LIMITS.runNoteLength), docId, section: card.id, runtime: runtime.id, sentAt: Date.now(), repo, hash, was: card.status };
+  const clientId = newClientId();
+  void sendContent(conversationId, { text: `Run ${id}: ${card.title}`, run }, false, clientId);
+  return clientId;
+}
+
+/** The owner's go for another round on a run's draft, after a review or with their own words (D-105). */
+export function askFix(conversationId: number, request: number, note: string, review?: number) {
+  const fix: RunDTO = { kind: 'fix', request, sentAt: Date.now() };
+  if (note.trim()) fix.note = note.trim();
+  // The review it approves, so only the text the owner saw runs (D-105).
+  if (review !== undefined) fix.review = review;
+  return sendContent(conversationId, { text: note.trim() || 'Let the agent fix it.', run: fix }, false);
 }
 
 /**
@@ -963,7 +972,7 @@ export function retryMessage(message: ChatMessage) {
   const content: MessageContent = { text: message.text };
   if (message.replyTo) content.replyTo = message.replyTo;
   if (message.pull) content.pull = message.pull;
-  if (message.run) content.run = message.run;
+  if (message.run) content.run = 'sentAt' in message.run ? { ...message.run, sentAt: Date.now() } : message.run;
   // A fresh send time, or the agent would refuse a retry made 10 minutes later. The client id still makes it one message (D-061, K-47).
   if (message.prompt) content.prompt = 'sentAt' in message.prompt ? { ...message.prompt, sentAt: Date.now() } : message.prompt;
   if (message.added) content.added = message.added;
