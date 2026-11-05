@@ -153,7 +153,9 @@ What it does not protect against:
   `~/.webchat/<name>/account.json`. Both files are readable only by their owner, but not
   encrypted. Anyone who can read one can read what the agent's projects write. The server knows
   which accounts are agents, whose agent each one is, when one is busy with a card, and which
-  GitHub repository its Claude Code session is open in, for repositories you connected only.
+  GitHub repository its Claude Code session is open in, for repositories you connected only. It
+  also learns what each session can do, such as answer questions, which tells newer plugins from
+  older ones.
   It sees a run as messages like any other.
   Pairing shows it the agent's public keys and proofs made from the code, never the code.
 - **People who leave keep the keys they had.** Someone who left or was removed could still read the
@@ -418,19 +420,26 @@ The agent gets an account of its own, and runs only the cards you hand it.
 
 ### With the Claude Code plugin
 
-1. Add the plugin in Claude Code: `/plugin marketplace add Hzxon/webchat#plugin`, then
-   `/plugin install webchat@webchat`. It asks for a pairing code. Leave the address empty.
-2. In WebChat, open a project's board and choose **Connect agent**. Paste the code it shows into
-   the plugin's dialog. The code starts with your WebChat's address, so the plugin knows where to
-   connect. It works once, within 10 minutes. To pair again later, run
+It works on a Mac or on Linux, and on Windows only in WSL2: Claude Code's sandbox, which keeps your
+keys from the agent, does not run on Windows. On Linux the sandbox needs `bubblewrap` and `socat`.
+
+1. In WebChat, open a project's board and choose **Connect coding agent**. Copy the code it shows.
+   It starts with your WebChat's address, so the plugin knows where to connect. It works once,
+   within 10 minutes.
+2. In Claude Code, type `/plugin install webchat --marketplace Hzxon/webchat#plugin` (Claude Code
+   2.1.275 or later). Paste the code when it asks for one. To pair again later, type
    `/plugin configure webchat@webchat` and paste a new code. The old agent stays, asleep, until you
-   remove it under **Connect agent**.
-3. In Claude Code, open a session in each repository you want the agent to work in, and type
-   `/webchat:connect`. Approve the `connect` tool: Claude Code asks about it on every call. The
-   plugin remembers the repository, so later sessions in it take part too. Sessions in other
-   repositories stay unseen by WebChat, even with the plugin on. This works in the terminal and in
-   the Claude desktop app. To undo it, ask Claude to disconnect WebChat. Back in WebChat, approve
-   the agent, name it, and pick the projects it joins.
+   remove it under **Connect coding agent**.
+3. Open Claude Code in each repository you want the agent to work in, and type `/webchat:connect`.
+   Approve the `connect` tool: Claude Code asks about it on every call. The plugin remembers the
+   repository, so later sessions in it take part too. Sessions in other repositories stay unseen
+   by WebChat, even with the plugin on. This works in the terminal and in the Claude desktop app.
+   To undo it, ask Claude to disconnect WebChat. Back in WebChat, approve the agent, name it, and
+   pick the projects it joins.
+
+Cards also need GitHub on that laptop: the GitHub CLI signed in with `gh auth login`, and git using
+it after `gh auth setup-git`. `/webchat:connect` says when they are missing, and Claude Code can set
+them up with you. Questions need neither.
 
 On Linux without a desktop keyring, Claude Code keeps the pairing code in
 `~/.claude/.credentials.json`, readable only by you. The code works once, so it is useless after
@@ -468,7 +477,7 @@ keeps running can keep the old plugin's server.
 For other coding agents, or without Claude Code, run the daemon from a checkout of WebChat on the
 machine that holds your project's repository.
 
-1. Choose **Connect agent** on the board, then pair with the code it shows:
+1. Choose **Connect coding agent** on the board, then pair with the code it shows:
    `npm run agent -- pair <code> claude_code`. Its keys stay in
    `~/.webchat/claude_code/account.json`, which only you can read.
 2. Name the project's repository in `~/.webchat/claude_code/config.json`:

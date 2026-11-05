@@ -7,12 +7,6 @@
   },
   "repository": "https://github.com/Hzxon/webchat",
   "userConfig": {
-    "server": {
-      "type": "string",
-      "title": "WebChat address",
-      "description": "Leave it empty: the pairing code carries it. Only a code without an address, from an older WebChat, needs it, such as https://chat.example.com.",
-      "required": false
-    },
     "pairing_code": {
       "type": "string",
       "title": "Pairing code",
@@ -28,7 +22,6 @@
         "${CLAUDE_PLUGIN_ROOT}/server.mjs"
       ],
       "env": {
-        "WEBCHAT_SERVER": "${user_config.server}",
         "WEBCHAT_PAIRING_CODE": "${user_config.pairing_code}"
       }
     }

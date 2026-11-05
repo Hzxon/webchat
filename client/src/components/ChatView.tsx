@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
 import type { QuotedMessage } from '../../../shared/e2ee';
 import { githubCardEvent } from '../../../shared/github';
 import { LIMITS, type GithubCardDTO, type PullCardDTO, type PullEvent, type RunReport, type RunRequest } from '../../../shared/types';
@@ -586,43 +586,8 @@ interface ComposerProps {
   onCancelReply: () => void;
 }
 
-function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: ComposerProps) {
-  const [text, setText] = useState('');
-  const [urgent, setUrgent] = useState(false);
-  const input = useRef<HTMLTextAreaElement>(null);
-  const draft = useRef('');
-
-  // A reload after a deploy waits until the draft is sent or cleared (D-040).
-  useEffect(() => {
-    draft.current = text;
-  }, [text]);
-  useEffect(() => holdReloadWhile(() => draft.current.trim() !== ''), []);
-
-  // The draft stays on this device, so it comes back here after a close, a reload or another chat (D-051).
-  useEffect(() => {
-    let current = true;
-    setText('');
-    setUrgent(false);
-    // On a phone the keyboard would cover half of a chat just opened, so it waits for a tap.
-    if (!touchOnly()) input.current?.focus();
-    void loadDraft(conversationId).then((saved) => {
-      if (current && saved) setText((typed) => typed || saved);
-    });
-    return () => {
-      current = false;
-    };
-  }, [conversationId]);
-
-  function edit(value: string) {
-    setText(value);
-    saveDraft(conversationId, value);
-  }
-
-  useEffect(() => {
-    if (replyTo) input.current?.focus();
-  }, [replyTo]);
-
-  // Grow with the text up to about six lines.
+/** Grows a message box with its text up to about six lines. */
+export function useAutoGrow(input: RefObject<HTMLTextAreaElement | null>, text: string) {
   useLayoutEffect(() => {
     const el = input.current;
     if (!el) return;
@@ -631,7 +596,53 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
     const height = el.scrollHeight + el.offsetHeight - el.clientHeight;
     el.style.height = `${Math.min(height, 150)}px`;
     el.style.overflowY = height > 150 ? 'auto' : 'hidden';
+  }, [input, text]);
+}
+
+/**
+ * A message box's text. The draft stays on this device, so it comes back after a close, a reload or
+ * another chat (D-051), and a reload after a deploy waits until it is sent or cleared (D-040).
+ */
+export function useDraft(name: number | string) {
+  const [text, setText] = useState('');
+  const draft = useRef('');
+  useEffect(() => {
+    draft.current = text;
   }, [text]);
+  useEffect(() => holdReloadWhile(() => draft.current.trim() !== ''), []);
+  useEffect(() => {
+    let current = true;
+    setText('');
+    void loadDraft(name).then((saved) => {
+      if (current && saved) setText((typed) => typed || saved);
+    });
+    return () => {
+      current = false;
+    };
+  }, [name]);
+  const edit = (value: string) => {
+    setText(value);
+    saveDraft(name, value);
+  };
+  return [text, edit] as const;
+}
+
+function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: ComposerProps) {
+  const [text, edit] = useDraft(conversationId);
+  const [urgent, setUrgent] = useState(false);
+  const input = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    setUrgent(false);
+    // On a phone the keyboard would cover half of a chat just opened, so it waits for a tap.
+    if (!touchOnly()) input.current?.focus();
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (replyTo) input.current?.focus();
+  }, [replyTo]);
+
+  useAutoGrow(input, text);
 
   function submit() {
     if (!text.trim() || blockedReason) return;

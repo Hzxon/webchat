@@ -1087,21 +1087,22 @@ requester's board is open.
 
 ### D-101: A repository takes part once its owner connects it
 
-Proposed 2026-11-06 in #117 (R-035). It replaces D-098, and with D-097 it replaces D-095.
+Proposed 2026-11-06 in #117 (R-035), changed in #120. It replaces D-098, and with D-097 it replaces
+D-095.
 
 The plugin's server takes part only in a repository whose folder in the plugin's data holds a
-`connected` mark. The owner sets it by typing `/webchat:connect` in a session there, in a terminal
-or the desktop app; the skill only the user can start calls the `connect` tool. That tool carries
-`requiresUserInteraction`, so Claude Code asks the owner on every call, even when they allowed the
-plugin's tools or bypass permissions, and a repository's files cannot connect it. Every session in
-a connected repository may take part, and the lock still gives its runs to one (D-094). A session
-anywhere else never pairs, checks in or takes a lock. `disconnect` removes the mark, and runs and
-fix rounds stop from then on. Why: the desktop app starts no session with `WEBCHAT_AGENT=1`, and the server should
-still learn only the repositories the owner chose.
+`connected` mark. The owner sets it by typing `/webchat:connect` in a session there; the skill only
+the user can start calls the `connect` tool. That tool carries `requiresUserInteraction`, so Claude
+Code asks the owner on every call, and a repository's files cannot connect it. Its answer says in
+plain words what comes next, and says when cards need GitHub on the laptop: questions need no `gh`
+login, and cards refuse at once without one. Every session in a connected repository may take part,
+and the lock gives its runs to one (D-094). A session anywhere else never pairs, checks in or takes
+a lock. `disconnect` removes the mark. Why: the desktop app starts no session with
+`WEBCHAT_AGENT=1`, and the server should still learn only the repositories the owner chose.
 
 Cost: the owner connects each repository once. A session in an unconnected repository looks for the
-mark every 5 seconds. A disconnected repository stays in the play menu,
-shown asleep, for 30 days after its last check-in (D-094).
+mark every 5 seconds. A disconnected repository stays in the play menu, shown asleep, for 30 days
+after its last check-in (D-094).
 
 ### D-102: A conversation is a prompt and the messages that name it
 
@@ -1120,6 +1121,23 @@ and its copy goes. Why: the owner asks from a phone, and the chat keeps it encry
 
 Cost: an answer waits up to 15 seconds for a check-in, plus the turn. Each conversation fetches a
 copy of the default branch. An answer cut inside a code block shows as two messages.
+
+### D-103: The owner asks their agents in a Coding agents pane
+
+Proposed 2026-11-06 in #120 (R-035).
+
+A Coding agents row sits at the top of Chats once the user has an agent. Their direct chats with
+their agents leave the list: the pane shows them as conversations, and their unread counts move to
+the row. One Ask box names the repository it asks in, with a picker only when there are several. It
+sends only to a session that is online and whose check-ins name the level `AGENT_LEVEL.answers`; a
+session on an older plugin, which ignores prompts, gets the steps to update. While a turn runs, Send
+turns into Stop, so each answer sits under what it answers. A conversation whose newest message is a
+day old shows Ended, since the agent ends it without a word (D-102). Answers render as Markdown, and
+the parts of a long one show as one. Why: students ask from a phone and are not programmers, so
+every state says what to do in plain words.
+
+Cost: each page load fetches a page of every agent chat. Messages in an agent chat without a
+`prompt` field no longer show. The level, a number later steps raise, costs a migration.
 
 ## Replies and reactions
 

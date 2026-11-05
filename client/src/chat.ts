@@ -9,6 +9,7 @@
 import { pairingId, pairingProof, type MessageContent, type QuotedMessage } from '../../shared/e2ee';
 import {
   LIMITS,
+  previewOf,
   showsEveryPush,
   type ConversationDTO,
   type DocDTO,
@@ -39,7 +40,8 @@ import { refreshGithub, startGithub } from './github';
 import { disablePushHere, forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
 import type { Card } from './board';
 import { keyedQueue } from './queue';
-import { actions, chatTitle, generalOf, localEditCount, senderName, store } from './store';
+import { agentChats, agentOf, threadsOf } from './agents';
+import { actions, chatTitle, generalOf, localEditCount, senderName, store, type State } from './store';
 
 const newClientId = () =>
   typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -318,13 +320,14 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
       const state = store.get();
       if (state.githubOpen) return '/?github=open';
       if (state.docOpen) return `/?doc=${state.docOpen}`;
+      if (state.agentsOpen) return `/?agents=${encodeURIComponent(state.agentThread ?? '')}`;
       return state.activeId === null ? '/' : `/?chat=${state.activeId}`;
     }),
     attention.subscribe((attentive) => {
       // Tell the server right away, so pushes switch between this tab and the phone.
       void syncNow();
-      const activeId = store.get().activeId;
-      if (attentive && activeId !== null) markRead(activeId);
+      const state = store.get();
+      if (attentive) viewedChats(state).forEach(markRead);
     }),
   );
 
@@ -360,8 +363,17 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
     history.replaceState(null, '', '/');
     actions.setDocOpen(doc);
   }
-  // After the chat above, so the two never load the same history at once.
-  void opening.catch(() => undefined).then(() => restoreUnsent(run));
+  const agents = query.get('agents');
+  if (agents !== null) {
+    history.replaceState(null, '', '/');
+    actions.setAgentsOpen(true, agents || null);
+  }
+  // After the chat above, so the two never load the same history at once. The Coding agents row
+  // shows the newest conversation, so the chats with agents load too (D-103).
+  void opening.catch(() => undefined).then(async () => {
+    await Promise.all(agentChats(store.get()).map((chat) => (store.get().messages[chat.id] ? undefined : loadOlder(chat.id).catch(() => undefined))));
+    return restoreUnsent(run);
+  });
   return { status: 'ready' };
 }
 
@@ -459,13 +471,15 @@ export function previewText(message: ChatMessage): string {
   if (message.security === 'failed') return 'Encrypted message. Open the chat to read it.';
   if (message.security === 'plain') return `Not encrypted: ${message.text}`;
   if (message.github) return message.text;
-  if (message.pull) return `Pull request: ${message.pull.title}`;
-  return message.text;
+  return previewOf(message);
 }
+
+/** The chats the user has in view: the open chat, or every chat with their agents while that pane shows. */
+const viewedChats = (state: State) => (state.agentsOpen ? agentChats(state).map((c) => c.id) : state.activeId === null ? [] : [state.activeId]);
 
 function onIncoming(message: ChatMessage) {
   const state = store.get();
-  if (attention.isAttentive() && state.activeId === message.conversationId) {
+  if (attention.isAttentive() && viewedChats(state).includes(message.conversationId)) {
     markRead(message.conversationId);
     return;
   }
@@ -539,8 +553,21 @@ export async function openConversation(conversationId: number) {
     return;
   }
   actions.setTab(conversation.type === 'channel' ? 'projects' : 'chats');
-  actions.setActive(conversationId);
-  if (!store.get().messages[conversationId]) {
+  // The user's chat with their own coding agent shows as conversations in its pane (D-103).
+  const agent = agentOf(store.get(), conversation);
+  if (!agent) actions.setActive(conversationId);
+  else actions.setAgentsOpen(true);
+  await loadChat(conversationId);
+  // A notification is for the chat's newest message, so it opens that message's conversation, unless
+  // the user went elsewhere while it loaded.
+  const now = store.get();
+  if (agent && now.agentsOpen && now.agentThread === null) actions.setAgentsOpen(true, threadsOf(now.messages[conversationId] ?? [], meId, agent.id, now.pending)[0]?.root ?? null);
+}
+
+/** Loads a chat's newest messages when the page has none yet, and marks it read while the user looks. */
+export async function loadChat(conversationId: number) {
+  const conversation = store.get().conversations[conversationId];
+  if (conversation && !store.get().messages[conversationId]) {
     try {
       await loadOlder(conversationId);
     } catch {
@@ -746,6 +773,24 @@ export async function requestRun(projectId: number, docId: string, card: Card, r
   await sendContent(general.id, { text: `Run ${id} with ${runtime.displayName}${where}: ${card.title}`, run }, false);
 }
 
+/**
+ * Asks one of the user's coding agents about a repository (D-102): a message in their direct chat
+ * with it, whose `prompt` field names the repository and when it was sent. The Claude Code session
+ * open in that repository answers. Returns the conversation, by the prompt's client id.
+ */
+export async function askAgent(agentId: number, repo: string, question: string) {
+  const conversationId = await startDirectChat(agentId);
+  const clientId = newClientId();
+  // The message shows as sending at once, so the pane can open its conversation.
+  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', repo, sentAt: Date.now() } }, false, clientId);
+  return clientId;
+}
+
+/** Replies in a conversation with an agent, or stops its turn. Both name the prompt's client id (D-102). */
+export function tellAgent(conversationId: number, to: string, kind: 'reply' | 'cancel', text: string) {
+  return sendContent(conversationId, { text: text.trim(), prompt: { kind, to, sentAt: Date.now() } }, false);
+}
+
 /** Stops a run the user handed to an agent (R-030). The agent heeds only the person who sent the request. */
 export function cancelRun(request: ChatMessage & { run: RunRequest }) {
   const text = `Cancel ${request.run.card} with ${senderName(store.get().users, request.run.runtime)}`;
@@ -826,6 +871,7 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     pull: entry.content.pull ?? null,
     github: null,
     run: entry.content.run ?? null,
+    prompt: entry.content.prompt ?? null,
     security: 'encrypted',
   };
 }
@@ -900,6 +946,8 @@ export function retryMessage(message: ChatMessage) {
   if (message.replyTo) content.replyTo = message.replyTo;
   if (message.pull) content.pull = message.pull;
   if (message.run) content.run = message.run;
+  // A fresh send time, or the agent would refuse a retry made 10 minutes later. The client id still makes it one message (D-061, K-47).
+  if (message.prompt) content.prompt = 'sentAt' in message.prompt ? { ...message.prompt, sentAt: Date.now() } : message.prompt;
   void sendContent(message.conversationId, content, message.urgent, message.clientId!);
 }
 

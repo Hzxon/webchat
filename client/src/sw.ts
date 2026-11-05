@@ -2,7 +2,7 @@
 // Pushed messages arrive encrypted; it decrypts them here, on the device, with the keys the page
 // left in IndexedDB. vite.sw.config.ts bundles it into one plain script at /sw.js.
 import { decryptContent } from '../../shared/e2ee';
-import { showsEveryPush, type ConfigDTO, type PushPayload, type WorkerToPageMessage } from '../../shared/types';
+import { previewOf, showsEveryPush, type ConfigDTO, type PushPayload, type WorkerToPageMessage } from '../../shared/types';
 import { keystore } from './e2ee/keystore';
 
 declare const self: ServiceWorkerGlobalScope;
@@ -59,7 +59,7 @@ async function notificationBody(payload: PushPayload): Promise<string> {
     const senderKeys = directory?.[senderId];
     if (!key || !senderKeys) throw new Error('Keys are not on this device yet.');
     const content = await decryptContent(key, senderKeys.sign, { conversationId, senderId, urgent: payload.urgent, clientId }, envelope);
-    return payload.bodyPrefix + preview(content.pull ? `Pull request: ${content.pull.title}` : content.text);
+    return payload.bodyPrefix + preview(previewOf(content));
   } catch {
     return payload.bodyPrefix + (payload.urgent ? 'Urgent message. Open the chat to read it.' : 'New encrypted message');
   }
