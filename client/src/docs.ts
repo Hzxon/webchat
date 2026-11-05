@@ -111,6 +111,18 @@ export async function replaceSection(doc: ChatDoc, section: string, content: Doc
   }
 }
 
+/** Rewrites a section from what it holds under its lock, so no save lands between the read and the write. Null leaves it. */
+export async function rewriteSection(doc: ChatDoc, section: string, make: (current: DocSection | undefined) => Promise<DocContent | null>) {
+  await api.lockSection(doc.id, section);
+  try {
+    const content = await make((await loadSections(doc)).find((s) => s.id === section));
+    if (content) await saveSection(doc, section, content);
+    return content !== null;
+  } finally {
+    await api.unlockSection(doc.id, section);
+  }
+}
+
 export async function deleteDoc(docId: string) {
   await api.deleteDoc(docId);
   actions.dropDoc(docId);

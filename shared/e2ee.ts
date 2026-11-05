@@ -489,7 +489,10 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
 
 /** A conversation's message, if it has the right shape. */
 export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO | undefined {
-  if (raw?.kind === 'prompt') return typeof raw.repo === 'string' && isRepoName(raw.repo) && isId(raw.sentAt) ? { kind: 'prompt', repo: raw.repo, sentAt: raw.sentAt } : undefined;
+  if (raw?.kind === 'prompt') {
+    if (typeof raw.repo !== 'string' || !isRepoName(raw.repo) || !isId(raw.sentAt)) return;
+    return { kind: 'prompt', repo: raw.repo, sentAt: raw.sentAt, ...(isId(raw.project) && { project: raw.project }) };
+  }
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
   if (raw.kind === 'reply' || raw.kind === 'cancel') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt } : undefined;
@@ -503,7 +506,8 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
 function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | undefined {
   const title = short(raw?.title, LIMITS.docTitleLength);
   const body = short(raw?.body, LIMITS.messageLength);
-  if (!raw || (raw.kind !== 'R' && raw.kind !== 'K') || !title || body === undefined) return;
+  // A line break in the title would write a status line of its own into the card.
+  if (!raw || (raw.kind !== 'R' && raw.kind !== 'K') || !title || /[\r\n]/.test(title) || body === undefined) return;
   const replaces = raw.replaces as Record<string, unknown> | undefined;
   if (!replaces) return { kind: raw.kind, title, body };
   const card = typeof replaces.card === 'string' && /^[RK]-\d{1,6}$/.test(replaces.card) ? replaces.card : undefined;

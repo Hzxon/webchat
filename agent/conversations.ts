@@ -30,6 +30,8 @@ export interface Conversation {
   /** When it last moved. */
   last: number;
   ended?: boolean;
+  /** The board its owner's page picked for the prompt, the only one its briefs hold (D-104). */
+  project?: number;
   /** Each roadmap card in the brief, by its id, with its place and hash, so a draft that changes one names what it saw (D-104). */
   seen?: Record<string, { doc: string; section: string; hash: string }>;
 }
@@ -80,7 +82,7 @@ export class Conversations {
     const conversation =
       prompt.kind === 'prompt'
         ? prompt.repo === this.client.repo && message.clientId
-          ? { root: message.clientId, chat: message.conversationId, session: randomUUID(), answered: false, prompt: text, last: Date.now() }
+          ? { root: message.clientId, chat: message.conversationId, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project }
           : undefined
         : this.list.find((c) => c.root === prompt.to && c.chat === message.conversationId);
     // A copy the server posted again under a new id does nothing (K-47).

@@ -542,7 +542,7 @@ export interface RunCancel {
  * its own, so the agent can refuse an old one played again (K-42).
  */
 export type PromptDTO =
-  | { kind: 'prompt'; repo: string; sentAt: number }
+  | { kind: 'prompt'; repo: string; sentAt: number; project?: number }
   | { kind: 'reply'; to: string; sentAt: number }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }
