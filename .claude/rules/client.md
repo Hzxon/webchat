@@ -1,0 +1,33 @@
+---
+paths:
+  - "client/src/**"
+  - "test/store.test.ts"
+  - "test/queue.test.ts"
+  - "test/build.test.ts"
+  - "test/ios.test.ts"
+  - "test/ignoreBuild.test.ts"
+---
+# The page
+
+Each line is a constraint the code cannot state on its own. The number names the decision in
+docs/decisions.md that explains it. Encryption, GitHub and projects have their own files.
+
+- Every API request names the account its tab shows in `x-webchat-user`; on `409 account_changed` the tab reloads (D-008).
+- A tab with no push subscription checks in every 3 seconds; a closing tab sends `POST /api/away` (D-007).
+- Reload a tab only when the page's `/assets/` files changed, and never while `holdReloadWhile` holds; a tab in use waits until hidden or idle for 30 seconds (D-040).
+- `client/src/viewport.ts` sets `--visible-height`; it runs only while the chat layout shows and leaves a pinch-zoomed page alone (D-053).
+- Every hover style sits behind `@media (hover: hover)`; opening a chat on a touch screen does not focus the message box (D-053).
+- The palette is neutral grays plus one indigo accent; success uses `--ok`, never the accent; every corner uses `--radius`; no font loads from a font host; colors, type and shapes change in `styles.css` only (D-083).
+- Panels are flat with a 1px line; only dialogs, toasts and the reaction tray cast a shadow (D-083).
+- A message alerts only when its id is above the loaded cursor and the user's read pointer, and it is encrypted; the urgent flag counts only when the signature checks out (D-049, D-023, D-078).
+- Drafts and unsent messages live in IndexedDB, are removed at sign-out, and a retry keeps the client id (D-051).
+- A tab holds a Web Lock while it keeps unsent messages, and takes over only the messages of tabs with no lock (D-051).
+- A 2xx with an unparseable body is a failed request in `request` (D-056).
+- A chat's sends go through `keyedQueue`; a failed send does not block the ones behind it (D-075).
+- A 401 on a check-in or first load ends the browser's push subscription (D-072).
+- Every change the page makes to its chats or projects must go through the counted store actions, or a late check-in answer undoes it (D-069).
+- `request` aborts when the answer has not started after 60 seconds, using `AbortController`, not `AbortSignal.timeout` (D-077).
+- A reply's envelope holds the quoted message id, sender and at most 160 characters of text; when the original is loaded, show it, not the copy (D-029).
+- A reaction is a message of kind `reaction`; the newest per person and message wins, an empty emoji removes it; reactions never count as unread, reorder chats or replace the preview (D-030).
+- History paging goes from the oldest row fetched, not the oldest message shown, and continues while pages hold only reactions (D-030).
+- Alerts on iPhones without Web Push go through the Bark app; `client/src/ios.ts` spots iOS before 16.4 (D-054).
