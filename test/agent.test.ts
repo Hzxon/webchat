@@ -250,6 +250,35 @@ describe('agent client (R-027)', () => {
     await alice.sync();
     assert.equal(alice.users.get(bot.id)?.busy, false, 'idle again');
   });
+
+  test('reports a run that a restart cut short as failed (K-46)', async () => {
+    const id = (await alice.send(generalId, { text: 'Run K-1 with Bot', run: runOf() })).id;
+    // The daemon stops mid-run: its runner never returns.
+    let started!: () => void;
+    const running = new Promise<void>((resolve) => (started = resolve));
+    const runs = new Runs(bot, () => {
+      started();
+      return new Promise(() => {});
+    });
+    for (const m of await bot.sync()) void runs.handle(m);
+    await running;
+    const saved = async () => JSON.parse(await fs.readFile(botFile, 'utf8')).running;
+    assert.deepEqual(await saved(), { message: id, conversation: generalId, card: 'K-1' });
+
+    // Started again from its file, it no longer sees the request: the cursor is past it.
+    bot = await AgentClient.load(botFile);
+    assert.deepEqual(await bot.sync(), []);
+    const restarted = new Runs(bot, async () => ({ branch: 'agent/k1' }));
+    await restarted.recover();
+    assert.equal(await saved(), undefined);
+    await restarted.recover();
+    const reports = (await alice.sync()).filter((m) => m.content?.run?.kind !== 'request' && m.content?.run?.request === id);
+    assert.deepEqual(reports.map((m) => [m.content?.run?.kind, m.content?.text]), [
+      ['claimed', 'I am on K-1: Pushes with bad keys'],
+      ['failed', 'I could not run K-1: The daemon stopped during the run.'],
+    ]);
+  });
+
   test('runs a card with the coding agent in a worktree of the project repository', async () => {
     // A repository with a remote, as a student's checkout has.
     const origin = path.join(home, 'origin.git');

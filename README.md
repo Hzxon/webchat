@@ -427,7 +427,9 @@ cards you hand it.
    repository it found for each.
 
 On a roadmap card, the play button lists your agents in the project. The request and the agent's
-reports show as one card in #general, so your team sees who is on what. The agent reads the card
+reports show as one card in #general, so your team sees who is on what. It says when the agent is
+offline, since nothing runs then. A run cut short when the daemon stopped is reported failed when
+it starts again. The agent reads the card
 as it is on the board, whoever wrote it, and the board's decisions. Each run gets a git worktree
 on a branch named after the card, under `~/.webchat/claude_code/runs`, and ends in a draft pull
 request when `gh` is signed in on that machine. The agent runs with your git and GitHub

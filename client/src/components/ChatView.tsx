@@ -438,6 +438,8 @@ const RUN_TAGS: Record<RunReport['kind'], [Tone, string]> = {
 /** A card handed to a coding agent (R-027), with the agent's latest report on it folded in. */
 function RunCard({ run, state, users }: { run: RunRequest; state: RunReport | null; users: State['users'] }) {
   const [tone, label] = state ? RUN_TAGS[state.kind] : (['muted', 'Waiting for the agent'] as [Tone, string]);
+  // Nothing runs while the agent checks in nowhere. A daemon that starts again reports the run (K-46).
+  const offline = (!state || state.kind === 'claimed') && !users[run.runtime]?.online;
   return (
     <span className="pull-card">
       <span className="pull-card-head">
@@ -446,6 +448,7 @@ function RunCard({ run, state, users }: { run: RunRequest; state: RunReport | nu
       <span className="pull-title">{run.title}</span>
       <span className="pull-tags">
         <Tag tone={tone}>{label}</Tag>
+        {offline && <Tag tone="warn">Agent offline</Tag>}
         {state?.branch && <code>{state.branch}</code>}
         {state?.pull && (
           <a href={`https://github.com/${state.pull.repo}/pull/${state.pull.number}`} target="_blank" rel="noopener noreferrer">
