@@ -14,7 +14,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { pairingId } from '../shared/e2ee.ts';
 import { isRepoName, type RunRequest } from '../shared/types.ts';
-import { AgentClient, type OpenedMessage, type TakenRequest } from './client.ts';
+import { AgentClient, readPairing, type OpenedMessage, type TakenRequest } from './client.ts';
 import { addWorktree, decisionsOf } from './runner.ts';
 import { messageOf, Runs, type Runner, type RunResult } from './runs.ts';
 
@@ -113,7 +113,8 @@ export class Plugin {
    * this session takes no runs; `problem` says why.
    */
   async start(): Promise<boolean> {
-    const { server, code, dataDir, projectDir } = this.options;
+    const { dataDir, projectDir } = this.options;
+    const { server, code } = this.options.code ? readPairing(this.options.code, this.options.server) : this.options;
     await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
     let client = await AgentClient.load(this.file('account.json')).catch(() => null);
     if (!client && !code) {

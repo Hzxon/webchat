@@ -113,6 +113,16 @@ export interface DocSection {
 /** How often the daemon checks in. It has no push, so this is its whole delay (D-004). */
 export const SYNC_INTERVAL_MS = 15_000;
 
+/**
+ * Splits a pasted pairing code. The page shows it after its own address, as `<address>#<code>`,
+ * so nobody types the address (R-031). A bare code, from a page older than that, needs `server`.
+ */
+export function readPairing(pasted: string, server: string) {
+  const at = pasted.lastIndexOf('#');
+  if (at >= 0) return { server: pasted.slice(0, at).trim(), code: pasted.slice(at + 1) };
+  if (!server) throw new Error('Paste the whole code that WebChat shows, with its address.');
+  return { server, code: pasted };
+}
 
 export class AgentClient {
   readonly api: Api;

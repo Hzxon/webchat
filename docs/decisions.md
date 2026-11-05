@@ -987,16 +987,17 @@ A teammate's card runs with the owner's credentials; the owner reviews the draft
 
 ### D-093: An agent pairs through a one-time code, and runs only in the repository its owner signed
 
-Proposed 2026-11-05 in #100.
+Proposed 2026-11-05 in #100. The code carries the address since #101 (R-031).
 
-The owner's page shows 128 random bits as a code. The agent sends new keys and a random login key
-with an HMAC of the keys under the code, filed under the code's SHA-256. The page checks the HMAC;
-on approval the server makes the owner's agent account, with a random username and no key backup.
-The approval carries an HMAC of the owner's id and keys and the agent's keys, which the agent
-checks and pins. A pairing works once and lapses after 10 minutes. A plugin's check-ins name the
-GitHub repository its session is open in; the page signs the one its menu showed into the request,
-and the plugin runs it only there. An agent remembers each request's signed client id while it
-could run, across restarts (K-47). Why: no invite code, password or security code to compare.
+The owner's page shows 128 random bits as a code, after its own address as `<address>#<code>`, so
+the agent needs no address setting and a browser never sends the code. The agent sends new keys and
+a random login key with an HMAC of the keys under the code, filed under the code's SHA-256. The page
+checks the HMAC; on approval the server makes the owner's agent account, with a random username and
+no key backup. The approval carries an HMAC of the owner's id and keys and the agent's keys, which
+the agent checks and pins. A pairing works once and lapses after 10 minutes. A plugin's check-ins
+name the GitHub repository its session is open in; the page signs the one its menu showed into the
+request, and the plugin runs it only there. An agent remembers each request's signed client id while
+it could run, across restarts (K-47). Why: no invite code, password or security code to compare.
 
 Cost: the server sees the repository an agent's session is in. Deleting an account deletes its
 agents. A new code makes a new account, and the old one stays, asleep.
