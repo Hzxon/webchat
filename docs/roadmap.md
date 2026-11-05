@@ -436,6 +436,22 @@ Open questions:
 
 ## Known issues
 
+### K-49: A session that cannot hear the doorbell takes its repository's runs
+
+Status: Fixed in #108 (D-095). Found on 2026-11-05, when card K-1 failed in Hzxon/test_agent.
+
+The plugin's MCP server took its repository's lock whether or not a monitor tailed the doorbell.
+The Claude desktop app starts no plugin monitor, so a desktop session holding the lock let every
+run ring unheard and fail after 30 minutes, while a terminal session in that repository waited.
+After the update to 0.4.0, one running session kept the 0.3.0 monitor, which tails the old
+doorbell. Another kept the 0.3.0 server, which locks the whole machine and reported K-1, a card for
+another repository, as failed. `status` also said "Taking the cards" while the sandbox check failed
+every card, and showed an empty address when the address came with the pairing code.
+
+Fix: the monitor marks its session, and only a marked session takes runs (D-095). `status` leads
+with the sandbox problem and names the address the agent uses. The README says to start new
+sessions after an update, which is the only fix for a session that kept the 0.3.0 server.
+
 ### K-48: The agent refuses a plain http address under .localhost
 
 Status: Fixed in #106. Found while testing R-033 on 2026-11-05.

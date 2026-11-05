@@ -1018,6 +1018,20 @@ minutes. Why: students keep several repositories open, and the first session to 
 Cost: a request for a repository with no open session waits until the owner cancels it. The
 `agent_repo` column of migration 17 is unused. A repository unseen for 30 days leaves the menu.
 
+### D-095: A Claude Code session takes runs only while its own monitor hears the doorbell
+
+Proposed 2026-11-05 in #108.
+
+The plugin's monitor passes its session's process id, `$PPID`, to the doorbell command. That writes
+a mark in the repository's `monitors/` folder holding the session's start time from `ps`. The MCP
+server, a child of the same session, takes the repository's lock only once it finds its session's
+mark (K-49). Why: the Claude desktop app starts no plugin monitor, and a session updated in place
+keeps the monitor it started with, which may tail an old doorbell. Both took the lock, so their runs
+rang where nobody heard and failed after 30 minutes, while a terminal session there waited.
+
+Cost: Claude Code must start the monitor's shell and the MCP server as direct children of the
+session. A mark stays after its session ends; the start time keeps it from counting.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope
