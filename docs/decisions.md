@@ -454,18 +454,18 @@ the chat list, starts with "Not encrypted:".
 
 Accepted 2026-11-01 in 10ba6d8.
 
-WebChat accepts these limits and lists them in the README. The page runs the code the server sends,
-so an operator who changes the app could read messages. The server sees metadata: who talks to whom
-and when, group, project and channel names, who is in which project or group, who added them, who
-owns each, who left, when a chat got a new key, display names, whether a message is urgent, that
-someone reacted, and its size band (D-059). It sees pull request titles and repository names
-(D-033), which docs a project has, their section counts, editors, times and size bands, and who is
-editing now; it could show an older section revision as the newest (D-081). It sees which
-repositories a project links and writes the GitHub cards in plain text, so a changed server could
-write fake ones (D-050). It supplies the member list a new channel's key, or a key after someone
-leaves, is wrapped for; the New channel dialog shows it for checking (D-044). People who leave keep
-the keys they had (D-044). Someone who writes to the database can add unencrypted messages under any
-member's name, which show as "Not encrypted" and never alert (D-019).
+WebChat accepts these limits and lists them in the README. An operator who changes the app the page
+runs could read messages. The server sees metadata: who talks to whom and when, group, project and
+channel names, who is in which project or group, who added them, who owns each, who left, when a
+chat got a new key, display names, whether a message is urgent, that someone reacted, and its size
+band (D-059). It sees pull request titles and repository names (D-033), which docs a project has,
+their section counts, editors, times and size bands, and who is editing now; it could show an older
+section revision as the newest (D-081). It sees the repositories a project links, whose cards it
+writes in plain text and could fake (D-050), and the one an agent's session is open in (D-093). It
+supplies the member list a new channel's key, or a key after someone leaves, is wrapped for; the New
+channel dialog shows it (D-044). People who leave keep the keys they had (D-044). Someone who writes
+to the database can add unencrypted messages under any member's name, which show as "Not encrypted"
+and never alert (D-019).
 
 Cost: a feature that shows the server something new must add it to this list and to the README.
 
@@ -901,19 +901,20 @@ so an unknown status sorts with the open items.
 
 Accepted 2026-11-05 in #85.
 
-A coding agent a student runs for a project (R-027) joins as an account of its own, signed up with
-the invite code. Its daemon, a headless client in `agent/`, uses the page's `/api` routes and keeps
-its keys, login key, session cookie and pins in `~/.webchat/<name>/account.json`. It checks in with
-`POST /api/sync` every 15 seconds, opens keys and messages, sends sealed messages and edits doc
-sections under the section lock, with code ported from `client/src/e2ee/keyring.ts` and
-`client/src/chat.ts` on `shared/e2ee.ts`. Check-ins say whether it runs a card; that flag is in the
-sync fingerprint (D-021), so the menu offers only idle agents. Why: rule 5 gives keys only to
-members, and the owner's keys would expose their direct messages.
+A coding agent a student runs for a project (R-027) joins as an account of its own, made by pairing
+with its owner since #100 (D-093). Its daemon, a headless client in `agent/`, uses the page's `/api`
+routes and keeps its keys, login key, session cookie and pins in `~/.webchat/<name>/account.json`,
+or the Claude Code plugin's data folder (D-092). It checks in with `POST /api/sync` every 15
+seconds, opens keys and messages, sends sealed messages and edits doc sections under the section
+lock, with code ported from `client/src/e2ee/keyring.ts` and `client/src/chat.ts` on
+`shared/e2ee.ts`. Check-ins say whether it runs a card; that flag is in the sync fingerprint
+(D-021), so the menu offers only idle agents. Why: rule 5 gives keys only to members, and the
+owner's keys would expose their direct messages.
 
-Cost: one account per runtime, invited to each project by hand. Private keys sit in a file in the
-clear, readable only by its owner, since Node has no unexportable key store (README lists this). Two
-daemons must not share an account file. The daemon never makes keys, so after a removal (D-044) it
-waits for a member's browser. Key logic is ported, not shared, until K-40.
+Cost: one account per runtime. Private keys sit in a file in the clear, readable only by its owner,
+since Node has no unexportable key store (README lists this). Two daemons must not share an account
+file. The daemon never makes keys, so after a removal (D-044) it waits for a member's browser. Key
+logic is ported, not shared, until K-40.
 
 ### D-086: A run is a request message and the reports that name it
 
@@ -955,36 +956,50 @@ adapters were wired from their documentation and not run end to end.
 
 Proposed 2026-11-05 in #95.
 
-An agent account belongs to one owner, named at sign-up or sign-in: `npm run agent -- signup
-<server> <name> <invite-code> <owner>`. The server keeps the owner on the account, and the sync
-fingerprint (D-021) carries it. A card's play button lists only the viewer's own agents, and none
-while someone holds the card's lock. The daemon keeps the owner's id, pins their keys at its first
-check-in and prints the security code the owner compares in a direct chat (D-018). It runs a request
-only when the owner sent it, proved by signature against the pins. The owner's page signs the send
-time into `run`; the daemon refuses a time over 10 minutes from its own clock, or none. Others'
-requests fail with a report. The brief holds the card as on the board and every decision. The run
-card in #general is the run's status. Why: a username allow list trusts the server (K-42, K-45).
+An agent account belongs to the owner who approved its pairing (D-093, since #100). The server keeps
+the owner on the account, and the sync fingerprint (D-021) carries it. A card's play button lists
+only the viewer's own agents, and none while someone holds the card's lock. The agent keeps the
+owner's id and pins the keys the pairing proved. It runs a request only when the owner sent it,
+proved by signature against the pins. The owner's page signs the send time into `run`; the daemon
+refuses a time over 10 minutes from its own clock, or none. Others' requests fail with a report. The
+brief holds the card as on the board and every decision. The run card in #general is the run's
+status. Why: a username allow list trusts the server (K-42, K-45).
 
 Cost: the owner vouches for card and decisions by clicking; a teammate's text runs with the owner's
-credentials. Any client can name any owner, so a stranger's agent can show in a menu; it can read
-only what a member reads. The `agent` column of migration 13 is unused. A teammate's agent is R-029.
+credentials. The `agent` column of migration 13 is unused. A teammate's agent is R-029.
 
 ### D-092: An agent can run as a Claude Code plugin whose server rings a doorbell
 
-Proposed 2026-11-05 in #99.
+Proposed 2026-11-05 in #99, built in #100.
 
-An agent can run inside Claude Code as a plugin, instead of a daemon beside it (R-030). Its MCP
-server is the trusted part. It holds the agent's keys, uses the owner's `gh` login, checks requests
-as D-089 says, pushes `agent/*` branches, and watches the draft pull requests' CI, conflicts and
-reviews. It wakes the session through a plugin monitor that tails a file it writes: one line per
-event, with ids only. The model fetches the card with a tool, works sandboxed with no credentials,
-and asks the server to publish. The agent keeps its own account (D-085), created by pairing: the
-owner pastes a code from WebChat into the plugin's setup dialog and approves on the page, and both
-sides pin keys bound to the code. Once built, pairing replaces the sign-up of D-085 and the owner
-naming of D-089. Why: one install, and channels need a research-preview flag on every start.
+An agent can run inside Claude Code as the plugin in `plugin/` (R-030). Its MCP server,
+`agent/plugin.ts`, is the trusted part: it keeps the agent's keys in the plugin's data folder, uses
+the owner's `gh` login, checks requests as D-089 says, adds a worktree under `.claude/worktrees`
+and pushes only that `agent/*` branch, never forced. A monitor tails a file the server writes, with
+ids only; `start_run` refuses an id the server did not file. The model works sandboxed with no
+credentials. A guard hook keeps file tools from the secrets, and in the worktree with no web during
+a run. Runs wait until the sandbox is on and `denyRead` covers the secrets. A draft gets three
+rounds of fixes for failed CI, conflicts and reviews by writers. Why: one install, and channels
+need a flag on every start.
 
-Cost: the session must stay open, interactive and sandboxed. `experimental.monitors` may change. A
-teammate's card still runs with the owner's credentials, and the owner reviews the draft.
+Cost: the session must stay open, and one per machine watches. `experimental.monitors` may change.
+A teammate's card runs with the owner's credentials; the owner reviews the draft.
+
+### D-093: An agent pairs through a one-time code, and runs only in the repository its owner signed
+
+Proposed 2026-11-05 in #100.
+
+The owner's page shows 128 random bits as a code. The agent sends new keys and a random login key
+with an HMAC of the keys under the code, filed under the code's SHA-256. The page checks the HMAC;
+on approval the server makes the owner's agent account, with a random username and no key backup.
+The approval carries an HMAC of the owner's id and keys and the agent's keys, which the agent
+checks and pins. A pairing works once and lapses after 10 minutes. A plugin's check-ins name the
+GitHub repository its session is open in; the page signs the one its menu showed into the request,
+and the plugin runs it only there. An agent remembers each request's signed client id while it
+could run, across restarts (K-47). Why: no invite code, password or security code to compare.
+
+Cost: the server sees the repository an agent's session is in. Deleting an account deletes its
+agents. A new code makes a new account, and the old one stays, asleep.
 
 ## Replies and reactions
 

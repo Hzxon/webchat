@@ -26,6 +26,7 @@ docs/decisions.md that explains it. The process itself is in AGENTS.md.
 - The pull request title type sets the version: `fix` patch, `feat` minor, `!` or `BREAKING CHANGE:` also minor below 1.0.0 (D-055).
 - Never edit the version or `CHANGELOG.md` by hand; Release Please owns them, and needs "Allow GitHub Actions to create and approve pull requests" on (D-055).
 - Only Release Please may title a commit `chore(main): Release `; the ignore script skips it (D-058).
+- The Claude Code plugin ships from the `plugin` branch, which the release job builds from the tag; Release Please sets `plugin/.claude-plugin/plugin.json`'s version (D-092).
 - A file under `docs/`, `test/`, `.github/`, `scripts/` or any Markdown never ships; move a file the app reads at runtime out first (D-058).
 - Only main deploys from Git: keep `git.deploymentEnabled` and the Vercel Ignored Build Step (D-041).
 - The function runs in `sin1` (`vercel.json`), the same region as the database (D-003).

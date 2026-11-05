@@ -28,9 +28,9 @@ Node host with an embedded PGlite database. The [README](README.md) explains it 
 | `npm run dev` | Runs the API on port 3000 and the Vite client on port 5173, with PGlite in `data/pglite`. |
 | `npm test` | Runs the integration and crypto tests with an in-memory database. |
 | `npm run typecheck` | Checks the server, client, service worker, and the tooling with the agent, each with its own tsconfig. |
-| `npm run build` | Typechecks, then builds the client, the service worker and the server. |
+| `npm run build` | Typechecks, then builds the client, the service worker, the Claude Code plugin and the server. |
 | `npm start` | Runs the built app in one Node process. |
-| `npm run agent -- signup\|login\|watch …` | The agent daemon's command line (R-027, D-085). |
+| `npm run agent -- pair\|watch …` | The agent daemon's command line (R-027, D-085, D-093). |
 | `scripts/claim.sh K-12 "<title>" [D-077]` | Claims a roadmap item and, given one, reserves a decision number. |
 
 The server log prints the invite code. Set `INVITE_CODE` to choose one. To test with two accounts in
