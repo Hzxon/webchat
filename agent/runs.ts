@@ -74,7 +74,12 @@ export class Runs {
     }
     // The time the owner's page signed, not the server's, which could play an old request again (K-42).
     if (!run.sentAt || Math.abs(Date.now() - run.sentAt) > REQUEST_TTL_MS) return failed('The request was not sent in the last 10 minutes.');
-    if (this.running) return failed(`I am busy with ${this.running.card}.`);
+    // Two tabs or two devices can each send a request before either has seen the other's, and the
+    // server cannot tell them apart (D-014). The card runs once; the copy hears that, not "busy" (K-51).
+    if (this.running) {
+      const same = this.running.docId === run.docId && this.running.section === run.section;
+      return failed(same ? `${run.card} is already running.` : `I am busy with ${this.running.card}.`);
+    }
     const projectId = this.client.conversations.get(message.conversationId)?.projectId;
     return this.execute(taken, run, async (signal) => {
       const refused = await this.refuse(run);
