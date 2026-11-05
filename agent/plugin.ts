@@ -8,7 +8,7 @@
 // it conflicts, or someone who may push reviews it, the same Claude session takes another turn.
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, readlinkSync, realpathSync, unlinkSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -520,18 +520,34 @@ const within = (file: string, dir: string) => {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 };
 
-/** The real path of a file that may not exist yet: its nearest existing folder's, then the rest. */
-function real(file: string): string {
+/**
+ * The real path of a file that may not exist yet: its nearest existing folder's, then the rest. A
+ * link to a file not made yet counts as its target, where a write through it lands (K-55).
+ */
+function real(file: string, hops = 0): string {
   try {
-    return realpathSync(file);
+    // Unlike Node's own, the native call resolves as the kernel does: `..` after a link goes up from
+    // the link's target, and on macOS a name in other letter case is the same folder.
+    return realpathSync.native(file);
   } catch {
     const parent = path.dirname(file);
-    return parent === file ? file : path.join(real(parent), path.basename(file));
+    if (parent === file) return file;
+    const dir = real(parent, hops);
+    const here = path.join(dir, path.basename(file));
+    let target: string;
+    try {
+      target = readlinkSync(here);
+    } catch {
+      return here;
+    }
+    // Not path.resolve, which applies `..` before the links. A kernel follows at most 40 links, so
+    // this stops there too, which also ends a loop.
+    return hops < 40 ? real(path.isAbsolute(target) ? target : `${dir}${path.sep}${target}`, hops + 1) : here;
   }
 }
 
 interface Settings {
-  sandbox?: { enabled?: boolean; filesystem?: { denyRead?: string[]; allowRead?: string[] } };
+  sandbox?: { enabled?: boolean; failIfUnavailable?: boolean; filesystem?: { denyRead?: string[]; allowRead?: string[] } };
   permissions?: { blockReadsOutsideWorkingDirectories?: boolean };
 }
 
@@ -575,6 +591,8 @@ export async function sandboxProblem(projectDir: string, secrets: string[], sour
       return `My sandboxed shell could read ${secret}, as Claude Code’s managed settings allow.`;
     }
   }
+  // Where the sandbox cannot start, Claude Code would run the shell without it (K-53).
+  if (first((s) => s.sandbox?.failIfUnavailable) !== true) return 'Claude Code’s managed settings would let my shell run unsandboxed if its sandbox failed to start.';
 }
 
 /** A tool call, as Claude Code hands it to a PreToolUse hook. */
