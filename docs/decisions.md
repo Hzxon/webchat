@@ -1,7 +1,9 @@
 # Decisions
 
-This is the log of the decisions that shape WebChat. Each entry says what was decided, why, and what
-it costs. Read the entries for the area you work on before you change how something works. Start at
+This is the log of the decisions that shape WebChat. Each entry says what was decided, as it stands
+today, why, and what it costs. Read an entry when a rule, a code comment or a roadmap item names
+its number: grep for `D-021`. Do not read the file top to bottom. The constraints each area must
+hold are in `.claude/rules/`, one line per constraint, each naming its decision. Start at
 [AGENTS.md](../AGENTS.md) if you have not read it yet.
 
 ## How to add or change an entry
@@ -13,7 +15,12 @@ it costs. Read the entries for the area you work on before you change how someth
 - Put a new entry at the end of its topic section, never at the end of the file. Git merges this
   file with the union driver (`.gitattributes`, D-076), so two pull requests that each add an entry
   at the same place merge without a conflict. The doc-ids check still fails a repeated number.
-- Say the decision first, then why it was made, then what it costs. Name the commit or pull request.
+- An entry is the decision as it stands, then why it was made, then what it costs: at most 12 lines
+  of text. The status line names the date and the commit or pull request that made it. When a later
+  change alters the decision, rewrite the entry to the new state and name that pull request; do not
+  append what changed. Git keeps the history (D-090).
+- When the decision adds a constraint for the people who edit an area, add one line to that area's
+  file in `.claude/rules/`, ending with the decision number.
 - Never delete an entry. When a decision replaces an older one, change the old entry's status line
   to "Superseded by D-0xx", say in the new entry what it replaces, and move the old entry under
   Superseded at the end of this file. An entry replaced only in part stays where it is.
@@ -28,11 +35,10 @@ Commits are short hashes on main. Pull requests are numbered, as in #2.
 
 Accepted 2026-11-01.
 
-WebChat began as a chat for friends whose urgent WhatsApp messages reached them late (74d53ff). On
-2026-11-01 the owner named its main users: college students who run several group projects at once.
-The product grows toward three tools they already know, in one place: chat like WhatsApp, projects
-and channels like Slack, and task tracking like Jira. Chat came first, then projects with replies
-and reactions (#2). The owner set the task board aside for later; it is roadmap item R-001.
+WebChat exists because urgent WhatsApp messages reached friends late (74d53ff). Its main users are
+college students who run several group projects at once. The product grows toward three tools they
+already know, in one place: chat like WhatsApp, projects and channels like Slack, and task tracking
+like Jira. The task board is set aside for later; it is roadmap item R-001.
 
 Cost: judge each new feature by whether it helps a student team plan and finish its projects.
 
@@ -64,18 +70,17 @@ reason for D-004.
 
 Proposed 2026-11-04 for R-022, the first step of the rebrand.
 
-The page drops WhatsApp's teal and green for neutral grays with one indigo accent (`#4f46e5` light,
-`#818cf8` dark). Success has its own green, `--ok`, so passed checks, added lines and the online dot
-no longer borrow the accent. The sidebar is tinted, and the content area is white, or near black in
-dark mode. The sidebar sets `--panel`, `--panel-2` and `--hover` to its own shades, so every row and
-field inside it follows without its own rule. Panels are flat: a 1px line, no shadow. Only what
-floats over the page casts one: dialogs, toasts and the reaction tray. Type is 14px with a 1.35 line
-height, code uses the `--mono` stack, and every corner, avatars included, has the 6px `--radius`.
-Small status dots stay round. The fonts stay the system's, so the page loads nothing from a font
-host.
+The page uses neutral grays with one indigo accent (`#4f46e5` light, `#818cf8` dark). Success has
+its own green, `--ok`, so passed checks, added lines and the online dot do not borrow the accent.
+The sidebar is tinted and sets `--panel`, `--panel-2` and `--hover` to its own shades, so every row
+and field inside it follows without its own rule. The content area is white, or near black in dark
+mode. Panels are flat: a 1px line, no shadow. Only dialogs, toasts and the reaction tray cast one.
+Type is 14px with a 1.35 line height, code uses the `--mono` stack, and every corner, avatars
+included, has the 6px `--radius`. Small status dots stay round. The fonts are the system's, so the
+page loads nothing from a font host.
 
-Why: the features are for project work, but the look said consumer messenger before anyone saw a
-project. Colors, type and shapes change in `styles.css` alone, so this step changes no behavior.
+Why: the features are for project work, but the look said consumer messenger. Colors, type and
+shapes live in `styles.css` alone, so this step changes no behavior.
 
 Cost: people and projects now share one avatar shape. The favicon, the installed app's icon, the
 `theme-color` meta tag and one avatar color are still teal. Bubbles stay until R-023.
@@ -160,64 +165,42 @@ Cost: third-party scripts, fonts, analytics or CDNs need a change to the policy.
 
 ### D-040: Open tabs reload when the build changes
 
-Accepted 2026-11-01 in #6, changed in #18 and #66.
+Accepted 2026-11-01 in #6.
 
-Every `/api` response carries an `X-WebChat-Build` header that names the running build. The page
-remembers the first value it sees. When a later response carries another, the page fetches `/`
-again and compares the bundle files under `/assets/`, which Vite names after their contents. It
-reloads only when the new page loads a file that this one did not, once the tab is hidden or
-nobody has pressed a key, clicked, touched or scrolled in it for 30 seconds. The
-reload opens the chat or Pull requests pane that was open, through the `/?chat=` link that a
-notification click uses. On Vercel the name is the deployment id. Elsewhere it is `WEBCHAT_BUILD`,
-or a hash of the built `index.html`, whose script tags change with every client build. Without a
-built page, as in tests and in development, no header is sent and tabs never reload.
+Every `/api` response carries an `X-WebChat-Build` header that names the running build. On Vercel
+the name is the deployment id. Elsewhere it is `WEBCHAT_BUILD`, or a hash of the built `index.html`.
+Without a built page, as in tests and in development, no header is sent and tabs never reload. The
+page remembers the first value it sees. When a later response carries another, it fetches `/` and
+compares the bundle files under `/assets/`. A tab with the same files keeps the new name and asks
+the service worker to update instead (K-36). A tab whose page loads a new file reloads once it is
+hidden or idle for 30 seconds, and it waits while the composer holds a draft, a message is sending
+or failed, or an urgent alert waits (`holdReloadWhile` in `client/src/build.ts`). The reload opens
+the chat or Pull requests pane that was open, through the `/?chat=` link of a notification click.
 
-Why: a tab from before a deploy keeps its old code until it reloads. Old tabs showed each reaction
-as a message they could not decrypt after #2 (K-1), and every later format change would do the
-same. A check-in is the only channel to a tab (D-004), so the header rides on it.
-
-A review on 2026-11-01 found that focus alone lost things that live only in the page: a hidden tab
-reloaded with a draft in it, and a tab ringing an urgent alert reloaded at once, because the alert's
-button has the focus. Now the reload also waits while the composer holds a draft, a message is
-still sending or failed to send, or an urgent alert waits to be dismissed (`holdReloadWhile` in
-`client/src/build.ts`).
-
-The owner reported on 2026-11-01 that any click with a chat open sent them to the Chats tab. The
-reload then waited only for the focus to leave an input, and the composer holds the focus while a
-chat is open, so the next click anywhere reloaded the page, swallowed the click, and started over
-on the Chats tab. Now no click fires it, and the user lands where they were (#18).
-
-The owner reported on 2026-11-03 that tabs reloaded again and again. 16 pull requests deployed in
-40 minutes, and each new deployment id reloaded every tab. 7 of those deploys handed out the same
-page, because they changed only the docs, the tests or the server. Now a new build name only starts
-the check of the page, and a tab with the same page keeps the new name and stays. It asks the
-service worker to update instead, because the worker can change without the page (K-36).
+Why: a tab from before a deploy keeps its old code, and a format change makes it show messages it
+cannot decrypt (K-1). A check-in is the only channel to a tab (D-004), so the header rides on it.
 
 Cost: a deploy that changes the page reloads every open tab once, which drops scroll positions and
-any open dialog, so a burst of such deploys reloads tabs as often. Every deploy costs each tab one
-fetch of the page. A tab
-in use keeps the old build until it goes quiet for 30 seconds or is hidden. A tab with a failed
-message or an alert nobody dismisses keeps the old build until they are dealt with. A self-hosted
-server that restarts with the same build does not reload tabs, because the hash comes from the page,
-not from the start time.
+any open dialog. Every deploy costs each tab one fetch of the page. A tab with a failed message or
+an undismissed alert keeps the old build until they are dealt with. A self-hosted server that
+restarts with the same build does not reload tabs.
 
 ### D-041: Only main deploys from Git
 
 Accepted 2026-11-01 in #7.
 
 `git.deploymentEnabled` in `vercel.json` turns off automatic deployments for every branch but
-`main`. Vercel for GitHub otherwise built a preview for every push and a production deployment for
-every merge, two builds per pull request, from Hobby build minutes and the daily deployment cap.
-
-A branch without `vercel.json`, such as one that holds only screenshots, escapes that rule, because
-Vercel reads it from the pushed commit. So the project's settings on Vercel set the Ignored Build
-Step to `[ "$VERCEL_ENV" != production ]`, which skips every build but production. The
+`main`. A branch without `vercel.json`, such as one that holds only screenshots, escapes that rule,
+because Vercel reads it from the pushed commit. So the project's settings on Vercel set the Ignored
+Build Step to `[ "$VERCEL_ENV" != production ]`, which skips every build but production. The
 `ignoreCommand` in `vercel.json` overrides it, so it runs only on such a branch (#83).
 
-Why: a preview of this app is not useful. The GitHub connector cannot connect on a preview URL,
-because the OAuth App has one callback URL (D-032). The server runs pending migrations at start
-(D-010), so a preview that shares the production database would apply a branch's new migration
-before the pull request merges. Changes people see are checked locally instead (D-037).
+Why: Vercel for GitHub otherwise builds a preview for every push and a production deployment for
+every merge, from Hobby build minutes and the daily deployment cap. A preview of this app is not
+useful. The GitHub connector cannot connect on a preview URL, because the OAuth App has one callback
+URL (D-032). The server runs pending migrations at start (D-010), so a preview that shares the
+production database would apply a branch's new migration before the pull request merges. Changes
+people see are checked locally instead (D-037).
 
 Cost: no preview URL on pull requests. Trying a branch on a real phone, where push needs HTTPS,
 takes a deployment by hand with `vercel deploy`, which the setting does not stop.
@@ -227,16 +210,16 @@ takes a deployment by hand with `vercel deploy`, which the setting does not stop
 Accepted 2026-11-03 in #52.
 
 Register, login, the upgrade, the key backup and setting keys share one limit per IP address: 20
-attempts in a fixed window of 15 minutes. Each attempt still counts before it runs. When it
-succeeds, the route gives the hit back with `returnRateLimit` in `server/db.ts`. Only failures
-stay counted: a wrong password, an unknown user, a wrong invite code, a taken username, or a
-request that does not parse. A class that signs up together behind one campus address no longer
-locks itself out (K-14).
+attempts in a fixed window of 15 minutes. Each attempt counts before it runs. When it succeeds, the
+route gives the hit back with `returnRateLimit` in `server/db.ts`, before it answers, not on the
+response's `finish` event, because a Vercel function may stop once its answer is sent. Only
+failures stay counted: a wrong password, an unknown user, a wrong invite code, a taken username, or
+a request that does not parse. A class that signs up together behind one campus address does not
+lock itself out (K-14).
 
 Why: counting first keeps the check atomic. Counting only after a failure would let a burst of
-parallel guesses all pass the check before any was recorded. Raising the limit for everyone would
-give guessers more tries too. The route gives the hit back before it answers, not on the
-response's `finish` event, because a Vercel function may stop once its answer is sent.
+parallel guesses all pass before any was recorded. Raising the limit for everyone would give
+guessers more tries too.
 
 Cost: a full window still blocks everyone behind that address, the right password included. One
 student who types 20 wrong passwords locks out the rest of the class for up to 15 minutes. The
@@ -248,16 +231,15 @@ first sign-in of an account from before encryption counts as a failure, because 
 Accepted 2026-11-03 in #71.
 
 Each device makes one account, and the browser counts as the device. Signing up, signing in and
-signing out set the `webchat_device` cookie. Sign-up refuses a browser that sends it, with "This
-device already has a WebChat account." Signing in to another account on the same device still
-works. The cookie holds only `1` and lasts 400 days, the most browsers allow. Each sign-in starts
-the 400 days again.
+signing out set the `webchat_device` cookie. It holds only `1` and lasts 400 days, the most
+browsers allow, and each sign-in starts the 400 days again. Sign-up refuses a browser that sends it,
+with "This device already has a WebChat account." Signing in to another account on the same device
+still works.
 
 Why: the owner wants one device, one account. A web page cannot read a hardware id. A limit per IP
 address would stop a class that signs up together behind one campus address, which D-068 protects.
 A browser fingerprint would make phones of the same model look like one device. A cookie without an
-id cannot tie a device to an account. Signing out sets it too, because browsers that were signed
-in before this change have no cookie yet.
+id cannot tie a device to an account.
 
 Cost: it is easy to get around. A private window, another browser, or clearing the site's data
 allows one more account. Someone who signs in on a friend's phone or a shared computer stops that
@@ -295,37 +277,31 @@ every page loads. Deleting asks for a confirm, not the password.
 
 ### D-010: Migrations only grow at the end
 
-Accepted 2026-11-01 in 10ba6d8. The rule about numbers comes from #2.
+Accepted 2026-11-01 in 10ba6d8.
 
 `SCHEMA` in `server/db.ts` creates the original tables. Every later change is an entry at the end of
 `MIGRATIONS`. Each entry runs once, in order, in a transaction that holds an advisory lock, because
 several serverless instances can start at once. `webchat.meta` records how many have run. So far:
 1 is end-to-end encryption, 2 is the GitHub connector, 3 is projects with replies and reactions, 4
-is group owners (#4), 5 is key rotation, leaving and handing over (#13), 6 is sharing new pull
-requests into projects (#14), and 7 pulls back delivered pointers that went past a chat's newest
-event (D-022).
-
-Two branches once both added a migration 2. The projects migration became 3 when its branch merged,
-because a database that had already run the connector's migration 2 would have skipped it. When two
-branches add migrations, the one that reaches main first keeps its number.
+is group owners, 5 is key rotation, leaving and handing over, 6 is sharing new pull requests into
+projects, and 7 pulls back delivered pointers that went past a chat's newest event (D-022).
+When two branches add migrations, the one that reaches main first keeps its number, because a
+database that already ran that number would skip the other.
 
 Cost: a mistake in a migration on main is fixed with a new migration, never by editing the old one.
 
 ### D-011: Limits live in one place
 
-Accepted 2026-11-01 in 74d53ff, extended in 10ba6d8, #2, #4, #10 and #13, and after a review of
-main on 2026-11-01.
+Accepted 2026-11-01 in 74d53ff.
 
 `LIMITS` in `shared/types.ts` holds the sizes that the server enforces and the page respects: 4,000
 characters per message, 160 per quote, 24,000 per ciphertext, the lengths of names, 50 messages per
 history page, and 20 people added to a project or group at once. Express accepts JSON bodies of up
-to 256 KB (`server/app.ts`), raised from 16 KB for encryption in 10ba6d8 and from 64 KB after a
-review found that removing one person from a project of 20 people and 30 channels did not fit. That
-caps batch requests: adding 20 people to a project sends every channel's key wrapped for each of
-them. Removing someone sends a new key for every channel, wrapped for each person who stays, with
-the old key inside (D-044). A copy takes about 110 bytes, so 256 KB holds about 2,300 copies, for
-example 40 people with 58 channels. A body over the limit, or one that is not JSON, gets a JSON
-error the page can show.
+to 256 KB (`server/app.ts`). That caps batch requests: adding 20 people to a project sends every
+channel's key wrapped for each of them. Removing someone sends a new key for every channel, wrapped
+for each person who stays, with the old key inside (D-044). A copy takes about 110 bytes, so 256 KB
+holds about 2,300 copies, for example 40 people with 58 channels. A body over the limit, or one
+that is not JSON, gets a JSON error the page can show.
 
 Cost: raising a limit can need a larger body limit too. Check both.
 
@@ -335,7 +311,7 @@ Accepted 2026-11-01 in d4083df.
 
 Reading `req.query` makes Express call Node's `url.parse()`, and Vercel then logs its deprecation
 warning (DEP0169). Routes read query strings with the WHATWG URL API instead. The history route does
-it inline, and the GitHub routes use the `queryOf` helper in `server/api.ts`, added in #1.
+it inline, and the GitHub routes use the `queryOf` helper in `server/api.ts`.
 
 ### D-013: Node and build pinned for Vercel
 
@@ -365,27 +341,21 @@ line moves with it.
 
 ### D-053: The chat fits the part of a touch screen still visible
 
-Accepted 2026-11-02 in #21, extended in #22.
+Accepted 2026-11-02 in #21.
 
 Safari on iPhone keeps the page at full height when the on-screen keyboard opens, and scrolls the
-page up until the focused field shows. The chat fills the screen, so its header left the top.
+page up until the focused field shows, which would push the chat's header off the top.
 `client/src/viewport.ts` sets the CSS variable `--visible-height` from the visual viewport, the
 layout takes that height, and the page stays at the top. Dialogs centre in the same area and scroll
-inside. This runs only while the chat layout shows, so the sign-in pages scroll as usual, and it
-leaves a pinch-zoomed page alone.
+inside. This runs only while the chat layout shows, and it leaves a pinch-zoomed page alone.
+Resetting Safari's animated scroll midway makes the page drop (K-25). So on a touch screen with the
+keyboard closed, a field that takes the focus is moved far above the screen, and Safari finds
+nothing to scroll to. It comes back when the visual viewport resizes, or after 400ms. Opening a
+chat does not focus the message box. Every hover style sits behind `@media (hover: hover)`, since a
+touch screen keeps `:hover` on the last thing tapped.
 
-Safari animates that scroll, and resetting it midway made the page drop and slide back up (K-25).
-Since #22, on a touch screen with the keyboard closed, a field that takes the focus is moved far
-above the screen. Safari then finds nothing to scroll to. The field comes back when the visual
-viewport resizes, or after 400ms. Opening a chat on a touch screen no longer focuses the message
-box, so the keyboard waits for a tap.
-
-A touch screen also keeps `:hover` on the last thing tapped, so every hover style sits behind
-`@media (hover: hover)`.
-
-Cost: the field disappears for a moment as the keyboard starts to open. Whether Safari skips its
-scroll depends on when it reads the field's position. Both changes were checked in Chromium, not
-yet on an iPhone.
+Cost: the field disappears for a moment as the keyboard opens. Whether Safari skips its scroll
+depends on when it reads the field's position. Checked in Chromium, not yet on an iPhone.
 
 ## End-to-end encryption
 
@@ -405,7 +375,7 @@ server can still see.
 
 ### D-015: One key per chat, wrapped for each member
 
-Accepted 2026-11-01 in 10ba6d8, extended in #4, #10 and #13.
+Accepted 2026-11-01 in 10ba6d8.
 
 Each chat has a random AES-256-GCM key. The member who creates it wraps a copy for every member with
 a key from ECDH between the two of them, so a wrapped copy proves who made it. The page accepts a
@@ -419,7 +389,7 @@ encrypt with it (D-044).
 
 ### D-016: Encrypt, then sign everything the server could change
 
-Accepted 2026-11-01 in 10ba6d8. The kind joined the signed header in #2.
+Accepted 2026-11-01 in 10ba6d8.
 
 A message is encrypted with the chat key, then signed with the sender's ECDSA key. The signature
 covers the ciphertext and a header with the chat, the key id, the sender, the urgent flag, the
@@ -429,9 +399,8 @@ server changed and shows it as "could not be decrypted".
 The kind is in the header only for new kinds, so messages signed before kinds existed still verify.
 A new field that the server stores and the page acts on must join the header the same way.
 
-The page keeps the text of messages it has decrypted, so it does not decrypt them again on every
-check-in. It keeps them with the signed fields and the signature they were checked against, and
-checks a message again when the server sends it with any of them changed.
+The page keeps the text of messages it has decrypted, with the signed fields and the signature they
+were checked against. It checks a message again when the server sends it with any of them changed.
 
 Cost: the server cannot correct a signed field. It must refuse a bad value instead of changing it.
 For example, it refuses an urgent reaction rather than clearing the urgent flag.
@@ -455,21 +424,17 @@ Accepted 2026-11-01 in 10ba6d8.
 
 Each device remembers the keys it first saw for each person and warns when they change. Until the
 user checks them, the page refuses to wrap a new chat key for that person. Two people can compare a
-60-digit security code: matching codes mean nobody swapped keys between them.
+60-digit security code: matching codes mean nobody swapped keys between them. Until the check, the
+page also trusts nothing signed or wrapped with the changed keys. It refuses to open a new chat key
+that person wrapped, so it never sends under a key the server could know. It shows their new
+messages as unreadable, and the service worker shows their pushes without text. A chat key stored
+before the change still works. The pins stay on the device when someone signs out or in, so a swap
+made while nobody was signed in still shows a warning. They hold only fingerprints of other people's
+public keys.
 
-Until the check, the page also trusts nothing signed or wrapped with the changed keys. It refuses to
-open a new chat key that person wrapped, so it never sends under a key the server could know. It
-shows their new messages as unreadable, and the service worker shows their pushes without text. A
-chat key the device stored before the change still works. A security review of main on 2026-11-03
-found that only wrapping was blocked.
-
-These pins stay on the device when someone signs out or signs in, so a swap made while nobody was
-signed in still shows a warning. They hold only fingerprints of other people's public keys. Until a
-review on 2026-11-01, every sign-in erased them along with the account's keys.
-
-Cost: a device trusts the first keys it sees for a person without proof. After someone's keys
-change for a real reason, their new messages stay unreadable until the user checks the code. The
-page keeps what failed to open, and opens it again after the check, without a reload (K-26).
+Cost: a device trusts the first keys it sees for a person without proof. After someone's keys change
+for a real reason, their new messages stay unreadable until the user checks the code. The page keeps
+what failed to open, and opens it again after the check, without a reload (K-26).
 
 ### D-019: Accounts and chats from before encryption upgrade once
 
@@ -487,28 +452,20 @@ the chat list, starts with "Not encrypted:".
 
 ### D-020: Known limits of the encryption
 
-Accepted 2026-11-01 in 10ba6d8, extended in #1, #2, #4, #10, #13, #14, #17, #33 and #73.
+Accepted 2026-11-01 in 10ba6d8.
 
-WebChat accepts these limits and lists them in the README:
-
-- The page runs the code the server sends, so an operator who changes the app could read messages.
-- Metadata stays visible to the server: who talks to whom and when, group, project and channel
-  names, who is in which project or group and who added them, who owns each project and group, who
-  left, when a chat got a new key, display names, whether a message is urgent, that someone
-  reacted, and roughly how long a message is: the size band it was padded to (D-059).
-- Pull request titles and repository names are not end-to-end encrypted (D-033).
-- Which docs a project has, how many sections each has, who edited which section and when, who is
-  editing one now, and the size band of each section. The server could show an older revision of
-  a section as its newest (D-081).
-- Which repositories a project links, and the cards from GitHub in its channels. The server
-  writes those cards in plain text, so a server that was changed could write fake ones (D-050).
-- The member list that a new channel's key is wrapped for comes from the server. The New channel
-  dialog shows it so people can check it. The same holds for the people a new key is wrapped for
-  after someone leaves (D-044).
-- People who leave or are removed keep the keys they had, so they could read the messages from
-  before if they got them another way, for example from a copy of the database (D-044).
-- Someone who writes to the database can add messages without encryption under any member's name.
-  They show as "Not encrypted" and never alert (D-019).
+WebChat accepts these limits and lists them in the README. The page runs the code the server sends,
+so an operator who changes the app could read messages. The server sees metadata: who talks to whom
+and when, group, project and channel names, who is in which project or group, who added them, who
+owns each, who left, when a chat got a new key, display names, whether a message is urgent, that
+someone reacted, and its size band (D-059). It sees pull request titles and repository names
+(D-033), which docs a project has, their section counts, editors, times and size bands, and who is
+editing now; it could show an older section revision as the newest (D-081). It sees which
+repositories a project links and writes the GitHub cards in plain text, so a changed server could
+write fake ones (D-050). It supplies the member list a new channel's key, or a key after someone
+leaves, is wrapped for; the New channel dialog shows it for checking (D-044). People who leave keep
+the keys they had (D-044). Someone who writes to the database can add unencrypted messages under any
+member's name, which show as "Not encrypted" and never alert (D-019).
 
 Cost: a feature that shows the server something new must add it to this list and to the README.
 
@@ -516,58 +473,41 @@ Cost: a feature that shows the server something new must add it to this list and
 
 Accepted 2026-11-01 in #13. Replaces the part of D-039 that kept keys the same.
 
-When someone leaves a chat or is removed from it, the chat gets a new key, and the person who left
-never gets a copy. The browser that makes it wraps it for everyone who stays and encrypts the old
-key with the new one. The server keeps these links in `key_links`, and `ConversationDTO.keyLinks`
-hands them to members. A browser that holds the current key opens each earlier key in turn, so the
-whole history stays readable. Each message names its key in its signed header (D-016). Someone added
-after a rotation gets the current key and reads the history the same way (D-026, D-043), which
-answers the open question of roadmap R-002.
+When someone leaves or is removed, the chat gets a new key they never get. The browser that makes it
+wraps it for everyone who stays and encrypts the old key with the new one. The server keeps these
+links in `key_links`, and `ConversationDTO.keyLinks` hands them to members, so the whole history
+stays readable, also for someone added later (D-026, D-043). A page never encrypts with a replaced
+key. On removal, the owner's browser makes the new key of every channel, or of the group, in the
+removing request. The server checks under the project's or group's lock that each new key names the
+current one in its link and is wrapped for exactly the people who stay. On leaving, the server sets
+`needs_new_key` on each chat left and refuses messages there with `409 needs_new_key`. The first
+member's browser that checks in or sends makes the key with `PUT /conversations/:id/key`. The others
+get `409 stale_key` and take it. The leaver may have wrapped a member's copy of the old key. It is
+opened without D-015's membership check, since it only goes inside the new key and never encrypts
+again.
 
-- Removal: the owner's browser makes the new key of every channel, or of the group, in the request
-  that removes the person. The server checks under the project's or group's lock that each new key
-  names the current one in its link and is wrapped for exactly the people who stay.
-- Leaving: the person who leaves cannot make keys for the others. The server marks each chat they
-  left with `needs_new_key` and refuses messages there with `409 needs_new_key`. The first member's
-  browser that checks in, or sends, makes the new key with `PUT /conversations/:id/key`. The first
-  one wins; the others get `409 stale_key` and take its key.
-- The person who left may have wrapped a member's copy of the old key. The browser making the new
-  key opens that copy without the membership check of D-015. The old key only goes inside the new
-  one and never encrypts again, so a forged copy could only spoil the history, not expose new
-  messages.
-- A page never encrypts with a key that a link says was replaced.
-
-Why: removal kept keys the same (D-039), so people removed could read later messages if they got
-them another way. Wrapping every earlier key again for everyone who stays would grow with each
-rotation. One link per rotation does not.
-
-Cost: anyone with the current key reads the whole history, as before. After someone leaves, nobody
-can send in that chat until a member's browser has made the new key. That waits for a member to be
-online, or for a security code check when someone's keys changed (D-018). A service worker that has
-not seen a new key yet shows "New encrypted message" for a push, until a page opens the key (D-017).
+Cost: anyone with the current key reads the whole history. After someone leaves, nobody can send in
+that chat until a member's browser makes the key, which waits for a member to be online or for a
+security code check (D-018). Until a page opens the key, a push shows "New encrypted message"
+(D-017).
 
 ## Messaging
 
 ### D-021: The sync fingerprint is the change detector
 
-Accepted 2026-11-01 in 74d53ff, extended in #2, #4, #13, #73, #88 and #91.
+Accepted 2026-11-01 in 74d53ff.
 
 `db.stamp` builds one string per user from a single query. It covers the sum of the newest event
 ids in their chats, the read and delivered pointers, how many chats they are in, the sum of the
 times their members joined those chats, how many chats have keys, the sum of the times their keys
-were replaced, a hash of who owns each of their projects and groups, how many people there are and
-how many have keys, who is online, a hash of each doc's version, and a hash of the doc locks held
-now. A check-in whose stamp matches answers "unchanged" without
-loading anything else.
+were replaced (D-044), a hash of who owns each of their projects and groups (D-045), how many people
+there are and how many have keys, who is online, which agents are busy (R-027), which accounts are
+agents (K-41), a hash of each doc's version, and a hash of the doc locks held now (D-081). Owners
+go in as a hash, not a sum, so two handovers at once cannot cancel out. A check-in whose stamp
+matches answers "unchanged" without loading anything else.
 
-Cost: any state that pages must see has to change this string, or pages miss it until something
-else changes. #2 added the newest event ids, so reactions show up, and the member count, so new
-members show up. #4 replaced the member count with the sum of join times, so one person leaving and
-another joining between two check-ins still show up. #13 added new keys (D-044) and owners (D-045).
-Owners go in as a hash, not a sum, so two handovers at once cannot cancel out. #73 added docs and
-their locks (D-081). A lock that runs out leaves the hash at the next check-in, with nothing saved.
-#88 added which agents are busy (R-027), so a card is offered only to idle ones, and #91 which
-accounts are agents, since the daemon's sign-in can turn an account into one (K-41).
+Cost: any new state that pages must see has to change this string, or pages miss it until
+something else changes.
 
 ### D-022: Receipts are per-member pointers
 
@@ -578,10 +518,9 @@ pointer count as delivered or read. Check-ins move the delivered pointer, and op
 the read pointer. The service worker reports delivery when a push arrives, so the sender sees
 "delivered" even while every tab of the recipient is closed.
 
-A pointer never moves past the chat's newest event, whatever id a client sends. Before a review on
-2026-11-01 the delivered route stored any id, and one near the top of the INTEGER range overflowed
-the sum in the sync fingerprint (D-021), which stopped every member of the chat from loading.
-Migration 7 pulls back pointers that went too far, and the fingerprint adds pointers as BIGINT.
+A pointer never moves past the chat's newest event, whatever id a client sends. A pointer near the
+top of the INTEGER range would overflow the sum in the sync fingerprint (D-021) and stop every
+member of the chat from loading. The fingerprint adds pointers as BIGINT.
 
 ### D-023: Urgent messages ring until acknowledged
 
@@ -600,8 +539,7 @@ Accepted 2026-11-01 after a review of main.
 
 WebKit, which runs Safari and every web app on iPhone and iPad, revokes a push subscription after a
 few pushes that show no notification. The service worker shows nothing for a push that arrives
-while the user looks at the app (D-007), so an iPhone used with the app open lost its push after
-three messages, urgent alerts included. Now the server sends no push to a Safari endpoint while it
+while the user looks at the app (D-007). So the server sends no push to a Safari endpoint while it
 knows the user is looking, except urgent ones, which always show. That tab checks in every 3
 seconds instead, like a tab without push. If a push reaches Safari while a tab is focused anyway,
 the service worker shows it. `showsEveryPush` in `shared/types.ts` tells Safari endpoints apart by
@@ -617,8 +555,8 @@ Accepted 2026-11-01 after a review of main.
 A check-in returns at most 500 messages, those after the cursor first, and its queries each see
 their own moment. A message could therefore be counted in the fingerprint it returned without being
 in the answer: one past the 500th, or one that committed while the answer was being built. Then
-every later check-in answered "unchanged" without it. Now the server compares the newest message id
-with the answer's cursor. When messages are missing, it answers `more: true` with an empty
+every later check-in would answer "unchanged" without it. So the server compares the newest message
+id with the answer's cursor. When messages are missing, it answers `more: true` with an empty
 fingerprint, and the page checks in again at once, up to 10 rounds in a row. `GET /api/bootstrap`
 reads the fingerprint before anything else, so a change during the load makes the first check-in
 answer "changed".
@@ -630,11 +568,9 @@ Cost: catching up after a long sleep takes several full check-ins in a row.
 Accepted 2026-11-01 after a review of main.
 
 A check-in re-sends the last 15 seconds of messages, and a person added to a project gets its
-history (D-026). The page used to alert for every message it had not handled since it loaded, so
-both rang again: a reload replayed recent alerts, and joining a project played a sound for every
-old message and rang its old urgent ones. Now a message alerts only when its id is above both the
-cursor the page loaded with and the user's own read pointer in that chat, and it is encrypted
-(D-019).
+history (D-026). A message alerts only when its id is above both the cursor the page loaded with
+and the user's own read pointer in that chat, and it is encrypted (D-019). So a reload does not
+replay recent alerts, and joining a project does not alert for its old messages.
 
 Cost: a message that commits more than a moment after a newer one while the page loads shows up
 without an alert.
@@ -646,28 +582,17 @@ D-078 makes an exception: an unread urgent message from the last 3 days alerts w
 Accepted 2026-11-02 in #19.
 
 What someone types in a chat's message box, and every message the server has not confirmed, stay in
-the device's IndexedDB next to the account's keys. A draft comes back when its chat opens again:
-after a closed tab, a reload, or a visit to another chat. A message that was sending or failed comes
-back in its chat as "Not sent", with a toast that names the chat, unless the chat's history shows
-that the server has it after all. The page never sends it again by itself; the person decides with
-"Tap to retry", which keeps the message's client id so the server stores it once (D-061). A Remove
-button next to it drops the message. While a message is still sending, the tab asks before it
-closes or reloads. Signing out removes drafts and unsent
-messages with the keys.
+the device's IndexedDB next to the account's keys. A draft comes back when its chat opens again. A
+message that was sending or failed comes back as "Not sent", with a toast that names the chat,
+unless the chat's history shows the server has it. The page never sends it again by itself. "Tap to
+retry" keeps the client id (D-061), and Remove drops the message. A tab with a message still
+sending asks before it closes. Signing out removes them with the keys. A tab holds a Web Lock while
+it keeps unsent messages, and a tab that opens takes over only those of tabs that hold no lock.
 
-A tab holds a Web Lock while it keeps unsent messages, and each one names its tab. A tab that opens
-takes over only the messages of tabs that hold no lock, so it never shows one that another open tab
-is still sending.
-
-Why: drafts and messages still sending lived only in the page. Closing the tab, reloading it, or
-opening another chat dropped them without a word. A test on 2026-11-01 lost both. The person they
-were for never got them, and the writer believed they had.
-
-Cost: drafts and unsent messages sit on the device unencrypted until they are sent or the user
-signs out, so anyone with the device's files can read them. A browser without Web Locks, such as
-Safari before 15.4, can show the same unsent message in two tabs. A message that reached the server
-as its tab closed shows as not sent if newer messages push it off the chat's first page, until a
-retry brings back the stored copy (D-061).
+Cost: drafts and unsent messages sit on the device unencrypted until sent or signed out. A browser
+without Web Locks, such as Safari before 15.4, can show one unsent message in two tabs. A message
+that reached the server as its tab closed shows as not sent if newer messages push it off the
+chat's first page, until a retry brings back the stored copy (D-061).
 
 ### D-056: A 2xx answer whose body does not parse is a failed request
 
@@ -675,14 +600,14 @@ Accepted 2026-11-02 in #27.
 
 Every route answers with JSON, or with 204 and no body. `request` in `client/src/api.ts` treats a
 2xx answer whose body fails to parse as a failed request and throws an `ApiError` that carries the
-status. Before, it returned `{}` as success. The sync loop read a cursor of NaN from that, which no
-later `Math.max` repairs, so every check-in asked from 0, and a user with more than 500 messages
-stopped getting new ones until a reload (K-7). On a failed status the body still falls back to `{}`,
-so the default error message stands.
+status. A parse failure treated as success would give the sync loop a cursor of NaN, which no later
+`Math.max` repairs, so every check-in would ask from 0 and a user with more than 500 messages would
+stop getting new ones (K-7). On a failed status the body still falls back to `{}`, so the default
+error message stands.
 
 Cost: a route that answers 2xx without a JSON body must use 204, or every call to it fails. A send
-whose answer breaks off now shows as not sent, like one whose connection dropped, although the
-server stored it. A retry brings back the stored copy (D-061).
+whose answer breaks off shows as not sent, like one whose connection dropped, although the server
+stored it. A retry brings back the stored copy (D-061).
 
 ### D-061: A sender's client id names one message per chat
 
@@ -694,9 +619,9 @@ repeats a client id its sender used in that chat before, `db.insertMessage` stor
 returns the stored message, the route answers 200 instead of 201, and no push goes out.
 `retryMessage` in `client/src/chat.ts` keeps the client id of the message it sends again.
 
-Why: a send whose answer was lost, to a dropped connection or a 2xx that broke off (D-056), showed
-as not sent although the server had stored it. "Tap to retry" sent it under a new client id, so
-the server stored a second copy, and an urgent one alerted everyone twice (K-9).
+Why: a send whose answer was lost, to a dropped connection or a 2xx that broke off (D-056), shows
+as not sent although the server stored it. A retry under a new client id would store a second copy,
+and an urgent one would alert everyone twice (K-9).
 
 Cost: migration 10 fails on a database that already holds two messages with the same chat, sender
 and client id, and the server then stops at start. The page's retries never made such rows; only
@@ -713,13 +638,13 @@ stays on the device (D-051), from the moment it is written, while it waits its t
 fails does not hold up the ones behind it: they go out, and the failed one shows "Not sent". A
 retry joins the back of its chat's queue. Chats do not wait for each other.
 
-Why: the server numbers messages in the order they arrive, and each send ran on its own. Five quick
-sends were stored as one, three, four, two, five, and a reload kept that order (K-24).
+Why: the server numbers messages in the order they arrive. Sends that each ran on their own could
+be stored out of order, and a reload kept that order (K-24).
 
 Cost: a burst of messages goes out one round trip at a time, so the last one arrives later. A
-request that never ends holds up its chat's later sends until the browser gives up on it, because
-requests carry no timeout (K-32, fixed by D-077). A retried message is stored after the ones sent while it waited. The
-order holds within one tab only: two tabs that send to one chat at once still race.
+request that never ends holds up its chat's later sends until the request gives up (D-077). A
+retried message is stored after the ones sent while it waited. The order holds within one tab only:
+two tabs that send to one chat at once still race.
 
 ### D-072: An expired session ends the browser's push subscription
 
@@ -727,11 +652,12 @@ Accepted 2026-11-03 in #47.
 
 When a check-in or the page's first load answers 401, the page ends this browser's push
 subscription, the way "Turn off on this device" does. Without a session the server cannot be asked
-to drop its row, so the row stays until the next push to it. The push service answers 410 Gone, and the server deletes the row. "Sign out"
-still drops the row on the server first and leaves the browser subscribed.
+to drop its row, so the row stays until the next push to it. The push service answers 410 Gone, and
+the server deletes the row. "Sign out" still drops the row on the server first and leaves the
+browser subscribed.
 
-Why: the server kept pushing the old account's messages to that browser, and a push names the
-sender and the chat in its title. Whoever used the browser next saw them (K-18).
+Why: otherwise the server keeps pushing the old account's messages to that browser, and a push
+names the sender and the chat in its title. Whoever used the browser next would see them (K-18).
 
 Cost: the next sign-in in that browser subscribes again with a new endpoint, outside a click. A
 browser that allows that only from a click needs notifications turned on again in the bell dialog.
@@ -747,10 +673,9 @@ request goes out. When the count moved before the answer is applied, `applySync`
 and the page checks in again at once with the same stamp and cursor. `reloadAll` fetches again the
 same way, because its callers go on with what it loads.
 
-Why: the server builds an answer from the chats as they were when the request arrived. An answer
-that left before a new chat committed, but came back after the page opened it, closed the chat
-with "It was deleted, or you were removed" until the next check-in (K-15). The same race brought
-back a chat the page had just left or deleted, and put back a project's old member list.
+Why: the server builds an answer from the chats as they were when the request arrived. A late
+answer can close a chat the page just opened ("It was deleted, or you were removed", K-15), bring
+back a chat the page just left or deleted, or restore a project's old member list.
 
 Cost: every change on the page that overlaps a check-in costs one more check-in. A change that
 reaches the store some other way must go through the counted actions, or a late answer undoes it
@@ -765,18 +690,12 @@ not read, sent in the last 3 days. The page treats each one like a message that 
 so the full-screen alert rings until Open chat or Dismiss. It alerts only when the signature checks
 out, so the server cannot make a message urgent (D-016). Dismiss keeps the message's id in the
 device's IndexedDB, and pages on that device do not alert for it again. Open chat marks the chat
-read, which ends the alert on every device. This is an exception to D-049 for urgent messages.
+read, which ends the alert on every device. This is an exception to D-049. The 3 days match how
+long an urgent push waits for an offline device (K-21).
 
-Why: D-049 keeps every message from before the page loaded quiet. An urgent message sent while
-every tab was closed showed only its URGENT tag when the page opened, and without push nothing ever
-rang (K-21). D-023 says urgent messages ring until acknowledged. The 3 days match how long an
-urgent push waits for an offline device.
-
-Cost: browsers hold sound until the first tap or key on a fresh page, so on most of them the alert
-at open is silent until then. When the push reached the device, its notification and the page's
-alert both show. Each other device alerts once, until the user reads the chat or dismisses the
-alert there. Only a chat's newest unread urgent message alerts at open. An older one shows only in
-its chat. The server reads the urgent flag it already stores for push, so it learns nothing new.
+Cost: browsers hold sound until the first tap or key, so the alert at open is often silent. When
+the push reached the device, its notification and the page's alert both show. Each other device
+alerts once. Only a chat's newest unread urgent message alerts at open.
 
 ### D-077: A request gives up when its answer has not started after a minute
 
@@ -787,53 +706,31 @@ went out. It uses an `AbortController` and a timer, because `AbortSignal.timeout
 and the build supports iOS 15.4 (D-052). A request that times out fails like one whose connection
 dropped: a send shows "Not sent", and the next one in its chat goes out (D-075). "Tap to retry"
 keeps the client id, so a message the server stored after all is not stored twice (D-061). The
-timer stops once the answer starts, so reading the body is not timed.
-
-Why: requests had no timeout. A request that never got an answer, for example on a connection that
-dropped without a reset, held every later send in its chat, and the check-in loop with it, until a
-reload (K-32). Vercel ends a function after 30 seconds, so a healthy answer starts by then. The
-other 30 seconds leave room for a slow upload, such as a 256 KB body on a weak phone signal. Timing
-only the start keeps a large check-in answer from being cut off on a slow connection, where every
-retry would fail the same way.
+timer stops once the answer starts, so reading the body is not timed. Vercel ends a function after
+30 seconds, and the other 30 leave room for a slow upload. Timing only the start keeps a large
+check-in answer from being cut off on a slow connection (K-32).
 
 Cost: a send on a dead connection shows "Not sent" only after a minute. An answer that stops
-partway through its body still hangs until the browser gives up on it. A request that is still
-uploading after a minute fails, although the server might have taken it.
+partway through its body still hangs. A request still uploading after a minute fails, although the
+server might have taken it.
 
 ### D-079: An unread urgent message rings again every 15 seconds
 
 Accepted 2026-11-03 in #69.
 
 The server sends an urgent message's push again every 15 seconds to each member who has not read
-the chat and is not looking at the app. It stops when they read the chat on any device, or when the
-message is 3 days old. Each push repeats the first one, so the notification sounds and vibrates
-again, and through Bark the phone rings for 30 seconds each time (D-054). A Bark alert for an
-urgent message is critical, so it rings through silent mode and Do Not Disturb. Only Chromium
-sounds again for a notification under the same tag, so the service worker closes the last one
-before it shows the next. Only a chat's newest unread urgent message rings. A recipient who looks
-at the app gets no push: the page rings on its own there (D-023). Dismiss stops only that page's
-alert.
+the chat and is not looking at the app, until they read it on any device or it is 3 days old. Each
+push repeats the first, and through Bark the phone rings for 30 seconds each time (D-054). A Bark
+alert for an urgent message is critical, so it rings through silent mode. The service worker closes
+the last notification first, because only Chromium sounds again for the same tag. Only a chat's
+newest unread urgent message rings, and a page that is looking rings on its own (D-023). Pushes
+carry a `Topic` header from the hashed tag. A self-hosted server rings on a timer. On Vercel, the
+Supabase Cron job `webchat-urgent-ring` calls `GET /api/urgent/ring` every 15 seconds with the
+GitHub poll's secret (D-057), only while an unread urgent message exists (R-019).
 
-A self-hosted server rings on a timer. On Vercel, a second Supabase Cron job, `webchat-urgent-ring`,
-calls `GET /api/urgent/ring` every 15 seconds with the same secret as the GitHub poll (D-057). It
-calls only while the database finds an unread urgent message, and a partial index keeps that check
-cheap. Urgent pushes carry a `Topic` header made from the hashed tag, so a push service keeps only
-the newest ring for an offline device instead of one per ring.
-
-Why: with every tab closed, an urgent message alerted once, like any other message, and nothing
-rang after that (R-019). D-023 says urgent messages ring until acknowledged. A closed tab cannot
-play a sound, so only a push reaches a locked phone or a closed browser, and only the server can
-send one later. The 3 days match how long an urgent push waits for an offline device.
-
-Cost: a phone rings every 15 seconds until its owner opens the chat, at night too. Silent mode and
-Do Not Disturb still mute a Web Push, because a web app cannot override them. Bark rings through
-them only where the person allowed critical alerts for it. Where they did not, Bark shows the alert
-as a normal one, which a Focus can hold back, as it could not when urgent alerts were
-time-sensitive. While an urgent message waits unread, Vercel runs a function every 15 seconds: up
-to 5,760 calls a day, a sixth of Hobby's monthly million if one waited all month. Push services and
-Apple see a push every 15 seconds while it waits. A browser that is quit rings only once it starts
-again. Without pg_cron and pg_net on Vercel, the server logs why, and an urgent message rings once
-with every tab closed.
+Cost: a phone rings every 15 seconds until opened, at night too. Silent mode and Do Not Disturb
+mute a Web Push, and Bark rings through them only where critical alerts are allowed. Vercel runs up
+to 5,760 calls a day. Without pg_cron and pg_net, an urgent message rings once.
 
 ## Projects and channels
 
@@ -841,37 +738,19 @@ with every tab closed.
 
 Accepted 2026-11-02 in #23.
 
-An iPhone on iOS 15 can never get Web Push, which Apple added in iOS 16.4, and an app of our own
-could push only through the paid Apple Developer Program. So WebChat alerts such phones through
-Bark, a free, open-source notification app whose author publishes the APNs key its pushes are
-signed with. The server stands in for Bark's own server: the bell dialog makes a server URL with a
-secret token in it, the person types it into Bark, and the app registers its APNs token there.
-From then on, whenever a Web Push would go to the person's other devices (D-007), the server also
-sends an APNs push to the phone, signed with Bark's key, with what a Web Push carries before it is
-decrypted: the chat name, the sender's name, urgency and the unread count, never the message text,
-which the server does not have (D-014). With encryption turned on in the dialog, the person types
-a second key into Bark, and the alert reaches Apple as AES-256-GCM ciphertext under a placeholder
-that Bark replaces on the phone. One provider token signs every push for an hour and is shared
-through the database, because Apple refuses tokens refreshed more often than every 20 minutes and
-serverless instances start often.
+iOS 15 phones never get Web Push, and an app of our own needs the paid Apple Developer Program. So
+WebChat alerts them through Bark, a free open-source app whose author publishes the APNs key its
+pushes are signed with. The server stands in for Bark's server: the bell dialog makes a URL with a
+secret token, and the person types it into Bark. Whenever a Web Push would go to the person's other
+devices (D-007), the server also sends an APNs push signed with Bark's key: chat name, sender name,
+urgency and unread count, never the text (D-014). With encryption on, a second key typed into Bark
+makes it AES-256-GCM ciphertext. One provider token signs pushes for an hour, shared through the
+database, as Apple refuses refreshes under 20 minutes.
 
-Why: the students the product is for keep old phones. Relays through Telegram and similar services
-were turned down because they put another service and account in the path. An app of our own
-signed with a free Apple ID stops after 7 days, a jailbreak wants a computer or a tap after every
-reboot, and a page kept alive with silent audio costs battery and dies with any other sound. Bark
-needs an App Store install and nothing running on the phone.
-
-Cost:
-
-- The route depends on Bark: its app, and a key its author calls permanent but could withdraw. If
-  it stops, these alerts stop until another route is built, and nothing else is affected.
-- The operator downloads the key from Bark's documentation into `BARK_APNS_KEY`. The repository
-  never carries it.
-- Apple sees when a push goes to the phone and its collapse id, and without encryption also the
-  chat and sender names. The Bark app sees the decrypted alert. The README lists this.
-- A Bark alert cannot mark the message delivered; the tick comes when the person opens WebChat.
-- The link's state is not in the sync fingerprint (D-021). The dialog reads it when it opens, so
-  another tab of the same account shows it on its next opening of the dialog.
+Cost: depends on Bark and a key its author could withdraw; it goes in `BARK_APNS_KEY`, never the
+repository. Apple sees push timing and collapse id, and without encryption the names; Bark sees
+the alert (README lists this). No delivered tick until WebChat opens. Link state is not in the sync
+fingerprint (D-021).
 
 ### D-024: Every project member is in every channel
 
@@ -904,7 +783,7 @@ When a member adds someone, that member's browser opens its own copy of each cha
 it for the newcomer. Each key holds the one it replaced (D-044), so the newcomer can read every
 earlier message, as when joining a Slack channel. Their read pointers start at the newest message,
 so the history does not count as unread. Being added sends a notification (D-031). Groups work the
-same way since #10 (D-043).
+same way (D-043).
 
 Cost: only a member whose browser can open every channel key can add people. The server records who
 added whom.
@@ -922,79 +801,48 @@ so "Slides & Design" becomes `slides-design`. Every project starts with `#genera
 Accepted 2026-11-03 in #51.
 
 `toChannelName` and `isChannelName` in `shared/types.ts` hold the rule of D-027 for both sides. The
-New channel dialog makes names with the first, and the server checks them with the second. The
-page applies NFKC first, so a capital with no lowercase form, such as ℂ, becomes a plain one. It
-cuts the name to the limit before it trims hyphens, and it counts UTF-16 units as the server does.
-
-Why: the dialog had its own copy of the rule, and the copies drifted. It trimmed before it cut, and
-kept capitals the server refuses, so some names it showed got a 400 (K-11).
+New channel dialog makes names with the first, and the server checks them with the second, so no
+name the dialog shows gets a 400 (K-11). The page applies NFKC first, so a capital with no
+lowercase form, such as ℂ, becomes a plain one. It cuts the name to the limit before it trims
+hyphens, and it counts UTF-16 units as the server does.
 
 Cost: NFKC also folds other look-alikes, such as full-width letters and ligatures, so a few typed
 names change more than people expect. The dialog shows the result before it creates the channel.
 
 ### D-039: Owners remove people and delete, before key rotation
 
-Partly superseded by D-044 and D-045: removal now gives each chat a new key, and people can leave.
-Owners still remove people and delete. Accepted 2026-11-01 in #4. Replaces D-028.
+Partly superseded by D-044 and D-045: removal gives each chat a new key, and people can leave.
+Accepted 2026-11-01 in #4. Replaces D-028.
 
-The person who made a project or group is its owner. Only the owner can remove people from it, or
-delete it for everyone with every channel and message. Projects already recorded who made them.
-Migration 4 adds `conversations.created_by` for groups. Every copy of a group's key was wrapped by
-the person who made it, so existing groups get that person. A group from before encryption gets the
-member who set its key, and one with no key yet has no owner, so any member can manage it.
+The person who made a project or group is its owner. Only the owner removes people or deletes it,
+with every channel and message. `conversations.created_by` (migration 4) names a group's owner: who
+wrapped its key copies, or for a pre-encryption group who set its key; with no key yet, no owner,
+and any member manages it. A page accepts a key copy only from a current member (D-015), so removal
+makes the owner's browser wrap every key in the project or group again for exactly the people who
+stay. The server checks this under the project's or group's lock and answers `409 stale_project` or
+`409 stale_group` when the page's view is stale; the page reloads and retries once (D-025). Being
+removed sends no notification; a page with the chat open closes it and says why.
 
-WebChat's owner asked for removal before key rotation (R-002), so keys stay the same. A page accepts
-a copy of a key only from a current member (D-015). Removing someone who made a channel or added
-people would then lock others out on any new device. So the owner's browser wraps every key in the
-project or group again, for exactly the people who stay. The server checks this under the project's
-or the group's lock, and answers `409 stale_project` or `409 stale_group` when the page's view is
-out of date. The page then reloads and tries once more (D-025).
-
-Nobody can remove themselves, so nobody can leave. A person who leaves could not wrap the copies the
-others need. Being removed sends no notification. A page that has the chat open closes it and says
-why. Groups could not take new members at first, so someone removed from a group could not come
-back. Since #10, any member can add them again (D-043).
-
-Cost: people removed keep the keys they had. They could read later messages if they got them some
-other way, for example from a copy of the database. The server stops sending them anything. Only a
-browser that can open every key in the project or group can remove someone, and the request carries
-every key wrapped for everyone who stays (D-011).
+Cost: removed people keep the keys they had. Only a browser that can open every key in the project
+or group can remove someone, and the request carries every key wrapped for those who stay (D-011).
 
 ### D-043: Any group member adds people, and they read the history
 
-Accepted 2026-11-01 in #10, extended in #13. It answers the open question of roadmap item R-003.
+Accepted 2026-11-01 in #10. It answers the open question of roadmap item R-003.
 
-Groups take new members the way projects do (D-026). Any member can add up to 20 people at once with
-the Add people button in the group's header. That member's browser opens its own copy of the group's
-key and wraps it for each newcomer. Each key holds the one it replaced (D-044), so newcomers read
-every earlier message. Their read pointers start at the newest message, so the history does not
-count as unread. Being added sends a push, as for projects (D-031). Someone removed from a group can
-come back this way.
+Groups take new members as projects do (D-026). Any member adds up to 20 people at once with the
+Add people button; that member's browser wraps its own copy of the group's key for each newcomer.
+Each key holds the one it replaced (D-044), so newcomers read all history, and their read pointers
+start at the newest message. Being added sends a push (D-031). Under the group's lock the server
+checks that the copies cover exactly the people added, that the group still has the key they were
+made from and that the adder is still a member, else `409 stale_group` and one retry (D-025).
+Adding to a project checks the adder's membership under its lock too. A pre-encryption group with
+no key takes members without one; its first message keys it for everyone (D-019). Pages alert only
+for messages after the user's read pointer, so history does not ring. Why: hiding history needs a
+new key per join (R-002).
 
-The server checks under the group's lock that the copies cover exactly the people added. It also
-checks that the group still has the key the copies were made from, and that the person adding is
-still a member. Otherwise it answers `409 stale_group`, and the page reloads and tries once more
-(D-025). A group from before encryption that has no key yet takes new members without one. Its
-first message then keys it for everyone (D-019).
-
-Why: a late teammate needed a new group, and someone removed by mistake could not come back (D-039).
-Hiding the history from newcomers would need a new key for every join (R-002). With one key per
-chat, the server could only choose not to send old messages, which the encryption does not enforce.
-As in projects, anyone in the group can add people, and only the owner can remove them.
-
-Pages now alert only for messages after the user's read pointer. A newcomer's first check-in brings
-the chat's messages after their sync cursor, and each of them used to ring or notify, urgent ones
-too. The same burst hit people added to a project. The rule also stops alerts on one device for
-messages already read on another.
-
-Adding people to a project now also checks under the lock that the person adding is still a member.
-Before, someone removed at that moment could still add people, with copies the newcomers' browsers
-refuse.
-
-Cost: any member can let someone read the whole history, and only the owner can take them out again.
-The other members see a newcomer only in the member list; the chat shows no note (roadmap R-017).
-The server knows who added whom in a group only from who wrapped each copy, until a new key
-replaces every copy (D-044).
+Cost: any member can expose all history; only the owner removes. Others see a newcomer only in the
+member list (R-017). Who added whom shows only from who wrapped each copy, until a new key (D-044).
 
 ### D-045: People leave on their own, and owners hand over
 
@@ -1017,201 +865,109 @@ come back only when a member adds them again (D-026, D-043).
 
 Accepted 2026-11-04 in #73.
 
-A project's shared docs (R-020) belong to its #general channel. Every project member is in
-#general (D-024), and #general lasts as long as the project. So its key encrypts every doc, and its
-members read and edit them. Adding people (D-026) and new keys after a removal (D-044) cover docs
-with no key code of their own. The server takes a doc only in a channel, never in a group or a
-direct chat.
+A project's shared docs (R-020) belong to its #general (D-024), whose key encrypts every doc, so
+D-026 and D-044 cover docs. The server takes a doc only in a channel. A doc is a title and sections
+stored as revisions, sealed under their own header `webchat/doc/v1`, which binds chat, key id,
+author, doc and section, so a revision never passes as a message and cannot move. The browser makes
+the doc's id. A section's place is a number inside its content; a deleted section is a revision
+marked removed. One person edits a section at a time under a lock in `doc_locks`, kept by the
+editing tab's check-ins (every minute in the background) and gone 2 minutes after the last. A save
+needs the lock; one editing session replaces one revision. Doc versions and held locks join the sync
+fingerprint (D-021). Why: no merge code, dependency or open connection (D-004, Q-1).
 
-A doc is a title and sections, each stored as revisions. A revision is sealed like a message, under
-its own header, `webchat/doc/v1`, which binds the chat, the key id, the author, the doc and the
-section. So a revision never passes as a message, and the server cannot move one to another doc or
-section. The browser makes the doc's id, so it is signed before the server sees it. A section's
-place is a number inside its content, so the server cannot reorder sections. A deleted section is a
-revision marked as removed.
-
-One person edits a section at a time. Editing takes a lock in `doc_locks`. Each check-in from the
-editing tab names the section and keeps the lock, which runs out 2 minutes after the last one: a
-tab in the background checks in every minute. A save needs the lock. The saves of one editing
-session replace one revision, so the history has one entry per session, not one per keystroke.
-Each doc's version and the locks held now join the sync fingerprint (D-021).
-
-Why: locks need no merge code, no new dependency and no open connection (D-004), and student teams
-split a spec by section. A CRDT such as Yjs would let two people write one paragraph at once, but
-it needs a dependency, compaction and, for live cursors, WebSockets (Q-1).
-
-Cost: two people cannot edit one section at once. A closed tab holds its lock for up to 2 minutes.
-Every save makes each open copy of the doc load its sections again. The server sees who edits
-which section and when, and could show an older revision of a section as its newest (D-020). Docs
-are Markdown only, shown by a small renderer of WebChat's own instead of a library, and export only
-to PDF through the browser's print dialog.
+Cost: no two editors in a section; a closed tab holds its lock up to 2 minutes; each save reloads
+open copies. The server sees who edits which section and when, and could show an older revision as
+newest (D-020). Docs are Markdown only, exported only as PDF through print.
 
 ### D-082: The project board is two docs whose sections are cards
 
 Accepted 2026-11-04 in #75.
 
 A project's board (R-021) is a view over two docs: Decisions, and Roadmap for ideas and issues. A
-card is a section of that doc, written in the section editor docs have, with its lock and its
-history (D-081). The two docs are marked by a `board` field inside the sealed content of their
-title, so the server does not know a board from a doc, and the sidebar leaves them out of the Docs
-list. The browser makes them the first time someone adds a card. A card's number, title and status
-are read from its first two lines, `### D-3: Title` and `Status: Accepted 2026-11-04.`, which is
-the format of this repository's own `docs/decisions.md` and `docs/roadmap.md`. "Copy as Markdown"
-joins a column's cards into that file.
+card is a section of that doc, with its lock and history (D-081). A `board` field inside the sealed
+content of the doc's title marks them, so the server does not know a board from a doc, and the
+sidebar leaves them out of Docs. The browser makes them when someone first adds a card. A card's
+number, title and status come from its first two lines, `### D-3: Title` and `Status: Accepted
+2026-11-04.`, the format of `docs/decisions.md` and `docs/roadmap.md`. "Copy as Markdown" joins a
+column's cards into that file. Why: needs no migration, route, key code or fingerprint change, and
+a team pastes a column into its repository for its agents to read.
 
-Why: the owner wanted student teams to have what this repository has, a numbered decision log and
-a roadmap, because choices made in a chat are lost by the next person or agent to act. Building
-cards on docs needs no migration, no route, no key code and no change to the sync fingerprint, and
-the server learns nothing new. Keeping the repository's format means a team pastes the column into
-its own repository, and the agents it runs read the same decisions.
-
-Cost: the browser numbers a new card from the cards it has, so two tabs that add a card at the
-same moment can take one number. The board warns on both cards and someone renumbers one, as D-063
-has this repository do. Two tabs that make the board doc at the same moment make two; the board
-shows the oldest, and the other appears in the Docs list, where it can be deleted. A card's status
-is wording inside its text, not a field, so a status outside the known list sorts with the open
-items.
+Cost: the browser numbers a new card from the cards it has, so two tabs can take one number; the
+board warns and someone renumbers (D-063). Two tabs making the board doc at once make two; the
+board shows the oldest and the other appears in Docs for deletion. Status is wording, not a field,
+so an unknown status sorts with the open items.
 
 ### D-085: An agent runtime is a member account, and its daemon a headless client
 
-Proposed 2026-11-05 in #85, extended in #88.
-Proposed 2026-11-05 in #85.
+Accepted 2026-11-05 in #85.
 
-A coding agent that a student runs for a project (R-027) joins WebChat as an account of its own,
-such as `claude-code-mbp`, signed up with the invite code and added to projects like a person. The
-daemon that drives it is a headless client in `agent/`: it signs up or in through the same `/api`
-routes as the page, derives its login key from a password the same way, keeps its private keys,
-login key, session cookie and the pins of other people's keys in `~/.webchat/<name>/account.json`,
-and checks in with `POST /api/sync` every 15 seconds like a tab the user looks at. It opens chat
-keys and messages, sends sealed messages and edits doc sections under the section lock with the
-same code paths as the page, ported from `client/src/e2ee/keyring.ts` and `client/src/chat.ts`,
-on `shared/e2ee.ts`.
+A coding agent a student runs for a project (R-027) joins as an account of its own, signed up with
+the invite code. Its daemon, a headless client in `agent/`, uses the page's `/api` routes and keeps
+its keys, login key, session cookie and pins in `~/.webchat/<name>/account.json`. It checks in with
+`POST /api/sync` every 15 seconds, opens keys and messages, sends sealed messages and edits doc
+sections under the section lock, with code ported from `client/src/e2ee/keyring.ts` and
+`client/src/chat.ts` on `shared/e2ee.ts`. Check-ins say whether it runs a card; that flag is in the
+sync fingerprint (D-021), so the menu offers only idle agents. Why: rule 5 gives keys only to
+members, and the owner's keys would expose their direct messages.
 
-Why: the agent needs chat keys to read a card and to report, and rule 5 gives keys only to
-members. A member account gets them the way every member does, and signs what it sends with its
-own key, so its messages are labelled as the agent's and verify like anyone's. A daemon that
-held its owner's keys would read every direct message on that laptop, and its words would pass
-as the owner's. Reusing the page's routes and sync model means no new transport, no open
-connection (D-004) and nothing new for the server to learn, except one more account.
-
-Cost: one account per runtime, which its owner invites into each project by hand. The private
-keys sit in a file in the clear, readable only by its owner, because Node has no key store that
-keeps a key unexportable; the README lists this. Two daemons must not share one account file,
-because each keeps its own sync cursor there. A daemon that is removed from a project, or whose
-chat needs a new key after someone left (D-044), waits for a member's browser to rotate it: the
-daemon never makes keys. The key logic is ported from the page, not shared with it, until K-40
-moves it under `shared/`. The server learns which accounts are agents, and since #95 whose
-agent each one is (D-089), which replaces the flag set at sign-up and at sign-in (K-41). Since
-#88 the daemon's check-ins also say whether it is running a card, which the server keeps as a
-flag on the account and puts in the sync fingerprint (D-021), so the menu offers only agents
-that are online and idle; the server learns that an agent is busy, not with what.
+Cost: one account per runtime, invited to each project by hand. Private keys sit in a file in the
+clear, readable only by its owner, since Node has no unexportable key store (README lists this). Two
+daemons must not share an account file. The daemon never makes keys, so after a removal (D-044) it
+waits for a member's browser. Key logic is ported, not shared, until K-40.
 
 ### D-086: A run is a request message and the reports that name it
 
-Proposed 2026-11-05 in #86.
+Accepted 2026-11-05 in #86.
 
-Handing a card to an agent (R-027) sends an ordinary message of kind "message" into the project's
-#general, whose sealed content carries a `run` field, as a shared pull request carries `pull`
-(D-042): the card's id and title, its doc and section, and the agent's account. The daemon
-answers with messages of its own whose `run` field names the request's message id and says
-claimed, done or failed, with a note, a branch and a pull request where there is one.
-The text of each says the same in words. A page folds the reports into the request's card and
-shows the latest, but only reports from the agent the request names. An older page shows the
-texts. The daemon runs a request only from accounts its owner listed with `npm run agent --
-allow`, one at a time, and not one older than 10 minutes when it first sees it. The card must be
-on the board of the request's project, and saved last by a listed account or by the agent: its
-text is the agent's prompt. The brief leaves out decisions from anyone else. When a run is done,
-the daemon reads the card again under the section lock (D-081) and writes the branch into its
-status line, unless someone not listed saved it meanwhile. The request names the card, not its text: the daemon reads
-the card from the board when it claims, with the key it has as a member. Since #95 the allow
-list, the checks on who saved the card and the decisions, and the status line are gone: an agent
-runs what its owner hands it (D-089).
+Handing a card to an agent (R-027) sends an ordinary message of kind "message" into #general. Its
+sealed content carries a `run` field, as a pull request carries `pull` (D-042): the card's id and
+title, its doc and section, and the agent's account. It names the card, not its text: the daemon
+reads the card from the board when it claims, with its member key. It runs one request at a time
+(D-089 says whose). It answers with messages whose `run` field names the request's message id and
+says claimed, done or failed, with a note, a branch and a pull request if any; the text says the
+same. A page folds reports into the request's card and shows the latest, only from the agent the
+request names. An older page shows the texts. Why: the signature proves who asked (D-016), and
+separate report messages stay immutable and signed by their author.
 
-Why: a field inside the envelope changes nothing on the server, which sees messages and nothing
-more, and the signature proves who asked (D-016). Reports as messages of their own, instead of
-edits to the request, keep every message immutable and signed by its author: the agent cannot
-alter what the teammate wrote, and the teammate cannot alter what the agent reported. The
-allow list keeps a teammate's prompt from running on another student's laptop without their say.
-
-Cost: each report counts as an unread message and alerts like one, so a chatty run is noisy;
-reports stay sparse. A report whose request is not loaded on the page shows as its text. The
-request's message id is the server's, so a server that was changed could attach a report to
-another request; it could not forge either, and both texts name the card.
+Cost: each report is an unread message that alerts, so keep them sparse. The request's id is the
+server's, so a changed server could attach a report to another request, but could forge neither.
 
 ### D-087: A run is a worktree, a brief and a headless coding agent
 
-Proposed 2026-11-05 in #87, extended in #89.
+Accepted 2026-11-05 in #87.
 
-The daemon runs a card in the project's repository on its owner's machine. `config.json` next to
-the account file maps each project name to a local checkout. A run fetches `origin`, adds a git
-worktree on a branch named after the card, such as `agent/k-12-pushes-with-bad-keys`, under the
-account's `runs` folder, and writes a brief next to it, outside the repository: the card's
-Markdown, the Decisions column of the board, and how to finish. Then it starts the coding agent
-headless in that worktree and reads its output line by line until its final word. Claude Code
-runs as `claude -p "Read the brief in <file> …" --output-format stream-json --permission-mode
-acceptEdits`, with the shell allowed for `git`, `gh pr` and npm scripts. The brief asks for
-small commits, a push and a
-draft pull request with `gh pr create --draft`, and never a push to main. After the agent exits,
-the run fails when it left no commits, and otherwise reports the branch, the pull request `gh`
-finds in the worktree, and the agent's closing line. An agent that prints nothing for 2 hours is
-killed and the run fails. A card run again gets a branch with a number after it. Since #89
-`config.json` can name Codex or Hermes instead: Codex runs as `codex exec --json` with
-approvals off and its own workspace sandbox, with the network open so it can push, and Hermes as
-`hermes chat --oneshot --quiet --yolo --format stream-json`, with its approval prompts off. Each
-adapter is a command, its arguments and how its final word is read from its output lines.
+The daemon runs a card in the project's repository on its owner's machine. `config.json` next to the
+account file maps each project name to a local checkout and picks the agent. A run fetches `origin`,
+adds a git worktree on a branch named after the card, such as `agent/k-12-bad-keys`, under the
+account's `runs` folder, and writes a brief outside the repository: the card's Markdown, the board's
+Decisions column and how to finish (small commits, a push, `gh pr create --draft`, never a push to
+main). It runs the agent headless there until its final word. The run fails when no commits are left
+or after 2 hours of silence; else it reports the branch, the pull request `gh` finds and the closing
+line. A rerun gets a numbered branch. Adapters: `claude -p ... --output-format stream-json
+--permission-mode acceptEdits` with the shell limited to `git`, `gh pr` and npm scripts; `codex exec
+--json`, approvals off, network open; `hermes chat --oneshot --quiet --yolo --format stream-json`.
 
-Why: a worktree per run keeps the owner's own checkout untouched and lets runs of different cards
-sit side by side, as this repository's sessions do. A brief file outside the repository cannot
-end up committed. Reading the project's repository from a config file, rather than cloning the
-linked GitHub repository, needs no token and works for a repository the project never linked.
-Headless mode with a fixed tool list is what Claude Code documents for scripts; the agent reads
-the repository's `AGENTS.md` and settings as it would in a terminal, which is what the brief
-asks it to do.
-
-Cost: the worktrees and briefs of finished runs stay on disk until their owner removes them. The
-tool list narrows what the agent's shell runs; it is not a sandbox, since `git`, npm scripts and
-file edits can reach anything the owner can. The agent runs with its owner's git and GitHub
-credentials, so the allow list (D-086) is what keeps a teammate's card from doing more than its
-owner would. A pull request is reported only when
-`gh` is signed in on that machine. Codex and Hermes were wired up from their documented command
-lines and not run end to end here, because neither was usable on the owner's machine when
-written; Claude Code was. Each adapter is a few lines to fix if a command line moves.
+Cost: finished worktrees and briefs stay on disk. The tool list is no sandbox: it runs with the
+owner's git and GitHub credentials, so D-089 limits who may send runs. The Codex and Hermes
+adapters were wired from their documentation and not run end to end.
 
 ### D-089: An agent runs the cards its owner hands it
 
 Proposed 2026-11-05 in #95.
 
-An agent account belongs to one person, its owner, named when its daemon signs up or signs in:
-`npm run agent -- signup <server> <name> <invite-code> <owner>`. The server keeps the owner on
-the account and lists it with the user, in place of the agent flag of D-085, and the sync
-fingerprint (D-021) carries it. A card's play button lists only the viewer's own agents in the
-project, and none while someone holds the card's lock. The daemon keeps the owner's user id in its
-account file, pins their keys at its first check-in, and prints the security code that the owner
-compares in a direct chat with the agent (D-018).
+An agent account belongs to one owner, named at sign-up or sign-in: `npm run agent -- signup
+<server> <name> <invite-code> <owner>`. The server keeps the owner on the account, and the sync
+fingerprint (D-021) carries it. A card's play button lists only the viewer's own agents, and none
+while someone holds the card's lock. The daemon keeps the owner's id, pins their keys at its first
+check-in and prints the security code the owner compares in a direct chat (D-018). It runs a request
+only when the owner sent it, proved by signature against the pins. The owner's page signs the send
+time into `run`; the daemon refuses a time over 10 minutes from its own clock, or none. Others'
+requests fail with a report. The brief holds the card as on the board and every decision. The run
+card in #general is the run's status. Why: a username allow list trusts the server (K-42, K-45).
 
-The daemon runs a request only when the owner sent it, which the signature proves against the
-pinned keys. The owner's page signs the time it sent the request into the `run` field, and the
-daemon refuses one more than 10 minutes from its own clock, or without that time. A request from
-anyone else fails with a report that says so. The daemon reads the card as it is on the board,
-whoever saved it last, and puts every decision of the board into the brief. It no longer writes
-the branch into the card's status line: the run card in #general is the run's status, and the pull
-request card shows the branch.
-
-Why: under D-086 a run needed the sender, the card's last author and each decision's author on a
-username allow list. The owner had to allow themselves before their own clicks worked. A card a
-teammate wrote failed unless the teammate was allowed, which also let that teammate send runs to
-the owner's machine (K-45). The list trusted the username the server reported for an id, and the
-age check trusted the server's clock (K-42). One owner, pinned by id and key, and a time the owner
-signed, close both. The status line needed the section lock and checks of its own, and failed
-whenever someone was editing the card.
-
-Cost: the owner vouches for the card and the decisions by clicking. A teammate who writes a card
-or a decision writes part of a prompt that runs on the owner's machine with their credentials. The
-board shows a card's status only as people set it. Any client can name any owner, so a stranger's
-agent in a project can show in someone's menu; a request to it names a card it can already read
-as a member. The `agent` column of migration 13 is no longer read. An agent from before #95 has no
-play button until its daemon signs in again with an owner. Handing a card to a teammate's agent is
-R-029.
+Cost: the owner vouches for card and decisions by clicking; a teammate's text runs with the owner's
+credentials. Any client can name any owner, so a stranger's agent can show in a menu; it can read
+only what a member reads. The `agent` column of migration 13 is unused. A teammate's agent is R-029.
 
 ## Replies and reactions
 
@@ -1222,8 +978,8 @@ Accepted 2026-11-01 in #2.
 A reply's encrypted content holds the id and sender of the message it answers and up to 160
 characters of its text, so the quote shows even when the original is not loaded. When the original
 is loaded, the page shows the original, whose signature it checked, instead of the copy the replier
-wrote. Tapping a quote scrolls to the original and highlights it. The ciphertext limit grew from
-22,000 to 24,000 characters to make room for the quote.
+wrote. Tapping a quote scrolls to the original and highlights it. The ciphertext limit is 24,000
+characters, which leaves room for the quote.
 
 Cost: the quote of a message that is not loaded is only as honest as the person who replied.
 
@@ -1234,19 +990,17 @@ Accepted 2026-11-01 in #2.
 A reaction is a row in `messages` with the kind `reaction`. Its envelope holds the emoji and the
 message it is for, so the server sees only that someone reacted. Reusing messages gives reactions
 the same sync, history paging, encryption and signatures, without a new table. The newest reaction
-from a person to a message wins, and an empty emoji takes the reaction back. A reaction is never
-urgent: the server refuses an urgent one instead of changing it (D-016). The page offers WhatsApp's
-six quick emoji.
+from a person to a message wins, and an empty emoji takes it back. The server refuses an urgent
+reaction instead of changing it (D-016). The page offers WhatsApp's six quick emoji.
 
 `conversations.last_event_id` follows every row, so sync notices reactions, while
 `last_message_id` follows only messages. So reactions do not count as unread, do not move a chat up
-the list, and do not replace its preview. They notify nobody: their push only wakes a tab the
+the list and do not replace its preview. They notify nobody: their push only wakes a tab the
 recipient is looking at.
 
 Cost: reactions count toward the 50 rows of a history page. So the page pages from the oldest row it
-fetched, not the oldest message it shows, and keeps going while pages bring only reactions. A tab
-still running the app from before reactions shows them as messages it cannot decrypt until it
-reloads (roadmap K-1).
+fetched, not the oldest message it shows, and keeps going while pages bring only reactions. An old
+tab shows reactions as messages it cannot decrypt until it reloads (roadmap K-1).
 
 ### D-070: The service worker never shows a reaction
 
@@ -1254,10 +1008,9 @@ Accepted 2026-11-03 in #45.
 
 A reaction's push only wakes the page (D-030), so the server sends it only to the browser the user
 is looking at. The server can be wrong for up to 45 seconds (D-007), such as after a laptop slept
-before its check-in went out. The service worker then showed "Bob reacted to a message", and under
-the chat's tag it replaced the message notification. Now the service worker hands a reaction to the
-open pages and shows nothing, whoever is looking. A reaction push also has a tag of its own,
-`reaction-` and the chat id, so it can never replace a message notification.
+before its check-in went out. So the service worker hands a reaction to the open pages and shows
+nothing, whoever is looking. A reaction push has a tag of its own, `reaction-` and the chat id, so
+it can never replace a message notification.
 
 Cost: a reaction push that reaches a browser nobody looks at shows nothing, and browsers count such
 pushes. Chrome may show its own "updated in the background" notice, and Firefox counts it against
@@ -1265,13 +1018,13 @@ the site's quota of pushes without a notification. Safari never gets these pushe
 
 ### D-031: Project invites notify even while the app is open
 
-Accepted 2026-11-01 in #2, extended in #10.
+Accepted 2026-11-01 in #2.
 
 Being added to a project sends a push to every device of the person added, saying who added them.
 The service worker shows it even while the app is open and focused, because being added is rare and
 the page has no alert of its own for it. Project names are not encrypted, so the server can write
-this text itself. Since #10, being added to a group sends the same kind of push, which opens the
-group (D-043).
+this text itself. Being added to a group sends the same kind of push, which opens the group
+(D-043).
 
 ## GitHub connector
 
@@ -1307,13 +1060,11 @@ Accepted 2026-11-01 in #1.
 GitHub does not tell WebChat when a pull request changes, so the server asks with a GraphQL query
 and compares the answer with the last one. Pull requests that left the lists cost a second query,
 which finds out whether they were merged or closed. Polls of one account are at least a minute apart
-when open tabs ask, 10 seconds apart when the user presses refresh, and 55 seconds apart for
-scheduled runs, so a run that starts a moment early does not skip an account. Review requests,
-reviews, comments from others, failed or fixed checks, conflicts, merges and closes become events.
-One poll pushes at most three of them: the three most important. Polls start from open tabs, from a
+when open tabs ask, 10 seconds when the user presses refresh, and 55 seconds for scheduled runs.
+Review requests, reviews, comments from others, failed or fixed checks, conflicts, merges and closes
+become events; one poll pushes at most the three most important. Polls start from open tabs, from a
 timer on a self-hosted server (`GITHUB_POLL_SECONDS`, 120 by default), and from any scheduler that
-calls `GET /api/github/poll` with `CRON_SECRET`, because Vercel Hobby cron jobs run only once a day.
-On Vercel, the database is that scheduler (D-057).
+calls `GET /api/github/poll` with `CRON_SECRET`. On Vercel, the database is that scheduler (D-057).
 
 Cost: alerts arrive up to a few minutes after the change. Each list shows at most 30 pull requests,
 and only from github.com.
@@ -1322,33 +1073,22 @@ and only from github.com.
 
 Accepted 2026-11-02 in #29.
 
-Vercel Hobby runs a cron job at most once a day, and refuses to deploy one that runs more often. So
-on Vercel nothing polled GitHub while every tab was closed, and the connect card still promised
-alerts (K-5). The database now keeps the clock. When the server starts on Vercel, it makes sure a
-Supabase Cron job named `webchat-github-poll` exists. Every 2 minutes, pg_cron runs it, and pg_net
-calls `GET /api/github/poll` with a bearer secret that the server generated and keeps in
-`webchat.meta`. The job reads the secret on every run, so the secret is not in the job's text. The
-server enables pg_cron and pg_net itself, which Supabase allows its `postgres` role. A job that
-already matches is left alone, even one the owner deactivated. So every start checks it cheaply,
-and a deleted job comes back.
+Vercel Hobby runs a cron job at most once a day, so the database keeps the clock. At start on
+Vercel, the server makes sure a Supabase Cron job named `webchat-github-poll` exists; a matching job
+is left alone, even a deactivated one. Every 2 minutes pg_cron runs it, and pg_net calls
+`GET /api/github/poll` with a bearer secret that the server generated and keeps in `webchat.meta`.
+The job reads the secret on every run, so it is not in the job's text. The server enables pg_cron
+and pg_net itself, which Supabase allows its `postgres` role. Every `pollAll` run records its start.
+The pane promises alerts with every tab closed only while the last run is under 10 minutes old, and
+otherwise says alerts need an open tab (K-5). A tab's own poll does not count. A self-hosted server
+polls once at start. Why: those alerts justify the server holding the token (D-033) and must stay
+free (D-003); the database is already part of the free setup. GitHub Actions schedules run at
+most every 5 minutes, are late when GitHub is busy, and stop after 60 days without activity.
 
-Every `pollAll` run records when it started. The pane promises alerts with every tab closed only
-while the last run is less than 10 minutes old: five missed runs of the 2-minute clock. Otherwise
-the connect card says alerts need an open tab, and the connected pane shows a banner. A tab's own
-poll does not count, because it stops when the tab closes. A self-hosted server polls once at
-start, so a fresh one does not show the banner before its timer first runs.
-
-Why: alerts with every tab closed are why the server holds the token (D-033), and they must stay
-free (D-003). The database is already part of the free setup, can run a job every minute, and needs
-no account or secret from the owner. GitHub Actions schedules run at most every 5 minutes, are late
-when GitHub is busy, and stop after 60 days without activity in a public repository.
-
-Cost: the server changes the owner's database: it enables two extensions and adds a job. The job
-adds up to 720 function calls a day, about 2% of Hobby's monthly million. With another Postgres, or
-where the role may not enable the extensions, the server logs why and the pane says so; a scheduler
-with `CRON_SECRET` still works. Anyone who can read the database can start polls with the secret,
-which poll an account at most once a minute anyway. A paused Supabase project stops the clock along
-with everything else.
+Cost: the server enables two extensions and adds a job in the owner's database, up to 720 function
+calls a day, about 2% of Hobby's monthly million. Where the role may not enable them, the server
+logs why and the pane says so; `CRON_SECRET` still works. Anyone who can read the database can start
+polls, at most one per account per minute. A paused Supabase project stops the clock.
 
 ### D-042: A shared pull request is a message with a card inside
 
@@ -1361,11 +1101,9 @@ notification and the chat list show something without knowing the card. The page
 instead of the text. When reading content, the page rebuilds the link from the repository and
 number and drops a card whose link differs, so a card can only lead to github.com.
 
-Why: R-013 planned a new signed kind like reactions (D-030). A kind exists so the server can treat
-rows differently, and reactions needed that: no unread count, no preview, no push. A shared pull
-request should count, preview and push exactly like a message, so a field inside the envelope is
-enough, and the server changes not at all. It sees one more message and nothing about pull
-requests. The signature covers the envelope, so the card cannot be altered either (D-016).
+Why: a kind exists so the server can treat rows differently (D-030), and a shared pull request
+should count, preview and push exactly like a message. So a field inside the envelope is enough,
+and the server sees nothing about pull requests. The signature covers the envelope (D-016).
 
 Cost: the card shows the state at the time of sharing and does not update. The text of a shared
 pull request is a stock sentence that the user does not write.
@@ -1375,39 +1113,22 @@ pull request is a stock sentence that the user does not write.
 Accepted 2026-11-01 in #17. Supersedes D-046.
 
 A project's owner links a repository by installing the WebChat GitHub App on it and signing in to
-the app once. The server lists the repositories the owner reaches through the app, revokes that
-sign-in's token at once, and lets the owner link only those, for half an hour. GitHub then sends a
-signed webhook for every pull request event in the repository. When a pull request opens, is ready
-for review, is reopened, merged or closed, the server writes a card into each channel that links
-the repository, and pushes it to every member like a message. The card is a message of kind
-"github" with no sender, whose body is the card as plain JSON. Pages show it as GitHub's, with a
-"Not encrypted" mark, and rebuild its link from the repository and number, as for a shared card
-(D-042). A card names who still has to review and who is assigned, as GitHub logins, and the
-viewer's own login reads "you", as under D-046. The share button stays. The OAuth App stays for
-each person's Pull requests pane only (D-032 to D-034).
+the app once. The server lists the repositories the owner reaches, revokes that token at once, and
+lets the owner link only those, for half an hour. GitHub then sends a signed webhook for every pull
+request event. When a pull request opens, is ready for review, is reopened, merged or closed, the
+server writes a card into each channel that links the repository and pushes it like a message. The
+card is a message of kind "github" with no sender and a plain JSON body. Pages show it with a "Not
+encrypted" mark and rebuild its link from the repository and number (D-042). It names reviewers
+and assignees as GitHub logins, and the viewer's own reads "you". The OAuth App serves only the
+Pull requests pane (D-032 to D-034). Why: a team wants its pull requests in its channel with every
+tab closed. The App gets webhooks and reads pull requests only. The server holds no chat key
+(D-015), and it already reads titles for the pane (D-033).
 
-Why: a team wants its pull requests in its channel whoever opens them, at once, even with every tab
-closed. Under D-046 they came only from members who connected GitHub, and only when their browser
-next polled. A GitHub App gets webhooks, so nothing has to poll. It reads pull requests only, where
-the OAuth App needs the `repo` scope. The sign-in proves the owner can see each repository they
-link, which a typed name did not. The server holds no chat key (D-015), so it cannot write an
-encrypted, signed message. It already reads pull request titles from GitHub for the pane (D-033),
-so writing them in plain text tells it nothing new. With the token revoked once used, no token of
-the app exists anywhere.
-
-Cost:
-
-- The cards are the first messages the server writes. They are not end-to-end encrypted, and a
-  server that was changed could write fake ones. Their links still lead only to github.com.
-- The server owner registers a GitHub App, and webhooks need a public address. Local development
-  of linking needs a tunnel, or signed test deliveries.
-- A card shows the pull request as the webhook described it, without checks, review decision or
-  conflicts, and it does not update.
-- Only someone who can install the app on a repository can link it. A repository in an
-  organization needs an owner of that organization to install it.
-- Migration 8 dropped the links made by typing a name under D-046.
-- Neither the pane nor the cards name a team asked to review. Reading a team needs `read:org` from
-  the OAuth App, and a query that asked for one without it made GitHub refuse the whole poll.
+Cost: the cards are the first messages the server writes, not end-to-end encrypted, and a changed
+server could write fake ones; their links still lead only to github.com. The owner registers a
+GitHub App with a public webhook address. A card does not update. Only someone who can install the
+app can link a repository. Cards and pane name no requested team: reading one needs `read:org`, and
+a query that asked without it made GitHub refuse the whole poll.
 
 ### D-060: The pane names an organization that hides its pull requests
 
@@ -1416,28 +1137,25 @@ Accepted 2026-11-03 in #34.
 An organization that restricts OAuth Apps hides its pull requests from the token until one of its
 owners approves WebChat (D-033). GitHub still answers the poll with the other pull requests, and
 adds one FORBIDDEN error for each one it left out. The error's message names the organization;
-nothing else in the answer does. `graphql` in `server/github.ts` now returns those errors next to
-the data, and the poll keeps the organizations they name in the stored lists as
-`hiddenOrganizations`. The pane names them in a banner that links to GitHub's page on asking the
-owners for approval, and the connect card says an organization may need to approve the app.
+nothing else in the answer does. `graphql` in `server/github.ts` returns those errors next to the
+data, and the poll keeps the organizations they name in the stored lists as `hiddenOrganizations`.
+The pane names them in a banner that links to GitHub's page on asking the owners for approval, and
+the connect card says an organization may need to approve the app.
 
-Why: course repositories often live in an instructor's organization, and GitHub turns the
-restriction on for new organizations. Without the banner the pane said "You have no open pull
-requests" to a student whose pull requests were all hidden, and nothing told them that only an
-owner could change that. Only the owner's approval can fix it, so the pane's job is to say so and
-to whom.
+Why: course repositories often live in an instructor's organization, and only the owner's approval
+can fix a hidden list, so the pane says so and to whom.
 
-Cost: the server recognizes the restriction by the text of GitHub's error message, which no
-schema fixes. If GitHub rewords it, the banner stops showing and the pull requests go silently
-missing again, as before. An organization that enforces SAML single sign-on hides its pull
-requests the same way, but its error names no organization, so the pane says nothing for it. The
-banner was built against GitHub's answer as reports describe it, not against a real organization.
+Cost: the server recognizes the restriction by the text of GitHub's error message, which no schema
+fixes. If GitHub rewords it, the banner stops showing. An organization that enforces SAML single
+sign-on hides its pull requests the same way, but its error names no organization, so the pane says
+nothing for it. The banner was built against GitHub's answer as reports describe it, not against a
+real organization.
 
 ## Engineering process
 
 ### D-035: Pull requests, squash merges and plain commit messages
 
-Accepted 2026-11-01 in #1 and #2.
+Accepted 2026-11-01 in #1.
 
 Work happens on a branch and reaches main through a pull request. Main is squash-merged, and the
 squash commit's subject is the pull request title followed by "(#N)". Commit messages follow
@@ -1459,10 +1177,8 @@ names. Other sessions check the same list before they start. A draft that is aba
 so its item frees up. Decision and roadmap numbers stay sequential; a pull request that merges
 second renumbers its own entry when it resolves conflicts.
 
-Why: since #12, AGENTS.md said to open the draft "as soon as the branch exists", but every session
-read that as "once there is something to show". On 2026-11-03, #35 and #36 both fixed K-9: each session opened
-its draft at the end, three minutes apart, and the second one's work was thrown away. GitHub's open
-pull requests are the only state every session can see, so the claim has to be there, and first.
+Why: GitHub's open pull requests are the only state every session can see, so the claim has to be
+there, and first.
 
 Cost: every pull request starts with an empty commit, which the squash merge drops. A claim depends
 on the item id appearing in the branch name and the pull request text, so the script insists on
@@ -1506,63 +1222,46 @@ without updating this file misleads the next agent.
 Accepted 2026-11-02 in #25.
 
 WebChat follows Semantic Versioning 2.0.0. While it is in early development, the major version
-stays 0, and any release may change anything. The first release is 0.1.0, as the SemVer FAQ
-suggests.
+stays 0, and any release may change anything. A version speaks to the people who run WebChat: the
+settings and deploy steps in the README, the Node version `engines` pins (D-013), the stored data
+that migrations upgrade in place (D-010), and tabs that still run the previous build. A change is
+breaking when the person who runs WebChat must act during the upgrade, or when stored data or open
+tabs stop working. The type in a pull request title sets the next version, because the squash merge
+makes the title the commit subject on main (D-035):
 
-A version speaks to the people who run WebChat. What they rely on across an upgrade: the settings
-and deploy steps in the README, the Node version `engines` pins (D-013), the data already stored,
-which the migrations upgrade in place (D-010), and tabs that still run the previous build. A change
-is breaking when the person who runs WebChat must act during the upgrade, such as setting a new
-variable, or when stored data or open tabs stop working.
-
-The type in a pull request title sets the next version, because the squash merge makes the title
-the commit subject on main (D-035):
-
-- `fix` bumps the patch, as in 0.1.0 to 0.1.1.
-- `feat` bumps the minor, as in 0.1.0 to 0.2.0.
+- `fix` bumps the patch, and `feat` bumps the minor.
 - A breaking change, marked with `!` after the type or a `BREAKING CHANGE:` footer, also bumps the
-  minor while the version is below 1.0.0. `bump-minor-pre-major` in `release-please-config.json`
-  does this.
+  minor below 1.0.0 (`bump-minor-pre-major` in `release-please-config.json`).
 - Other types, such as `docs`, `ci` and `chore`, make no release on their own.
 
-Release Please runs on every push to main, from `.github/workflows/release-please.yml`. It keeps one
+Release Please runs on every push to main (`.github/workflows/release-please.yml`). It keeps one
 release pull request open, which updates `package.json`, `package-lock.json` and `CHANGELOG.md`.
-Merging it tags that commit as `v0.y.z` and publishes a GitHub release. Vercel does not build that
-commit (D-058). Nobody edits the version or the changelog by hand, so parallel pull requests never
-conflict over them. Reaching 1.0.0 is the owner's call (Q-4). A commit with `Release-As: 1.0.0` in
-its body makes the release pull request propose that version.
+Merging it tags `v0.y.z` and publishes a GitHub release; Vercel does not build that commit (D-058).
+Nobody edits the version or the changelog by hand. Reaching 1.0.0 is the owner's call (Q-4); a
+commit with `Release-As: 1.0.0` in its body proposes it.
 
 Cost: a title with the wrong type gives the wrong version and changelog line. To fix one before the
-release, add a `BEGIN_COMMIT_OVERRIDE` section to the merged pull request's body. The Vercel
-deployment runs main, so it is usually ahead of the latest version. Release Please opens its pull
-request with the workflow's `GITHUB_TOKEN`, so the repository setting "Allow GitHub Actions to
-create and approve pull requests" must be on, and that pull request starts no other workflow.
+release, add a `BEGIN_COMMIT_OVERRIDE` section to the merged pull request's body. Release Please
+opens its pull request with `GITHUB_TOKEN`, so the setting "Allow GitHub Actions to create and
+approve pull requests" must be on, and that pull request starts no other workflow.
 
 ### D-058: Vercel skips builds that ship the same app
 
-Accepted 2026-11-02 in #30, changed in #66.
+Accepted 2026-11-02 in #30.
 
-Vercel builds every push to main (D-041). A release commit from Release Please changes only
-`package.json`, `package-lock.json` and `CHANGELOG.md`, and nothing at runtime reads them. Its build
-shipped the same app again, from Hobby build minutes. `scripts/ignore-build.sh`, the Ignored Build
-Step in `vercel.json`, skips a commit whose message starts with `chore(main): Release `.
-
-Since #66 it also skips a commit when nothing outside `docs/`, `test/`, `.github/`, `scripts/` and
-Markdown files changed since the last deployment, whose commit Vercel names in
-`VERCEL_GIT_PREVIOUS_SHA`. Such a deploy shipped the same app too, and made every open tab check the
-new build (K-36). When that commit is unknown or not in Vercel's shallow clone, the build runs.
-
-The release pull request still waits for the owner. It collects every `feat` and `fix` since the
-last release, so the owner merges it when a set of changes is worth a version. A workflow step that
-merged it after every push was tried in #30 and set aside. Every `feat` would have bumped the minor
-at once. A wrong type in a title would have shipped before `BEGIN_COMMIT_OVERRIDE` could fix it. And
-the workflow needed a second Release Please run to tag, because a push made with `GITHUB_TOKEN`
-starts no workflow run.
+Vercel builds every push to main (D-041). `scripts/ignore-build.sh`, the Ignored Build Step in
+`vercel.json`, skips a commit whose message starts with `chore(main): Release `. It also skips a
+commit when nothing outside `docs/`, `test/`, `.github/`, `scripts/` and Markdown files changed
+since the last deployment, whose commit Vercel names in `VERCEL_GIT_PREVIOUS_SHA`, so those deploys
+do not make every open tab check a new build (K-36). When that commit is unknown or not in Vercel's
+shallow clone, the build runs. The release pull request waits for the owner: it collects every
+`feat` and `fix` since the last release, so the owner merges it when a set of changes is worth a
+version. Merging it automatically would bump the minor at every `feat`, ship a wrong title type
+before `BEGIN_COMMIT_OVERRIDE` could fix it, and need a second Release Please run to tag.
 
 Cost: Vercel still clones the repository and records a canceled deployment for each release commit.
-A commit on main whose message starts like a release commit never deploys, so only Release Please
-may use that title. A commit that changes only the skipped paths never deploys either, so a file
-there that the app starts to read at runtime must move out of them first.
+Only Release Please may use a title that starts like a release commit. A file in a skipped path that
+the app starts to read at runtime must move out of those paths first.
 
 ### D-059: Message content is padded to a few fixed sizes
 
@@ -1571,22 +1270,17 @@ Accepted 2026-11-03 in #33.
 Before `encryptMessage` encrypts the content, it pads it to the smallest power of two from 256
 bytes that holds it, so a ciphertext is 256, 512, 1,024 bytes and so on, plus the AES-GCM tag. The
 server learns which band a message falls in, not its length. A reaction, a reaction taken back and
-a short message all land in the first band and look the same, which is what the README promises
-(K-8). The padding is one 0x80 byte and then zeros, inside the AES-GCM ciphertext, so it is
-authenticated with the content. The content is JSON, which ends with `}` and never holds a raw
-zero byte, so `decryptContent` tells padded content from the content of messages sent before this
-by the last byte, and both still open. Nothing in the signed header changes, so every old
-signature still verifies (D-016). A new band at the top raised `LIMITS.ciphertextLength` to the
-32 KB band.
+a short message all land in the first band and look the same, which the README promises (K-8). The
+padding is one 0x80 byte and then zeros, inside the AES-GCM ciphertext, so it is authenticated with
+the content. The content is JSON, which ends with `}` and never holds a raw zero byte, so
+`decryptContent` tells padded content from the unpadded content of older messages by the last
+byte, and both still open. Nothing in the signed header changes (D-016). `LIMITS.ciphertextLength`
+is the 32 KB band. Doubling bands reveal less than a fixed step, which shows a long message's
+length to within the step, and cost at most half the band in padding.
 
-Doubling bands were chosen over a fixed step, such as 256 bytes, because a step still shows a long
-message's length to within the step. A few bands reveal less and cost at most half the band in
-padding.
-
-Cost: every message costs at least 272 bytes of ciphertext, and a message from about 1,000 to
-1,800 bytes of content, which fitted in a push before, now pads past the 3,000-byte push payload
-(D-017) and shows "New message" on the lock screen. Messages sent before this change keep their
-exact lengths in the database.
+Cost: every message costs at least 272 bytes of ciphertext, and a message of about 1,000 to 1,800
+bytes of content now pads past the 3,000-byte push payload (D-017) and shows "New message" on the
+lock screen.
 
 ### D-063: A check fails a pull request that repeats a decision or roadmap id
 
@@ -1598,16 +1292,13 @@ The `doc-ids` workflow (`.github/workflows/doc-ids.yml`) runs on every pull requ
 `sort | uniq -d`, so it adds no dependency. The error names the file and the repeated id, and the
 pull request that merges second renumbers its own entry, as AGENTS.md says.
 
-Why: sessions take "the next free number" in parallel, and the numbers raced twice on 2026-11-03.
-Git does not see it as a conflict when the two entries land in different places in the file, so the
-repeat reached main unless someone read both pull requests. A check on the pull request finds it
-before the merge.
+Why: sessions take "the next free number" in parallel, and git sees no conflict when the two
+entries land in different places in the file.
 
 Cost: the check sees only the pull request's merge with main at the time it runs. Two open pull
-requests that take the same number both pass until one merges, and GitHub does not run the second
-one's check again on its own. The second pull request has to be updated from main first, which
-runs the check. Mark the check required in the branch rules, with "Require branches to be up to
-date", or a red result will not stop the merge.
+requests that take the same number both pass until one merges, and the second has to be updated from
+main to run the check again. Mark the check required in the branch rules, with "Require branches to
+be up to date", or a red result will not stop the merge.
 
 ### D-076: Fix pull requests edit the roadmap in place, and CI runs the checks
 
@@ -1619,22 +1310,38 @@ both for every finished item at once. New decision entries go at the end of thei
 and `.gitattributes` merges `docs/decisions.md` with git's union driver. `scripts/claim.sh` takes a
 decision number as a third argument and refuses one that an open pull request already reserves.
 `.github/workflows/ci.yml` runs typecheck, the tests and the build on every pull request, on main,
-and in the merge queue. (#55)
+and in the merge queue.
 
-Why: on 2026-11-03, thirteen fixes opened at once, and twelve of them conflicted with main before
-they could merge, eleven only in the docs. Each one appended a row at the same end of the Done
-table, added an entry at the same place in Done, and removed its own entry from Known issues next
-to where another had removed its own. Each merge took a merge of main, a resolve, a local test run
-and a wait for CI, because the only check on a pull request was doc-ids. A status line changed in
-place touches different lines for different items, so those merges go through clean. The union
-driver is safe for `decisions.md` because entries are never deleted. It is not used for the
-roadmap, where entries move: union would restore what one side removed.
+Why: a status line changed in place touches different lines for different items, so parallel merges
+go through clean. The union driver is safe for `decisions.md` because entries are never deleted. It
+is not used for the roadmap, where entries move: union would restore what one side removed.
 
 Cost: the Done section and its table lag behind until the next housekeeping pull request, so the
 status lines are the current index. The union driver can interleave two entries added at the same
 place in an odd order, which the next edit tidies. A merge queue is a repository setting, so the
 owner turns it on and requires the `checks` job; until then CI runs, but merges are not
 serialized.
+
+### D-090: Documents say the current state, and an area's rules load with its code
+
+Accepted 2026-11-05 in #97.
+
+AGENTS.md holds only what the code cannot say: where the knowledge lives, the commands, the rules
+that must hold, and the process. It has no map of the code; agents read the repository. The
+constraints of each area live in `.claude/rules/<area>.md` behind a `paths` filter, one line per
+constraint ending in its decision number, so Claude Code loads them when the area's files are
+edited and any other agent reads the one file for its area. A decision entry states the decision
+as it stands, why, and the cost, in at most 12 lines; a change rewrites the entry and git keeps the
+history. A finished roadmap item becomes one row in the Done table and its entry goes. The pull
+request template asks how the change was tested and how to undo it.
+
+Why: on 2026-11-05 the three documents an agent was told to read came to about 55,000 tokens, and
+entries narrated every pull request that touched them, so agents met several versions of the truth
+and picked one. The Claude Code team keeps its shared instruction file near two thousand tokens,
+scopes area rules by path, and rewrites instead of appending.
+
+Cost: how a decision changed is in git history, not in the entry. A rules file and the log can
+drift apart, and the doc-ids check does not read the rules files.
 
 ## Superseded
 
@@ -1645,38 +1352,18 @@ that replaced each one instead.
 
 Superseded by D-039. Accepted 2026-11-01 in #2.
 
-Nobody can leave a project or be removed from one yet. A removed member would still hold every
-channel key, so removal without key rotation would only stop the server from sending them new
-messages. Groups also cannot take new members after they are created; projects can.
-
-Cost: a mistaken add cannot be undone in the app (roadmap R-002), and a teammate who joins late
-needs a new group (roadmap R-003).
+Nobody could leave a project or be removed from one, because a removed member would still hold
+every channel key. Groups could not take new members after creation. D-039 replaced it, and D-044
+later added key rotation on leaving.
 
 ### D-046: New pull requests in a linked repository are shared by the author's browser
 
 Superseded by D-050. Accepted 2026-11-01 in #14.
 
-A project's owner links GitHub repositories to the project, each with a channel. When a member's
-poll finds a pull request of theirs in a linked repository that just became ready for review,
-opened as ready or moved out of draft, the server queues it for that member. Their page claims it
-and posts the same card as the share button (D-042), marked as automatic. Every card, shared by
-hand or not, names who still has to review and who is assigned, as GitHub logins, and shows the
-viewer's own login as "you". The share button stays.
-
-Why: the server holds no chat key (D-015), so it cannot write an encrypted, signed message into a
-channel. The author's browser can, so the card stays an ordinary message that only members read.
-The author's own poll already sees the pull request, so WebChat reads nothing new from GitHub and
-shares only what the author could share by hand. The claim lets one tab post it. GitHub drops a
-reviewer from the review requests once they review, so the list is who still has to. A card the
-page posts on its own leaves the author's read pointer where it was, because the author has not
-seen the channel (`auto` in `SendMessageInput`).
-
-Cost: only members who connected GitHub get their pull requests shared; anyone else's needs the
-share button. A card goes out when the author's page next loads pull requests: within a minute
-while a tab is open, otherwise when they next open WebChat. The server learns which repositories a
-project links and which pull requests went into which channel. Everyone in the project sees each
-shared title, even without access to the repository. Reviewers show as GitHub logins, not WebChat
-names, and a card does not update when reviewers change later.
+When a member's poll found their pull request in a linked repository that just became ready for
+review, the server queued it and the author's page posted the card as the share button does (D-042).
+The server holds no chat key (D-015), so only a browser could write it. D-050 replaced this with
+cards that the GitHub App's webhooks post.
 
 ### D-084: Messages are one feed, not bubbles
 
@@ -1684,30 +1371,5 @@ Reverted on 2026-11-05: the owner prefers bubbles to a linear feed, so #78 was r
 R-023 is dropped. Was: Proposed 2026-11-05 in #78, step 2 of the move to a Slack-like look
 (R-022 to R-026).
 
-Every message renders the same way, in one column: the sender's avatar in a gutter on the left, the
-sender's name and time on one line, the text below. Nothing aligns right, and the viewer's own
-messages have no colored bubble. Messages from the same sender within 5 minutes, on the same day,
-share one name and avatar; a grouped message shows its time in the gutter while the pointer rests
-on it. A quote is a block quote above the text, with the sender's color on its bar, and a tap still
-jumps to the original. Message text renders with the Markdown renderer that docs use, so bold, code,
-lists and links in a message look as they do in a doc; a single line break stays a line break. The
-reply and react tools sit in a toolbar at the row's edge, shown on hover and on keyboard focus. A
-screen without hover opens the same tray with a long press of 450 ms, in place of the tap it took
-before: in a full-width row a tap would too easily hit a link or start a selection. Day separators,
-the urgent label, pull request cards, the encryption notice, reactions and the failed-send row stay.
-
-Why: left and right bubbles, with a colored bubble for your own messages, are the strongest
-messenger signal on the page, and the owner moves WebChat toward the look of a work tool (D-001,
-R-023). One column also leaves room for Markdown, which a narrow bubble did not.
-
-The sender name, the time and the grouping come from fields the page already has, so the server
-sees nothing new, and a message's signature is unchanged (D-016). Own messages keep their ticks, in
-a column at the feed's edge on every own message, until the owner settles the read-tick question
-in R-023.
-
-Cost: multiple spaces and leading spaces in a message collapse, as Markdown does, where the bubble
-kept them. A quote shows the original's Markdown as typed, with its asterisks and backticks. The
-long-press menu of a phone, such as copy or open link, no longer opens on a message, because the
-tray opens instead; a long press on a link still opens the link's menu where the browser offers
-it. The hover toolbar covers the ticks of a hovered own message. Keyboard users reach the tools by
-tabbing through the feed, one pair of buttons per message.
+Messages would render in one column with an avatar gutter, with no colored own-message bubble. The
+change was reverted, so messages stay in bubbles and no decision replaced it.

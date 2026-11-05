@@ -492,9 +492,10 @@ docs/     Decisions and roadmap, the source of truth for anyone changing the cod
 .github/  The Release Please workflow, which versions and tags releases
 ```
 
-Before you change the code, read [AGENTS.md](AGENTS.md). It links to
-[docs/decisions.md](docs/decisions.md), which records why the code is the way it is, and to
-[docs/roadmap.md](docs/roadmap.md), which lists planned work, known issues and open questions.
+Before you change the code, read [AGENTS.md](AGENTS.md). It points to `.claude/rules/`, which
+holds the constraints of each area of the code, to [docs/decisions.md](docs/decisions.md), which
+records why the code is the way it is, and to [docs/roadmap.md](docs/roadmap.md), which lists
+planned work, known issues and open questions.
 
 ## Limits
 
