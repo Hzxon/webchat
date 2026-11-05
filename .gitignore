@@ -11,5 +11,6 @@ data/
 !.env.example
 .vercel
 
-# Local Claude Code tooling
-.claude/
+# Local Claude Code tooling, except the rules of each area, which every agent reads (D-090)
+.claude/*
+!.claude/rules/
