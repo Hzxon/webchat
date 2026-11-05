@@ -562,26 +562,43 @@ interface Settings {
   permissions?: { blockReadsOutsideWorkingDirectories?: boolean };
 }
 
+/** A settings file Claude Code reads, and the folder a relative path in it counts from. */
+type SettingsFile = [file: string, base: string];
+
+const MANAGED =
+  process.platform === 'darwin'
+    ? '/Library/Application Support/ClaudeCode/managed-settings.json'
+    : process.platform === 'win32'
+      ? 'C:\\Program Files\\ClaudeCode\\managed-settings.json'
+      : '/etc/claude-code/managed-settings.json';
+
 /**
- * Why the model's shell could read a secret, from Claude Code's settings, or undefined when it
- * cannot. A plugin cannot turn the sandbox on (D-092), so runs wait for the owner to.
+ * The files a session in the project reads, highest precedence first. A relative path counts from
+ * the project in its settings, from ~/.claude in the user's.
  */
-export async function sandboxProblem(projectDir: string, secrets: string[]) {
-  const home = os.homedir();
-  const claudeDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(home, '.claude');
-  const managed =
-    process.platform === 'darwin'
-      ? '/Library/Application Support/ClaudeCode/managed-settings.json'
-      : process.platform === 'win32'
-        ? 'C:\\Program Files\\ClaudeCode\\managed-settings.json'
-        : '/etc/claude-code/managed-settings.json';
-  // Highest precedence first. A relative path counts from the project in its settings, from ~/.claude in the user's.
-  const sources: Array<[string, string]> = [
-    [managed, path.dirname(managed)],
+function sessionSettings(projectDir: string): SettingsFile[] {
+  const claudeDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
+  return [
+    [MANAGED, path.dirname(MANAGED)],
     [path.join(projectDir, '.claude', 'settings.local.json'), projectDir],
     [path.join(projectDir, '.claude', 'settings.json'), projectDir],
     [path.join(claudeDir, 'settings.json'), claudeDir],
   ];
+}
+
+/** The files a `claude -p --restricted` run reads: managed settings, then the one it got with --settings (D-097). */
+export const restrictedSettings = (file: string): SettingsFile[] => [
+  [MANAGED, path.dirname(MANAGED)],
+  [file, path.dirname(file)],
+];
+
+/**
+ * Why the model's shell could read a secret, from the Claude Code settings it runs with, or
+ * undefined when it cannot. A plugin cannot turn the sandbox on in the owner's session (D-092),
+ * so runs there wait for the owner to.
+ */
+export async function sandboxProblem(projectDir: string, secrets: string[], sources = sessionSettings(projectDir)) {
+  const home = os.homedir();
   const settings = await Promise.all(
     sources.map(async ([file, base]) => ({ base, json: (JSON.parse(await fs.readFile(file, 'utf8').catch(() => '{}')) ?? {}) as Settings })),
   );

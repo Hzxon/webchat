@@ -1,18 +1,21 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { after, before, describe, mock, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Api } from '../agent/api.ts';
+import { claudeArgs, claudeSettings } from '../agent/claude.ts';
 import { AgentClient, type OpenedMessage } from '../agent/client.ts';
-import { doorbellOf, guard, markMonitor, Plugin, sandboxProblem, startedForWebChat, type RunState } from '../agent/plugin.ts';
-import { ADAPTERS, createRunner } from '../agent/runner.ts';
+import { doorbellOf, guard, markMonitor, Plugin, restrictedSettings, sandboxProblem, startedForWebChat, type RunState } from '../agent/plugin.ts';
+import { ADAPTERS, createRunner, start, type Final } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
@@ -22,6 +25,7 @@ import type { ChatKeyInput, CreateProjectResponse, DocDTO, PairingDTO, RunDTO, R
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
 const KDF_ROUNDS = 1000;
 const sh = promisify(execFile);
+const git = (dir: string, ...args: string[]) => sh('git', ['-C', dir, '-c', 'user.name=Claude', '-c', 'user.email=claude@example.com', ...args]);
 
 /** Stands in for a coding agent: keeps the brief it was given as a commit, and prints a result line. */
 const FAKE_AGENT = `#!/usr/bin/env node
@@ -411,8 +415,13 @@ describe('agent client (R-027)', () => {
 
   test('reads the final word of each coding agent from its own output lines', () => {
     const last = (agent: keyof typeof ADAPTERS, lines: string[]) =>
-      lines.reduce<ReturnType<(typeof ADAPTERS)['claude']['result']>>((kept, line) => ADAPTERS[agent].result(line) ?? kept, undefined);
-    assert.deepEqual(last('claude', ['not json', '{"type":"system"}', '{"type":"result","result":"Done.","is_error":false}']), { text: 'Done.', error: false });
+      lines.reduce<Final | undefined>((kept, line) => ADAPTERS[agent].result(line) ?? kept, undefined);
+    assert.deepEqual(last('claude', ['not json', '{"type":"system"}', '{"type":"result","result":"Done.","is_error":false,"session_id":"s-1","structured_output":{"reply":"Hi"}}']), {
+      text: 'Done.',
+      error: false,
+      session: 's-1',
+      answer: { reply: 'Hi' },
+    });
     assert.deepEqual(
       last('codex', [
         '{"type":"item.completed","item":{"type":"reasoning","text":"hmm"}}',
@@ -446,7 +455,6 @@ describe('agent client (R-027)', () => {
     const project = path.join(home, 'app');
     await sh('git', ['init', '-q', '--bare', '-b', 'main', origin]);
     await sh('git', ['clone', '-q', origin, project]);
-    const git = (dir: string, ...args: string[]) => sh('git', ['-C', dir, '-c', 'user.name=Claude', '-c', 'user.email=claude@example.com', ...args]);
     await fs.writeFile(path.join(project, 'README.md'), '# App\n');
     await git(project, 'add', 'README.md');
     await git(project, 'commit', '-q', '-m', 'Start');
@@ -736,8 +744,113 @@ describe('agent client (R-027)', () => {
       // The narrower rule decides.
       await settings({ sandbox: { enabled: true, filesystem: { denyRead: [dir], allowRead: [data] } } });
       assert.match((await sandboxProblem(project, [data])) ?? '', /can read/);
+      // A background Claude reads only managed settings and the plugin's file, so the project cannot reopen the secrets (R-035).
+      const file = path.join(dir, 'claude.json');
+      await fs.writeFile(file, JSON.stringify(claudeSettings({ secrets: [data], npmCache: path.join(dir, 'npm'), guard: 'true' })));
+      assert.equal(await sandboxProblem(project, [data], restrictedSettings(file)), undefined);
+      // Its reads stop at the working directories, so only a folder inside them needs a rule of its own.
+      const inside = path.join(project, 'keys');
+      assert.match((await sandboxProblem(project, [data, inside], restrictedSettings(file))) ?? '', /can read/, 'a folder in the project the file leaves out');
     } finally {
       restore();
     }
   });
 });
+
+// Claude Code's own behaviour, which the plugin relies on (R-035, D-097). It costs a few cents of
+// the account `claude` is signed in to, so it runs only when asked. Run it after each Claude Code
+// update: a -p run drops, without a word, a settings file holding a value it no longer accepts.
+test(
+  'runs a background Claude restricted, sandboxed and guarded, and resumes its session (R-035)',
+  { skip: !process.env.WEBCHAT_REAL_CLAUDE && 'set WEBCHAT_REAL_CLAUDE=1 to run it with your claude', timeout: 10 * 60_000 },
+  async (t) => {
+    const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-claude-')));
+    const data = path.join(dir, 'data');
+    const project = path.join(dir, 'app');
+    const worktree = path.join(project, '.claude', 'worktrees', 'k-1');
+    const canary = `CANARY-${randomUUID()}`;
+    await fs.mkdir(path.join(project, '.claude'), { recursive: true });
+    await fs.mkdir(data);
+    await fs.writeFile(path.join(data, 'canary.txt'), canary);
+    // A repository's settings and MCP servers, which a restricted run must not load.
+    await fs.writeFile(
+      path.join(project, '.claude', 'settings.json'),
+      JSON.stringify({
+        hooks: { SessionStart: [{ hooks: [{ type: 'command', command: `touch ${path.join(dir, 'hook-ran')}` }] }] },
+        sandbox: { filesystem: { allowRead: [data] } },
+      }),
+    );
+    await fs.writeFile(path.join(project, '.mcp.json'), JSON.stringify({ mcpServers: { evil: { command: 'touch', args: [path.join(dir, 'mcp-ran')] } } }));
+    await git(project, 'init', '-q');
+    // The sandboxed shell commits with plain git, so the repository needs a name to commit under.
+    await git(project, 'config', 'user.name', 'Claude');
+    await git(project, 'config', 'user.email', 'claude@example.com');
+    await git(project, 'add', '-A');
+    await git(project, 'commit', '-q', '-m', 'Start');
+    await git(project, 'worktree', 'add', '-q', '-b', 'agent/k-1', worktree);
+    // A link in the worktree, which the file tools follow and the guard must catch.
+    await fs.symlink(data, path.join(worktree, 'link'));
+
+    const settings = path.join(dir, 'claude.json');
+    const tsx = fileURLToPath(import.meta.resolve('tsx'));
+    const hook = `"${process.execPath}" --import "${tsx}" "${fileURLToPath(new URL('../agent/mcp.ts', import.meta.url))}" guard`;
+    await fs.writeFile(settings, JSON.stringify(claudeSettings({ secrets: [data], npmCache: path.join(dir, 'npm'), guard: hook })));
+    assert.equal(await sandboxProblem(worktree, [data], restrictedSettings(settings)), undefined);
+    // The guard finds the plugin's folder where Claude Code tells a plugin's programs.
+    t.after(setEnv({ CLAUDE_PLUGIN_DATA: data }));
+
+    const lines: string[] = [];
+    const session = randomUUID();
+    const answer = { type: 'object', properties: { reply: { type: 'string' } }, required: ['reply'] };
+    const turn = (input: string, resume: boolean) =>
+      start(
+        'claude',
+        [...claudeArgs({ settings, session, resume, answer }), '--model', 'haiku', '--max-budget-usd', '1'],
+        worktree,
+        AbortSignal.timeout(5 * 60_000),
+        (line) => (lines.push(line), ADAPTERS.claude.result(line)),
+        input,
+      );
+    const first = await turn(
+      [
+        'This checks a sandbox. Do these steps in order, one tool call each, and do not retry one that fails. Steps 1 to 3 and 6 are meant to fail.',
+        `1. Run with the Bash tool: cat ${path.join(data, 'canary.txt')}`,
+        '2. Use the Read tool on link/canary.txt',
+        "3. Run with the Bash tool: curl -sS -m 8 -o /dev/null -w '%{http_code}' https://example.com",
+        "4. Run with the Bash tool: curl -sS -m 8 -o /dev/null -w '%{http_code}' https://registry.npmjs.org/left-pad",
+        '5. Run with the Bash tool: echo hi > notes.txt && git add notes.txt && git commit -q -m "Add notes"',
+        '6. Run with the Bash tool: ls ~/Library/Keychains',
+        '7. Run with the Bash tool: npm view left-pad version',
+        '8. Keep the word PELICAN in mind for later.',
+        'Then put one line per step in reply.',
+      ].join('\n'),
+      false,
+    );
+    assert.equal(first.session, session);
+    assert.ok(first.answer, 'the turn ends with the JSON answer');
+
+    // What each tool call returned, by the command or file it named.
+    const events = lines.map((line) => JSON.parse(line) as { type: string; message?: { content?: Array<Record<string, unknown>> } });
+    const blocks = events.flatMap((e) => (e.type === 'assistant' || e.type === 'user' ? (e.message?.content ?? []) : []));
+    const resultOf = (named: string) => {
+      const use = blocks.find((b) => b.type === 'tool_use' && JSON.stringify(b.input).includes(named));
+      assert.ok(use, `Claude tried: ${named}`);
+      return JSON.stringify(blocks.find((b) => b.type === 'tool_result' && b.tool_use_id === use.id)?.content);
+    };
+    assert.match(resultOf('cat '), /Operation not permitted/, 'the sandbox keeps the shell from the secrets, whatever the project allows');
+    assert.match(resultOf('link/canary.txt'), /secrets the WebChat plugin keeps/, 'the guard hook runs, and follows the link');
+    assert.match(resultOf('example.com'), /deny network-outbound/, 'the shell reaches no other host');
+    assert.match(resultOf('registry.npmjs.org'), /200/, 'the shell reaches the registry');
+    assert.ok(!lines.some((line) => line.includes(canary)), 'the secret never reaches the model');
+    assert.match((await git(worktree, 'log', '--format=%s', '-1')).stdout, /Add notes/, 'the sandboxed shell commits in the worktree');
+    assert.equal(await fs.stat(path.join(dir, 'hook-ran')).catch(() => null), null, "the repository's hook never runs");
+    assert.equal(await fs.stat(path.join(dir, 'mcp-ran')).catch(() => null), null, "the repository's MCP server never runs");
+    // gh keeps the owner's token in the keychain, which the shell reaches only through these files (K-54).
+    assert.match(resultOf('Library/Keychains'), /Operation not permitted/, 'the shell cannot read the home folder, keychain included');
+    assert.match(resultOf('npm view'), /\d+\.\d+\.\d+/, "npm works with a cache and no config of the owner's");
+
+    const second = await turn('Which word did the first message ask you to keep in mind? Put only that word in reply.', true);
+    assert.equal(second.session, session);
+    assert.match(String((second.answer as { reply?: string } | undefined)?.reply), /PELICAN/i, 'the turn resumes the session');
+  },
+);

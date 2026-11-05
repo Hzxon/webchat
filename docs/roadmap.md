@@ -255,7 +255,8 @@ messages go. The menu has been tried in a browser with two accounts.
 
 ### R-035: An Agents pane where the owner talks with their agents
 
-Status: Planned (D-097). Designed in #112 on 2026-11-05, after K-49.
+Status: In progress (D-097). Designed in #112 on 2026-11-05, after K-49. Step 1, the spike, is
+#114 on branch `claude/r-035-implementation-f6ddc3`.
 
 Why: an agent only runs board cards, and only a terminal session whose monitor hears the doorbell
 starts them. Setup asks the owner to edit sandbox and permission settings by hand, and the sandbox
@@ -271,10 +272,10 @@ Scope:
   From it the owner prompts, replies, cancels, connects and removes agents. It works at 375 pixels.
 - A conversation is the owner's direct chat with the agent. A prompt is an encrypted message whose
   signed `prompt` field names the repository, and the card when there is one.
-- The plugin answers each conversation with a background `claude -p` under a settings file of its
-  own: a sandbox that blocks its keys and `gh`'s folder, with the webchat tools allowed. It posts
-  the answer, and the owner's reply resumes that session with `--resume`. The owner's own sessions
-  keep their settings, so `gh` works there.
+- The plugin answers each conversation with a background `claude -p --restricted` under a settings
+  file of its own: a sandbox that blocks its keys and `gh`'s folder. The turn ends in a JSON answer
+  that the plugin posts, and the owner's reply resumes that session with `--resume`. The owner's own
+  sessions keep their settings, so `gh` works there.
 - No doorbell and no monitor, so a session in the desktop app takes runs too. One session per
   repository still takes them (D-094). The owner edits no settings by hand.
 - A prompt may just answer, with no code. A card's conversation always uses a worktree, an
@@ -296,7 +297,10 @@ Scope:
 Order, one pull request each:
 
 1. A spike: `claude -p --settings` applies the sandbox and loads the guard hook headless, the
-   settings file reaches the plugin's sandbox check, and `--resume` continues a session.
+   settings file reaches the plugin's sandbox check, and `--resume` continues a session. It held on
+   Claude Code 2.1.318 (#114), with `--restricted`, no reads outside the working directories, a
+   cache of npm's own and a JSON answer (D-097). The guard resolves no link to a file not made yet
+   (K-55).
 2. The plugin runs cards in the background, and the doorbell goes. Cards work as before.
 3. Conversations: the `prompt` message, a Claude session per conversation, replies and resume.
 4. The Agents pane: the list, the conversations, the reply box and cancel.
@@ -315,6 +319,9 @@ Open questions:
 - A reply arrives at the next 15-second check-in. Is that fast enough, or does an open conversation
   need faster check-ins?
 - How long does a conversation wait for the owner before it fails? The proposal is 24 hours.
+- D-098 lets only a session started with `WEBCHAT_AGENT=1` take part, and the desktop app starts
+  none that way. How does a desktop session take part, as this item wants?
+- The shell reaches only the npm registry. Do projects on Yarn or pip need their registries too?
 
 ## Ideas
 
@@ -512,6 +519,37 @@ Open questions:
   leaving? A member's runtime loses the project's key when they leave (D-044).
 
 ## Known issues
+
+### K-55: The guard lets the file tools write through a link to a file not made yet
+
+Status: Open. Found in the review of the R-035 spike (#114) on 2026-11-06.
+
+The guard checks the real path of each file the file tools name (D-092). For a link whose target
+does not exist yet, `realpathSync` fails, so it checks the link's own path. The sandboxed shell can
+make such a link into a secret folder, and Write would create a file there. In the spike, Claude
+Code itself refused that write under `--restricted`, so only the second layer is missing.
+
+### K-54: A card's model can find the owner's GitHub token in the macOS keychain
+
+Status: Open. Found in the R-035 spike (#114) on 2026-11-06. R-035's step 2 fixes it for its runs.
+
+On macOS, `gh` keeps its token in the login keychain unless it was logged in with
+`--insecure-storage`, so the `~/.config/gh` that the sandbox denies (D-092) holds none. A sandboxed
+shell with the settings the README gives still found gh's keychain item in the spike. Reading it
+takes `security find-generic-password -w`, which the spike did not run, and a card could then have
+the model commit the token to the draft that teammates read. Denying `~/Library/Keychains` hid the
+item, and so did blocking reads outside the working directories. The plugin's check asks for
+neither. Until step 2, an owner on macOS adds `~/Library/Keychains` to `sandbox.filesystem.denyRead`.
+
+### K-53: The plugin takes runs where the sandbox cannot start
+
+Status: Open. Found in the R-035 spike (#114) on 2026-11-06. R-035's step 2 fixes it (D-097).
+
+The plugin takes runs once the owner's settings turn the sandbox on and deny reading its secrets
+(D-092). Where the sandbox cannot start, such as on Linux without bubblewrap, Claude Code runs
+commands unsandboxed unless `sandbox.failIfUnavailable` is true, and the check still passes. The
+model's shell could then read the owner's `gh` token. Until step 2, an owner on Linux adds
+`"failIfUnavailable": true` to the `sandbox` settings.
 
 ### K-50: Every Claude Code session checks in to WebChat
 
