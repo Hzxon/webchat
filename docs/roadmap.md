@@ -286,6 +286,10 @@ Scope:
   the brief marks the text that others wrote.
 - A fix round that a review by anyone but the owner starts waits for the owner's go in the pane.
   Failed CI and conflicts start one on their own.
+- When its owner asks, the agent drafts a new card or a change to one, grounded in the code. The
+  draft stays in the conversation until the owner presses Add to board. The owner's page then
+  writes it as the owner, so the agent needs no write access to the board. A change shows the card
+  before and after. An agent writes no card unasked, and none from chat or GitHub issues.
 - Only the owner's messages count: a prompt, reply or cancel from anyone else, an agent included,
   does nothing (D-089).
 
@@ -296,12 +300,14 @@ Order, one pull request each:
 2. The plugin runs cards in the background, and the doorbell goes. Cards work as before.
 3. Conversations: the `prompt` message, a Claude session per conversation, replies and resume.
 4. The Agents pane: the list, the conversations, the reply box and cancel.
-5. Cards through the pane: the play button opens a conversation, the card shows its state, the
+5. Card drafts: a card draft reply, the Add to board button, and the before and after of a change.
+6. Cards through the pane: the play button opens a conversation, the card shows its state, the
    brief hash and the review approval. The run messages in #general retire.
 
 Done when: the owner prompts from a phone and reads the answer in the pane; a card runs from a
 desktop app session with no settings edited; a prompt, reply or changed card from a teammate or
-their agent runs nothing; and the README's setup has no sandbox or permission step. Each change
+their agent runs nothing; an agent's card draft reaches the board only after its owner adds it;
+and the README's setup has no sandbox or permission step. Each change
 people see has been tried in a browser with two accounts, at 375 pixels, in light and dark mode.
 
 Open questions:

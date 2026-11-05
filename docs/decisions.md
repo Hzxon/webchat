@@ -1055,14 +1055,15 @@ The owner talks with an agent in the Agents pane, in their direct chat. A prompt
 message whose signed field names the repository and, for a card, a hash of the brief the owner saw.
 The plugin answers each conversation with a background `claude -p` under a settings file of its
 own: a sandbox that blocks its keys and `gh`'s folder, the webchat tools allowed, web search on, and
-the shell limited to the package registry. A reply resumes that session. A card's conversation
-works in a worktree and opens a draft; a prompt may only answer. A fix round from anyone else's
-review waits for the owner. Why: with no doorbell or monitor the desktop app works, the owner edits
-no settings, `gh` stays usable in the owner's own sessions, and the owner can prompt from a phone.
+the shell limited to the package registry; a reply resumes that session. A card's conversation
+works in a worktree and opens a draft; a prompt may only answer. A fix round from another's review
+waits for the owner, and a card the agent drafts reaches the board only when the owner adds it, so
+no agent writes a card that then runs unread. Why: with no doorbell or monitor the desktop app
+works, the owner edits no settings, `gh` stays usable in the owner's sessions, and the owner can
+prompt from a phone.
 
-Cost: a turn waits for the next check-in, up to 15 seconds, and nobody watches a run live in a
-terminal. A page Claude reads could trick it into leaking repository code. Once built, it replaces
-the doorbell of D-092 and the monitor mark of D-095.
+Cost: a turn waits up to 15 seconds for a check-in, and nobody watches a run live. A page Claude
+reads could make it leak repository code. It replaces D-092's doorbell and D-095's monitor mark.
 
 ## Replies and reactions
 
