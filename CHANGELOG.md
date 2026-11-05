@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/Hzxon/webchat/compare/v0.3.0...v0.4.0) (2026-11-05)
+
+
+### Features
+
+* **agent:** Carry the address in the pairing code ([#101](https://github.com/Hzxon/webchat/issues/101)) ([d258016](https://github.com/Hzxon/webchat/commit/d258016175742c5389e68308fcfb27a5f9cbf192))
+* **agent:** Let the owner remove an agent ([#105](https://github.com/Hzxon/webchat/issues/105)) ([ada5740](https://github.com/Hzxon/webchat/commit/ada574090b5e5729b14c2c8b7a3c762a18113fcb))
+* **agent:** Take runs in every open repository ([#104](https://github.com/Hzxon/webchat/issues/104)) ([761f4ae](https://github.com/Hzxon/webchat/commit/761f4ae46dc9d8a43f711861431c007bcdcc841d))
+
+
+### Bug Fixes
+
+* **agent:** Accept plain http on .localhost hosts ([#106](https://github.com/Hzxon/webchat/issues/106)) ([fbdf742](https://github.com/Hzxon/webchat/commit/fbdf742f67fc26fdd53cb647a36bab23a85abc23))
+
 ## [0.3.0](https://github.com/Hzxon/webchat/compare/v0.2.0...v0.3.0) (2026-11-05)
 
 
