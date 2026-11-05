@@ -3018,3 +3018,135 @@ a {
     break-inside: avoid;
   }
 }
+
+/* The Coding agents pane (D-103) */
+
+.agents-ask {
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.agents-repo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.agents-repo select {
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.agents-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agents-item {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+}
+
+@media (hover: hover) {
+  .agents-item:hover {
+    background: var(--hover);
+  }
+}
+
+.agents-item-text {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.agents-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agents-item-meta time {
+  margin-left: auto;
+}
+
+.agents-empty,
+.agents-note {
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.agents-failed {
+  box-shadow: inset 3px 0 0 var(--danger);
+  padding-left: 13px;
+}
+
+.agents-stop {
+  flex: none;
+  height: 42px;
+}
+
+.agents-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agents-ended {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agents-ended .composer-blocked {
+  flex: 1;
+  margin: 0;
+}
+
+.agents-mark {
+  position: relative;
+}
+
+/* Answers hold code, so they take more of the width, and a long line scrolls inside its block. */
+.agents-pane .bubble-line {
+  max-width: min(92%, 760px);
+}
+
+.bubble .markdown {
+  min-width: 0;
+}
+
+.bubble .markdown pre {
+  overflow-x: auto;
+}
+
+.dialog-steps {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding-left: 20px;
+  font-size: 14px;
+}

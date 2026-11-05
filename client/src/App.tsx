@@ -9,6 +9,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { ChatView } from './components/ChatView';
 import { BoardView } from './components/BoardView';
 import { DocView, RenameDialog } from './components/DocView';
+import { AgentsView } from './components/AgentsView';
 import { GithubView } from './components/GithubView';
 import { MembersDialog, type MembersTarget } from './components/MembersDialog';
 import { NewChatDialog, type NewChatMode } from './components/NewChatDialog';
@@ -82,6 +83,7 @@ function ChatLayout() {
   const active = useAppState((s) => (s.activeId === null ? undefined : s.conversations[s.activeId]));
   const push = useAppState((s) => s.push);
   const githubOpen = useAppState((s) => s.githubOpen);
+  const agentsOpen = useAppState((s) => s.agentsOpen);
   const doc = useAppState((s) => (s.docOpen === null ? undefined : s.docs[s.docOpen]));
   const board = useAppState((s) => (s.boardOpen === null ? undefined : s.projects[s.boardOpen]));
   const reposFor = useAppState((s) => s.reposFor);
@@ -92,7 +94,7 @@ function ChatLayout() {
   useEffect(fitToVisualViewport, []);
 
   return (
-    <div className={`layout ${activeId !== null || githubOpen || doc || board ? 'has-active' : ''}`}>
+    <div className={`layout ${activeId !== null || githubOpen || agentsOpen || doc || board ? 'has-active' : ''}`}>
       <Sidebar
         onNewChat={() => setDialog({ kind: 'new-chat', mode: 'person' })}
         onNewProject={() => setDialog({ kind: 'new-chat', mode: 'project' })}
@@ -106,6 +108,8 @@ function ChatLayout() {
       />
       {githubOpen ? (
         <GithubView />
+      ) : agentsOpen ? (
+        <AgentsView />
       ) : doc ? (
         <DocView key={doc.id} doc={doc} />
       ) : board ? (

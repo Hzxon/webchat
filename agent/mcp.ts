@@ -54,7 +54,6 @@ const TOOLS = [
 async function serve() {
   const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? '';
   const plugin = new Plugin({
-    server: process.env.WEBCHAT_SERVER ?? '',
     code: process.env.WEBCHAT_PAIRING_CODE ?? '',
     dataDir,
     projectDir: process.env.CLAUDE_PROJECT_DIR ?? process.cwd(),

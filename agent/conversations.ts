@@ -116,7 +116,7 @@ export class Conversations {
         // Claude may have kept the session it started, so a turn that starts afresh takes a new one.
         if (!conversation.answered) conversation.session = randomUUID();
         if (!conversation.answered && input !== conversation.prompt) conversation.prompt = `${conversation.prompt}\n\n${input}`;
-        await this.say(conversation, 'failed', stop.signal.aborted ? 'I stopped, as you asked.' : `I could not answer: ${messageOf(error)}`).catch(() => undefined);
+        await this.say(conversation, 'failed', stop.signal.aborted ? 'I stopped, as you asked.' : `I could not answer. ${messageOf(error)}`).catch(() => undefined);
       } finally {
         turns.stops.delete(stop);
         conversation.working = false;
@@ -165,17 +165,17 @@ export class Conversations {
 }
 
 /**
- * An answer as messages no longer than a message may be, cut at a line break where one is near,
- * and never inside a surrogate pair. Only the line break at a cut goes.
+ * An answer as messages no longer than a message may be, cut after a line break where one is near,
+ * and never inside a surrogate pair. Joined, they are the answer again, which the pane shows whole.
  */
 export function parts(text: string) {
   const out: string[] = [];
   let rest = text.trim() || '(No answer.)';
   while (rest.length > LIMITS.messageLength) {
-    const cut = rest.lastIndexOf('\n', LIMITS.messageLength);
+    const cut = rest.lastIndexOf('\n', LIMITS.messageLength - 1) + 1;
     if (cut > LIMITS.messageLength / 2) {
       out.push(rest.slice(0, cut));
-      rest = rest.slice(cut + 1);
+      rest = rest.slice(cut);
       continue;
     }
     const code = rest.charCodeAt(LIMITS.messageLength - 1);

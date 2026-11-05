@@ -15,7 +15,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId } from '../shared/e2ee.ts';
-import { isRepoName, type RunRequest } from '../shared/types.ts';
+import { AGENT_LEVEL, isRepoName, type RunRequest } from '../shared/types.ts';
 import { claudeArgs, claudeSettings } from './claude.ts';
 import { AgentClient, readPairing, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer } from './conversations.ts';
@@ -24,6 +24,8 @@ import { messageOf, Runs, type Runner, type RunResult } from './runs.ts';
 
 const exec = promisify(execFile);
 const gh = (args: string[]) => exec('gh', args, { maxBuffer: 32 * 1024 * 1024 }).then((r) => r.stdout.trim());
+const signedIn = () => gh(['auth', 'status', '--hostname', 'github.com']).then(() => true, () => false);
+const GITHUB = 'Cards need GitHub on this laptop: the GitHub CLI signed in with `gh auth login`, and git using it after `gh auth setup-git`.';
 
 /** Rounds of fixes one pull request gets. */
 const MAX_FIXES = 3;
@@ -34,8 +36,7 @@ const PULL_FIELDS = 'state,isDraft,headRefOid,mergeable,statusCheckRollup,review
 const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null'];
 
 export interface PluginOptions {
-  /** WebChat's address and the pairing code, from the plugin's settings. */
-  server: string;
+  /** The pairing code from the plugin's settings, after WebChat's address. */
   code: string;
   /** The plugin's own folder: the account, the lock, its Claude's settings. Neither the shell nor the file tools may read it. */
   dataDir: string;
@@ -159,7 +160,7 @@ export class Plugin {
       });
     }
     this.problem = 'Connecting to WebChat.';
-    const { server, code } = this.options.code ? readPairing(this.options.code, this.options.server) : this.options;
+    const { server, code } = this.options.code ? readPairing(this.options.code, '') : { server: '', code: '' };
     const pairedFile = path.join(dataDir, 'account.json');
     let paired = await AgentClient.load(pairedFile).catch(() => null);
     if (!paired && !code) {
@@ -181,13 +182,14 @@ export class Plugin {
     if (!client || client.pairing !== paired!.pairing) client = await paired!.copyTo(this.file('account.json'));
     this.client = client;
     client.repo = this.repo;
+    client.protocol = AGENT_LEVEL.answers;
     // The background Claude runs under the plugin's settings alone, so the owner's do not count (D-097).
     this.secrets = secretDirs(dataDir);
     const npmCache = path.join(os.tmpdir(), 'webchat-npm', path.basename(this.home));
     await fs.mkdir(npmCache, { recursive: true });
     await fs.writeFile(this.file('claude.json'), JSON.stringify(claudeSettings({ secrets: this.secrets, npmCache, guard: this.options.guard, env: process.env })));
     this.origin = await exec('git', ['-C', projectDir, 'config', '--get', 'remote.origin.url']).then((r) => r.stdout.trim(), () => '');
-    this.runs = new Runs(client, (job) => this.run(job), () => this.refusal());
+    this.runs = new Runs(client, (job) => this.run(job), () => this.cardRefusal());
     this.conversations = new Conversations(client, this.file('conversations.json'), (job) => this.converse(job));
     await this.conversations.load();
     this.watched = JSON.parse(await fs.readFile(this.file('pulls.json'), 'utf8').catch(() => '[]')) as Watched[];
@@ -195,13 +197,19 @@ export class Plugin {
     return true;
   }
 
-  /** Why this repository's runs and fixes fail before they start, or undefined. Runs asks before each claim. */
+  /** Why this repository's questions, runs and fixes fail before they start, or undefined. */
   private async refusal() {
     if (!existsSync(this.file('connected'))) return `${this.repo} is disconnected from WebChat.`;
-    if (!this.options.claude) return 'I cannot find the claude program to run cards with.';
+    if (process.platform === 'win32') return 'Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.';
+    if (!this.options.claude) return 'I cannot find Claude Code on this laptop.';
     // The background Claude's shell reads the repository's .git, where an https address can hold a login.
     if (/^https?:\/\/[^/]*@/i.test(this.origin)) return "origin's address holds a login, which my shell could read. Use an address without one.";
     return sandboxProblem(this.options.projectDir, this.secrets, restrictedSettings(this.file('claude.json')));
+  }
+
+  /** Why its runs fail before they start, which Runs asks before each claim: they also push and open drafts with this laptop's GitHub login (D-092). */
+  private async cardRefusal() {
+    return (await this.refusal()) ?? ((await signedIn()) ? undefined : GITHUB);
   }
 
   /** Checks in every 15 seconds and looks at the pull requests every minute, until the session ends the process. */
@@ -268,7 +276,9 @@ export class Plugin {
     // A link swapped in for the folder would lead the turn elsewhere, so only a real folder counts.
     if (!conversation.scratch || !(await fs.lstat(conversation.scratch).then((s) => s.isDirectory(), () => false))) {
       const dir = path.join(os.tmpdir(), 'webchat-scratch', randomUUID());
-      const base = await fetchOrigin(this.options.projectDir);
+      const base = await fetchOrigin(this.options.projectDir).catch(() => {
+        throw new Error('The laptop could not get your team’s code from GitHub. Check that it is online, then ask again.');
+      });
       await exec('git', ['init', '-q', dir]);
       await exec('git', ['-C', dir, 'fetch', '-q', '--depth', '1', this.options.projectDir, `refs/remotes/${base}`]);
       await exec('git', ['-C', dir, ...NO_HOOKS, 'checkout', '-q', '--detach', 'FETCH_HEAD']);
@@ -320,7 +330,11 @@ export class Plugin {
     await fs.mkdir(this.home, { recursive: true, mode: 0o700 });
     await fs.writeFile(this.file('connected'), '');
     this.wake();
-    return `Connected ${this.repo}. A Claude Code session open in it takes the cards you hand to this agent for it, from now on.`;
+    const paired = existsSync(path.join(this.options.dataDir, 'account.json'));
+    let next = paired ? ' Ask your agent about it in WebChat, or hand it cards on the board.' : ' Now approve the agent in WebChat, in the window that shows the code.';
+    if (!paired && !this.options.code) next = ' To pair the agent, choose Connect coding agent in WebChat, then type /plugin configure webchat@webchat here and paste the code.';
+    // Questions need no GitHub login, so connecting does not wait for one.
+    return `Connected ${this.repo}.${next}${(await signedIn()) ? '' : ` ${GITHUB}`}`;
   }
 
   private async disconnect() {
@@ -332,7 +346,7 @@ export class Plugin {
   private async status() {
     if (this.problem) return this.problem;
     const owner = this.client!.users.get(this.client!.owner!)?.displayName;
-    const sandbox = await this.refusal();
+    const sandbox = await this.cardRefusal();
     return [
       sandbox ? `Every card fails at once: ${sandbox}` : `Taking the cards that ${owner ?? 'your owner'} hands to this agent in ${this.repo}, on ${this.client!.api.baseUrl}.`,
       ...(this.runs!.running ? [`Working on ${this.runs!.running.card}.`] : []),

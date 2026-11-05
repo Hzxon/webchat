@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { ProjectDTO } from '../../../shared/types';
+import { agentOf, ownAgents, ready, THREAD_STATE, useAgentThreads } from '../agents';
 import { sound } from '../alerts';
 import { deleteAccount, deleteChannel, openConversation, previewText, signOut } from '../chat';
 import { deleteDoc } from '../docs';
@@ -22,6 +23,7 @@ import {
   PlusIcon,
   PullRequestIcon,
   SearchIcon,
+  TerminalIcon,
   Ticks,
   TrashIcon,
   UserPlusIcon,
@@ -48,6 +50,7 @@ export function Sidebar(props: SidebarProps) {
   const { onNewChat, onNewProject, onNewChannel, onAddPeople, onMembers, onRepos, onNewDoc, onRenameDoc, onNotifications } = props;
   const me = useAppState((s) => s.me);
   const conversations = useAppState((s) => s.conversations);
+  const users = useAppState((s) => s.users);
   const projects = useAppState((s) => s.projects);
   const docs = useAppState((s) => s.docs);
   const tab = useAppState((s) => s.tab);
@@ -58,10 +61,12 @@ export function Sidebar(props: SidebarProps) {
   const { chats, channels, chatUnread, projectUnread } = useMemo(() => {
     const all = Object.values(conversations);
     const chats = all.filter((c) => c.type !== 'channel');
+    // The chats with this user's agents show in their own pane (D-103), and count in the Chats tab.
+    const listed = chats.filter((c) => !agentOf({ users, me }, c));
     const channels = all.filter((c) => c.type === 'channel');
     const total = (list: ChatConversation[]) => list.reduce((sum, c) => sum + c.unread, 0);
-    return { chats, channels, chatUnread: total(chats), projectUnread: total(channels) };
-  }, [conversations]);
+    return { chats: listed, channels, chatUnread: total(chats), projectUnread: total(channels) };
+  }, [conversations, users, me]);
 
   const q = query.trim().toLowerCase();
   const sorted = useMemo(
@@ -170,6 +175,7 @@ export function Sidebar(props: SidebarProps) {
       {tab === 'chats' ? (
         <ul className="chat-list">
           {!query && <GithubListItem />}
+          {!query && <AgentsListItem />}
           {sorted.map((c) => (
             <ChatListItem key={c.id} conversation={c} />
           ))}
@@ -465,6 +471,42 @@ function GithubListItem() {
           <span className="chat-item-row">
             <span className="chat-item-preview">{preview}</span>
             {waiting > 0 && <span className="unread-badge">{waiting}</span>}
+          </span>
+        </span>
+      </button>
+    </li>
+  );
+}
+
+/** The Coding agents row, once the user has an agent (D-103). Its unread count is their agents' chats'. */
+function AgentsListItem() {
+  const users = useAppState((s) => s.users);
+  const meId = useAppState((s) => s.me?.id);
+  const open = useAppState((s) => s.agentsOpen);
+  const agents = useMemo(() => ownAgents(users, meId), [users, meId]);
+  const { chats, threads } = useAgentThreads();
+  if (agents.length === 0) return null;
+  const newest = threads[0];
+  const unread = chats.reduce((sum, c) => sum + c.unread, 0);
+  const online = agents.some((agent) => agent.agentRepos.some(ready));
+
+  return (
+    <li>
+      <button className={`chat-item ${open ? 'is-active' : ''}`} onClick={() => actions.setAgentsOpen(true)}>
+        <span className="github-mark agents-mark">
+          <TerminalIcon />
+          {online && <span className="avatar-online" aria-label="online" />}
+        </span>
+        <span className="chat-item-main">
+          <span className="chat-item-row">
+            <strong className="chat-item-title">Coding agents</strong>
+            {newest && <time className={unread > 0 ? 'has-unread' : ''}>{formatListTime(newest.last)}</time>}
+          </span>
+          <span className="chat-item-row">
+            <span className="chat-item-preview">
+              {newest ? `${THREAD_STATE[newest.state].label} · ${newest.messages[0]!.text}` : 'Ask about your code'}
+            </span>
+            {unread > 0 && <span className="unread-badge">{unread}</span>}
           </span>
         </span>
       </button>

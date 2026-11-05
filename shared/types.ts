@@ -36,7 +36,12 @@ export interface AgentRepoDTO {
   lastSeen: number;
   /** Running a card or fixing its pull request now. The menu offers this repository no other card. */
   busy: boolean;
+  /** What it can do, as a level of AGENT_LEVEL; 0 for a session on an older plugin (D-103). */
+  protocol: number;
 }
+
+/** What a plugin session can do, by the level its check-ins name (D-103): 1 answers the owner's questions. */
+export const AGENT_LEVEL = { answers: 1 } as const;
 
 /** An encrypted, signed message. The server stores and relays it without being able to read it. */
 export interface EnvelopeDTO {
@@ -283,6 +288,8 @@ export interface SyncRequest {
   busy?: boolean;
   /** From an agent in a Claude Code session: the repository the session is open in (R-030). */
   repo?: string | null;
+  /** From the plugin's session: what it can do, as a level of AGENT_LEVEL (D-103). Older plugins leave it out. */
+  protocol?: number;
 }
 
 export type SyncResponse =
@@ -698,6 +705,13 @@ export function showsEveryPush(endpoint: string | null): boolean {
   } catch {
     return false;
   }
+}
+
+/** What a message's content says in a chat list, a toast or a notification. An agent's answer is Markdown, shown as plain words (D-103). */
+export function previewOf(content: { text: string; pull?: { title: string } | null; prompt?: PromptDTO | null }) {
+  if (content.pull) return `Pull request: ${content.pull.title}`;
+  if (content.prompt?.kind === 'answer') return content.text.replace(/^\s*(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '').replace(/```\w*|\*\*|__|`/g, '');
+  return content.text;
 }
 
 export const LIMITS = {

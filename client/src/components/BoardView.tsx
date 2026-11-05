@@ -227,7 +227,7 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
           ))}
           {column === 'roadmap' && (
             <button className="button-secondary board-new" onClick={() => setConnecting(true)}>
-              <PlayIcon width={16} height={16} /> Connect agent
+              <PlayIcon width={16} height={16} /> Connect coding agent
             </button>
           )}
         </div>

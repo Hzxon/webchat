@@ -63,6 +63,10 @@ export interface State {
   boardOpen: number | null;
   /** The version of each doc this device last showed (see keystore.getDocsSeen). */
   docsSeen: Record<string, number>;
+  /** The Coding agents pane is showing instead of a chat (D-103). */
+  agentsOpen: boolean;
+  /** The conversation that pane shows, by its prompt's client id, or null for the list. */
+  agentThread: string | null;
 }
 
 const initialState: State = {
@@ -88,6 +92,8 @@ const initialState: State = {
   docOpen: null,
   boardOpen: null,
   docsSeen: {},
+  agentsOpen: false,
+  agentThread: null,
 };
 
 let state = initialState;
@@ -191,8 +197,8 @@ function withoutChats(current: State, gone: Set<number>): State {
 let localEdits = 0;
 export const localEditCount = () => localEdits;
 
-/** Shows one of the panes that take the chat's place: the chat itself, a doc, a board or the pull requests. */
-const show = (s: State, pane: Partial<State>): State => ({ ...s, activeId: null, githubOpen: false, docOpen: null, boardOpen: null, ...pane });
+/** Shows one of the panes that take the chat's place: the chat itself, a doc, a board, the pull requests or the agents. */
+const show = (s: State, pane: Partial<State>): State => ({ ...s, activeId: null, githubOpen: false, docOpen: null, boardOpen: null, agentsOpen: false, ...pane });
 
 function editChats(update: (current: State) => State) {
   localEdits++;
@@ -382,6 +388,10 @@ export const actions = {
 
   /** Shows the pull requests pane in place of the open chat, or closes it. */
   setGithubOpen: (githubOpen: boolean) => store.set((s) => (githubOpen ? show(s, { githubOpen }) : { ...s, githubOpen })),
+
+  /** Shows the Coding agents pane in place of the open chat, at a conversation or at the list, or closes it. */
+  setAgentsOpen: (open: boolean, agentThread: string | null = null) =>
+    store.set((s) => (open ? show(s, { agentsOpen: true, agentThread }) : { ...s, agentsOpen: false })),
 
   setReposFor: (reposFor: number | null) => store.set((s) => ({ ...s, reposFor })),
 

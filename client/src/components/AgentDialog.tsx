@@ -5,17 +5,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { newPairingCode } from '../../../shared/e2ee';
 import { LIMITS, PAIRING_TTL_MS, type PublicKeysDTO, type UserDTO } from '../../../shared/types';
+import { ownAgents } from '../agents';
 import { connectAgent, pairingKeys, removeAgent } from '../chat';
 import { useAppState } from '../store';
 import { Dialog } from './Dialog';
 import { presenceText } from './format';
 import { CopyRow } from './NotificationDialog';
 
+/** Adds the plugin's marketplace and installs it in one step, from Claude Code 2.1.275 on. */
+const INSTALL = '/plugin install webchat --marketplace Hzxon/webchat#plugin';
+
 export function AgentDialog({ projectId, onClose }: { projectId: number; onClose: () => void }) {
   const projects = useAppState((s) => s.projects);
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
-  const mine = useMemo(() => Object.values(users).filter((u) => u.agentOwner === meId && !u.deleted), [users, meId]);
+  const mine = useMemo(() => ownAgents(users, meId), [users, meId]);
   const [code] = useState(newPairingCode);
   const [keys, setKeys] = useState<PublicKeysDTO | null>(null);
   const [name, setName] = useState('Claude Code');
@@ -76,7 +80,7 @@ export function AgentDialog({ projectId, onClose }: { projectId: number; onClose
     setError('');
     try {
       const agent = await connectAgent(code, keys!, name.trim(), [...picked]);
-      setDone(`${agent.displayName} is connected. Hand it a card with the play button on a roadmap card.`);
+      setDone(`${agent.displayName} is connected. Ask it about your code under Coding agents, at the top of your chats, or hand it a roadmap card with the play button.`);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -91,12 +95,29 @@ export function AgentDialog({ projectId, onClose }: { projectId: number; onClose
       ) : !keys ? (
         <>
           <p className="dialog-intro">
-            Paste this code into the WebChat plugin in Claude Code, then type <code>/webchat:connect</code> in a session
-            open in a repository. Or paste it into <code>npm run agent -- pair</code>. It works once, within 10 minutes.
-            The agent becomes yours, and runs only the cards you hand to it.
+            Your coding agent is Claude Code on your laptop, with the WebChat plugin. It answers your questions about
+            your team’s code and works on the cards you hand it, and nobody else’s. It needs a Mac or Linux for now.
           </p>
-          {/* The address rides along so nobody types it (R-031). After `#`, a browser would never send the code. */}
-          <CopyRow value={`${location.origin}#${code}`} onCopied={setNote} />
+          <ol className="dialog-steps">
+            <li>
+              In <a href="https://claude.com/claude-code" target="_blank" rel="noreferrer">Claude Code</a>, type this line:
+              <CopyRow value={INSTALL} onCopied={setNote} />
+              {mine.length > 0 && (
+                <>
+                  Already have the plugin? Type this instead:
+                  <CopyRow value="/plugin configure webchat@webchat" onCopied={setNote} />
+                </>
+              )}
+            </li>
+            <li>
+              When it asks for a pairing code, paste this one. It works once, within 10 minutes.
+              {/* The address rides along so nobody types it (R-031). After `#`, a browser would never send the code. */}
+              <CopyRow value={`${location.origin}#${code}`} onCopied={setNote} />
+            </li>
+            <li>
+              Open Claude Code in your team’s repository and type <code>/webchat:connect</code>.
+            </li>
+          </ol>
           {!error && <p className="dialog-note">{note || 'Waiting for the agent…'}</p>}
           {mine.length > 0 && <p className="dialog-intro">Your agents:</p>}
           <ul className="people-list">

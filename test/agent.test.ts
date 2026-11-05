@@ -553,7 +553,7 @@ describe('agent client (R-027)', () => {
       // The owner's settings turn the sandbox off, which no longer counts: the background Claude runs under the plugin's.
       await fs.mkdir(path.join(project, '.claude'));
       await fs.writeFile(path.join(project, '.claude', 'settings.local.json'), JSON.stringify({ sandbox: { enabled: false } }));
-      const options = { server: '', claude: path.join(bin, 'claude'), guard: 'true' };
+      const options = { claude: path.join(bin, 'claude'), guard: 'true' };
       const turns = async () =>
         (await fs.readFile(claudeLog, 'utf8').catch(() => ''))
           .split('\n')
@@ -577,7 +577,8 @@ describe('agent client (R-027)', () => {
         // Its check-ins say where it is open, so the menu names the repository.
         await plugin.client!.sync();
         await alice.sync();
-        assert.deepEqual(alice.users.get(agent.id)?.agentRepos.map((seat) => [seat.repo, seat.online]), [['acme/app', true]]);
+        // The plugin's sessions say they answer questions, which older plugins never do (D-103).
+        assert.deepEqual(alice.users.get(agent.id)?.agentRepos.map((seat) => [seat.repo, seat.online, seat.protocol]), [['acme/app', true, 1]]);
         // The status names the address that came with the code, whatever the owner's settings say.
         assert.equal((await plugin.call('status')).split('\n')[0], `Taking the cards that Alice hands to this agent in acme/app, on ${baseUrl}.`);
 
@@ -822,7 +823,7 @@ describe('agent client (R-027)', () => {
     await hear();
     const pieces = (await said()).map((m) => m[1] as string);
     assert.ok(pieces.length > 1 && pieces.every((text) => text.length <= 4000), 'each message is short enough');
-    assert.equal(pieces.join('\n'), long, 'in order, with nothing lost');
+    assert.equal(pieces.join(''), long, 'in order, with nothing lost');
 
     // A cancel stops the turn that waits.
     next = (signal) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('Aborted.'))));
@@ -841,7 +842,7 @@ describe('agent client (R-027)', () => {
     };
     const broken = await owner.send(direct, { text: 'Try', prompt: asks() });
     await hear();
-    assert.deepEqual(await said(), [[{ kind: 'failed', to: broken.clientId! }, 'I could not answer: No luck.']]);
+    assert.deepEqual(await said(), [[{ kind: 'failed', to: broken.clientId! }, 'I could not answer. No luck.']]);
 
     // A first turn that throws, then a reply: it starts afresh with the prompt and the reply.
     next = () => {
@@ -963,10 +964,10 @@ describe('agent client (R-027)', () => {
   });
 });
 
-test('cuts an answer into messages at line breaks, never inside a surrogate pair', () => {
+test('cuts an answer into messages after line breaks, never inside a surrogate pair', () => {
   const line = 'x'.repeat(3900);
   const [one, two] = parts(`${line}\n  ${'z'.repeat(200)}\n${'y'.repeat(300)}`);
-  assert.equal(one, line);
+  assert.equal(one, `${line}\n`);
   assert.ok(two!.startsWith(`  ${'z'.repeat(5)}`), 'the next line keeps its indentation');
   const emoji = parts(`${'a'.repeat(3999)}\u{1F600} and more`);
   assert.ok(emoji.length > 1);

@@ -397,6 +397,9 @@ CREATE TABLE IF NOT EXISTS webchat.agent_repos (
   PRIMARY KEY (user_id, repo)
 );
 `,
+  // 19: what a plugin session can do, by the level its check-ins name, so the page never offers one
+  // a question it would leave unanswered (R-035, D-103). Older plugins name none.
+  `ALTER TABLE webchat.agent_repos ADD COLUMN IF NOT EXISTS protocol INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 const statements = (sql: string) =>
@@ -434,7 +437,7 @@ export interface UserRow {
   busy: boolean;
   deleted_at: number | null;
   /** An agent's sessions, by repository, from listUsers only. */
-  repos?: Array<{ repo: string; last_seen: number; busy: boolean }>;
+  repos?: Array<{ repo: string; last_seen: number; busy: boolean; protocol: number }>;
 }
 
 interface PairingRow {
@@ -686,7 +689,7 @@ export function toUserDTO(row: UserRow, now = Date.now()): UserDTO {
     keys: row.dh_public && row.sign_public ? { dh: row.dh_public, sign: row.sign_public } : null,
     agentOwner: row.agent_owner,
     busy: row.busy,
-    agentRepos: (row.repos ?? []).map((r) => ({ repo: r.repo, online: now - r.last_seen < ONLINE_WINDOW_MS, lastSeen: r.last_seen, busy: r.busy })),
+    agentRepos: (row.repos ?? []).map((r) => ({ repo: r.repo, online: now - r.last_seen < ONLINE_WINDOW_MS, lastSeen: r.last_seen, busy: r.busy, protocol: r.protocol })),
     deleted: row.deleted_at !== null,
   };
 }
@@ -1214,7 +1217,7 @@ export async function openDb(sql: Sql) {
       one(sql.query<UserRow>('SELECT * FROM webchat.users WHERE lower(username) = lower($1) AND deleted_at IS NULL', [username])),
     listUsers: () =>
       sql.query<UserRow>(
-        `SELECT u.*, (SELECT json_agg(json_build_object('repo', r.repo, 'last_seen', r.last_seen, 'busy', r.busy) ORDER BY r.repo)
+        `SELECT u.*, (SELECT json_agg(json_build_object('repo', r.repo, 'last_seen', r.last_seen, 'busy', r.busy, 'protocol', r.protocol) ORDER BY r.repo)
            FROM webchat.agent_repos r WHERE r.user_id = u.id) AS repos
          FROM webchat.users u ORDER BY lower(u.display_name)`,
       ),
@@ -1224,7 +1227,7 @@ export async function openDb(sql: Sql) {
      * tab stops being attentive, the claim ends at once instead of waiting for it to expire. An
      * agent's Claude Code session checks in for its repository, which keeps its own busy flag (D-094).
      */
-    async checkIn(userId: number, attentive: boolean, tabId: string, endpoint: string | null, busy = false, repo: string | null = null) {
+    async checkIn(userId: number, attentive: boolean, tabId: string, endpoint: string | null, busy = false, repo: string | null = null, protocol = 0) {
       const now = Date.now();
       if (attentive) {
         await Promise.all([
@@ -1236,9 +1239,9 @@ export async function openDb(sql: Sql) {
           ),
           repo &&
             sql.query(
-              `INSERT INTO webchat.agent_repos (user_id, repo, last_seen, busy) VALUES ($1, $2, $3, $4)
-               ON CONFLICT (user_id, repo) DO UPDATE SET last_seen = EXCLUDED.last_seen, busy = EXCLUDED.busy`,
-              [userId, repo, now, busy],
+              `INSERT INTO webchat.agent_repos (user_id, repo, last_seen, busy, protocol) VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (user_id, repo) DO UPDATE SET last_seen = EXCLUDED.last_seen, busy = EXCLUDED.busy, protocol = EXCLUDED.protocol`,
+              [userId, repo, now, busy, protocol],
             ),
         ]);
       } else {
@@ -1968,8 +1971,8 @@ export async function openDb(sql: Sql) {
              -- Agents with their owners, and those running a card, so the board offers each owner's idle ones (K-45).
              (SELECT md5(string_agg(id || ':' || agent_owner, ',' ORDER BY id)) FROM webchat.users WHERE agent_owner IS NOT NULL) AS agents,
              (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE busy) AS busy,
-             -- Each agent's sessions by repository: which exist, which are online and which busy (D-094).
-             (SELECT md5(string_agg(user_id || ':' || repo || ':' || busy || ':' || (last_seen > $2), ',' ORDER BY user_id, repo))
+             -- Each agent's sessions by repository: which exist, which are online or busy, and what they can do (D-094, D-103).
+             (SELECT md5(string_agg(user_id || ':' || repo || ':' || busy || ':' || protocol || ':' || (last_seen > $2), ',' ORDER BY user_id, repo))
                FROM webchat.agent_repos) AS repos,
              -- Every save grows a doc's version, and a doc deleted leaves the list.
              (SELECT md5(COALESCE(string_agg(id || ':' || version, ',' ORDER BY id), '')) FROM webchat.docs
