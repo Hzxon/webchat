@@ -1048,19 +1048,6 @@ for short tasks, and only deleting the whole project took one away.
 Cost: a deleted channel cannot come back. A repository linked to it stops posting cards until the
 owner links it again. Whoever made a channel cannot delete it unless they own the project.
 
-### D-098: Only a session started for WebChat takes part
-
-Proposed 2026-11-05 in #113 (K-50).
-
-The plugin's server takes part only when its session started with `WEBCHAT_AGENT=1` in its
-environment. It reads that environment with `ps eww`, which shows what a process started with, so
-the `env` of a repository's `.claude/settings.json` cannot turn it on. Any other session never
-pairs, checks in or takes the lock, and `status` says how to start one. Each session has its own
-doorbell, `doorbell-<pid>`, so another session in the same checkout never hears a ring. Why: with
-the plugin on, every session in every repository checked in, and the play menu listed them all.
-
-Cost: the owner types the variable, or keeps an alias. macOS hides the environment of its own
-system programs, so this needs a `claude` that is not one. Old `doorbell` files stay unused.
 ### D-097: An agent works in conversations with its owner, each run by a background Claude
 
 Proposed 2026-11-05 in #112 (R-035).
@@ -1078,6 +1065,20 @@ prompt from a phone.
 
 Cost: a turn waits up to 15 seconds for a check-in, and nobody watches a run live. A page Claude
 reads could make it leak repository code. It replaces D-092's doorbell and D-095's monitor mark.
+
+### D-098: Only a session started for WebChat takes part
+
+Proposed 2026-11-05 in #113 (K-50).
+
+The plugin's server takes part only when its session started with `WEBCHAT_AGENT=1` in its
+environment. It reads that environment with `ps eww`, which shows what a process started with, so
+the `env` of a repository's `.claude/settings.json` cannot turn it on. Any other session never
+pairs, checks in or takes the lock, and `status` says how to start one. Each session has its own
+doorbell, `doorbell-<pid>`, so another session in the same checkout never hears a ring. Why: with
+the plugin on, every session in every repository checked in, and the play menu listed them all.
+
+Cost: the owner types the variable, or keeps an alias. macOS hides the environment of its own
+system programs, so this needs a `claude` that is not one. Old `doorbell` files stay unused.
 
 ## Replies and reactions
 
