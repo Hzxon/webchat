@@ -1080,6 +1080,20 @@ the plugin on, every session in every repository checked in, and the play menu l
 Cost: the owner types the variable, or keeps an alias. macOS hides the environment of its own
 system programs, so this needs a `claude` that is not one. Old `doorbell` files stay unused.
 
+### D-100: A card shows its latest run, and a done run moves it to In review
+
+Proposed 2026-11-05 in #116 (K-52).
+
+The board folds the user's run messages in #general into each roadmap card: Sending, Waiting for the
+agent, Running, Done or Failed. While a run may still go, the Run menu is a disabled button, so a
+second click asks nothing. A request no agent answers in 30 minutes stops blocking, the time a plugin
+job waits. When the agent reports done, the requester's page sets the card's status to `In review:
+repo#PR`, once per request, which a new In review group shows. The owner moves it to Done or Fixed
+after merging. Why: the server cannot drop copies of an encrypted request, and done means a draft.
+
+Cost: the board loads a page of #general to see runs. Two tabs can still each send one request
+before they sync. The status changes only while the requester's board is open.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope

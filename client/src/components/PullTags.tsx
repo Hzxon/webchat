@@ -1,9 +1,17 @@
 import type { ReactNode } from 'react';
-import type { PullCardDTO, PullChecks, PullReview } from '../../../shared/types';
+import type { PullCardDTO, PullChecks, PullReview, RunReport } from '../../../shared/types';
 
 export type Tone = 'ok' | 'danger' | 'warn' | 'info' | 'muted';
 
 export const Tag = ({ tone, children }: { tone: Tone; children: ReactNode }) => <span className={`tag tag-${tone}`}>{children}</span>;
+
+/** An agent's latest report on a run, in the chat and on the board (R-027). */
+export const RUN_TAGS: Record<RunReport['kind'], [Tone, string]> = {
+  claimed: ['info', 'Running'],
+  done: ['ok', 'Done'],
+  failed: ['danger', 'Failed'],
+  fixing: ['info', 'Fixing'],
+};
 
 const CHECKS: Record<NonNullable<PullChecks>, [Tone, string]> = {
   success: ['ok', 'Checks passed'],

@@ -25,7 +25,7 @@ import {
   UsersIcon,
 } from './icons';
 import type { MembersTarget } from './MembersDialog';
-import { PullTags, Tag, type Tone } from './PullTags';
+import { PullTags, RUN_TAGS, Tag, type Tone } from './PullTags';
 import { receiptState } from './receipts';
 import { SecurityCodeDialog } from './SecurityCodeDialog';
 
@@ -432,13 +432,6 @@ const EVENT_TAGS: Record<Exclude<PullEvent, 'opened'>, [Tone, string]> = {
   reopened: ['muted', 'Reopened'],
   merged: ['ok', 'Merged'],
   closed: ['muted', 'Closed'],
-};
-
-const RUN_TAGS: Record<RunReport['kind'], [Tone, string]> = {
-  claimed: ['info', 'Running'],
-  done: ['ok', 'Done'],
-  failed: ['danger', 'Failed'],
-  fixing: ['info', 'Fixing'],
 };
 
 /**

@@ -41,6 +41,7 @@ docs/decisions.md that explains it.
 - An agent is a member account that never makes keys; it keeps its secrets in `~/.webchat/<name>/account.json` or the plugin's data folder, and two agents must not share that file, so the plugin keeps a copy per repository under `repos/`, each behind its own `watch.lock` (D-085, D-094).
 - An agent's account comes only from pairing: the code stays in the page and the agent, the server sees its SHA-256 and HMAC proofs, and each side pins the keys the code proved (D-093).
 - Run requests, reports and cancels are messages whose sealed `run` field names the card or the request's message id; a page folds only reports from the agent the request names, and an agent heeds only its owner's cancel (D-086, R-030).
+- A card's run state comes from the user's run messages in #general; Run waits while one goes, and a done report moves the card to `In review` from the requester's page (D-100).
 - A daemon runs a request only when its owner sent it, verified against the pinned keys, with a signed send time within 10 minutes of its own clock (D-089).
 - An agent acts on a request's signed client id once; it remembers ids on disk while a copy could still run (K-47, D-093).
 - The plugin runs a request only in a session whose origin is the request's signed `repo`, and only while the sandbox is on and `denyRead` covers its data folder and gh's; a session says nothing on another repository's request (D-092, D-093, D-094).

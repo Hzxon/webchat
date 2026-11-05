@@ -2161,6 +2161,11 @@ a {
   box-shadow: inset 0 0 0 1px var(--line);
 }
 
+.tag-info {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
 .pull-size {
   font-variant-numeric: tabular-nums;
 }
@@ -2900,6 +2905,35 @@ a {
 
 .board-card-body .doc-section-tools {
   margin-top: 6px;
+}
+
+/* Where the user's latest run of the card stands (R-027). */
+.board-card-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  clear: both;
+  margin: 0 0 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.board-card-run-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: 600;
+}
+
+@media (hover: hover) {
+  .board-card-run-link:hover {
+    text-decoration: underline;
+  }
 }
 
 @media (max-width: 760px) {
