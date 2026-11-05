@@ -431,15 +431,7 @@ export class Plugin {
       for (const pull of [...this.watched]) {
         if (this.runs.running) return;
         const view = JSON.parse(await gh(['pr', 'view', String(pull.pull.number), '--repo', pull.pull.repo, '--json', PULL_FIELDS])) as PullView;
-        const ended = this.runs.cancelled.has(pull.taken.message)
-          ? 'you stopped it'
-          : view.state === 'MERGED'
-            ? 'it was merged'
-            : view.state !== 'OPEN'
-              ? 'it was closed'
-              : view.headRefOid !== pull.head
-                ? 'someone else pushed to it'
-                : '';
+        const ended = this.endOf(pull, view);
         if (ended) {
           await this.unwatch(pull);
           await this.runs.report(pull.taken, { kind: 'ended', note: ended, pull: pull.pull }, `I stopped watching ${pull.pull.repo}#${pull.pull.number}: ${ended}.`);
@@ -470,6 +462,14 @@ export class Plugin {
     }
   }
 
+  /** Why watching a pull request stops, or '' while it goes on. */
+  private endOf(pull: Watched, view: PullView) {
+    if (this.runs!.cancelled.has(pull.taken.message)) return 'you stopped it';
+    if (view.state === 'MERGED') return 'it was merged';
+    if (view.state !== 'OPEN') return 'it was closed';
+    return view.headRefOid !== pull.head ? 'someone else pushed to it' : '';
+  }
+
   /** What is new to fix: CI that failed on the head, a conflict, or review notes from people who may push. */
   private async whatToFix(pull: Watched, view: PullView) {
     const why: string[] = [];
@@ -488,7 +488,8 @@ export class Plugin {
     }
     const notes = await this.reviewNotes(pull, view);
     if (notes.length) pull.seenNote = notes.map((n) => n.at).sort().at(-1)!;
-    const login = (this.login ??= await gh(['api', 'user', '--jq', '.login']).catch(() => ''));
+    // A lookup that failed is tried again next time; until then every review waits for the go.
+    const login = (this.login ??= await gh(['api', 'user', '--jq', '.login']).catch(() => undefined));
     const list = (from: typeof notes) => from.map((n) => `- ${n.author}: ${n.text}`).join('\n');
     const own = notes.filter((n) => n.author === login);
     if (own.length) {

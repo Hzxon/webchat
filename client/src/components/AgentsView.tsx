@@ -3,7 +3,7 @@
 // prompt and the messages that name it, in the user's direct chat with the agent (D-102).
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AGENT_LEVEL, LIMITS, type RunRequest } from '../../../shared/types';
-import { ownAgents, ready, short, THREAD_STATE, useAgentThreads, type Seat, type Thread } from '../agents';
+import { ownAgents, ready, seatKey, short, THREAD_STATE, useAgentThreads, type Seat, type Thread } from '../agents';
 import { askAgent, askFix, cancelRun, discardMessage, loadChat, loadOlder, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { actions, useAppState } from '../store';
@@ -15,7 +15,6 @@ import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
 import { Tag } from './PullTags';
 
-const seatKey = (seat: Seat) => `${seat.agent.id}:${seat.repo}`;
 const asleep = (seat: Seat) => `${short(seat.repo)} is asleep${seat.lastSeen ? ` since ${formatSince(seat.lastSeen)}` : ''}`;
 
 /** Why a question or reply cannot go to a session now, in plain words, or '' when it can. */

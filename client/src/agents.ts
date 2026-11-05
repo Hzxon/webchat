@@ -138,16 +138,31 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
   return [...threads.values()].map((t) => (t.kind === 'question' && now - t.last > THREAD_TTL_MS ? { ...t, state: 'ended' as const } : t)).sort((a, b) => b.last - a.last);
 }
 
+/** The user's chats with their agents. */
+export function useAgentChats() {
+  const conversations = useAppState((s) => s.conversations);
+  const users = useAppState((s) => s.users);
+  const me = useAppState((s) => s.me);
+  return useMemo(() => agentChats({ users, me, conversations }), [users, me, conversations]);
+}
+
 /** The user's chats with their agents, and every conversation in them, newest first. */
 export function useAgentThreads() {
-  const conversations = useAppState((s) => s.conversations);
+  const chats = useAgentChats();
   const users = useAppState((s) => s.users);
   const me = useAppState((s) => s.me);
   const messages = useAppState((s) => s.messages);
   const pending = useAppState((s) => s.pending);
   return useMemo(() => {
-    const chats = agentChats({ users, me, conversations });
     const threads = me ? chats.flatMap((chat) => threadsOf(messages[chat.id] ?? [], me.id, agentOf({ users, me }, chat)!.id, pending)) : [];
     return { chats, threads: threads.sort((a, b) => b.last - a.last) };
-  }, [users, me, conversations, messages, pending]);
+  }, [chats, users, me, messages, pending]);
 }
+
+/** Every run message in the user's chats with their agents, as one string that changes when a run moves. */
+export const runSignature = (state: State) =>
+  agentChats(state)
+    .flatMap((c) => (state.messages[c.id] ?? []).filter((m) => m.run).map((m) => `${m.id}:${m.run!.kind}`))
+    .join();
+
+export const seatKey = (seat: Seat) => `${seat.agent.id}:${seat.repo}`;

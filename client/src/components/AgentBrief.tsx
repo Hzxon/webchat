@@ -4,15 +4,14 @@
 // request, so the agent refuses to run it once the card or a decision changed.
 import { useEffect, useMemo, useState } from 'react';
 import { textHash } from '../../../shared/e2ee';
-import { AGENT_LEVEL, briefText, cardStatus } from '../../../shared/types';
-import { short, type Seat } from '../agents';
+import { AGENT_LEVEL, briefText, isHeld } from '../../../shared/types';
+import { seatKey, short, type Seat } from '../agents';
 import { boardDocs, parseCard, type Card } from '../board';
 import { requestRun } from '../chat';
 import { loadSections, type DocSection } from '../docs';
 import { actions, senderName, useAppState, type State } from '../store';
 import { formatSince } from './format';
 
-const seatKey = (seat: Seat) => `${seat.agent.id}:${seat.repo}`;
 
 export function AgentBrief({ brief, seats }: { brief: NonNullable<State['agentBrief']>; seats: Seat[] }) {
   const docs = useAppState((s) => s.docs);
@@ -40,7 +39,7 @@ export function AgentBrief({ brief, seats }: { brief: NonNullable<State['agentBr
     };
   }, [doc?.version, decisionsDoc?.version, brief.section]);
 
-  const held = useMemo(() => (loaded?.decisions ?? []).filter((d) => !cardStatus(d.text).toLowerCase().startsWith('superseded')), [loaded]);
+  const held = useMemo(() => (loaded?.decisions ?? []).filter((d) => isHeld(d.text)), [loaded]);
   const by = (authorId: number | undefined) => (authorId === undefined || authorId === meId ? null : senderName(users, authorId, 'Someone'));
   const others = [...new Set(held.map((d) => by(d.authorId)).filter((n): n is string => n !== null))];
   // The agent must be in the card's project to read it.

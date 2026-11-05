@@ -568,8 +568,11 @@ export const cardStatus = (text: string) => /^Status:\s*(.*?)\.?\s*$/.exec(text.
  */
 export const briefText = (card: string, decisions: string[]) => [card.trim(), ...heldDecisions(decisions)].join('\n\n');
 
-/** The decisions a run follows: all but the superseded ones, each trimmed. */
-export const heldDecisions = (decisions: string[]) => decisions.filter((d) => !cardStatus(d).toLowerCase().startsWith('superseded')).map((d) => d.trim());
+/** Whether the team holds a decision still, so a run follows it: every one but the superseded. */
+export const isHeld = (decision: string) => !cardStatus(decision).toLowerCase().startsWith('superseded');
+
+/** The decisions a run follows, each trimmed. */
+export const heldDecisions = (decisions: string[]) => decisions.filter(isHeld).map((d) => d.trim());
 
 /**
  * The owner's conversation with their agent, in their direct chat (R-035, D-102): a prompt, the
