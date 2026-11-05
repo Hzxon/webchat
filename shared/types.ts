@@ -241,6 +241,9 @@ export interface PairingDTO {
 /** How long a pairing code works, from the page showing it to the owner's approval (R-030). */
 export const PAIRING_TTL_MS = 10 * 60_000;
 
+/** A plugin job nobody starts in this long fails; the board stops waiting on its request then (D-094). */
+export const RUN_PICKUP_MS = 30 * 60_000;
+
 export interface ApprovePairingInput {
   displayName: string;
   /** HMAC of the owner's id and keys and the agent's keys under the code. The agent checks it. */

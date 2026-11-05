@@ -15,7 +15,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId } from '../shared/e2ee.ts';
-import { isRepoName, type RunRequest } from '../shared/types.ts';
+import { isRepoName, RUN_PICKUP_MS, type RunRequest } from '../shared/types.ts';
 import { AgentClient, readPairing, type OpenedMessage, type TakenRequest } from './client.ts';
 import { addWorktree, decisionsOf } from './runner.ts';
 import { messageOf, Runs, type Runner, type RunResult } from './runs.ts';
@@ -25,8 +25,6 @@ const gh = (args: string[]) => exec('gh', args, { maxBuffer: 32 * 1024 * 1024 })
 
 /** A job the model goes quiet on for this long fails, as a daemon's run does (D-087). */
 const IDLE_MS = 2 * 60 * 60_000;
-/** A job nobody starts in this long fails: no session in its repository heard the doorbell (D-094). */
-const PICKUP_MS = 30 * 60_000;
 /** Rounds of fixes one pull request gets. */
 const MAX_FIXES = 3;
 /** Check results that mean the code broke, not that someone stopped or held the check. */
@@ -220,8 +218,8 @@ export class Plugin {
       if (error) settle.reject(error);
       else settle.resolve(result!);
     };
-    const nobody = `Nobody started it within ${PICKUP_MS / 60_000} minutes. Is a Claude Code session open in ${this.repo}?`;
-    const job: Job = { ...place, brief, done, end, timer: setTimeout(() => end(new Error(nobody)), PICKUP_MS) };
+    const nobody = `Nobody started it within ${RUN_PICKUP_MS / 60_000} minutes. Is a Claude Code session open in ${this.repo}?`;
+    const job: Job = { ...place, brief, done, end, timer: setTimeout(() => end(new Error(nobody)), RUN_PICKUP_MS) };
     signal.addEventListener('abort', () => end(new Error('The owner cancelled it.')), { once: true });
     this.jobs.set(id, job);
     const state: RunState = { pid: process.pid, project: this.options.projectDir, worktree: place.worktree };
