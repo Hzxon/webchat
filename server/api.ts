@@ -521,6 +521,12 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     res.status(201).json(toUserDTO(agent));
   });
 
+  /** The owner removes one of their agents for good, such as the one left after pairing again (R-033). */
+  router.delete('/agents/:id', requireAuth, async (req, res) => {
+    if (!(await db.removeAgent(currentUser(res).id, positiveInt(req.params.id, 'Agent')))) throw new HttpError(404, 'Agent not found.');
+    res.status(204).end();
+  });
+
   router.get('/bootstrap', requireAuth, async (_req, res) => {
     const me = currentUser(res);
     // The fingerprint first: a change that lands while the rest loads then makes the first

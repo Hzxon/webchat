@@ -1,16 +1,21 @@
 // Pairs a coding agent with this account (R-030, D-093). The page makes a one-time code, which the
 // owner pastes into the agent. The page then waits for the agent's keys, which the code proves,
-// and the owner names the agent, picks its projects and approves. No invite code or password.
+// and the owner names the agent, picks its projects and approves. No invite code or password. It
+// also lists the owner's agents, so one can be removed (R-033).
 import { useEffect, useMemo, useState } from 'react';
 import { newPairingCode } from '../../../shared/e2ee';
-import { LIMITS, PAIRING_TTL_MS, type PublicKeysDTO } from '../../../shared/types';
-import { connectAgent, pairingKeys } from '../chat';
+import { LIMITS, PAIRING_TTL_MS, type PublicKeysDTO, type UserDTO } from '../../../shared/types';
+import { connectAgent, pairingKeys, removeAgent } from '../chat';
 import { useAppState } from '../store';
 import { Dialog } from './Dialog';
+import { presenceText } from './format';
 import { CopyRow } from './NotificationDialog';
 
 export function AgentDialog({ projectId, onClose }: { projectId: number; onClose: () => void }) {
   const projects = useAppState((s) => s.projects);
+  const users = useAppState((s) => s.users);
+  const meId = useAppState((s) => s.me?.id);
+  const mine = useMemo(() => Object.values(users).filter((u) => u.agentOwner === meId && !u.deleted), [users, meId]);
   const [code] = useState(newPairingCode);
   const [keys, setKeys] = useState<PublicKeysDTO | null>(null);
   const [name, setName] = useState('Claude Code');
@@ -53,6 +58,19 @@ export function AgentDialog({ projectId, onClose }: { projectId: number; onClose
     });
   }
 
+  async function remove(agent: UserDTO) {
+    if (!confirm(`Remove ${agent.displayName}? It leaves every project, and its sessions stop taking cards. This cannot be undone.`)) return;
+    setBusy(true);
+    setError('');
+    try {
+      await removeAgent(agent);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function approve() {
     setBusy(true);
     setError('');
@@ -79,6 +97,22 @@ export function AgentDialog({ projectId, onClose }: { projectId: number; onClose
           {/* The address rides along so nobody types it (R-031). After `#`, a browser would never send the code. */}
           <CopyRow value={`${location.origin}#${code}`} onCopied={setNote} />
           {!error && <p className="dialog-note">{note || 'Waiting for the agent…'}</p>}
+          {mine.length > 0 && <p className="dialog-intro">Your agents:</p>}
+          <ul className="people-list">
+            {mine.map((agent) => (
+              <li key={agent.id} className="member">
+                <span className="member-name">
+                  <strong>{agent.displayName}</strong>
+                  <small>{presenceText(agent)}</small>
+                </span>
+                <span className="member-actions">
+                  <button className="member-remove" onClick={() => void remove(agent)} disabled={busy} aria-label={`Remove ${agent.displayName}`}>
+                    Remove
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
         </>
       ) : (
         <form

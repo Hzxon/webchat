@@ -642,6 +642,20 @@ describe('agent client (R-027)', () => {
     assert.equal(alice.users.get(agent.id)?.deleted, true, 'nobody else may hand it cards');
   });
 
+  test('is removed by its owner, and by nobody else (R-033)', async () => {
+    const code = newPairingCode();
+    const pairing = AgentClient.pair(path.join(home, 'spare.json'), baseUrl, code, 10);
+    const spare = await approve(alice, code, 'Spare');
+    const agent = await pairing;
+    await assert.rejects(carol.request('DELETE', `/agents/${spare.id}`), { status: 404 });
+    await alice.request('DELETE', `/agents/${spare.id}`);
+    await alice.sync();
+    assert.deepEqual([alice.users.get(spare.id)?.deleted, alice.users.get(spare.id)?.agentOwner], [true, null], 'no menu offers it');
+    // Its session ends, and it cannot sign in again.
+    await assert.rejects(agent.sync(), { status: 401 });
+    await assert.rejects(alice.request('DELETE', `/agents/${spare.id}`), { status: 404 });
+  });
+
   test('keeps the model away from secrets, and inside the worktree during a run (R-030)', async () => {
     const dir = await fs.mkdtemp(path.join(home, 'guard-'));
     const data = path.join(dir, 'data');
