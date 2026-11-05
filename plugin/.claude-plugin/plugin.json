@@ -1,8 +1,10 @@
 {
   "name": "webchat",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Runs the WebChat board cards you hand to Claude Code, and fixes their draft pull requests.",
-  "author": { "name": "Hzxon" },
+  "author": {
+    "name": "Hzxon"
+  },
   "repository": "https://github.com/Hzxon/webchat",
   "userConfig": {
     "server": {
@@ -22,7 +24,9 @@
   "mcpServers": {
     "webchat": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/server.mjs"],
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/server.mjs"
+      ],
       "env": {
         "WEBCHAT_SERVER": "${user_config.server}",
         "WEBCHAT_PAIRING_CODE": "${user_config.pairing_code}"

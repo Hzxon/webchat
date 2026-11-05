@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.3.0](https://github.com/Hzxon/webchat/compare/v0.2.0...v0.3.0) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** npm run agent -- signup and login are gone, and the API ignores owner at sign-up and sign-in. Pair a new agent with npm run agent -- pair; an existing one keeps running with watch.
+* **agent:** `npm run agent -- allow` is gone. signup and login take the owner's username as their last argument, and an existing agent must sign in again with it before its play button shows.
+
+### Features
+
+* **agent:** Add a headless client for the agent ([0473e2e](https://github.com/Hzxon/webchat/commit/0473e2eea8a0ad25ef18776f17461222a63d9980))
+* **agent:** Add a headless client, R-027 step 1 ([#85](https://github.com/Hzxon/webchat/issues/85)) ([ce6a991](https://github.com/Hzxon/webchat/commit/ce6a991f5e5feca70322e28e10f4e7f0af0fe109))
+* **agent:** Add Codex and Hermes adapters ([#89](https://github.com/Hzxon/webchat/issues/89)) ([9a2d622](https://github.com/Hzxon/webchat/commit/9a2d622ac81810db94a1a9c2e797c4ce296bbada))
+* **agent:** Add run requests and the card menu ([392be45](https://github.com/Hzxon/webchat/commit/392be451e88e16b434ab0a90fcb6d975661e6e82))
+* **agent:** Add run requests and the card menu ([#86](https://github.com/Hzxon/webchat/issues/86)) ([0ccae2a](https://github.com/Hzxon/webchat/commit/0ccae2aa1465f969460ebe10b117150abd946441))
+* **agent:** Offer only idle agents on a card ([bb32ddf](https://github.com/Hzxon/webchat/commit/bb32ddff139635c838068e86dd3291039e8335b6))
+* **agent:** Offer only idle agents on a card ([9a84ef9](https://github.com/Hzxon/webchat/commit/9a84ef9dd4c83cd74b88c431516988caa32b735e))
+* **agent:** Run cards from a Claude Code plugin ([#100](https://github.com/Hzxon/webchat/issues/100)) ([29792d7](https://github.com/Hzxon/webchat/commit/29792d7a1161397f1ab0c3f484a4c10fabc221db))
+* **agent:** Run cards with Claude Code ([a63124c](https://github.com/Hzxon/webchat/commit/a63124c0a89dafe423ffc26fed0203c99cb6a523))
+* **agent:** Run cards with Claude Code ([#87](https://github.com/Hzxon/webchat/issues/87)) ([5f6ff97](https://github.com/Hzxon/webchat/commit/5f6ff976d126cb03e5a4320a24dd12e4982ce8b1))
+* **auth:** Allow one account per device ([#71](https://github.com/Hzxon/webchat/issues/71)) ([98ea5c8](https://github.com/Hzxon/webchat/commit/98ea5c8839535d0fe0ae6128345d1ca212fb55c4))
+* **auth:** Delete an account from the sidebar ([#94](https://github.com/Hzxon/webchat/issues/94)) ([32f6f76](https://github.com/Hzxon/webchat/commit/32f6f76e9add32aa65757fa19e25b240a2a080e2))
+* **docs:** Add a menu of doc actions to its row ([#80](https://github.com/Hzxon/webchat/issues/80)) ([8e74d62](https://github.com/Hzxon/webchat/commit/8e74d629e8ef866214e3e4d5de864ea5c8420c58))
+* **projects:** Add a board of decisions and ideas ([#75](https://github.com/Hzxon/webchat/issues/75)) ([42ba8e0](https://github.com/Hzxon/webchat/commit/42ba8e0aefcc588c5c3e5194d197773fd56460e0))
+* **projects:** Add shared Markdown docs ([#73](https://github.com/Hzxon/webchat/issues/73)) ([32ceaf2](https://github.com/Hzxon/webchat/commit/32ceaf2a5c273bdd771bf30de26cefb4a918dc91))
+* **ui:** Show messages as a linear feed ([#78](https://github.com/Hzxon/webchat/issues/78)) ([2eb4710](https://github.com/Hzxon/webchat/commit/2eb4710536aa0dbb7c86510f5cc190e9adefad7a))
+* **ui:** Use a work-tool palette and type ([#77](https://github.com/Hzxon/webchat/issues/77)) ([a4ae053](https://github.com/Hzxon/webchat/commit/a4ae053ffcb5a0e83e50ca95ae392f0f6de8acdc))
+
+
+### Bug Fixes
+
+* **agent:** Fail runs a daemon restart cut short ([#96](https://github.com/Hzxon/webchat/issues/96)) ([e7d7700](https://github.com/Hzxon/webchat/commit/e7d77002aeb452d574f07a062b4feff51d8c6221))
+* **agent:** Resolve busy flag merge conflict ([a53d1fe](https://github.com/Hzxon/webchat/commit/a53d1fe3e8279de1b9e9f7a8408a3b5f2a7168f0))
+* **agent:** Run any card the agent's owner picks ([#95](https://github.com/Hzxon/webchat/issues/95)) ([7c4a206](https://github.com/Hzxon/webchat/commit/7c4a206780e6314933f6b2d03c79ca2e61dd1afa))
+* **agent:** Run only cards allowed people wrote ([#92](https://github.com/Hzxon/webchat/issues/92)) ([8d06b2a](https://github.com/Hzxon/webchat/commit/8d06b2ab0faff23cdcc757767232ee5076df84cc))
+* **agent:** Set the agent flag at sign-in too ([#91](https://github.com/Hzxon/webchat/issues/91)) ([1ce5f52](https://github.com/Hzxon/webchat/commit/1ce5f5231130e46f643a6d09306471890733a123))
+* **projects:** Add card delete and align the heads ([#79](https://github.com/Hzxon/webchat/issues/79)) ([0c22a36](https://github.com/Hzxon/webchat/commit/0c22a36d037bbdadf8362a7fa037bbc0f123e2c9))
+
+
+### Reverts
+
+* Show messages as bubbles again, not a feed ([#81](https://github.com/Hzxon/webchat/issues/81)) ([0691d08](https://github.com/Hzxon/webchat/commit/0691d08fae6cb8073a628bff0d75e97fdc2c4107))
+
 ## [0.2.0](https://github.com/Hzxon/webchat/compare/v0.1.1...v0.2.0) (2026-11-03)
 
 
