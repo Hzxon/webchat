@@ -1084,6 +1084,13 @@ export async function deleteProject(projectId: number) {
   void syncNow();
 }
 
+/** Deletes a channel for everyone, with its messages. Only the project's owner can, and never #general. */
+export async function deleteChannel(projectId: number, conversationId: number) {
+  await api.deleteChannel(projectId, conversationId);
+  actions.dropConversation(conversationId);
+  void syncNow();
+}
+
 /** Deletes a group for everyone, with its messages. */
 export async function deleteGroup(conversationId: number) {
   await api.deleteGroup(conversationId);

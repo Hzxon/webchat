@@ -29,6 +29,7 @@ docs/decisions.md that explains it.
 - Channel names go through `toChannelName` and `isChannelName` in `shared/types.ts` on both sides: lowercase letters and digits in any script, single hyphens, at most 40 characters, unique per project (D-027, D-065).
 - `toChannelName` applies NFKC first, cuts to the limit before trimming hyphens, and counts UTF-16 units like the server (D-065).
 - Only the owner removes people, deletes or hands over; `projects.created_by` and `conversations.created_by` name the owner, the API calls it `ownerId`, and a group with no owner is open to any member (D-039, D-045).
+- Only the owner deletes a channel, under the project's lock, and never #general: pages take the project's oldest channel for it, and its key opens the docs (D-081, D-096).
 - Removal gives every chat in the project or group a new key for exactly those who stay, in the removing request (D-039, D-044).
 - A project or group always has an owner among its members: the owner hands over before leaving, and the last member of a group deletes it (D-045).
 - Of being added, removed, leaving and handing over, only being added sends a notification (D-031, D-039, D-045).

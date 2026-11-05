@@ -18,8 +18,9 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
   starts with #general, and any member can add channels such as #slides or #research. Everyone in a
   project is in all of its channels. Any member can add more people later, and newcomers can read
   the earlier messages too. Any member can leave. The project's owner can remove people, hand the
-  project to another member, or delete it with every channel and message for everyone. An owner
-  hands it over before leaving. Channels have their own Projects tab, with unread counts per channel.
+  project to another member, delete any channel but #general with its messages, or delete the
+  project with every channel and message for everyone. An owner hands it over before leaving.
+  Channels have their own Projects tab, with unread counts per channel.
 - **Shared docs in projects**, such as a PRD, a spec or meeting notes, so a team writes them next
   to its channels instead of mailing Word files around. A doc starts from a template and is written
   in Markdown, section by section. One person edits a section at a time, and everyone else sees who.
@@ -503,7 +504,8 @@ forgotten. For projects it checks that channel keys must cover exactly the
 members, that a person added later reads the earlier messages, and that replies and reactions stay
 encrypted and reactions never count as unread. Any member of a group can add people, whose copy of
 the key must come for exactly them, and who then read the earlier messages. Only the owner of a
-project or group can remove people, delete it or hand it over. Removing or leaving gives each chat a
+project or group can remove people, delete it or hand it over, and only a project's owner deletes a
+channel, never #general. Removing or leaving gives each chat a
 new key for exactly the people who stay: the person who left cannot decrypt anything sent after, the
 others and anyone added later read the history through the old key inside the new one, and nothing
 is sent until the new key exists. The crypto tests cover wrong passwords, swapped keys, tampering,
