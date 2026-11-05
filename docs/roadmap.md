@@ -128,8 +128,8 @@ test covers a request from someone who was not let in.
 
 ### R-030: Run cards from a Claude Code plugin
 
-Status: In review in #100 (D-092, D-093). Designed on 2026-11-05 in #99. A spike showed that a
-plugin monitor wakes an idle session and that a forged line gets nothing.
+Status: Done in #100 on 2026-11-05 (D-092, D-093). Designed in #99. A spike showed that a plugin
+monitor wakes an idle session and that a forged line gets nothing. Q-5 holds what is still open.
 
 Why: an agent today is a second program. Its owner clones WebChat, signs the agent up with an
 invite code and a password, adds it to the project, compares a security code, writes
@@ -200,7 +200,7 @@ Open questions:
 
 ### R-031: The pairing code carries the WebChat address
 
-Status: In progress on `claude/r031-pairing-address` in #101 (D-093).
+Status: Done in #101 on 2026-11-05 (D-093).
 
 Why: the plugin asked each person for their WebChat's address as well as the code. The page that
 shows the code already knows the address, and a typed one can be wrong.
@@ -494,6 +494,13 @@ owner decided on 2026-11-01 to keep the OAuth App for the pane.
 WebChat stays at 0.y.z while it is in early development (D-055). Version 1.0.0 would promise that
 no upgrade within 1.x needs a step from the person who runs it. Decide what must hold first, for
 example the task board (R-001) and an upgrade path that people who self-host can trust.
+
+### Q-5: Does a resumed Claude Code session hear the plugin's doorbell?
+
+The plugin's monitor tails the doorbell for as long as the session runs (R-030). Claude Code's docs
+say a resumed session does not restore background tasks, and do not say whether a plugin's monitor
+starts again. Try `claude --resume` on a session with the plugin, and hand it a card. If the monitor
+is gone, a run fails after 30 minutes (D-094), so the README should say to start a new session.
 
 ## Done
 

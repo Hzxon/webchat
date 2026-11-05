@@ -970,7 +970,7 @@ credentials. The `agent` column of migration 13 is unused. A teammate's agent is
 
 ### D-092: An agent can run as a Claude Code plugin whose server rings a doorbell
 
-Proposed 2026-11-05 in #99, built in #100.
+Accepted 2026-11-05 in #100, proposed in #99.
 
 An agent can run inside Claude Code as the plugin in `plugin/` (R-030). Its MCP server,
 `agent/plugin.ts`, is the trusted part: it keeps the agent's keys in the plugin's data folder, uses
@@ -987,7 +987,7 @@ A teammate's card runs with the owner's credentials; the owner reviews the draft
 
 ### D-093: An agent pairs through a one-time code, and runs only in the repository its owner signed
 
-Proposed 2026-11-05 in #100. The code carries the address since #101 (R-031).
+Accepted 2026-11-05 in #100. The code carries the address since #101 (R-031).
 
 The owner's page shows 128 random bits as a code, after its own address as `<address>#<code>`, so
 the agent needs no address setting and a browser never sends the code. The agent sends new keys and
