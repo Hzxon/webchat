@@ -433,7 +433,6 @@ export interface UserRow {
   agent_owner: number | null;
   busy: boolean;
   deleted_at: number | null;
-  agent_repo: string | null;
   /** An agent's sessions, by repository, from listUsers only. */
   repos?: Array<{ repo: string; last_seen: number; busy: boolean }>;
 }
@@ -590,6 +589,8 @@ export interface GithubRepoGrant {
 const GRANT_TTL_MS = 30 * 60_000;
 /** Webhook deliveries are remembered this long. GitHub redelivers within hours, if at all. */
 const DELIVERY_TTL_MS = 3 * 24 * 3600_000;
+/** A repository nobody opened Claude Code in for this long leaves the agent's menu (D-094). */
+const AGENT_REPO_TTL_MS = 30 * 24 * 3600_000;
 /** An unread urgent message alerts as a page opens for as long as its push waits for an offline device (D-023). */
 const URGENT_WAIT_MS = 3 * 24 * 3600_000;
 
@@ -1106,8 +1107,7 @@ export async function openDb(sql: Sql) {
       await sql.query('DELETE FROM webchat.github_app_grants WHERE expires_at <= $1', [now]);
       await sql.query('DELETE FROM webchat.github_deliveries WHERE received_at <= $1', [now - DELIVERY_TTL_MS]);
       await sql.query('DELETE FROM webchat.pairings WHERE expires_at <= $1', [now]);
-      // A repository nobody opened Claude Code in for a month leaves the menu.
-      await sql.query('DELETE FROM webchat.agent_repos WHERE last_seen <= $1', [now - 30 * 24 * 3600_000]);
+      await sql.query('DELETE FROM webchat.agent_repos WHERE last_seen <= $1', [now - AGENT_REPO_TTL_MS]);
     },
 
     /** Creates an account with its keys. Returns undefined when the username is taken. */
@@ -1212,19 +1212,20 @@ export async function openDb(sql: Sql) {
     async checkIn(userId: number, attentive: boolean, tabId: string, endpoint: string | null, busy = false, repo: string | null = null) {
       const now = Date.now();
       if (attentive) {
-        await sql.query(
-          `UPDATE webchat.users
-           SET last_active_at = $2, attentive_until = $3, attentive_tab = $4, attentive_endpoint = $5, busy = $6
-           WHERE id = $1`,
-          [userId, now, now + ATTENTION_TTL_MS, tabId, endpoint, busy && !repo],
-        );
-        if (repo) {
-          await sql.query(
-            `INSERT INTO webchat.agent_repos (user_id, repo, last_seen, busy) VALUES ($1, $2, $3, $4)
-             ON CONFLICT (user_id, repo) DO UPDATE SET last_seen = EXCLUDED.last_seen, busy = EXCLUDED.busy`,
-            [userId, repo, now, busy],
-          );
-        }
+        await Promise.all([
+          sql.query(
+            `UPDATE webchat.users
+             SET last_active_at = $2, attentive_until = $3, attentive_tab = $4, attentive_endpoint = $5, busy = $6
+             WHERE id = $1`,
+            [userId, now, now + ATTENTION_TTL_MS, tabId, endpoint, busy && !repo],
+          ),
+          repo &&
+            sql.query(
+              `INSERT INTO webchat.agent_repos (user_id, repo, last_seen, busy) VALUES ($1, $2, $3, $4)
+               ON CONFLICT (user_id, repo) DO UPDATE SET last_seen = EXCLUDED.last_seen, busy = EXCLUDED.busy`,
+              [userId, repo, now, busy],
+            ),
+        ]);
       } else {
         await sql.query(
           `UPDATE webchat.users SET attentive_until = 0

@@ -451,7 +451,8 @@ function RunCard({ run, state, users, onCancel }: { run: RunRequest; state: RunR
   // Nothing runs while the agent, or its session in the request's repository, checks in nowhere.
   // A daemon that starts again reports the run (K-46).
   const agent = users[run.runtime];
-  const offline = going && !(run.repo ? agent?.agentRepos.find((seat) => seat.repo === run.repo) : agent)?.online;
+  const seat = run.repo ? agent?.agentRepos.find((s) => s.repo === run.repo) : agent;
+  const offline = going && !seat?.online;
   return (
     <span className="pull-card">
       <span className="pull-card-head">

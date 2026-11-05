@@ -168,13 +168,8 @@ export class Plugin {
     for await (const message of this.client!.watch(new AbortController().signal)) this.handle(message);
   }
 
-  /**
-   * Acts on one message. A run takes long, so the loop does not wait for it: check-ins go on
-   * meanwhile. A request for another repository is the session there's, so this one says nothing.
-   */
+  /** Acts on one message. A run takes long, so the loop does not wait for it: check-ins go on meanwhile. */
   handle(message: OpenedMessage) {
-    const run = message.content?.run;
-    if (run?.kind === 'request' && run.repo !== this.repo) return Promise.resolve();
     return this.runs!.handle(message).catch(log);
   }
 

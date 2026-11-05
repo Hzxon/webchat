@@ -62,6 +62,8 @@ export class Runs {
       return;
     }
     if (run.kind !== 'request' || run.runtime !== this.client.id) return;
+    // A Claude Code session takes only its repository's runs; another one's is the session there's (D-094).
+    if (this.client.repo && run.repo !== this.client.repo) return;
     // A copy the server posted again under a new id: nothing runs, and nothing answers it (K-47).
     if (!this.client.remember(message.clientId ?? '', run.sentAt ?? 0)) return;
     const taken: TakenRequest = { message: message.id, conversation: message.conversationId, card: run.card };
