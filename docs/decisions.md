@@ -1636,6 +1636,32 @@ place in an odd order, which the next edit tidies. A merge queue is a repository
 owner turns it on and requires the `checks` job; until then CI runs, but merges are not
 serialized.
 
+### D-091: The rules that a test can state have one
+
+Accepted 2026-11-05 in #98.
+
+Rules 3, 6, 7 and 8 of "Rules that must hold" in AGENTS.md each have a test, so breaking one fails
+`npm test` and the pull request. `test/rules.test.ts` keeps one SHA-256 per entry of `MIGRATIONS`
+in `server/db.ts` and compares them in order: an edit, a reorder or a removal fails, and a new
+migration needs one appended line, which the failure prints. The same file reads every `.ts` file
+under `server/` and `api/` and fails on `req.query` outside a comment. `test/chat.test.ts` sends the
+longest message and checks that the push payload stays at or under 3,000 bytes, goes without its
+envelope, and holds no plain text. `test/github.test.ts` checks every `/api/github` answer it gets
+for the two GitHub tokens. Rules 1 and 2, that the server never sees what users write and that the
+signature binds every field the client relies on, hold for every future change rather than one
+path, so no test can state them in general; `test/e2ee.test.ts` and `test/chat.test.ts` cover the
+paths that exist. Rules 4 and 5 are in the same position and keep their chat tests.
+
+Why: AGENTS.md said that breaking a rule is a bug even when every test passes, which named the gap:
+a rule in prose depends on a reader, and D-090 concluded that a rule that cannot bend belongs in a
+test, a hook or CI.
+
+Cost: a new migration adds one line to the fixture, and so does a fix to a comment inside an old
+one, which the diff then shows as a changed hash for a reviewer to question. The `req.query` check
+reads source text, so an alias such as `const r = req; r.query` passes it. The token check sees
+only the routes the GitHub tests call. The push test costs Alice one send of her 30 per 10 seconds,
+which the test gives back.
+
 ## Superseded
 
 Decisions that no longer hold. They keep their numbers and reasons for the record. Read the entry
