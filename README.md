@@ -427,8 +427,10 @@ The agent gets an account of its own, and runs only the cards you hand it.
    remove it under **Connect agent**.
 3. Turn on Claude Code's sandbox with `/sandbox`, and keep the shell away from the plugin's keys
    and your GitHub login in `~/.claude/settings.json`:
-   `{ "sandbox": { "enabled": true, "filesystem": { "denyRead": ["~/.claude/plugins/data", "~/.config/gh"] } } }`.
-   The plugin refuses runs until both hold.
+   `{ "sandbox": { "enabled": true, "failIfUnavailable": true, "filesystem": { "denyRead": ["~/.claude/plugins/data", "~/.config/gh", "~/Library/Keychains"] } } }`.
+   On macOS, gh keeps your login in the keychain, so the last folder matters there. Where the
+   sandbox cannot start, `failIfUnavailable` makes Claude Code stop instead of running commands
+   without it. The plugin refuses runs until all of this holds.
 4. Start a session with `WEBCHAT_AGENT=1 claude` in a terminal, in each repository you want the
    agent to work in, and leave it open. Only such a session pairs, checks in or hears a run. Your
    other sessions, in any repository, stay unseen by WebChat, even with the plugin on. A

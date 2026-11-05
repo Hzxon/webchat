@@ -8,7 +8,7 @@
 // someone who may push reviews it.
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, readlinkSync, realpathSync, unlinkSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -534,10 +534,14 @@ export function readRunStates(dataDir: string): RunState[] {
   });
 }
 
-/** The folders the model must never read: the plugin's, with the agent's keys, and gh's, with the owner's token. */
+/**
+ * The folders the model must never read: the plugin's, with the agent's keys, and gh's, with the
+ * owner's token. On macOS gh keeps the token in the login keychain by default (K-54).
+ */
 export function secretDirs(dataDir: string) {
   const ghDir = process.env.GH_CONFIG_DIR ?? path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'gh');
-  return [dataDir, ghDir].filter(Boolean);
+  const keychains = process.platform === 'darwin' ? [path.join(os.homedir(), 'Library', 'Keychains')] : [];
+  return [dataDir, ghDir, ...keychains].filter(Boolean);
 }
 
 const within = (file: string, dir: string) => {
@@ -545,18 +549,34 @@ const within = (file: string, dir: string) => {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 };
 
-/** The real path of a file that may not exist yet: its nearest existing folder's, then the rest. */
-function real(file: string): string {
+/**
+ * The real path of a file that may not exist yet: its nearest existing folder's, then the rest. A
+ * link to a file not made yet counts as its target, where a write through it lands (K-55).
+ */
+function real(file: string, hops = 0): string {
   try {
-    return realpathSync(file);
+    // Unlike Node's own, the native call resolves as the kernel does: `..` after a link goes up from
+    // the link's target, and on macOS a name in other letter case is the same folder.
+    return realpathSync.native(file);
   } catch {
     const parent = path.dirname(file);
-    return parent === file ? file : path.join(real(parent), path.basename(file));
+    if (parent === file) return file;
+    const dir = real(parent, hops);
+    const here = path.join(dir, path.basename(file));
+    let target: string;
+    try {
+      target = readlinkSync(here);
+    } catch {
+      return here;
+    }
+    // Not path.resolve, which applies `..` before the links. A kernel follows at most 40 links, so
+    // this stops there too, which also ends a loop.
+    return hops < 40 ? real(path.isAbsolute(target) ? target : `${dir}${path.sep}${target}`, hops + 1) : here;
   }
 }
 
 interface Settings {
-  sandbox?: { enabled?: boolean; filesystem?: { denyRead?: string[]; allowRead?: string[] } };
+  sandbox?: { enabled?: boolean; failIfUnavailable?: boolean; filesystem?: { denyRead?: string[]; allowRead?: string[] } };
   permissions?: { blockReadsOutsideWorkingDirectories?: boolean };
 }
 
@@ -597,6 +617,9 @@ export async function sandboxProblem(projectDir: string, secrets: string[]) {
     if (rule ? !rule.deny : !(outsideBlocked && !within(secret, projectDir))) {
       return `My sandboxed shell can read ${secret}. Add it to sandbox.filesystem.denyRead in ~/.claude/settings.json.`;
     }
+  }
+  if (first((s) => s.sandbox?.failIfUnavailable) !== true) {
+    return 'Claude Code would run my shell unsandboxed if its sandbox failed to start. Set sandbox.failIfUnavailable to true in ~/.claude/settings.json.';
   }
 }
 

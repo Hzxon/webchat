@@ -11,7 +11,7 @@ import { after, before, describe, mock, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Api } from '../agent/api.ts';
 import { AgentClient, type OpenedMessage } from '../agent/client.ts';
-import { doorbellOf, guard, markMonitor, Plugin, sandboxProblem, startedForWebChat, type RunState } from '../agent/plugin.ts';
+import { doorbellOf, guard, markMonitor, Plugin, sandboxProblem, secretDirs, startedForWebChat, type RunState } from '../agent/plugin.ts';
 import { ADAPTERS, createRunner } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
@@ -502,9 +502,9 @@ describe('agent client (R-027)', () => {
       GH_CONFIG_DIR: path.join(home, 'gh'),
       CLAUDE_CONFIG_DIR: path.join(home, 'claude'),
     });
-    // The sandbox keeps the shell from the plugin's folder and gh's.
+    // The sandbox keeps the shell from the plugin's folder, gh's and the macOS keychain, and fails where it cannot start.
     const dataDir = path.join(home, 'plugin');
-    const sandbox = { enabled: true, filesystem: { denyRead: [dataDir, process.env.GH_CONFIG_DIR] } };
+    const sandbox = { enabled: true, failIfUnavailable: true, filesystem: { denyRead: [dataDir, process.env.GH_CONFIG_DIR, '~/Library/Keychains'] } };
     await fs.mkdir(path.join(project, '.claude'));
     await fs.writeFile(path.join(project, '.claude', 'settings.local.json'), JSON.stringify({ sandbox }));
     try {
@@ -750,11 +750,27 @@ describe('agent client (R-027)', () => {
     await fs.mkdir(worktree, { recursive: true });
     await fs.mkdir(data);
     await fs.symlink(data, path.join(worktree, 'link'));
+    await fs.symlink(path.join(data, 'new.json'), path.join(worktree, 'new.json'));
+    await fs.symlink('loop', path.join(worktree, 'loop'));
+    await fs.mkdir(path.join(data, 'inner'));
+    await fs.writeFile(path.join(data, 'account.json'), '{}');
+    await fs.symlink(path.join(data, 'inner'), path.join(worktree, 'inner'));
+    await fs.symlink('inner/../account.json', path.join(worktree, 'up.json'));
+    await fs.symlink('inner/../made.json', path.join(worktree, 'up-new.json'));
+    const caseBlind = await fs.access(path.join(dir, 'DATA')).then(() => true, () => false);
     const use = (tool_name: string, tool_input: Record<string, unknown> = {}, cwd = project) => ({ tool_name, tool_input, cwd });
     const run: RunState = { pid: process.pid, project, worktree };
     // Run or not, the file tools never reach the plugin's folder, not even through a link.
     assert.match(guard(use('Read', { file_path: path.join(data, 'account.json') }), [data], []) ?? '', /secrets/);
     assert.match(guard(use('Read', { file_path: 'link/account.json' }, worktree), [data], [run]) ?? '', /secrets/);
+    // Nor through a link to a file not made yet, which Write would make in the folder (K-55).
+    assert.match(guard(use('Write', { file_path: 'new.json' }, worktree), [data], [run]) ?? '', /secrets/);
+    assert.equal(guard(use('Write', { file_path: 'loop' }, worktree), [data], [run]), undefined, 'a loop of links ends');
+    // Paths resolve as the kernel resolves them: `..` after a link goes up from its target, and other
+    // letter case names the folder where the disk ignores case, as macOS's does by default.
+    assert.match(guard(use('Read', { file_path: 'up.json' }, worktree), [data], [run]) ?? '', /secrets/);
+    assert.match(guard(use('Write', { file_path: 'up-new.json' }, worktree), [data], [run]) ?? '', /secrets/);
+    assert.equal(guard(use('Read', { file_path: path.join(dir, 'DATA', 'account.json') }), [data], []) !== undefined, caseBlind);
     assert.equal(guard(use('Read', { file_path: 'README.md' }), [data], []), undefined);
     // During a run: the worktree only, no web, no other MCP server, and the shell stays sandboxed.
     assert.equal(guard(use('Edit', { file_path: path.join(worktree, 'sum.js') }), [data], [run]), undefined);
@@ -768,15 +784,28 @@ describe('agent client (R-027)', () => {
     assert.equal(guard(use('WebFetch', {}, dir), [data], [run]), undefined);
 
     // Runs wait for a sandbox that keeps the shell from reading the secrets.
-    const restore = setEnv({ CLAUDE_CONFIG_DIR: path.join(dir, 'claude') });
+    const restore = setEnv({ CLAUDE_CONFIG_DIR: path.join(dir, 'claude'), GH_CONFIG_DIR: path.join(os.homedir(), '.config', 'gh') });
     const settings = (json: object) => fs.writeFile(path.join(project, '.claude', 'settings.json'), JSON.stringify(json));
     try {
       await settings({});
       assert.match((await sandboxProblem(project, [data])) ?? '', /sandbox is off/);
       await settings({ sandbox: { enabled: true } });
       assert.match((await sandboxProblem(project, [data])) ?? '', /can read/);
+      // Where the sandbox cannot start, Claude Code runs the shell without it unless told to fail (K-53).
       await settings({ sandbox: { enabled: true, filesystem: { denyRead: [dir] } } });
+      assert.match((await sandboxProblem(project, [data])) ?? '', /failIfUnavailable/);
+      await settings({ sandbox: { enabled: true, failIfUnavailable: true, filesystem: { denyRead: [dir] } } });
       assert.equal(await sandboxProblem(project, [data]), undefined);
+      // On macOS gh keeps its token in the login keychain, which the settings the README gave before
+      // K-54 leave readable. GH_CONFIG_DIR above puts gh's folder where the README expects it.
+      const mac = mock.property(process, 'platform', 'darwin');
+      const secrets = secretDirs(path.join(os.homedir(), '.claude', 'plugins', 'data', 'webchat-webchat'));
+      mac.mock.restore();
+      const denyRead = ['~/.claude/plugins/data', '~/.config/gh'];
+      await settings({ sandbox: { enabled: true, failIfUnavailable: true, filesystem: { denyRead } } });
+      assert.match((await sandboxProblem(project, secrets)) ?? '', /can read .*Keychains/);
+      await settings({ sandbox: { enabled: true, failIfUnavailable: true, filesystem: { denyRead: [...denyRead, '~/Library/Keychains'] } } });
+      assert.equal(await sandboxProblem(project, secrets), undefined);
       // The narrower rule decides.
       await settings({ sandbox: { enabled: true, filesystem: { denyRead: [dir], allowRead: [data] } } });
       assert.match((await sandboxProblem(project, [data])) ?? '', /can read/);
