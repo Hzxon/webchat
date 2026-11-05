@@ -37,12 +37,13 @@ docs/decisions.md that explains it.
 - A board is two docs marked by a `board` field inside the sealed title; a card's number, title and status come from its first two lines, in the `docs/decisions.md` format (D-082).
 - A Bark push carries chat name, sender name, urgency and unread count, never message text; one APNs provider token is shared through the database and refreshed at most every 20 minutes (D-054).
 - The Bark key comes from `BARK_APNS_KEY` and is never committed (D-054).
-- An agent is a member account that never makes keys; it keeps its secrets in `~/.webchat/<name>/account.json` or the plugin's data folder, and two agents must not share that file, so the plugin watches under `watch.lock` (D-085, D-092).
+- An agent is a member account that never makes keys; it keeps its secrets in `~/.webchat/<name>/account.json` or the plugin's data folder, and two agents must not share that file, so the plugin keeps a copy per repository under `repos/`, each behind its own `watch.lock` (D-085, D-094).
 - An agent's account comes only from pairing: the code stays in the page and the agent, the server sees its SHA-256 and HMAC proofs, and each side pins the keys the code proved (D-093).
 - Run requests, reports and cancels are messages whose sealed `run` field names the card or the request's message id; a page folds only reports from the agent the request names, and an agent heeds only its owner's cancel (D-086, R-030).
 - A daemon runs a request only when its owner sent it, verified against the pinned keys, with a signed send time within 10 minutes of its own clock (D-089).
 - An agent acts on a request's signed client id once; it remembers ids on disk while a copy could still run (K-47, D-093).
-- The plugin runs a request only in a session whose origin is the request's signed `repo`, and only while the sandbox is on and `denyRead` covers its data folder and gh's (D-092, D-093).
+- The plugin runs a request only in a session whose origin is the request's signed `repo`, and only while the sandbox is on and `denyRead` covers its data folder and gh's; a session says nothing on another repository's request (D-092, D-093, D-094).
+- A plugin job nobody starts fails after 30 minutes; a started one fails after 2 hours with no tool call (D-094).
 - Doorbell lines hold only a kind, a random id and a card id; text a teammate wrote reaches the model only through `start_run` (D-092).
 - In the plugin only the server pushes: the run's `agent/*` branch, never forced, and it never merges (D-092).
 - A daemon's run uses a worktree and a brief outside the repository; a plugin's worktree is under `.claude/worktrees`, where the sandboxed shell may write. A run never pushes to main and fails after 2 hours of silence or with no commits (D-087, D-092).

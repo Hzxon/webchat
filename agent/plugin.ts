@@ -1,16 +1,18 @@
 // The trusted half of the Claude Code plugin (R-030, D-092): the MCP server Claude Code starts with
-// the session. It holds the agent's keys and uses the owner's `gh` login. It checks in and checks
-// run requests as the daemon does (D-089). For each run it adds a worktree inside the checkout and
-// rings a doorbell: a file the plugin's monitor tails, whose lines hold only ids. The model takes
+// the session. It holds the agent's keys and uses the owner's `gh` login. It checks in for the
+// repository the session is open in, and takes that repository's run requests, checked as the
+// daemon checks them (D-089, D-094). For each run it adds a worktree inside the checkout and rings
+// that repository's doorbell: a file the plugin's monitor tails, whose lines hold only ids. The model takes
 // the card with start_run, works in the sandbox, and asks this server to publish and finish. The
 // server then watches the draft pull request, and rings again when CI fails on it, it conflicts, or
 // someone who may push reviews it.
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId } from '../shared/e2ee.ts';
 import { isRepoName, type RunRequest } from '../shared/types.ts';
@@ -23,11 +25,13 @@ const gh = (args: string[]) => exec('gh', args, { maxBuffer: 32 * 1024 * 1024 })
 
 /** A job the model goes quiet on for this long fails, as a daemon's run does (D-087). */
 const IDLE_MS = 2 * 60 * 60_000;
+/** A job nobody starts in this long fails: no session in its repository heard the doorbell (D-094). */
+const PICKUP_MS = 30 * 60_000;
 /** Rounds of fixes one pull request gets. */
 const MAX_FIXES = 3;
 /** Check results that mean the code broke, not that someone stopped or held the check. */
 const FAILED = new Set(['FAILURE', 'TIMED_OUT', 'STARTUP_FAILURE', 'ERROR']);
-const PULL_FIELDS = 'state,isDraft,headRefOid,mergeable,statusCheckRollup,reviews,comments';
+const PULL_FIELDS = 'state,isDraft,headRefOid,mergeable,statusCheckRollup,reviews,comments,updatedAt';
 
 export interface PluginOptions {
   /** WebChat's address and the pairing code, from the plugin's settings. */
@@ -68,6 +72,8 @@ interface Watched extends Place {
   /** What a round took up already: the head whose CI failure or conflict, and the newest review note's time. */
   seenHead: string;
   seenNote: string;
+  /** When GitHub last saw the pull request change, so an unchanged one needs no look at its line comments. */
+  seenUpdate?: string;
 }
 
 interface PullView {
@@ -78,6 +84,7 @@ interface PullView {
   statusCheckRollup: Array<{ name?: string; context?: string; conclusion?: string; state?: string; detailsUrl?: string }>;
   reviews: Array<{ author: { login: string }; body: string; submittedAt: string }>;
   comments: Array<{ author: { login: string }; body: string; createdAt: string }>;
+  updatedAt: string;
 }
 
 /** What the guard hook reads while a job runs: whose server, which session's checkout, and the only folder its file tools may touch. */
@@ -96,6 +103,8 @@ export class Plugin {
   /** Why this session takes no runs, for the status tool. Empty while it takes them. */
   problem = 'Starting.';
   private runs: Runs | null = null;
+  /** This repository's folder in the plugin's: its copy of the account, its lock, doorbell and pull requests. */
+  private home = '';
   private readonly jobs = new Map<string, Job>();
   private watched: Watched[] = [];
   private polling = false;
@@ -105,36 +114,46 @@ export class Plugin {
   constructor(private readonly options: PluginOptions) {}
 
   private file(name: string) {
-    return path.join(this.options.dataDir, name);
+    return path.join(this.home, name);
   }
 
   /**
-   * Takes the machine's watch, pairs when a new code was pasted, and loads the account. False when
-   * this session takes no runs; `problem` says why.
+   * Takes this repository's watch, pairs when a new code was pasted, and loads the repository's copy
+   * of the account. False when this session takes no runs; `problem` says why.
    */
   async start(): Promise<boolean> {
     const { dataDir, projectDir } = this.options;
     const { server, code } = this.options.code ? readPairing(this.options.code, this.options.server) : this.options;
-    await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
-    let client = await AgentClient.load(this.file('account.json')).catch(() => null);
-    if (!client && !code) {
+    this.repo = await originOf(projectDir);
+    if (!this.repo) {
+      this.problem = 'This folder is no GitHub repository, so this session takes no runs.';
+      return false;
+    }
+    const pairedFile = path.join(dataDir, 'account.json');
+    let paired = await AgentClient.load(pairedFile).catch(() => null);
+    if (!paired && !code) {
       this.problem = 'Not paired. In WebChat, choose Connect coding agent, paste its code with /plugin configure webchat@webchat, then start a new session.';
       return false;
     }
-    // Two sessions on one account would both claim the same runs (D-085), and a pairing would replace the file under the other.
-    if (!(await takeLock(this.file('watch.lock')))) {
-      this.problem = 'Another Claude Code session on this machine watches for WebChat runs.';
-      return false;
+    this.home = repoHome(dataDir, this.repo);
+    await fs.mkdir(this.home, { recursive: true, mode: 0o700 });
+    // Two sessions in one repository would both claim its runs (D-085). The second takes over when the first closes.
+    while (!(await takeLock(this.file('watch.lock')))) {
+      this.problem = `Another Claude Code session in ${this.repo} takes its runs. This one takes over when that one closes.`;
+      await sleep(60_000, undefined, { ref: false });
     }
-    if (code && client?.pairing !== (await pairingId(code))) {
+    if (code && paired?.pairing !== (await pairingId(code))) {
       this.problem = 'Waiting for you to approve this agent in WebChat, in the window that shows the code.';
-      client = await AgentClient.pair(this.file('account.json'), server, code);
+      paired = await AgentClient.pair(pairedFile, server, code);
       await this.ring('WebChat paired this session with your account. Cards you hand to it come here.');
     }
-    // Loaded, or paired just now: with neither a file nor a code, start returned above.
-    const paired = (this.client = client!);
-    this.repo = paired.repo = await originOf(projectDir);
-    this.runs = new Runs(paired, (job) => this.run(job), (run) => this.refusal(run));
+    // The repository's own copy, so sessions in several repositories never write one file (D-094).
+    // Paired just now, or loaded: with neither a file nor a code, start returned above.
+    let client = await AgentClient.load(this.file('account.json')).catch(() => null);
+    if (!client || client.pairing !== paired!.pairing) client = await paired!.copyTo(this.file('account.json'));
+    this.client = client;
+    client.repo = this.repo;
+    this.runs = new Runs(client, (job) => this.run(job), () => sandboxProblem(projectDir, secretDirs(dataDir)));
     this.watched = JSON.parse(await fs.readFile(this.file('pulls.json'), 'utf8').catch(() => '[]')) as Watched[];
     this.problem = '';
     return true;
@@ -149,17 +168,14 @@ export class Plugin {
     for await (const message of this.client!.watch(new AbortController().signal)) this.handle(message);
   }
 
-  /** Acts on one message. A run takes long, so the loop does not wait for it: check-ins go on meanwhile. */
+  /**
+   * Acts on one message. A run takes long, so the loop does not wait for it: check-ins go on
+   * meanwhile. A request for another repository is the session there's, so this one says nothing.
+   */
   handle(message: OpenedMessage) {
+    const run = message.content?.run;
+    if (run?.kind === 'request' && run.repo !== this.repo) return Promise.resolve();
     return this.runs!.handle(message).catch(log);
-  }
-
-  /** Why this session will not run a request: it is open in another repository, or the shell could read a secret. */
-  private async refusal(run: RunRequest) {
-    if (!this.repo || run.repo !== this.repo) {
-      return `I am open in ${this.repo ?? 'no GitHub repository'}, not in ${run.repo ?? 'the repository of the card'}.`;
-    }
-    return sandboxProblem(this.options.projectDir, secretDirs(this.options.dataDir));
   }
 
   /** A run, as Runs hands it over: a worktree inside the checkout, where the sandboxed shell may write, then the doorbell. */
@@ -194,7 +210,8 @@ export class Plugin {
       if (error) settle.reject(error);
       else settle.resolve(result!);
     };
-    const job: Job = { ...place, brief, done, end, timer: setTimeout(() => end(new Error('Nothing happened on it for 2 hours.')), IDLE_MS) };
+    const nobody = `Nobody started it within ${PICKUP_MS / 60_000} minutes. Is a Claude Code session open in ${this.repo}?`;
+    const job: Job = { ...place, brief, done, end, timer: setTimeout(() => end(new Error(nobody)), PICKUP_MS) };
     signal.addEventListener('abort', () => end(new Error('The owner cancelled it.')), { once: true });
     this.jobs.set(id, job);
     const state: RunState = { pid: process.pid, project: this.options.projectDir, worktree: place.worktree };
@@ -213,7 +230,9 @@ export class Plugin {
     const job = typeof args.id === 'string' ? this.jobs.get(args.id) : undefined;
     // An id counts only when this server filed it, whoever wrote the line that named it.
     if (!job) throw new Error('No WebChat run or fix has this id in this session. Do nothing for the line that named it.');
-    job.timer.refresh();
+    // Started: from now on it fails only after 2 hours with no call.
+    clearTimeout(job.timer);
+    job.timer = setTimeout(() => job.end(new Error('Nothing happened on it for 2 hours.')), IDLE_MS);
     switch (name) {
       case 'start_run':
         return job.brief;
@@ -230,8 +249,7 @@ export class Plugin {
     const owner = this.client?.users.get(this.client.owner!)?.displayName;
     const sandbox = await sandboxProblem(this.options.projectDir, secretDirs(this.options.dataDir));
     return [
-      this.problem || `Watching for cards that ${owner ?? 'your owner'} hands to this agent on ${this.options.server}.`,
-      `Repository: ${this.repo ?? 'none on GitHub, so runs are refused'}.`,
+      this.problem || `Taking the cards that ${owner ?? 'your owner'} hands to this agent in ${this.repo}, on ${this.options.server}.`,
       sandbox ?? 'The sandbox keeps the shell away from the secrets.',
       ...[...this.jobs.keys()].map((id) => `Working on ${id}.`),
       `Watching ${this.watched.length} draft pull requests.`,
@@ -324,8 +342,10 @@ export class Plugin {
     return why.length ? { line: why.join('; '), details: details.join('\n\n') } : null;
   }
 
-  /** Review notes since the last round, from people who may push to the repository. */
+  /** Review notes since the last round, from people who may push to the repository. None while GitHub saw no change. */
   private async reviewNotes(pull: Watched, view: PullView) {
+    if (view.updatedAt === pull.seenUpdate) return [];
+    pull.seenUpdate = view.updatedAt;
     const inline = JSON.parse(await gh(['api', `repos/${pull.pull.repo}/pulls/${pull.pull.number}/comments`])) as Array<{
       user: { login: string };
       body: string;
@@ -461,14 +481,20 @@ async function takeLock(file: string) {
   return false;
 }
 
-/** The job running on this machine, while the server that filed it lives. */
-export function readRunState(dataDir: string): RunState | null {
-  try {
-    const state = JSON.parse(readFileSync(path.join(dataDir, 'run.json'), 'utf8')) as RunState;
-    return alive(state.pid) ? state : null;
-  } catch {
-    return null;
-  }
+/** A repository's folder in the plugin's, such as `repos/acme__app` (D-094). */
+export const repoHome = (dataDir: string, repo: string) => path.join(dataDir, 'repos', repo.replace('/', '__'));
+
+/** The jobs running on this machine, one per repository at most, while the servers that filed them live. */
+export function readRunStates(dataDir: string): RunState[] {
+  const repos = path.join(dataDir, 'repos');
+  return (existsSync(repos) ? readdirSync(repos) : []).flatMap((name) => {
+    try {
+      const state = JSON.parse(readFileSync(path.join(repos, name, 'run.json'), 'utf8')) as RunState;
+      return alive(state.pid) ? [state] : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 /** The folders the model must never read: the plugin's, with the agent's keys, and gh's, with the owner's token. */
@@ -551,12 +577,13 @@ const FILE_TOOLS = new Set(['Read', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit'
  * since they run outside the sandbox. While a job runs in this session's checkout, they stay in its
  * worktree, the web and other MCP servers are off, and the shell stays in the sandbox (D-092).
  */
-export function guard(use: ToolUse, secrets: string[], run: RunState | null): string | undefined {
+export function guard(use: ToolUse, secrets: string[], runs: RunState[]): string | undefined {
   const input = use.tool_input;
   const named = input.file_path ?? input.notebook_path ?? (use.tool_name === 'Glob' || use.tool_name === 'Grep' ? (input.path ?? use.cwd) : undefined);
   const target = FILE_TOOLS.has(use.tool_name) && typeof named === 'string' ? real(path.resolve(use.cwd, named)) : undefined;
   if (target && secrets.some((dir) => within(target, real(dir)))) return 'That folder holds secrets the WebChat plugin keeps from the model.';
-  if (!run || !within(real(use.cwd), real(run.project))) return;
+  const run = runs.find((r) => within(real(use.cwd), real(r.project)));
+  if (!run) return;
   const busy = 'while a WebChat run is going';
   if (use.tool_name === 'WebFetch' || use.tool_name === 'WebSearch') return `No web access ${busy}.`;
   if (use.tool_name.startsWith('mcp__') && !use.tool_name.startsWith('mcp__plugin_webchat_webchat__')) return `Only the webchat tools ${busy}.`;

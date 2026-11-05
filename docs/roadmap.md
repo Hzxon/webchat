@@ -211,6 +211,21 @@ from it. The plugin's address setting stays, optional, for a bare code from an o
 Done when: the plugin test pairs with an empty address setting, and the dialog shows the address
 with the code in a browser.
 
+### R-032: Every open repository takes its own runs
+
+Status: In progress on `claude/r032-every-repo` in #104 (D-094).
+
+Why: only the first Claude Code session on a machine took runs, whatever repository it was open
+in. A session in another repository stayed idle, and did not take over when the first one closed.
+
+Scope: each session checks in for the repository it is open in, and the play menu lists one entry
+per repository. A request goes to the session in the repository it names; the others say nothing.
+A second session in one repository takes over when the first closes. A run nobody starts fails
+after 30 minutes. A pull request's line comments are fetched only when GitHub saw a change.
+
+Done when: the plugin test runs sessions in two repositories, one with a second session waiting,
+and a run nobody starts fails. The menu lists both repositories in a browser.
+
 ## Ideas
 
 ### R-004: Private channels

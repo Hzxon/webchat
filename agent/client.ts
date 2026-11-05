@@ -219,6 +219,18 @@ export class AgentClient {
     return AgentClient.create(filePath, { server, username: user.username, userId: user.id, authKey, secrets, cookie: api.cookie, owner: owner.id, pins, pairing: id });
   }
 
+  /**
+   * A copy of the account for one repository's Claude Code session (D-094): the same keys and pins,
+   * with its own session, cursor and runs, so sessions in several repositories never write one
+   * file. Messages from before it are history.
+   */
+  async copyTo(filePath: string) {
+    const { cursor } = await this.request<BootstrapDTO>('GET', '/bootstrap');
+    const copy = new AgentClient({ ...this.file, cursor, running: undefined, handled: undefined }, filePath, this.identity);
+    await copy.save();
+    return copy;
+  }
+
   /** Opens the account an earlier sign-up or sign-in wrote. */
   static async load(filePath: string) {
     const file = JSON.parse(await fs.readFile(filePath, 'utf8')) as AccountFile;

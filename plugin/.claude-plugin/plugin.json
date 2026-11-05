@@ -37,8 +37,8 @@
     "monitors": [
       {
         "name": "doorbell",
-        "command": "touch \"${CLAUDE_PLUGIN_DATA}/doorbell\" && exec tail -n 0 -F \"${CLAUDE_PLUGIN_DATA}/doorbell\"",
-        "description": "Runs and pull request fixes that WebChat hands to this session"
+        "command": "f=$(node \"${CLAUDE_PLUGIN_ROOT}/server.mjs\" doorbell \"${CLAUDE_PLUGIN_DATA}\") && touch \"$f\" && exec tail -n 0 -F \"$f\"",
+        "description": "Runs and pull request fixes that WebChat hands to the repository this session is open in"
       }
     ]
   }

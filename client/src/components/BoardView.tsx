@@ -74,8 +74,18 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
   const memberIds = useAppState((s) => s.projects[projectId]?.memberIds ?? NO_MEMBERS);
-  // This user's coding agents in the project (D-089). A card can be handed to one that is online and idle.
-  const agents = useMemo(() => memberIds.map((id) => users[id]).filter((u): u is UserDTO => !!u && u.agentOwner === meId), [memberIds, users, meId]);
+  // This user's coding agents in the project (D-089), one choice per repository a Claude Code
+  // session of theirs is open in (D-094). A card can be handed to one that is online and idle.
+  const choices = useMemo(
+    () =>
+      memberIds
+        .map((id) => users[id])
+        .filter((u): u is UserDTO => !!u && u.agentOwner === meId)
+        .flatMap((agent): Array<{ agent: UserDTO; repo?: string; online: boolean; busy: boolean; lastSeen: number | null }> =>
+          agent.agentRepos.length ? agent.agentRepos.map((seat) => ({ agent, ...seat })) : [{ agent, online: agent.online, busy: agent.busy, lastSeen: agent.lastSeen }],
+        ),
+    [memberIds, users, meId],
+  );
   const [cards, setCards] = useState<Card[]>([]);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
@@ -144,9 +154,9 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
     setTimeout(() => setNote(''), 2000);
   }
 
-  async function handOver(card: Card, agent: UserDTO) {
+  async function handOver(card: Card, agent: UserDTO, repo: string | undefined) {
     if (!doc) return;
-    await requestRun(projectId, doc.id, card, agent);
+    await requestRun(projectId, doc.id, card, agent, repo);
     setNote(`Asked ${agent.displayName}. Its reports show in #general.`);
     setTimeout(() => setNote(''), 4000);
   }
@@ -243,22 +253,18 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                           <button className="icon-button icon-button-small" onClick={() => setHistoryOf(card)} title="History" aria-label="Card history">
                             <HistoryIcon width={18} height={18} />
                           </button>
-                          {column === 'roadmap' && card.kind && !card.failed && agents.length > 0 && (
+                          {column === 'roadmap' && card.kind && !card.failed && choices.length > 0 && (
                             <details className="run-menu">
                               <summary className="icon-button icon-button-small" title="Run with an agent" aria-label="Run with an agent">
                                 <PlayIcon width={18} height={18} />
                               </summary>
                               <div className="run-menu-list">
-                                {agents.map((agent) => (
+                                {choices.map(({ agent, repo, online, busy, lastSeen }) => (
                                   // A card someone is editing would run as half of what they mean.
-                                  <button key={agent.id} onClick={() => run(handOver(card, agent))} disabled={!agent.online || agent.busy || !!lock}>
+                                  <button key={`${agent.id} ${repo}`} onClick={() => run(handOver(card, agent, repo))} disabled={!online || busy || !!lock}>
                                     {agent.displayName}
-                                    {agent.agentRepo && <small> in {agent.agentRepo}</small>}
-                                    {!agent.online ? (
-                                      <small> · asleep{agent.lastSeen ? ` since ${formatSince(agent.lastSeen)}` : ''}</small>
-                                    ) : (
-                                      agent.busy && <small> · busy</small>
-                                    )}
+                                    {repo && <small> in {repo}</small>}
+                                    {!online ? <small> · asleep{lastSeen ? ` since ${formatSince(lastSeen)}` : ''}</small> : busy && <small> · busy</small>}
                                   </button>
                                 ))}
                               </div>
