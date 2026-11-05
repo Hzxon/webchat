@@ -536,12 +536,15 @@ export function readRunStates(dataDir: string): RunState[] {
 
 /**
  * The folders the model must never read: the plugin's, with the agent's keys, and gh's, with the
- * owner's token. On macOS gh keeps the token in the login keychain by default (K-54).
+ * owner's token. On macOS gh keeps the token in the login keychain by default (K-54). Claude Code
+ * keeps the environment that SessionStart hooks leave for each session, tokens included, in its
+ * session-env, which the sandbox lets the shell read (K-56).
  */
 export function secretDirs(dataDir: string) {
   const ghDir = process.env.GH_CONFIG_DIR ?? path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'gh');
   const keychains = process.platform === 'darwin' ? [path.join(os.homedir(), 'Library', 'Keychains')] : [];
-  return [dataDir, ghDir, ...keychains].filter(Boolean);
+  const sessionEnv = path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude'), 'session-env');
+  return [dataDir, ghDir, ...keychains, sessionEnv].filter(Boolean);
 }
 
 const within = (file: string, dir: string) => {

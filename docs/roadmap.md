@@ -513,6 +513,19 @@ Open questions:
 
 ## Known issues
 
+### K-56: A card's model can read the tokens that SessionStart hooks leave for the shell
+
+Status: Fixed in #118. Found in R-035's step 2 (#117) on 2026-11-06.
+
+Claude Code keeps the variables that SessionStart hooks set for each session in
+`~/.claude/session-env`, or under `CLAUDE_CONFIG_DIR` when that is set. On the owner's machine it
+had 297 entries, and 205 of its files mentioned TOKEN. A sandboxed shell could list and read it,
+even with reads outside the working directories blocked. The plugin's check did not ask for it.
+
+Fix: the plugin refuses runs until `denyRead` covers `session-env`, and the README's settings deny
+it. With that deny, the sandboxed shell cannot list the folder, and a hook's variable still reaches
+its commands.
+
 ### K-55: The guard lets the file tools write through a link to a file not made yet
 
 Status: Fixed in #118. Found in the review of the R-035 spike (#114) on 2026-11-06.
