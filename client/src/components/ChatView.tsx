@@ -3,7 +3,7 @@ import type { QuotedMessage } from '../../../shared/e2ee';
 import { githubCardEvent } from '../../../shared/github';
 import { LIMITS, type GithubCardDTO, type PullCardDTO, type PullEvent, type RunReport, type RunRequest } from '../../../shared/types';
 import { holdReloadWhile } from '../build';
-import { discardMessage, loadDraft, loadOlder, quoteOf, react, retryMessage, saveDraft, sendMessage } from '../chat';
+import { cancelRun, discardMessage, loadDraft, loadOlder, quoteOf, react, retryMessage, saveDraft, sendMessage } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { actions, chatTitle, otherMemberId, senderName, useAppState, type MessageReactions, type State } from '../store';
 import { Avatar, nameColor } from './Avatar';
@@ -172,7 +172,7 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
     const reports = new Map<number, RunReport>();
     const shown: ChatMessage[] = [];
     for (const m of messages) {
-      const report = m.run?.kind === 'request' ? null : m.run;
+      const report = m.run?.kind === 'request' || m.run?.kind === 'cancel' ? null : m.run;
       const request = report ? byId.get(report.request)?.run : null;
       if (report && request?.kind === 'request' && request.runtime === m.senderId) reports.set(report.request, report);
       else shown.push(m);
@@ -310,7 +310,12 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                   ) : message.github ? (
                     <GithubCard card={message.github} />
                   ) : message.run?.kind === 'request' ? (
-                    <RunCard run={message.run} state={reports.get(message.id) ?? null} users={users} />
+                    <RunCard
+                      run={message.run}
+                      state={reports.get(message.id) ?? null}
+                      users={users}
+                      onCancel={mine ? () => void cancelRun({ ...message, run: message.run as RunRequest }).catch(() => undefined) : undefined}
+                    />
                   ) : message.pull ? (
                     <PullCard pull={message.pull} />
                   ) : (
@@ -433,13 +438,18 @@ const RUN_TAGS: Record<RunReport['kind'], [Tone, string]> = {
   claimed: ['info', 'Running'],
   done: ['ok', 'Done'],
   failed: ['danger', 'Failed'],
+  fixing: ['info', 'Fixing'],
 };
 
-/** A card handed to a coding agent (R-027), with the agent's latest report on it folded in. */
-function RunCard({ run, state, users }: { run: RunRequest; state: RunReport | null; users: State['users'] }) {
+/**
+ * A card handed to a coding agent (R-027), with the agent's latest report on it folded in. Its
+ * sender can cancel it while it runs (R-030); the agent's report then says so.
+ */
+function RunCard({ run, state, users, onCancel }: { run: RunRequest; state: RunReport | null; users: State['users']; onCancel?: () => void }) {
   const [tone, label] = state ? RUN_TAGS[state.kind] : (['muted', 'Waiting for the agent'] as [Tone, string]);
+  const going = !state || state.kind === 'claimed' || state.kind === 'fixing';
   // Nothing runs while the agent checks in nowhere. A daemon that starts again reports the run (K-46).
-  const offline = (!state || state.kind === 'claimed') && !users[run.runtime]?.online;
+  const offline = going && !users[run.runtime]?.online;
   return (
     <span className="pull-card">
       <span className="pull-card-head">
@@ -457,6 +467,17 @@ function RunCard({ run, state, users }: { run: RunRequest; state: RunReport | nu
         )}
       </span>
       {state?.note && <span className="pull-people">{state.note}</span>}
+      {going && onCancel && (
+        <button
+          className="button-secondary run-cancel"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCancel();
+          }}
+        >
+          Cancel
+        </button>
+      )}
     </span>
   );
 }

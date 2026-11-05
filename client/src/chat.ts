@@ -6,7 +6,7 @@
 //
 // Everything the server sends is decrypted on the way in, and every message is encrypted on the
 // way out (see e2ee/keyring.ts). The store only ever holds readable text.
-import type { MessageContent, QuotedMessage } from '../../shared/e2ee';
+import { pairingId, pairingProof, type MessageContent, type QuotedMessage } from '../../shared/e2ee';
 import {
   LIMITS,
   showsEveryPush,
@@ -15,6 +15,7 @@ import {
   type PullCardDTO,
   type PullRequestDTO,
   type MessageDTO,
+  type PublicKeysDTO,
   type RunRequest,
   type SendMessageInput,
   type SyncResponse,
@@ -730,16 +731,52 @@ export function sendMessage(conversationId: number, body: string, urgent: boolea
 
 /**
  * Hands a board card to the user's coding agent (R-027, D-089): a message in the project's #general
- * whose `run` field names the card and the agent's account, and when it was sent. The daemon
- * answers with reports that name this message, and pages fold them into its card. The text says
- * the same in words for older pages.
+ * whose `run` field names the card and the agent's account, and when it was sent. It signs the
+ * repository the menu showed, where an agent in Claude Code runs it (R-030). The agent answers with
+ * reports that name this message, and pages fold them into its card. The text says the same in
+ * words for older pages.
  */
 export async function requestRun(projectId: number, docId: string, card: Card, runtime: UserDTO) {
   const general = generalOf(store.get(), projectId);
   if (!general) throw new Error('Project not found.');
   const id = `${card.kind}-${card.number}`;
   const run: RunRequest = { kind: 'request', card: id, title: card.title.slice(0, LIMITS.runNoteLength), docId, section: card.id, runtime: runtime.id, sentAt: Date.now() };
-  await sendContent(general.id, { text: `Run ${id} with ${runtime.displayName}: ${card.title}`, run }, false);
+  if (runtime.agentRepo) run.repo = runtime.agentRepo;
+  const where = run.repo ? ` in ${run.repo}` : '';
+  await sendContent(general.id, { text: `Run ${id} with ${runtime.displayName}${where}: ${card.title}`, run }, false);
+}
+
+/** Stops a run the user handed to an agent (R-030). The agent heeds only the person who sent the request. */
+export function cancelRun(request: ChatMessage & { run: RunRequest }) {
+  const text = `Cancel ${request.run.card} with ${senderName(store.get().users, request.run.runtime)}`;
+  return sendContent(request.conversationId, { text, run: { kind: 'cancel', request: request.id } }, false);
+}
+
+/**
+ * The coding agent's half of a pairing, once it sent one: its keys, which the code proves (R-030,
+ * D-093). Null while it has not. The code stays in this page: the server sees only a hash of it.
+ */
+export async function pairingKeys(code: string): Promise<PublicKeysDTO | null> {
+  const pairing = await api.pairing(await pairingId(code));
+  if (!pairing) return null;
+  if (pairing.proof !== (await pairingProof(code, pairing.keys))) throw new Error('These keys did not come with the code. Close this window and make a new code.');
+  return pairing.keys;
+}
+
+/**
+ * Approves a pairing: the server makes the agent's account, this browser pins the keys the code
+ * proved, and the agent joins the projects picked, with their channel keys. The agent pins this
+ * user's keys from the proof sent along (D-093).
+ */
+export async function connectAgent(code: string, keys: PublicKeysDTO, displayName: string, projectIds: number[]) {
+  const proof = await pairingProof(code, keys, { id: meId, keys: keyring.myKeys() });
+  const agent = await api.approvePairing(await pairingId(code), { displayName, proof });
+  if (agent.keys?.dh !== keys.dh || agent.keys.sign !== keys.sign) throw new Error('The server made the agent’s account with other keys.');
+  // Pinned before the first check-in sees the account, so keys the server swaps in later show as changed (D-018).
+  await keyring.trust(agent);
+  await reloadAll();
+  for (const projectId of projectIds) await addProjectMembers(projectId, [agent.id]);
+  return agent;
 }
 
 /**

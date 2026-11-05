@@ -19,7 +19,13 @@ export class Api {
     readonly baseUrl: string,
     /** The cookies the server set, as a Cookie header: the session, and the device mark of D-080. */
     public cookie = '',
-  ) {}
+  ) {
+    // A sign-in sends the login key, so it never travels in the clear, except on this machine (K-47).
+    const { protocol, hostname } = new URL(baseUrl);
+    if (protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(hostname)) {
+      throw new Error(`Use the https:// address of the server, not ${baseUrl}.`);
+    }
+  }
 
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     let res: Response;

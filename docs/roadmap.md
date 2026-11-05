@@ -128,8 +128,8 @@ test covers a request from someone who was not let in.
 
 ### R-030: Run cards from a Claude Code plugin
 
-Status: Planned. Designed on 2026-11-05 in #99 (D-092). A spike showed that a plugin monitor
-wakes an idle session and that a forged line gets nothing.
+Status: In review in #100 (D-092, D-093). Designed on 2026-11-05 in #99. A spike showed that a
+plugin monitor wakes an idle session and that a forged line gets nothing.
 
 Why: an agent today is a second program. Its owner clones WebChat, signs the agent up with an
 invite code and a password, adds it to the project, compares a security code, writes
@@ -195,8 +195,10 @@ Open questions:
   happens to a run when the laptop sleeps, or the session compacts?
 - `experimental.monitors` may change shape in Claude Code. Does a pinned plugin version shield
   the owner?
-- Does Claude Code's secure storage work on a Linux server without a desktop keyring, and how does
-  the owner paste a new code to pair again?
+- Does Claude Code's secure storage work on a Linux server without a desktop keyring? A new code
+  pasted with `/plugin configure webchat@webchat` pairs again at the next session start.
+- The release job that builds the `plugin` branch first runs with the next release. Does
+  `/plugin marketplace add Hzxon/webchat#plugin` install from it as the README says?
 
 ## Ideas
 
@@ -397,7 +399,7 @@ Open questions:
 
 ### K-47: The agent runs a replayed request, and signs up over plain HTTP
 
-Status: Open. Found while designing R-030 on 2026-11-05.
+Status: Fixed in #100, with R-030 (D-093). Found while designing R-030 on 2026-11-05.
 
 A run request is signed with its client id, and the database refuses a repeated one
 (`messages_by_client_id`). Only an honest server holds to that. `Runs.handle` in `agent/runs.ts`

@@ -15,6 +15,7 @@
 //   for everyone who stays, and encrypts the old key with the new one. Whoever holds the new key
 //   opens every earlier key in turn; the person who left never gets the new one.
 import {
+  isRepoName,
   LIMITS,
   type EnvelopeDTO,
   type MessageKind,
@@ -404,7 +405,6 @@ export class TamperedMessageError extends Error {
 
 const isId = (value: unknown): value is number => Number.isInteger(value) && (value as number) > 0;
 
-const REPO = /^[\w.-]+\/[\w.-]+$/;
 const REVIEWS = new Set<PullReview>(['approved', 'changes_requested', 'review_required']);
 const CHECKS = new Set<PullChecks>(['success', 'failure', 'pending']);
 /** A GitHub login, or a team as "org/team". */
@@ -421,7 +421,7 @@ function readPeople(raw: unknown): string[] | undefined {
  * number, so a card can only ever lead to that pull request on github.com.
  */
 export function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | undefined {
-  if (!raw || typeof raw.repo !== 'string' || !REPO.test(raw.repo) || !isId(raw.number) || typeof raw.title !== 'string') return;
+  if (!raw || typeof raw.repo !== 'string' || !isRepoName(raw.repo) || !isId(raw.number) || typeof raw.title !== 'string') return;
   const url = `https://github.com/${raw.repo}/pull/${raw.number}`;
   if (raw.url !== url) return;
   const card: PullCardDTO = {
@@ -442,7 +442,7 @@ export function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | u
 }
 
 const CARD_ID = /^[DRK]-\d{1,6}$/;
-const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed'];
+const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed', 'fixing'];
 const short = (value: unknown, max: number) => (typeof value === 'string' && value.length <= max ? value : undefined);
 
 /** A run request or report, if it has the right shape. A pull request is named by repository and number only. */
@@ -454,8 +454,18 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
     const docId = short(raw.docId, 64);
     const section = short(raw.section, 64);
     if (!card || !CARD_ID.test(card) || title === undefined || !docId || !section || !isId(raw.runtime)) return;
-    return { kind: 'request', card, title, docId, section, runtime: raw.runtime, ...(isId(raw.sentAt) && { sentAt: raw.sentAt }) };
+    return {
+      kind: 'request',
+      card,
+      title,
+      docId,
+      section,
+      runtime: raw.runtime,
+      ...(isId(raw.sentAt) && { sentAt: raw.sentAt }),
+      ...(typeof raw.repo === 'string' && isRepoName(raw.repo) && { repo: raw.repo }),
+    };
   }
+  if (raw.kind === 'cancel') return isId(raw.request) ? { kind: 'cancel', request: raw.request } : undefined;
   const kind = REPORT_KINDS.find((k) => k === raw.kind);
   if (!kind || !isId(raw.request)) return;
   const run: RunReport = { kind, request: raw.request };
@@ -464,7 +474,7 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
   const branch = short(raw.branch, LIMITS.branchLength);
   if (branch) run.branch = branch;
   const pull = raw.pull as { repo?: unknown; number?: unknown } | undefined;
-  if (typeof pull?.repo === 'string' && REPO.test(pull.repo) && isId(pull.number)) run.pull = { repo: pull.repo, number: pull.number };
+  if (typeof pull?.repo === 'string' && isRepoName(pull.repo) && isId(pull.number)) run.pull = { repo: pull.repo, number: pull.number };
   return run;
 }
 
@@ -606,4 +616,41 @@ export async function safetyCode(a: { id: number; keys: PublicKeysDTO }, b: { id
     groups.push(String(value % 100_000).padStart(5, '0'));
   }
   return groups;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pairing a coding agent (R-030, D-093)
+
+/**
+ * A one-time code the owner's page shows and the owner pastes into the agent: 128 random bits, so
+ * a server that sees the id and the proofs made from it cannot guess it offline. Hex in groups of
+ * four, which reads aloud and types on a phone.
+ */
+export function newPairingCode(): string {
+  const hex = Array.from(randomBytes(16), (b) => b.toString(16).padStart(2, '0')).join('');
+  return hex.match(/.{4}/g)!.join('-');
+}
+
+/** The code's bytes, however it was spaced or cased. Throws on anything else. */
+function pairingSecret(code: string): Uint8Array<ArrayBuffer> {
+  const hex = code.toLowerCase().replace(/[\s-]/g, '');
+  if (!/^[0-9a-f]{32}$/.test(hex)) throw new Error('A pairing code is 32 digits and letters a to f.');
+  return new Uint8Array(hex.match(/../g)!.map((pair) => parseInt(pair, 16)));
+}
+
+/** Where the server files a pairing: a hash of the code, so the server never learns the code. */
+export async function pairingId(code: string): Promise<string> {
+  return toBase64Url(await sha('SHA-256', concat(utf8('webchat/pair/id/v1'), pairingSecret(code))));
+}
+
+/**
+ * Binds keys to the code. The agent proves its keys to the owner's page. The page then proves the
+ * owner's id and keys to the agent, together with the agent's, so the server can swap neither.
+ */
+export async function pairingProof(code: string, agent: PublicKeysDTO, owner?: { id: number; keys: PublicKeysDTO }): Promise<string> {
+  const key = await subtle().importKey('raw', pairingSecret(code), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signer = owner
+    ? [utf8(`webchat/pair/owner/v1:${owner.id}`), fromBase64Url(owner.keys.dh), fromBase64Url(owner.keys.sign)]
+    : [utf8('webchat/pair/agent/v1')];
+  return toBase64Url(await subtle().sign('HMAC', key, concat(...signer, fromBase64Url(agent.dh), fromBase64Url(agent.sign))));
 }

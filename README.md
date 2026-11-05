@@ -147,11 +147,13 @@ What it does not protect against:
   everyone the server lists as a project member. The New channel dialog names them, so check that
   list. The same goes for the new key a chat gets after someone leaves.
 - **An agent's keys live in a file on its owner's machine.** A coding agent that a project runs
-  (the roadmap's R-027) has an account of its own, and the daemon behind it keeps that account's
-  private keys and session in `~/.webchat/<name>/account.json`, readable only by its owner but
-  not encrypted. Anyone who can read that file can read what the agent's projects write. The
-  server knows which accounts are agents, whose agent each one is, and when one is busy with a
-  card, and sees a run as messages like any other.
+  (the roadmap's R-027) has an account of its own. The Claude Code plugin keeps that account's
+  private keys and session in its data folder, `~/.claude/plugins/data/`, and the daemon in
+  `~/.webchat/<name>/account.json`. Both files are readable only by their owner, but not
+  encrypted. Anyone who can read one can read what the agent's projects write. The server knows
+  which accounts are agents, whose agent each one is, when one is busy with a card, and which
+  GitHub repository its Claude Code session is open in. It sees a run as messages like any other.
+  Pairing shows it the agent's public keys and proofs made from the code, never the code.
 - **People who leave keep the keys they had.** Someone who left or was removed could still read the
   messages from before, if they got them another way, for example from a copy of the database.
   Everything sent after they left uses a new key they never get.
@@ -409,32 +411,51 @@ WebChat tab is open.
 
 ## Run board cards with a coding agent
 
-You can hand an issue or idea card on your project's board to a coding agent that you run on
-your own machine, such as Claude Code. The agent gets an account of its own, and runs only the
-cards you hand it.
+You can hand an issue or idea card on your project's board to a coding agent on your own machine.
+The agent gets an account of its own, and runs only the cards you hand it.
 
-1. Sign the agent up as yours, from a checkout of WebChat on the machine that holds your project's
-   repository: `npm run agent -- signup https://your-webchat.example claude_code <invite code> alice`,
-   where `alice` is your username. Its keys stay in `~/.webchat/claude_code/account.json`, which
-   only you can read. An agent account that already exists signs in instead:
-   `npm run agent -- login https://your-webchat.example claude_code alice`.
-2. Both print a security code. Open a direct chat with the agent and check that it shows the same.
-3. Add the agent to your project from the Add people dialog, like a teammate.
-4. Name the project's repository in `~/.webchat/claude_code/config.json`:
+### With the Claude Code plugin
+
+1. Add the plugin in Claude Code: `/plugin marketplace add Hzxon/webchat#plugin`, then
+   `/plugin install webchat@webchat`. It asks for your WebChat's address and a pairing code.
+2. In WebChat, open a project's board and choose **Connect agent**. Paste the code it shows into
+   the plugin's dialog. The code works once, within 10 minutes. To pair again later, run
+   `/plugin configure webchat@webchat` and paste a new code.
+3. Turn on Claude Code's sandbox with `/sandbox`, and keep the shell away from the plugin's keys
+   and your GitHub login in `~/.claude/settings.json`:
+   `{ "sandbox": { "enabled": true, "filesystem": { "denyRead": ["~/.claude/plugins/data", "~/.config/gh"] } } }`.
+   The plugin refuses runs until both hold.
+4. Start a new session with `claude` in your project's repository, and leave it open. Back in
+   WebChat, approve the agent, name it, and pick the projects it joins.
+
+On a roadmap card, the play button lists your agents and the repository each one is open in. One
+that is not checking in shows as asleep since its last check-in: a run needs the session open and
+the laptop awake. When you hand it a card, the plugin checks that you sent it, adds a git worktree
+inside the repository, and wakes the session. Claude works in that worktree, in the sandbox, with
+no credentials. The plugin pushes the branch and opens a draft pull request with your `gh` login.
+It never pushes anywhere else and never merges. It then watches the draft: when CI fails, it
+conflicts, or someone who may push reviews it, Claude gets another round, at most three. Watching
+stops when someone else pushes to it, or it is closed, merged or marked ready.
+
+### With the daemon
+
+For other coding agents, or without Claude Code, run the daemon from a checkout of WebChat on the
+machine that holds your project's repository.
+
+1. Choose **Connect agent** on the board, then pair with the code it shows:
+   `npm run agent -- pair https://your-webchat.example <code> claude_code`. Its keys stay in
+   `~/.webchat/claude_code/account.json`, which only you can read.
+2. Name the project's repository in `~/.webchat/claude_code/config.json`:
    `{ "projects": { "Capstone": "/home/you/dev/capstone" } }`. Add `"agent": "codex"` or
    `"agent": "hermes"` there to run one of those instead of Claude Code.
-5. Keep it running: `npm run agent -- watch claude_code`. It lists your projects and the
-   repository it found for each.
+3. Keep it running: `npm run agent -- watch claude_code`. It lists your projects and the
+   repository it found for each. Each run gets a git worktree under `~/.webchat/claude_code/runs`.
 
-On a roadmap card, the play button lists your agents in the project. The request and the agent's
-reports show as one card in #general, so your team sees who is on what. It says when the agent is
-offline, since nothing runs then. A run cut short when the daemon stopped is reported failed when
-it starts again. The agent reads the card
-as it is on the board, whoever wrote it, and the board's decisions. Each run gets a git worktree
-on a branch named after the card, under `~/.webchat/claude_code/runs`, and ends in a draft pull
-request when `gh` is signed in on that machine. The agent runs with your git and GitHub
-credentials, so run only cards you would do yourself. Handing a card to a teammate's agent comes
-later (R-029).
+Either way, the request and the agent's reports show as one card in #general, so your team sees
+who is on what, and you can cancel a run there. A run cut short when the agent stopped is reported
+failed when it starts again. The agent reads the card as it is on the board, whoever wrote it, and
+the board's decisions. It works with your git and GitHub credentials, so run only cards you would
+do yourself. Handing a card to a teammate's agent comes later (R-029).
 
 ## Self-hosting instead
 
@@ -486,6 +507,8 @@ api/      Vercel function entry point (wraps the Express app)
 server/   Express API, Postgres queries, Web Push sender, alerts through Bark
 client/   React app (Vite), the service worker (client/src/sw.ts), and the key store (client/src/e2ee)
 shared/   Types and the end-to-end encryption code shared by server, client, and service worker
+agent/    The coding agent's account, daemon (npm run agent) and Claude Code plugin server
+plugin/   The Claude Code plugin: manifest, monitor, guard hook and skill, around agent/mcp.ts
 test/     Integration tests (node:test)
 scripts/  Icon generator (npm run icons) and the Vercel build skip for release commits
 docs/     Decisions and roadmap, the source of truth for anyone changing the code

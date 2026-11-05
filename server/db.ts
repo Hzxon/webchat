@@ -17,6 +17,9 @@ import {
   type RepoChoiceDTO,
   type RotatedChannelKeyInput,
   type RotatedKeyInput,
+  PAIRING_TTL_MS,
+  type PairingDTO,
+  type PairingInput,
   type SealedBackupDTO,
   type UserDTO,
   type WrappedKeyInput,
@@ -365,6 +368,24 @@ ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS deleted_at BIGINT;
   `
 ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS agent_owner INTEGER REFERENCES webchat.users(id) ON DELETE SET NULL;
 `,
+  // 17: a coding agent pairs with its owner through a one-time code, and says which repository its
+  // Claude Code session is open in (R-030, D-093).
+  `
+CREATE TABLE IF NOT EXISTS webchat.pairings (
+  -- A hash of the code. The code itself never reaches the server.
+  id          TEXT PRIMARY KEY,
+  dh_public   TEXT NOT NULL,
+  sign_public TEXT NOT NULL,
+  proof       TEXT NOT NULL,
+  -- The agent's login key, hashed as a password is.
+  login_hash  TEXT NOT NULL,
+  expires_at  BIGINT NOT NULL,
+  -- Set once, when the owner approves.
+  agent_id    INTEGER REFERENCES webchat.users(id) ON DELETE CASCADE,
+  owner_proof TEXT
+);
+ALTER TABLE webchat.users ADD COLUMN IF NOT EXISTS agent_repo TEXT;
+`,
 ];
 
 const statements = (sql: string) =>
@@ -401,7 +422,20 @@ export interface UserRow {
   agent_owner: number | null;
   busy: boolean;
   deleted_at: number | null;
+  agent_repo: string | null;
 }
+
+interface PairingRow {
+  id: string;
+  dh_public: string;
+  sign_public: string;
+  proof: string;
+  login_hash: string;
+  expires_at: number;
+  agent_id: number | null;
+  owner_proof: string | null;
+}
+
 
 interface ConversationRow {
   id: number;
@@ -638,6 +672,7 @@ export function toUserDTO(row: UserRow, now = Date.now()): UserDTO {
     keys: row.dh_public && row.sign_public ? { dh: row.dh_public, sign: row.sign_public } : null,
     agentOwner: row.agent_owner,
     busy: row.busy,
+    agentRepo: row.agent_repo,
     deleted: row.deleted_at !== null,
   };
 }
@@ -938,6 +973,62 @@ export async function openDb(sql: Sql) {
     }));
   }
 
+  /**
+   * Deletes one account (R-028, D-088). The row stays, without its name, secrets or keys, so old
+   * messages keep their sender. The person leaves every group and channel the way leaving does,
+   * so each needs a new key before anyone sends again. Groups with nobody else, and direct chats,
+   * which have nobody left to name them, are deleted. False when the person still owns a project
+   * or group with other people in it: they hand it over or delete it first, as for leaving.
+   * A new table with rows per user needs a line in the list below, since the row is never deleted.
+   */
+  async function removeAccount(tx: Querier, userId: number): Promise<boolean> {
+    const projects = [];
+    for (const { project_id } of await tx.query<{ project_id: number }>(
+      'SELECT project_id FROM webchat.project_members WHERE user_id = $1 ORDER BY project_id',
+      [userId],
+    )) {
+      projects.push({ id: project_id, ...(await lockProject(tx, project_id)) });
+    }
+    const chats = await tx.query<{ id: number; type: ConversationType; created_by: number | null; members: number }>(
+      `SELECT c.id, c.type, c.created_by,
+         (SELECT COUNT(*)::int FROM webchat.members WHERE conversation_id = c.id) AS members
+       FROM webchat.conversations c JOIN webchat.members m ON m.conversation_id = c.id
+       WHERE m.user_id = $1 ORDER BY c.id FOR UPDATE OF c`,
+      [userId],
+    );
+    if (
+      projects.some((p) => p.ownerId === userId && p.memberIds.length > 1) ||
+      chats.some((c) => c.type === 'group' && c.created_by === userId && c.members > 1)
+    ) {
+      return false;
+    }
+    for (const project of projects) {
+      if (project.memberIds.length === 1) await tx.query('DELETE FROM webchat.projects WHERE id = $1', [project.id]);
+      else await tx.query('DELETE FROM webchat.project_members WHERE project_id = $1 AND user_id = $2', [project.id, userId]);
+    }
+    // The channels of a project deleted above are gone already, so these queries skip them.
+    for (const chat of chats) {
+      if (chat.type === 'direct' || (chat.type === 'group' && chat.members === 1)) {
+        await tx.query('DELETE FROM webchat.conversations WHERE id = $1', [chat.id]);
+      } else {
+        await leaveChat(tx, chat.id, userId);
+      }
+    }
+    for (const table of ['sessions', 'push_subscriptions', 'bark_devices', 'bark_links', 'github_events', 'github_accounts', 'github_app_grants', 'doc_locks']) {
+      await tx.query(`DELETE FROM webchat.${table} WHERE user_id = $1`, [userId]);
+    }
+    // The username is freed. A hyphen is not allowed in one, so nobody can sign up as the stand-in.
+    await tx.query(
+      `UPDATE webchat.users
+       SET username = 'deleted-' || id, display_name = 'Deleted account', password_hash = '', last_active_at = NULL,
+         attentive_until = 0, attentive_tab = NULL, attentive_endpoint = NULL, dh_public = NULL, sign_public = NULL,
+         key_backup = NULL, agent = FALSE, busy = FALSE, agent_repo = NULL, deleted_at = $2
+       WHERE id = $1`,
+      [userId, Date.now()],
+    );
+    return true;
+  }
+
   async function leaveChat(q: Querier, conversationId: number, userId: number) {
     await q.query('DELETE FROM webchat.members WHERE conversation_id = $1 AND user_id = $2', [conversationId, userId]);
     await q.query('DELETE FROM webchat.conversation_keys WHERE conversation_id = $1 AND user_id = $2', [conversationId, userId]);
@@ -1001,81 +1092,76 @@ export async function openDb(sql: Sql) {
       await sql.query('DELETE FROM webchat.rate_limits WHERE window_start <= $1', [now - 24 * 3600_000]);
       await sql.query('DELETE FROM webchat.github_app_grants WHERE expires_at <= $1', [now]);
       await sql.query('DELETE FROM webchat.github_deliveries WHERE received_at <= $1', [now - DELIVERY_TTL_MS]);
+      await sql.query('DELETE FROM webchat.pairings WHERE expires_at <= $1', [now]);
     },
 
     /** Creates an account with its keys. Returns undefined when the username is taken. */
-    createUser: async (username: string, displayName: string, loginKeyHash: string, keys: AccountKeysInput, agentOwner: number | null) =>
+    createUser: async (username: string, displayName: string, loginKeyHash: string, keys: AccountKeysInput) =>
       one(
         sql.query<UserRow>(
           `INSERT INTO webchat.users
-             (username, display_name, password_hash, created_at, auth_version, dh_public, sign_public, key_backup, agent_owner)
-           VALUES ($1, $2, $3, $4, 2, $5, $6, $7, $8)
+             (username, display_name, password_hash, created_at, auth_version, dh_public, sign_public, key_backup)
+           VALUES ($1, $2, $3, $4, 2, $5, $6, $7)
            ON CONFLICT DO NOTHING RETURNING *`,
-          [username, displayName, loginKeyHash, Date.now(), keys.dh, keys.sign, JSON.stringify(keys.backup), agentOwner],
+          [username, displayName, loginKeyHash, Date.now(), keys.dh, keys.sign, JSON.stringify(keys.backup)],
         ),
       ),
-    /**
-     * Deletes an account (R-028, D-088). The row stays, without its name, secrets or keys, so old
-     * messages keep their sender. The person leaves every group and channel the way leaving does,
-     * so each needs a new key before anyone sends again. Groups with nobody else, and direct chats,
-     * which have nobody left to name them, are deleted. False when the person still owns a project
-     * or group with other people in it: they hand it over or delete it first, as for leaving.
-     * A new table with rows per user needs a line in the list below, since the row is never deleted.
-     */
+    /** Deletes an account and the agents it owns. False when removeAccount refuses the person. */
     deleteUser(userId: number): Promise<boolean> {
       return sql.transaction(async (tx) => {
-        const projects = [];
-        for (const { project_id } of await tx.query<{ project_id: number }>(
-          'SELECT project_id FROM webchat.project_members WHERE user_id = $1 ORDER BY project_id',
+        if (!(await removeAccount(tx, userId))) return false;
+        // The person's agents go too (R-030): nobody else may hand them cards. An agent owns nothing.
+        for (const { id } of await tx.query<{ id: number }>(
+          'SELECT id FROM webchat.users WHERE agent_owner = $1 AND deleted_at IS NULL ORDER BY id',
           [userId],
         )) {
-          projects.push({ id: project_id, ...(await lockProject(tx, project_id)) });
+          if (!(await removeAccount(tx, id))) throw new Error(`Agent ${id} owns a project or group with others in it.`);
         }
-        const chats = await tx.query<{ id: number; type: ConversationType; created_by: number | null; members: number }>(
-          `SELECT c.id, c.type, c.created_by,
-             (SELECT COUNT(*)::int FROM webchat.members WHERE conversation_id = c.id) AS members
-           FROM webchat.conversations c JOIN webchat.members m ON m.conversation_id = c.id
-           WHERE m.user_id = $1 ORDER BY c.id FOR UPDATE OF c`,
-          [userId],
-        );
-        if (
-          projects.some((p) => p.ownerId === userId && p.memberIds.length > 1) ||
-          chats.some((c) => c.type === 'group' && c.created_by === userId && c.members > 1)
-        ) {
-          return false;
-        }
-        for (const project of projects) {
-          if (project.memberIds.length === 1) await tx.query('DELETE FROM webchat.projects WHERE id = $1', [project.id]);
-          else await tx.query('DELETE FROM webchat.project_members WHERE project_id = $1 AND user_id = $2', [project.id, userId]);
-        }
-        // The channels of a project deleted above are gone already, so these queries skip them.
-        for (const chat of chats) {
-          if (chat.type === 'direct' || (chat.type === 'group' && chat.members === 1)) {
-            await tx.query('DELETE FROM webchat.conversations WHERE id = $1', [chat.id]);
-          } else {
-            await leaveChat(tx, chat.id, userId);
-          }
-        }
-        for (const table of ['sessions', 'push_subscriptions', 'bark_devices', 'bark_links', 'github_events', 'github_accounts', 'github_app_grants', 'doc_locks']) {
-          await tx.query(`DELETE FROM webchat.${table} WHERE user_id = $1`, [userId]);
-        }
-        // The username is freed. A hyphen is not allowed in one, so nobody can sign up as the stand-in.
-        await tx.query(
-          `UPDATE webchat.users
-           SET username = 'deleted-' || id, display_name = 'Deleted account', password_hash = '', last_active_at = NULL,
-             attentive_until = 0, attentive_tab = NULL, attentive_endpoint = NULL, dh_public = NULL, sign_public = NULL,
-             key_backup = NULL, agent = FALSE, busy = FALSE, deleted_at = $2
-           WHERE id = $1`,
-          [userId, Date.now()],
-        );
         return true;
       });
     },
-    /** Makes an account the coding agent of another (K-45). Returns the owner. */
-    setAgentOwner: async (userId: number, ownerId: number) => {
-      await sql.query('UPDATE webchat.users SET agent_owner = $2 WHERE id = $1', [userId, ownerId]);
-      return ownerId;
+
+    /** Files the agent's half of a pairing (R-030). False when the code was used already. */
+    createPairing: async (input: PairingInput, loginHash: string) =>
+      (
+        await sql.query(
+          `INSERT INTO webchat.pairings (id, dh_public, sign_public, proof, login_hash, expires_at)
+           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING RETURNING id`,
+          [input.id, input.keys.dh, input.keys.sign, input.proof, loginHash, Date.now() + PAIRING_TTL_MS],
+        )
+      ).length > 0,
+    /** A pairing while it lasts, with the agent's account and its owner's keys once approved. */
+    async pairing(id: string): Promise<PairingDTO | undefined> {
+      const row = await one(sql.query<PairingRow>('SELECT * FROM webchat.pairings WHERE id = $1 AND expires_at > $2', [id, Date.now()]));
+      if (!row) return;
+      const agent = row.agent_id === null ? undefined : await one(sql.query<UserRow>('SELECT * FROM webchat.users WHERE id = $1', [row.agent_id]));
+      const owner = agent?.agent_owner ? await one(sql.query<UserRow>('SELECT * FROM webchat.users WHERE id = $1', [agent.agent_owner])) : undefined;
+      const approved =
+        agent && owner?.dh_public && owner.sign_public && row.owner_proof
+          ? { user: toUserDTO(agent), owner: { id: owner.id, keys: { dh: owner.dh_public, sign: owner.sign_public } }, proof: row.owner_proof }
+          : null;
+      return { keys: { dh: row.dh_public, sign: row.sign_public }, proof: row.proof, approved };
     },
+    /**
+     * Makes the agent's account for the owner who approves, once, while the pairing lasts. Nobody but
+     * the agent signs in to it, so its username is random. Undefined when the pairing is gone or done.
+     */
+    approvePairing: (id: string, ownerId: number, displayName: string, ownerProof: string) =>
+      sql.transaction(async (tx) => {
+        const row = await one(
+          tx.query<PairingRow>('SELECT * FROM webchat.pairings WHERE id = $1 AND expires_at > $2 AND agent_id IS NULL FOR UPDATE', [id, Date.now()]),
+        );
+        if (!row) return undefined;
+        const agent = (await one(
+          tx.query<UserRow>(
+            `INSERT INTO webchat.users (username, display_name, password_hash, created_at, auth_version, dh_public, sign_public, agent_owner)
+             VALUES ($1, $2, $3, $4, 2, $5, $6, $7) RETURNING *`,
+            [`agent_${Buffer.from(randomBytes(5)).toString('hex')}`, displayName, row.login_hash, Date.now(), row.dh_public, row.sign_public, ownerId],
+          ),
+        ))!;
+        await tx.query('UPDATE webchat.pairings SET agent_id = $2, owner_proof = $3 WHERE id = $1', [id, agent.id, ownerProof]);
+        return agent;
+      }),
     /** Switches an account from a raw-password hash to a login-key hash. */
     upgradeAuth: (userId: number, loginKeyHash: string) =>
       one(
@@ -1102,14 +1188,14 @@ export async function openDb(sql: Sql) {
      * Records a check-in from a tab. An attentive tab claims the user's attention; when that same
      * tab stops being attentive, the claim ends at once instead of waiting for it to expire.
      */
-    async checkIn(userId: number, attentive: boolean, tabId: string, endpoint: string | null, busy = false) {
+    async checkIn(userId: number, attentive: boolean, tabId: string, endpoint: string | null, busy = false, repo: string | null = null) {
       const now = Date.now();
       if (attentive) {
         await sql.query(
           `UPDATE webchat.users
-           SET last_active_at = $2, attentive_until = $3, attentive_tab = $4, attentive_endpoint = $5, busy = $6
+           SET last_active_at = $2, attentive_until = $3, attentive_tab = $4, attentive_endpoint = $5, busy = $6, agent_repo = $7
            WHERE id = $1`,
-          [userId, now, now + ATTENTION_TTL_MS, tabId, endpoint, busy],
+          [userId, now, now + ATTENTION_TTL_MS, tabId, endpoint, busy, repo],
         );
       } else {
         await sql.query(
@@ -1817,8 +1903,10 @@ export async function openDb(sql: Sql) {
              ) owned) AS owners,
              (SELECT COUNT(*)::int FROM webchat.users) AS people,
              (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE last_active_at > $2) AS online,
-             -- Agents with their owners, and those running a card, so the board offers each owner's idle ones (K-45).
-             (SELECT string_agg(id || ':' || agent_owner, ',' ORDER BY id) FROM webchat.users WHERE agent_owner IS NOT NULL) AS agents,
+             -- Agents with their owners and repositories, and those running a card, so the board offers
+             -- each owner's idle ones and names where they run (K-45, R-030).
+             (SELECT md5(string_agg(id || ':' || agent_owner || ':' || COALESCE(agent_repo, ''), ',' ORDER BY id))
+               FROM webchat.users WHERE agent_owner IS NOT NULL) AS agents,
              (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE busy) AS busy,
              -- Every save grows a doc's version, and a doc deleted leaves the list.
              (SELECT md5(COALESCE(string_agg(id || ':' || version, ',' ORDER BY id), '')) FROM webchat.docs

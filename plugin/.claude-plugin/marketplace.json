@@ -1,0 +1,11 @@
+{
+  "name": "webchat",
+  "owner": { "name": "Hzxon" },
+  "plugins": [
+    {
+      "name": "webchat",
+      "source": "./",
+      "description": "Runs the WebChat board cards you hand to Claude Code, and fixes their draft pull requests."
+    }
+  ]
+}

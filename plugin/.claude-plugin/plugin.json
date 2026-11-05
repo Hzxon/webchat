@@ -1,0 +1,41 @@
+{
+  "name": "webchat",
+  "version": "0.2.0",
+  "description": "Runs the WebChat board cards you hand to Claude Code, and fixes their draft pull requests.",
+  "author": { "name": "Hzxon" },
+  "repository": "https://github.com/Hzxon/webchat",
+  "userConfig": {
+    "server": {
+      "type": "string",
+      "title": "WebChat address",
+      "description": "The https address of your WebChat, such as https://chat.example.com.",
+      "required": true
+    },
+    "pairing_code": {
+      "type": "string",
+      "title": "Pairing code",
+      "description": "In WebChat, choose Connect coding agent and paste the code it shows. It works once, within 10 minutes. Paste a new one to pair again.",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "mcpServers": {
+    "webchat": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server.mjs"],
+      "env": {
+        "WEBCHAT_SERVER": "${user_config.server}",
+        "WEBCHAT_PAIRING_CODE": "${user_config.pairing_code}"
+      }
+    }
+  },
+  "experimental": {
+    "monitors": [
+      {
+        "name": "doorbell",
+        "command": "touch \"${CLAUDE_PLUGIN_DATA}/doorbell\" && exec tail -n 0 -F \"${CLAUDE_PLUGIN_DATA}/doorbell\"",
+        "description": "Runs and pull request fixes that WebChat hands to this session"
+      }
+    ]
+  }
+}

@@ -6,6 +6,14 @@
   "include-component-in-tag": false,
   "pull-request-title-pattern": "chore${scope}: Release${component} ${version}",
   "packages": {
-    ".": {}
+    ".": {
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "plugin/.claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    }
   }
 }
