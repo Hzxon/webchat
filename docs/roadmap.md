@@ -239,6 +239,20 @@ after 30 minutes. A pull request's line comments are fetched only when GitHub sa
 Done when: the plugin test runs sessions in two repositories, one with a second session waiting,
 and a run nobody starts fails. The menu lists both repositories in a browser.
 
+### R-034: The owner deletes a channel
+
+Status: Done in #110 on 2026-11-05 (D-096).
+
+Why: a team makes channels for short tasks, such as #slides for one deadline. Only deleting the
+whole project took a channel away, so finished ones stayed in the sidebar.
+
+Scope: the project's owner deletes a channel for everyone from the "⋮" at the end of its row. Its
+messages go with it. #general stays, since its key opens the docs and the board. Other members see
+the channel go at their next check-in, with no push.
+
+Done when: a test shows that only the owner deletes a channel, never #general, and that its
+messages go. The menu has been tried in a browser with two accounts.
+
 ## Ideas
 
 ### R-004: Private channels

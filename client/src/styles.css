@@ -2289,14 +2289,14 @@ a {
   font-size: 14px;
 }
 
-/* A doc's row: its name, then the menu of its actions at the row's right edge. */
-.doc-row {
+/* A doc's or channel's row: its name, then the menu of its actions at the row's right edge. */
+.menu-row {
   display: flex;
   align-items: center;
   padding-right: 10px;
 }
 
-.doc-row .channel-item {
+.menu-row .channel-item {
   flex: 1;
   min-width: 0;
   padding-right: 6px;

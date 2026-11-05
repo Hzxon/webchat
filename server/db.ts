@@ -1399,6 +1399,23 @@ export async function openDb(sql: Sql) {
     },
 
     /**
+     * Deletes a channel for everyone, with its messages, keys and repository links. Never #general,
+     * the project's first channel, whose key opens its docs and board (D-081). It takes the
+     * project's lock, as adding or removing people does, since they must bring a key for every
+     * channel there is.
+     */
+    deleteChannel(projectId: number, conversationId: number): Promise<true | 'not_found' | 'general'> {
+      return sql.transaction(async (tx) => {
+        await lockProject(tx, projectId);
+        const ids = (await projectChannels(tx, projectId)).map((c) => c.id);
+        if (!ids.includes(conversationId)) return 'not_found';
+        if (conversationId === Math.min(...ids)) return 'general';
+        await tx.query('DELETE FROM webchat.conversations WHERE id = $1', [conversationId]);
+        return true;
+      });
+    },
+
+    /**
      * Adds people to a project and to every channel in it. Each channel's key must come wrapped for
      * them, so they can read its history. Their read pointers start at the newest message, so that
      * history does not count as unread.

@@ -1362,6 +1362,29 @@ describe('chat server', () => {
       assert.equal((await bob.request<{ code?: string }>('POST', `/projects/${project.id}/leave`)).data.code, 'owner');
     });
 
+    test('only the owner deletes a channel, with its messages, and never #general (R-034)', async () => {
+      const path = `/projects/${project.id}/channels/${design.id}`;
+      const messagesIn = async (id: number) =>
+        (await instance.sql.query('SELECT 1 FROM webchat.messages WHERE conversation_id = $1', [id])).length;
+      assert.equal((await alice.request<{ code?: string }>('DELETE', path)).data.code, 'not_owner');
+      assert.equal((await carol.request('DELETE', path)).status, 404, 'nor anyone outside the project');
+      const kept = await bob.request('DELETE', `/projects/${project.id}/channels/${general.id}`);
+      assert.equal(kept.status, 400, 'its key opens the docs and the board');
+      assert.ok((await messagesIn(design.id)) > 0);
+
+      await alice.sync(true);
+      assert.equal((await bob.request('DELETE', path)).status, 204);
+      assert.equal((await bob.request('DELETE', path)).status, 404, 'it is gone');
+      assert.equal(await messagesIn(design.id), 0);
+      assert.equal((await alice.request('GET', `/conversations/${design.id}/messages`)).status, 404);
+      const res = await alice.sync(true);
+      assert.ok(res.changed, 'every member sees it go');
+      assert.deepEqual(
+        res.conversations.filter((c) => c.projectId === project.id).map((c) => c.id),
+        [general.id],
+      );
+    });
+
     test('only the owner can delete a project, with every channel and message in it', async () => {
       const notOwner = await alice.request<{ code?: string }>('DELETE', `/projects/${project.id}`);
       assert.equal(notOwner.status, 403);

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type { ProjectDTO } from '../../../shared/types';
 import { sound } from '../alerts';
-import { deleteAccount, openConversation, previewText, signOut } from '../chat';
+import { deleteAccount, deleteChannel, openConversation, previewText, signOut } from '../chat';
 import { deleteDoc } from '../docs';
 import type { ChatConversation, ChatDoc } from '../e2ee/keyring';
-import { actions, chatTitle, otherMemberId, senderName, useAppState } from '../store';
+import { actions, chatTitle, generalOf, otherMemberId, senderName, useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { formatListTime } from './format';
 import {
@@ -238,6 +238,9 @@ function ProjectSection(props: {
   const urgent = useAppState((s) => s.urgent);
   // Linking a repository only does something where the GitHub App is set up.
   const github = useAppState((s) => s.github?.appConfigured ?? false);
+  // Not from `channels`, which a search may have left without #general.
+  const generalId = useAppState((s) => generalOf(s, project.id)?.id);
+  const owner = project.ownerId === meId;
   const people = project.memberIds.length;
   /** Someone else saved it since this device last showed it. */
   const updatedSince = (d: ChatDoc) => d.updatedBy !== meId && d.version > (docsSeen[d.id] ?? 0);
@@ -271,8 +274,10 @@ function ProjectSection(props: {
       <ul className="channel-list">
         {channels.map((c) => {
           const hasUrgent = urgent.some((m) => m.conversationId === c.id);
+          // #general stays as long as the project: its key opens the docs and the board (D-081).
+          const deletable = owner && c.id !== generalId;
           return (
-            <li key={c.id}>
+            <li key={c.id} className={deletable ? 'menu-row' : undefined}>
               <button
                 className={`channel-item ${activeId === c.id ? 'is-active' : ''} ${c.unread > 0 ? 'has-unread' : ''} ${hasUrgent ? 'is-urgent' : ''}`}
                 onClick={() => void openConversation(c.id)}
@@ -282,6 +287,13 @@ function ProjectSection(props: {
                 {hasUrgent && <span className="urgent-chip">URGENT</span>}
                 {c.unread > 0 && <span className="unread-badge">{c.unread}</span>}
               </button>
+              {deletable && (
+                <RowMenu
+                  name={`#${c.title}`}
+                  question={`Delete #${c.title} for everyone? Every message in it will be deleted for all members.${github ? ' A repository linked to it will be unlinked.' : ''} This cannot be undone.`}
+                  onDelete={() => deleteChannel(project.id, c.id)}
+                />
+              )}
             </li>
           );
         })}
@@ -298,7 +310,7 @@ function ProjectSection(props: {
         {docs.map((d) => {
           const updated = updatedSince(d);
           return (
-            <li key={d.id} className="doc-row">
+            <li key={d.id} className="menu-row">
               <button
                 className={`channel-item ${docOpen === d.id ? 'is-active' : ''} ${updated ? 'has-unread' : ''}`}
                 onClick={() => actions.setDocOpen(d.id)}
@@ -307,7 +319,12 @@ function ProjectSection(props: {
                 <span className="channel-name">{d.name}</span>
                 {updated && <span className="doc-dot" aria-label="Updated" />}
               </button>
-              <DocMenu doc={d} canDelete={d.createdBy === meId || project.ownerId === meId} onRename={() => onRenameDoc(d)} />
+              <RowMenu
+                name={d.name}
+                question={`Delete “${d.name}” for everyone in the project? This cannot be undone.`}
+                onRename={() => onRenameDoc(d)}
+                onDelete={d.createdBy === meId || owner ? () => deleteDoc(d.id) : undefined}
+              />
             </li>
           );
         })}
@@ -322,8 +339,12 @@ function ProjectSection(props: {
   );
 }
 
-/** The "⋮" at the end of a doc's row: a menu with Rename and, for its creator or the project's owner, Delete. */
-function DocMenu({ doc, canDelete, onRename }: { doc: ChatDoc; canDelete: boolean; onRename: () => void }) {
+/**
+ * The "⋮" at the end of a doc's or channel's row: Rename, when it can be renamed, and Delete, for
+ * those who may. Delete asks the question first, and shows a failure as a toast.
+ */
+function RowMenu(props: { name: string; question: string; onRename?: () => void; onDelete?: () => Promise<void> }) {
+  const { name, question, onRename, onDelete } = props;
   const [open, setOpen] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
 
@@ -340,12 +361,12 @@ function DocMenu({ doc, canDelete, onRename }: { doc: ChatDoc; canDelete: boolea
     };
   }, [open]);
 
-  async function remove() {
-    if (!confirm(`Delete “${doc.name}” for everyone in the project? This cannot be undone.`)) return;
+  async function remove(run: () => Promise<void>) {
+    if (!confirm(question)) return;
     try {
-      await deleteDoc(doc.id);
+      await run();
     } catch (err) {
-      actions.addToast({ conversationId: null, title: doc.name, body: (err as Error).message });
+      actions.addToast({ conversationId: null, title: name, body: (err as Error).message });
     }
   }
 
@@ -361,18 +382,20 @@ function DocMenu({ doc, canDelete, onRename }: { doc: ChatDoc; canDelete: boolea
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`Options for ${doc.name}`}
+        aria-label={`Options for ${name}`}
         title="Options"
       >
         <MoreIcon width={18} height={18} />
       </button>
       {open && (
         <div className="menu-list" role="menu">
-          <button role="menuitem" onClick={pick(onRename)}>
-            <PencilIcon width={16} height={16} /> Rename
-          </button>
-          {canDelete && (
-            <button role="menuitem" className="is-danger" onClick={pick(() => void remove())}>
+          {onRename && (
+            <button role="menuitem" onClick={pick(onRename)}>
+              <PencilIcon width={16} height={16} /> Rename
+            </button>
+          )}
+          {onDelete && (
+            <button role="menuitem" className="is-danger" onClick={pick(() => void remove(onDelete))}>
               <TrashIcon width={16} height={16} /> Delete
             </button>
           )}

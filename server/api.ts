@@ -314,7 +314,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     if (!(await db.isProjectMember(projectId, userId))) throw new HttpError(404, 'Project not found.');
   }
 
-  /** Only a project's owner can remove people from it, delete it, or hand it over. */
+  /** Only a project's owner can remove people from it, delete it or its channels, or hand it over. */
   async function requireProjectOwner(projectId: number, userId: number) {
     await requireProjectMember(projectId, userId);
     if ((await db.getProject(projectId))?.created_by !== userId) {
@@ -750,6 +750,18 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const created = await db.createChannel(projectId, name, me.id, wrappedChatKey(req.body?.key));
     if (typeof created !== 'number') throw projectRefusal(created);
     res.status(201).json(await db.conversationFor(me.id, created));
+  });
+
+  /** Deletes a channel for everyone, with its messages. Only the owner can, and never #general (R-034). */
+  router.delete('/projects/:id/channels/:channelId', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const projectId = positiveInt(req.params.id, 'Project id');
+    const conversationId = positiveInt(req.params.channelId, 'Channel id');
+    await requireProjectOwner(projectId, me.id);
+    const result = await db.deleteChannel(projectId, conversationId);
+    if (result === 'not_found') throw new HttpError(404, 'Channel not found.');
+    if (result === 'general') throw new HttpError(400, 'A project keeps its #general channel. Delete the project instead.');
+    res.status(204).end();
   });
 
   /** Adds people to a project. The member adding them shares every channel key, so they can read the history. */

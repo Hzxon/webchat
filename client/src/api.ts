@@ -129,6 +129,8 @@ export const api = {
   createProject: (input: CreateProjectInput) => request<CreateProjectResponse>('POST', '/projects', input),
   createChannel: (projectId: number, input: CreateChannelInput) =>
     request<ConversationDTO>('POST', `/projects/${projectId}/channels`, input),
+  deleteChannel: (projectId: number, conversationId: number) =>
+    request<void>('DELETE', `/projects/${projectId}/channels/${conversationId}`),
   addProjectMembers: (projectId: number, input: AddProjectMembersInput) =>
     request<ProjectDTO>('POST', `/projects/${projectId}/members`, input),
   removeProjectMember: (projectId: number, userId: number, input: RemoveProjectMemberInput) =>

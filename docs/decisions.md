@@ -1032,6 +1032,21 @@ rang where nobody heard and failed after 30 minutes, while a terminal session th
 Cost: Claude Code must start the monitor's shell and the MCP server as direct children of the
 session. A mark stays after its session ends; the start time keeps it from counting.
 
+### D-096: The owner deletes a channel, but never #general
+
+Accepted 2026-11-05 in #110 (R-034).
+
+A project's owner deletes a channel for everyone from the "⋮" at the end of its row, as with a doc.
+Its messages, keys and repository links go with it, as when a group is deleted (D-039). #general
+stays: its key opens the docs and the board (D-081), and pages take the project's oldest channel
+for it. The server deletes under the project's lock, so a change that must bring every channel's
+key (D-025, D-044) sees the channel or answers `409 stale_project`. Other pages drop it at their
+next check-in, with a note if it was open, and nobody gets a push (D-039). Why: teams make channels
+for short tasks, and only deleting the whole project took one away.
+
+Cost: a deleted channel cannot come back. A repository linked to it stops posting cards until the
+owner links it again. Whoever made a channel cannot delete it unless they own the project.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope
