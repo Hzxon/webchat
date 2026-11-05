@@ -23,26 +23,35 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
   test('a prompt and what names it make one conversation, whose state follows the newest turn', () => {
     const prompt = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'p1');
     const answer = say(AGENT, { kind: 'answer', to: 'p1' });
-    const [thread] = threadsOf([prompt, answer], ME, AGENT, 100);
+    const [thread] = threadsOf([prompt, answer], ME, AGENT, {}, 100);
     assert.equal(thread.root, 'p1');
     assert.equal(thread.repo, 'team/app');
     assert.deepEqual(thread.messages, [prompt, answer]);
     assert.equal(thread.state, 'answered');
     const reply = say(ME, { kind: 'reply', to: 'p1', sentAt: 2 });
-    assert.equal(threadsOf([prompt, answer, reply], ME, AGENT, 100)[0].state, 'working');
+    assert.equal(threadsOf([prompt, answer, reply], ME, AGENT, {}, 100)[0].state, 'working');
     const cancel = say(ME, { kind: 'cancel', to: 'p1', sentAt: 3 });
-    assert.equal(threadsOf([prompt, answer, reply, cancel], ME, AGENT, 100)[0].state, 'working', 'until the agent says it stopped');
+    assert.equal(threadsOf([prompt, answer, reply, cancel], ME, AGENT, {}, 100)[0].state, 'working', 'until the agent says it stopped');
     const stopped = say(AGENT, { kind: 'failed', to: 'p1' });
-    assert.equal(threadsOf([prompt, answer, reply, cancel, stopped], ME, AGENT, 100)[0].state, 'failed');
+    assert.equal(threadsOf([prompt, answer, reply, cancel, stopped], ME, AGENT, {}, 100)[0].state, 'failed');
   });
 
   test("a long answer's parts show as one message, which keeps the first part's id", () => {
     const prompt = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'p1');
     const one = { ...say(AGENT, { kind: 'answer', to: 'p1' }), text: 'Line one\n' };
     const two = { ...say(AGENT, { kind: 'answer', to: 'p1' }), text: 'line two' };
-    const [thread] = threadsOf([prompt, one, two], ME, AGENT, 100);
+    const [thread] = threadsOf([prompt, one, two], ME, AGENT, {}, 100);
     assert.equal(thread.messages.length, 2);
     assert.deepEqual([thread.messages[1].id, thread.messages[1].text], [one.id, 'Line one\nline two']);
+  });
+
+  test('a prompt or reply that did not send leaves the conversation Not sent, not Working', () => {
+    const prompt = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'p1');
+    assert.equal(threadsOf([prompt], ME, AGENT, { p1: 'failed' }, 100)[0].state, 'unsent');
+    assert.equal(threadsOf([prompt], ME, AGENT, { p1: 'sending' }, 100)[0].state, 'working');
+    const answer = say(AGENT, { kind: 'answer', to: 'p1' });
+    const reply = say(ME, { kind: 'reply', to: 'p1', sentAt: 2 }, 'r1');
+    assert.equal(threadsOf([prompt, answer, reply], ME, AGENT, { r1: 'failed' }, 100)[0].state, 'unsent');
   });
 
   test('only the owner starts or replies, only the agent answers, and only signed messages count', () => {
@@ -53,7 +62,7 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     const elsewhere = say(AGENT, { kind: 'answer', to: 'p0' });
     const agentPrompt = say(AGENT, { kind: 'prompt', repo: 'team/app', sentAt: 3 });
     const plain = { ...say(ME, {}), prompt: null };
-    const threads = threadsOf([prompt, fake, theirs, unsigned, elsewhere, agentPrompt, plain], ME, AGENT, 100);
+    const threads = threadsOf([prompt, fake, theirs, unsigned, elsewhere, agentPrompt, plain], ME, AGENT, {}, 100);
     assert.equal(threads.length, 1);
     assert.deepEqual(threads[0].messages, [prompt]);
     assert.equal(threads[0].state, 'working');
@@ -63,8 +72,8 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     const old = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'old', 1_000);
     const fresh = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 2 }, 'fresh', 5_000);
     const late = say(AGENT, { kind: 'answer', to: 'old' }, 'a', 9_000);
-    assert.deepEqual(threadsOf([old, fresh, late], ME, AGENT, 10_000).map((t: { root: string }) => t.root), ['old', 'fresh']);
-    const [, ended] = threadsOf([old, fresh], ME, AGENT, 1_000 + THREAD_TTL_MS + 1);
+    assert.deepEqual(threadsOf([old, fresh, late], ME, AGENT, {}, 10_000).map((t: { root: string }) => t.root), ['old', 'fresh']);
+    const [, ended] = threadsOf([old, fresh], ME, AGENT, {}, 1_000 + THREAD_TTL_MS + 1);
     assert.deepEqual([ended.root, ended.state], ['old', 'ended']);
   });
 

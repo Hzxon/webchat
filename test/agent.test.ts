@@ -810,11 +810,16 @@ describe('agent client (R-027)', () => {
     assert.equal(calls.length, 3);
     assert.deepEqual(await said(), []);
 
-    // A prompt signed 11 minutes ago is refused.
-    await owner.send(direct, { text: 'Old', prompt: asks({ sentAt: Date.now() - 11 * 60_000 }) });
+    // A prompt signed 11 minutes ago is refused, and a reply asks it again, afresh.
+    const skipped = (await owner.send(direct, { text: 'Old', prompt: asks({ sentAt: Date.now() - 11 * 60_000 }) })).clientId!;
     await hear();
     assert.equal(calls.length, 3);
-    assert.deepEqual((await said()).map((m) => m[1]), ['I got this more than 10 minutes after you sent it, so I skipped it. Send it again.']);
+    assert.deepEqual((await said()).map((m) => m[1]), ['I got this more than 10 minutes after you sent it, so I skipped it. Reply to ask again.']);
+    await owner.send(direct, { text: 'Now?', prompt: { kind: 'reply', to: skipped, sentAt: Date.now() } });
+    await hear();
+    assert.deepEqual(calls.slice(3).map((c) => [c.input, c.resume]), [['Old\n\nNow?', false]]);
+    assert.deepEqual((await said()).map((m) => m[1]), ['It adds.']);
+    calls.length = 3;
 
     // A long answer comes as several messages, in order, each within the limit.
     const long = Array.from({ length: 9 }, (_, i) => `${i}`.repeat(1000)).join('\n');

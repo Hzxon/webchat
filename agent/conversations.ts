@@ -84,7 +84,14 @@ export class Conversations {
     // A copy the server posted again under a new id does nothing (K-47).
     if (!conversation || !this.client.remember(message.clientId ?? '', prompt.sentAt)) return;
     // The time the owner's page signed, not the server's, which could play an old message again (K-42).
-    if (Math.abs(Date.now() - prompt.sentAt) > REQUEST_TTL_MS) return this.say(conversation, 'failed', 'I got this more than 10 minutes after you sent it, so I skipped it. Send it again.');
+    // A prompt skipped so stays, and nothing runs until a reply asks again.
+    if (Math.abs(Date.now() - prompt.sentAt) > REQUEST_TTL_MS) {
+      if (prompt.kind === 'prompt') {
+        this.list.push(conversation);
+        await this.save();
+      }
+      return this.say(conversation, 'failed', 'I got this more than 10 minutes after you sent it, so I skipped it. Reply to ask again.');
+    }
     if (conversation.ended) return this.say(conversation, 'failed', 'This conversation ended after a day with no reply. Start a new one.');
     if (prompt.kind === 'cancel') {
       for (const stop of this.turns.get(conversation.root)?.stops ?? []) stop.abort();
