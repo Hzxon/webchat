@@ -165,8 +165,10 @@ describe('agent client (R-027)', () => {
     const forged = AgentClient.pair(path.join(home, 'forged.json'), baseUrl, other, 10);
     await approve(alice, other, 'Forged', await pairingProof(newPairingCode(), keys, { id: alice.id, keys: alice.identity.publicKeys }));
     await assert.rejects(forged, /does not match the pairing code/);
-    // The agent's login key never travels in the clear.
+    // The agent's login key never travels in the clear, except on this machine, whatever its name (K-48).
     assert.throws(() => new Api('http://chat.example.com'), /https/);
+    assert.throws(() => new Api('http://localhost.example.com'), /https/);
+    for (const local of ['http://localhost:5173', 'http://alice.localhost:5173', 'http://127.0.0.1:3000', 'http://[::1]:3000']) new Api(local);
   });
 
   test('reads and answers in a project it was added to', async () => {

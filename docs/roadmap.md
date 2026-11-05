@@ -436,6 +436,15 @@ Open questions:
 
 ## Known issues
 
+### K-48: The agent refuses a plain http address under .localhost
+
+Status: Fixed in #106. Found while testing R-033 on 2026-11-05.
+
+Since K-47 the agent takes a plain http address only for `localhost`, `127.0.0.1` and `[::1]`.
+AGENTS.md tries two accounts on hosts such as `alice.localhost`, and since R-031 the pairing code
+carries that address, so `npm run agent -- pair` and the plugin refused it. Every name under
+`.localhost` is this machine, so the agent now takes those too.
+
 ### K-47: The agent runs a replayed request, and signs up over plain HTTP
 
 Status: Fixed in #100, with R-030 (D-093). Found while designing R-030 on 2026-11-05.
