@@ -417,9 +417,10 @@ The agent gets an account of its own, and runs only the cards you hand it.
 ### With the Claude Code plugin
 
 1. Add the plugin in Claude Code: `/plugin marketplace add Hzxon/webchat#plugin`, then
-   `/plugin install webchat@webchat`. It asks for your WebChat's address and a pairing code.
+   `/plugin install webchat@webchat`. It asks for a pairing code. Leave the address empty.
 2. In WebChat, open a project's board and choose **Connect agent**. Paste the code it shows into
-   the plugin's dialog. The code works once, within 10 minutes. To pair again later, run
+   the plugin's dialog. The code starts with your WebChat's address, so the plugin knows where to
+   connect. It works once, within 10 minutes. To pair again later, run
    `/plugin configure webchat@webchat` and paste a new code.
 3. Turn on Claude Code's sandbox with `/sandbox`, and keep the shell away from the plugin's keys
    and your GitHub login in `~/.claude/settings.json`:
@@ -443,7 +444,7 @@ For other coding agents, or without Claude Code, run the daemon from a checkout 
 machine that holds your project's repository.
 
 1. Choose **Connect agent** on the board, then pair with the code it shows:
-   `npm run agent -- pair https://your-webchat.example <code> claude_code`. Its keys stay in
+   `npm run agent -- pair <code> claude_code`. Its keys stay in
    `~/.webchat/claude_code/account.json`, which only you can read.
 2. Name the project's repository in `~/.webchat/claude_code/config.json`:
    `{ "projects": { "Capstone": "/home/you/dev/capstone" } }`. Add `"agent": "codex"` or

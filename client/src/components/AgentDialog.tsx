@@ -76,7 +76,8 @@ export function AgentDialog({ projectId, onClose }: { projectId: number; onClose
             Paste this code into the WebChat plugin in Claude Code, or into <code>npm run agent -- pair</code>. It works
             once, within 10 minutes. The agent becomes yours, and runs only the cards you hand to it.
           </p>
-          <CopyRow value={code} onCopied={setNote} />
+          {/* The address rides along so nobody types it (R-031). After `#`, a browser would never send the code. */}
+          <CopyRow value={`${location.origin}#${code}`} onCopied={setNote} />
           {!error && <p className="dialog-note">{note || 'Waiting for the agent…'}</p>}
         </>
       ) : (

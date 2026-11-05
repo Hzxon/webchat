@@ -10,8 +10,8 @@
     "server": {
       "type": "string",
       "title": "WebChat address",
-      "description": "The https address of your WebChat, such as https://chat.example.com.",
-      "required": true
+      "description": "Leave it empty: the pairing code carries it. Only a code without an address, from an older WebChat, needs it, such as https://chat.example.com.",
+      "required": false
     },
     "pairing_code": {
       "type": "string",

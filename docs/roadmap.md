@@ -197,8 +197,19 @@ Open questions:
   the owner?
 - Does Claude Code's secure storage work on a Linux server without a desktop keyring? A new code
   pasted with `/plugin configure webchat@webchat` pairs again at the next session start.
-- The release job that builds the `plugin` branch first runs with the next release. Does
-  `/plugin marketplace add Hzxon/webchat#plugin` install from it as the README says?
+
+### R-031: The pairing code carries the WebChat address
+
+Status: In progress on `claude/r031-pairing-address` in #101 (D-093).
+
+Why: the plugin asked each person for their WebChat's address as well as the code. The page that
+shows the code already knows the address, and a typed one can be wrong.
+
+Scope: the page shows `<address>#<code>`. The plugin and `npm run agent -- pair` read the address
+from it. The plugin's address setting stays, optional, for a bare code from an older page.
+
+Done when: the plugin test pairs with an empty address setting, and the dialog shows the address
+with the code in a browser.
 
 ## Ideas
 

@@ -2,7 +2,7 @@
 // chats for cards that its owner hands to it, which it runs with the coding agent on this machine
 // (D-089). `config.json` next to the account file names each project's repository (D-087).
 //
-//   npm run agent -- pair <server> <code> <name>
+//   npm run agent -- pair <code> <name>
 //   npm run agent -- watch <name>
 //
 // The code comes from Connect coding agent in WebChat (R-030). Accounts live under
@@ -10,7 +10,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { AgentClient, type OpenedMessage } from './client.ts';
+import { AgentClient, readPairing, type OpenedMessage } from './client.ts';
 import { createRunner, loadRunnerConfig } from './runner.ts';
 import { Runs } from './runs.ts';
 
@@ -20,8 +20,9 @@ const fileFor = (name: string) => path.join(home, name, 'account.json');
 async function main([command, ...args]: string[]) {
   switch (command) {
     case 'pair': {
-      const [server, code, name] = args;
-      if (!server || !code || !name) throw new Error('usage: pair <server> <code> <name>');
+      const [pasted, name] = args;
+      if (!pasted || !name) throw new Error('usage: pair <code> <name>');
+      const { server, code } = readPairing(pasted, '');
       if (await fs.stat(fileFor(name)).then(() => true, () => false)) throw new Error(`${fileFor(name)} holds an agent already. Pick another name.`);
       console.log('Approve the agent in WebChat, in the window that shows the code.');
       const client = await AgentClient.pair(fileFor(name), server, code);
@@ -33,7 +34,7 @@ async function main([command, ...args]: string[]) {
       const [username] = args;
       if (!username) throw new Error('usage: watch <name>');
       const client = await AgentClient.load(fileFor(username));
-      if (!client.owner) throw new Error(`Pair ${username} with its owner first: npm run agent -- pair <server> <code> ${username}`);
+      if (!client.owner) throw new Error(`Pair ${username} with its owner first: npm run agent -- pair <code> ${username}`);
       const dir = path.dirname(fileFor(username));
       const config = await loadRunnerConfig(dir);
       const runs = new Runs(client, createRunner(config, client, path.join(dir, 'runs')));

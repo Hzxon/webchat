@@ -468,7 +468,8 @@ describe('agent client (R-027)', () => {
     await fs.writeFile(path.join(project, '.claude', 'settings.local.json'), JSON.stringify({ sandbox }));
     try {
       const code = newPairingCode();
-      const plugin = new Plugin({ server: baseUrl, code, dataDir, projectDir: project });
+      // The page shows its address with the code, so the address setting stays empty (R-031).
+      const plugin = new Plugin({ server: '', code: `${baseUrl}#${code}`, dataDir, projectDir: project });
       const starting = plugin.start();
       const agent = await approve(alice, code, 'Claude Code');
       assert.equal(await starting, true);
