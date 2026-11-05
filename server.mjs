@@ -1,12 +1,12 @@
-import { existsSync, readFileSync, realpathSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, unlinkSync } from "node:fs";
+import path from "node:path";
 import readline from "node:readline";
 import { execFile } from "node:child_process";
 import crypto, { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
-import path from "node:path";
-import { promisify } from "node:util";
 import { setTimeout as setTimeout$1 } from "node:timers/promises";
+import { promisify } from "node:util";
 // shared/types.ts
 /** How long a pairing code works, from the page showing it to the owner's approval (R-030). */
 var PAIRING_TTL_MS = 6e5;
@@ -465,11 +465,12 @@ var Api = class {
 		this.baseUrl = baseUrl;
 		this.cookie = cookie;
 		const { protocol, hostname } = new URL(baseUrl);
-		if (protocol !== "https:" && ![
+		const local = [
 			"localhost",
 			"127.0.0.1",
 			"[::1]"
-		].includes(hostname)) throw new Error(`Use the https:// address of the server, not ${baseUrl}.`);
+		].includes(hostname) || hostname.endsWith(".localhost");
+		if (protocol !== "https:" && !local) throw new Error(`Use the https:// address of the server, not ${baseUrl}.`);
 	}
 	async request(method, path, body) {
 		let res;
@@ -545,6 +546,7 @@ var Runs = class {
 			return;
 		}
 		if (run.kind !== "request" || run.runtime !== this.client.id) return;
+		if (this.client.repo && run.repo !== this.client.repo) return;
 		if (!this.client.remember(message.clientId ?? "", run.sentAt ?? 0)) return;
 		const taken = {
 			message: message.id,
@@ -639,6 +641,22 @@ var Runs = class {
 // agent/client.ts
 /** How often the daemon checks in. It has no push, so this is its whole delay (D-004). */
 var SYNC_INTERVAL_MS = 15e3;
+/**
+* Splits a pasted pairing code. The page shows it after its own address, as `<address>#<code>`,
+* so nobody types the address (R-031). A bare code, from a page older than that, needs `server`.
+*/
+function readPairing(pasted, server) {
+	const at = pasted.lastIndexOf("#");
+	if (at >= 0) return {
+		server: pasted.slice(0, at).trim(),
+		code: pasted.slice(at + 1)
+	};
+	if (!server) throw new Error("Paste the whole code that WebChat shows, with its address.");
+	return {
+		server,
+		code: pasted
+	};
+}
 var AgentClient = class AgentClient {
 	file;
 	filePath;
@@ -754,6 +772,22 @@ var AgentClient = class AgentClient {
 			pins,
 			pairing: id
 		});
+	}
+	/**
+	* A copy of the account for one repository's Claude Code session (D-094): the same keys and pins,
+	* with its own session, cursor and runs, so sessions in several repositories never write one
+	* file. Messages from before it are history.
+	*/
+	async copyTo(filePath) {
+		const { cursor } = await this.request("GET", "/bootstrap");
+		const copy = new AgentClient({
+			...this.file,
+			cursor,
+			running: void 0,
+			handled: void 0
+		}, filePath, this.identity);
+		await copy.save();
+		return copy;
 	}
 	/** Opens the account an earlier sign-up or sign-in wrote. */
 	static async load(filePath) {
@@ -1120,6 +1154,8 @@ var exec = promisify(execFile);
 var gh = (args) => exec("gh", args, { maxBuffer: 33554432 }).then((r) => r.stdout.trim());
 /** A job the model goes quiet on for this long fails, as a daemon's run does (D-087). */
 var IDLE_MS = 72e5;
+/** A job nobody starts in this long fails: no session in its repository heard the doorbell (D-094). */
+var PICKUP_MS = 18e5;
 /** Rounds of fixes one pull request gets. */
 var MAX_FIXES = 3;
 /** Check results that mean the code broke, not that someone stopped or held the check. */
@@ -1129,7 +1165,7 @@ var FAILED = /* @__PURE__ */ new Set([
 	"STARTUP_FAILURE",
 	"ERROR"
 ]);
-var PULL_FIELDS = "state,isDraft,headRefOid,mergeable,statusCheckRollup,reviews,comments";
+var PULL_FIELDS = "state,isDraft,headRefOid,mergeable,statusCheckRollup,reviews,comments,updatedAt";
 var log = (error) => console.error(`webchat: ${messageOf(error)}`);
 var Plugin = class {
 	options;
@@ -1138,6 +1174,8 @@ var Plugin = class {
 	/** Why this session takes no runs, for the status tool. Empty while it takes them. */
 	problem = "Starting.";
 	runs = null;
+	/** This repository's folder in the plugin's: its copy of the account, its lock, doorbell and pull requests. */
+	home = "";
 	jobs = /* @__PURE__ */ new Map();
 	watched = [];
 	polling = false;
@@ -1147,35 +1185,45 @@ var Plugin = class {
 		this.options = options;
 	}
 	file(name) {
-		return path.join(this.options.dataDir, name);
+		return path.join(this.home, name);
 	}
 	/**
-	* Takes the machine's watch, pairs when a new code was pasted, and loads the account. False when
-	* this session takes no runs; `problem` says why.
+	* Takes this repository's watch, pairs when a new code was pasted, and loads the repository's copy
+	* of the account. False when this session takes no runs; `problem` says why.
 	*/
 	async start() {
-		const { server, code, dataDir, projectDir } = this.options;
-		await fs.mkdir(dataDir, {
-			recursive: true,
-			mode: 448
-		});
-		let client = await AgentClient.load(this.file("account.json")).catch(() => null);
-		if (!client && !code) {
+		const { dataDir, projectDir } = this.options;
+		const { server, code } = this.options.code ? readPairing(this.options.code, this.options.server) : this.options;
+		this.repo = await originOf(projectDir);
+		if (!this.repo) {
+			this.problem = "This folder is no GitHub repository, so this session takes no runs.";
+			return false;
+		}
+		const pairedFile = path.join(dataDir, "account.json");
+		let paired = await AgentClient.load(pairedFile).catch(() => null);
+		if (!paired && !code) {
 			this.problem = "Not paired. In WebChat, choose Connect coding agent, paste its code with /plugin configure webchat@webchat, then start a new session.";
 			return false;
 		}
-		if (!await takeLock(this.file("watch.lock"))) {
-			this.problem = "Another Claude Code session on this machine watches for WebChat runs.";
-			return false;
+		this.home = repoHome(dataDir, this.repo);
+		await fs.mkdir(this.home, {
+			recursive: true,
+			mode: 448
+		});
+		while (!await takeLock(this.file("watch.lock"))) {
+			this.problem = `Another Claude Code session in ${this.repo} takes its runs. This one takes over when that one closes.`;
+			await setTimeout$1(6e4, void 0, { ref: false });
 		}
-		if (code && client?.pairing !== await pairingId(code)) {
+		if (code && paired?.pairing !== await pairingId(code)) {
 			this.problem = "Waiting for you to approve this agent in WebChat, in the window that shows the code.";
-			client = await AgentClient.pair(this.file("account.json"), server, code);
+			paired = await AgentClient.pair(pairedFile, server, code);
 			await this.ring("WebChat paired this session with your account. Cards you hand to it come here.");
 		}
-		const paired = this.client = client;
-		this.repo = paired.repo = await originOf(projectDir);
-		this.runs = new Runs(paired, (job) => this.run(job), (run) => this.refusal(run));
+		let client = await AgentClient.load(this.file("account.json")).catch(() => null);
+		if (!client || client.pairing !== paired.pairing) client = await paired.copyTo(this.file("account.json"));
+		this.client = client;
+		client.repo = this.repo;
+		this.runs = new Runs(client, (job) => this.run(job), () => sandboxProblem(projectDir, secretDirs(dataDir)));
 		this.watched = JSON.parse(await fs.readFile(this.file("pulls.json"), "utf8").catch(() => "[]"));
 		this.problem = "";
 		return true;
@@ -1191,11 +1239,6 @@ var Plugin = class {
 	/** Acts on one message. A run takes long, so the loop does not wait for it: check-ins go on meanwhile. */
 	handle(message) {
 		return this.runs.handle(message).catch(log);
-	}
-	/** Why this session will not run a request: it is open in another repository, or the shell could read a secret. */
-	async refusal(run) {
-		if (!this.repo || run.repo !== this.repo) return `I am open in ${this.repo ?? "no GitHub repository"}, not in ${run.repo ?? "the repository of the card"}.`;
-		return sandboxProblem(this.options.projectDir, secretDirs(this.options.dataDir));
 	}
 	/** A run, as Runs hands it over: a worktree inside the checkout, where the sandboxed shell may write, then the doorbell. */
 	async run({ request, taken, card, projectId, signal }) {
@@ -1241,12 +1284,13 @@ var Plugin = class {
 			if (error) settle.reject(error);
 			else settle.resolve(result);
 		};
+		const nobody = `Nobody started it within ${PICKUP_MS / 6e4} minutes. Is a Claude Code session open in ${this.repo}?`;
 		const job = {
 			...place,
 			brief,
 			done,
 			end,
-			timer: setTimeout(() => end(/* @__PURE__ */ new Error("Nothing happened on it for 2 hours.")), IDLE_MS)
+			timer: setTimeout(() => end(new Error(nobody)), PICKUP_MS)
 		};
 		signal.addEventListener("abort", () => end(/* @__PURE__ */ new Error("The owner cancelled it.")), { once: true });
 		this.jobs.set(id, job);
@@ -1267,7 +1311,8 @@ var Plugin = class {
 		if (name === "status") return this.status();
 		const job = typeof args.id === "string" ? this.jobs.get(args.id) : void 0;
 		if (!job) throw new Error("No WebChat run or fix has this id in this session. Do nothing for the line that named it.");
-		job.timer.refresh();
+		clearTimeout(job.timer);
+		job.timer = setTimeout(() => job.end(/* @__PURE__ */ new Error("Nothing happened on it for 2 hours.")), IDLE_MS);
 		switch (name) {
 			case "start_run": return job.brief;
 			case "publish": return this.publish(job, String(args.title ?? ""), String(args.body ?? ""));
@@ -1279,8 +1324,7 @@ var Plugin = class {
 		const owner = this.client?.users.get(this.client.owner)?.displayName;
 		const sandbox = await sandboxProblem(this.options.projectDir, secretDirs(this.options.dataDir));
 		return [
-			this.problem || `Watching for cards that ${owner ?? "your owner"} hands to this agent on ${this.options.server}.`,
-			`Repository: ${this.repo ?? "none on GitHub, so runs are refused"}.`,
+			this.problem || `Taking the cards that ${owner ?? "your owner"} hands to this agent in ${this.repo}, on ${this.options.server}.`,
 			sandbox ?? "The sandbox keeps the shell away from the secrets.",
 			...[...this.jobs.keys()].map((id) => `Working on ${id}.`),
 			`Watching ${this.watched.length} draft pull requests.`
@@ -1404,8 +1448,10 @@ var Plugin = class {
 			details: details.join("\n\n")
 		} : null;
 	}
-	/** Review notes since the last round, from people who may push to the repository. */
+	/** Review notes since the last round, from people who may push to the repository. None while GitHub saw no change. */
 	async reviewNotes(pull, view) {
+		if (view.updatedAt === pull.seenUpdate) return [];
+		pull.seenUpdate = view.updatedAt;
 		const inline = JSON.parse(await gh(["api", `repos/${pull.pull.repo}/pulls/${pull.pull.number}/comments`]));
 		const all = [
 			...view.reviews.filter((r) => r.body.trim()).map((r) => ({
@@ -1568,14 +1614,19 @@ async function takeLock(file) {
 	}
 	return false;
 }
-/** The job running on this machine, while the server that filed it lives. */
-function readRunState(dataDir) {
-	try {
-		const state = JSON.parse(readFileSync(path.join(dataDir, "run.json"), "utf8"));
-		return alive(state.pid) ? state : null;
-	} catch {
-		return null;
-	}
+/** A repository's folder in the plugin's, such as `repos/acme__app` (D-094). */
+var repoHome = (dataDir, repo) => path.join(dataDir, "repos", repo.replace("/", "__"));
+/** The jobs running on this machine, one per repository at most, while the servers that filed them live. */
+function readRunStates(dataDir) {
+	const repos = path.join(dataDir, "repos");
+	return (existsSync(repos) ? readdirSync(repos) : []).flatMap((name) => {
+		try {
+			const state = JSON.parse(readFileSync(path.join(repos, name, "run.json"), "utf8"));
+			return alive(state.pid) ? [state] : [];
+		} catch {
+			return [];
+		}
+	});
 }
 /** The folders the model must never read: the plugin's, with the agent's keys, and gh's, with the owner's token. */
 function secretDirs(dataDir) {
@@ -1642,12 +1693,13 @@ var FILE_TOOLS = /* @__PURE__ */ new Set([
 * since they run outside the sandbox. While a job runs in this session's checkout, they stay in its
 * worktree, the web and other MCP servers are off, and the shell stays in the sandbox (D-092).
 */
-function guard(use, secrets, run) {
+function guard(use, secrets, runs) {
 	const input = use.tool_input;
 	const named = input.file_path ?? input.notebook_path ?? (use.tool_name === "Glob" || use.tool_name === "Grep" ? input.path ?? use.cwd : void 0);
 	const target = FILE_TOOLS.has(use.tool_name) && typeof named === "string" ? real(path.resolve(use.cwd, named)) : void 0;
 	if (target && secrets.some((dir) => within(target, real(dir)))) return "That folder holds secrets the WebChat plugin keeps from the model.";
-	if (!run || !within(real(use.cwd), real(run.project))) return;
+	const run = runs.find((r) => within(real(use.cwd), real(r.project)));
+	if (!run) return;
 	const busy = "while a WebChat run is going";
 	if (use.tool_name === "WebFetch" || use.tool_name === "WebSearch") return `No web access ${busy}.`;
 	if (use.tool_name.startsWith("mcp__") && !use.tool_name.startsWith("mcp__plugin_webchat_webchat__")) return `Only the webchat tools ${busy}.`;
@@ -1784,8 +1836,16 @@ function serve() {
 	});
 	lines.on("close", quit);
 }
-if (process.argv[2] === "guard") {
-	const reason = guard(JSON.parse(readFileSync(0, "utf8")), secretDirs(dataDir), readRunState(dataDir));
+if (process.argv[2] === "doorbell") {
+	const repo = await originOf(process.cwd());
+	const file = repo ? path.join(repoHome(process.argv[3], repo), "doorbell") : "/dev/null";
+	mkdirSync(path.dirname(file), {
+		recursive: true,
+		mode: 448
+	});
+	process.stdout.write(file);
+} else if (process.argv[2] === "guard") {
+	const reason = guard(JSON.parse(readFileSync(0, "utf8")), secretDirs(dataDir), readRunStates(dataDir));
 	if (reason) process.stdout.write(JSON.stringify({ hookSpecificOutput: {
 		hookEventName: "PreToolUse",
 		permissionDecision: "deny",

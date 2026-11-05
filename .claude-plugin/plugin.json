@@ -1,6 +1,6 @@
 {
   "name": "webchat",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Runs the WebChat board cards you hand to Claude Code, and fixes their draft pull requests.",
   "author": {
     "name": "Hzxon"
@@ -10,8 +10,8 @@
     "server": {
       "type": "string",
       "title": "WebChat address",
-      "description": "The https address of your WebChat, such as https://chat.example.com.",
-      "required": true
+      "description": "Leave it empty: the pairing code carries it. Only a code without an address, from an older WebChat, needs it, such as https://chat.example.com.",
+      "required": false
     },
     "pairing_code": {
       "type": "string",
@@ -37,8 +37,8 @@
     "monitors": [
       {
         "name": "doorbell",
-        "command": "touch \"${CLAUDE_PLUGIN_DATA}/doorbell\" && exec tail -n 0 -F \"${CLAUDE_PLUGIN_DATA}/doorbell\"",
-        "description": "Runs and pull request fixes that WebChat hands to this session"
+        "command": "f=$(node \"${CLAUDE_PLUGIN_ROOT}/server.mjs\" doorbell \"${CLAUDE_PLUGIN_DATA}\") && touch \"$f\" && exec tail -n 0 -F \"$f\"",
+        "description": "Runs and pull request fixes that WebChat hands to the repository this session is open in"
       }
     ]
   }
