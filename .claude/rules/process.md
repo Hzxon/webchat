@@ -37,3 +37,6 @@ docs/decisions.md that explains it. The process itself is in AGENTS.md.
 - Change the CSP in `vercel.json` and `server/app.ts` together; keep the service worker at `Cache-Control: no-cache` (D-009).
 - Tests in `test/chat.test.ts` run in order and share state (D-036).
 - Changes people see are tried with two accounts, at desktop and 375 pixels, in light and dark mode (D-037).
+- Rules 3, 6, 7 and 8 of AGENTS.md have a test; `test/rules.test.ts` checks migrations and `req.query`, `test/chat.test.ts` the push payload, `test/github.test.ts` the GitHub token (D-091).
+- A new migration appends one line to `FROZEN_MIGRATIONS` in `test/rules.test.ts`, which the failing test prints; never change or remove a line there (D-091).
+- A new test that sends from Alice in `test/chat.test.ts` may hit her 30 sends per 10 seconds; clear the `send:` rate limit rows after it, as the push payload test does (D-091).

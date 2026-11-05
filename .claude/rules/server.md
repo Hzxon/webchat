@@ -20,6 +20,7 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - Every query must run on both PGlite and Postgres; PGlite takes one statement per query (D-006).
 - Import PGlite through a computed module name so the bundler leaves it out of the function (D-006).
 - Add schema changes only as a new last entry of `MIGRATIONS` in `server/db.ts`; never edit, reorder or renumber one (D-010).
+- `test/rules.test.ts` hashes every entry of `MIGRATIONS`; a new one appends the line the failing test prints (D-091).
 - Each migration runs once, in order, in a transaction under an advisory lock (D-010).
 - When two branches add a migration, the one that reaches main first keeps its number (D-010).
 - Sizes the server enforces and the page respects live in `LIMITS` in `shared/types.ts`; raising one may need a larger JSON body limit in `server/app.ts` (D-011).
