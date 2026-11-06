@@ -7,6 +7,7 @@ import { newPairingCode } from '../../../shared/e2ee';
 import { LIMITS, PAIRING_TTL_MS, type PublicKeysDTO, type UserDTO } from '../../../shared/types';
 import { ownAgents } from '../agents';
 import { ApiError } from '../api';
+import { holdReloadWhile } from '../build';
 import { connectAgent, pairingKeys, removeAgent } from '../chat';
 import { useAppState } from '../store';
 import { Dialog } from './Dialog';
@@ -30,6 +31,10 @@ export function AgentDialog({ projectId, onClose }: { projectId: number; onClose
   const [done, setDone] = useState('');
   const [note, setNote] = useState('');
   const sorted = useMemo(() => Object.values(projects).sort((a, b) => a.name.localeCompare(b.name)), [projects]);
+
+  // The code lives only in this page. A reload after a deploy would lose it while the agent waits
+  // on it, and the owner leaves the tab for Claude Code, so it would go hidden or idle (D-040).
+  useEffect(() => holdReloadWhile(() => true), []);
 
   // Looks for the agent's half every 2 seconds, for as long as the code works. A failed request, in
   // a deploy or a network blip, shows its error and the look goes on (K-61).
