@@ -332,7 +332,7 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
               Start again
             </button>
           </div>
-        ) : thread.state === 'done' || (request && thread.state === 'unsent') ? null : (
+        ) : thread.state === 'done' || (request && (thread.state === 'unsent' || nocopy)) ? null : (
           <>
             {!working && blocked && <p className="composer-blocked">{blocked}</p>}
             <Box
