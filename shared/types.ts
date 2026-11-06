@@ -21,6 +21,8 @@ export interface UserDTO {
   keys: PublicKeysDTO | null;
   /** For a coding agent's account (R-027, D-085), the person it runs cards for (D-089). */
   agentOwner: number | null;
+  /** What the agent's laptop can do, as a level of AGENT_LEVEL; 0 until a plugin that serves every folder checked in (R-036). */
+  protocol: number;
   /** For an agent in Claude Code: a session per repository, each taking that repository's runs (R-032). */
   agentRepos: AgentRepoDTO[];
   /** The account was deleted (R-028). It stays listed so its old messages keep their sender's name. */
@@ -283,8 +285,10 @@ export interface SyncRequest {
   endpoint: string | null;
   /** The doc section this tab is editing. Each check-in keeps its lock (R-020). */
   editing?: { docId: string; section: string } | null;
-  /** From an agent in a Claude Code session: the repository the session is open in (R-030). */
+  /** From an older plugin's session: the repository it is open in (R-030). */
   repo?: string | null;
+  /** From an agent's laptop: every repository it has a folder for, which one window serves (R-036). */
+  repos?: string[];
   /** From the plugin's session: what it can do, as a level of AGENT_LEVEL (D-103). Older plugins leave it out. */
   protocol?: number;
 }
@@ -491,7 +495,7 @@ export interface PullRequestDTO {
  * owner's cancel. All travel inside a message's envelope, like a shared pull request, so the
  * server sees messages and nothing more. A report or a cancel names the request's message.
  */
-export type RunDTO = RunRequest | RunReport | RunCancel | RunFix;
+export type RunDTO = RunRequest | RunReport | RunCancel | RunFix | RunClone;
 
 export interface RunRequest {
   kind: 'request';
@@ -525,9 +529,11 @@ export interface RunReport {
   /**
    * "fixing" starts another round on the run's pull request, after CI failed, a conflict or a review
    * (R-030). "review" says someone other than the owner reviewed it, and the round waits for the
-   * owner's go; its text holds their comments. "ended" says the watching stopped (D-105).
+   * owner's go; its text holds their comments. "ended" says the watching stopped (D-105). "nocopy"
+   * says the laptop has no folder of the request's repository, and the run waits for the owner to
+   * have it cloned (R-036).
    */
-  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended';
+  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended' | 'nocopy';
   request: number;
   /** What happened, in a line. */
   note?: string;
@@ -552,6 +558,18 @@ export interface RunFix {
   /** The review report it approves: only the text that report showed runs, never what came after. */
   review?: number;
   note?: string;
+  sentAt: number;
+}
+
+/**
+ * The owner has their agent clone a repository its laptop has no folder for, after a "nocopy"
+ * report on the request; the run that waits for it then goes on (R-036, D-108). The agent heeds
+ * only its owner, and clones only a repository one of their projects links.
+ */
+export interface RunClone {
+  kind: 'clone';
+  request: number;
+  repo: string;
   sentAt: number;
 }
 
@@ -582,7 +600,12 @@ export type PromptDTO =
   | { kind: 'reply'; to: string; sentAt: number }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }
-  | { kind: 'failed'; to: string };
+  | { kind: 'failed'; to: string }
+  // The agent's laptop has no folder of the prompt's repository, and the turn waits for a clone; the
+  // owner's clone has it made; a note says what the agent does meanwhile, and changes no state (R-036).
+  | { kind: 'nocopy'; to: string }
+  | { kind: 'clone'; to: string; repo: string; sentAt: number }
+  | { kind: 'note'; to: string };
 
 /**
  * A board card an agent drafted when its owner asked (D-104): a new idea or issue, or a change to
@@ -800,6 +823,8 @@ export const LIMITS = {
   runNoteLength: 1000,
   /** A branch name in a run report. */
   branchLength: 200,
+  /** Repositories one laptop's check-in names (R-036). */
+  agentRepos: 50,
 } as const;
 
 /** Slack-style channel names (D-027): lowercase letters and digits in any script, joined by single hyphens. */

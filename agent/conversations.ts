@@ -1,9 +1,10 @@
 // The owner's conversations with their agent (R-035, D-102). The owner sends a prompt in their
-// direct chat with the agent, and its sealed `prompt` field names the repository. The Claude Code
-// session open in that repository answers it with a turn of its background Claude, and each reply
-// the owner sends resumes that Claude session. Only the owner's messages count (D-089): a prompt,
-// reply or cancel from anyone else does nothing. Answers and failures are messages that name the
-// conversation by its prompt's signed client id, as run reports name their request (D-086).
+// direct chat with the agent, and its sealed `prompt` field names the repository. The laptop's
+// plugin answers it with a turn of its background Claude in that repository's folder (R-036), and
+// each reply the owner sends resumes that Claude session. Only the owner's messages count (D-089):
+// a prompt, reply or cancel from anyone else does nothing. Answers and failures are messages that
+// name the conversation by its prompt's signed client id, as run reports name their request
+// (D-086).
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { LIMITS, type CardDraftDTO } from '../shared/types.ts';
@@ -18,6 +19,8 @@ export interface Conversation {
   /** Its prompt's client id, which every later message names. */
   root: string;
   chat: number;
+  /** The repository its prompt names, as "owner/name". */
+  repo: string;
   /** The background Claude session its turns share. A new one until a turn has answered. */
   session: string;
   answered: boolean;
@@ -74,19 +77,25 @@ export class Conversations {
   /** Acts on one message of a conversation. Anything else is ignored. Nothing waits before a turn is queued. */
   async handle(message: OpenedMessage) {
     const prompt = message.content?.prompt;
-    if (message.security !== 'encrypted' || !prompt || prompt.kind === 'answer' || prompt.kind === 'failed') return;
+    // Only the owner's prompts, replies and cancels; the plugin takes their clones (R-036).
+    if (message.security !== 'encrypted' || !prompt || (prompt.kind !== 'prompt' && prompt.kind !== 'reply' && prompt.kind !== 'cancel')) return;
     // The owner, in their direct chat with this agent; the signature checked the sender against the pins (D-089).
     if (message.senderId !== this.client.owner || this.client.conversations.get(message.conversationId)?.type !== 'direct') return;
-    // A prompt is the session's open in the repository it names, and a reply the session's that has its conversation (D-094).
     const text = message.content!.text;
     const conversation =
       prompt.kind === 'prompt'
-        ? prompt.repo === this.client.repo && message.clientId
-          ? { root: message.clientId, chat: message.conversationId, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project }
+        ? message.clientId
+          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project }
           : undefined
         : this.list.find((c) => c.root === prompt.to && c.chat === message.conversationId);
     // A copy the server posted again under a new id does nothing (K-47).
-    if (!conversation || !this.client.remember(message.clientId ?? '', prompt.sentAt)) return;
+    if (!this.client.remember(message.clientId ?? '', prompt.sentAt)) return;
+    // One laptop answers every conversation, so a reply it cannot place hears so: one gone after a
+    // week, or kept by a session from before R-036.
+    if (!conversation) {
+      if (prompt.kind === 'reply') await this.client.send(message.conversationId, { text: 'I no longer know this conversation. Start a new one.', prompt: { kind: 'failed', to: prompt.to } });
+      return;
+    }
     // The time the owner's page signed, not the server's, which could play an old message again (K-42).
     // A prompt skipped so stays, and nothing runs until a reply asks again.
     if (Math.abs(Date.now() - prompt.sentAt) > REQUEST_TTL_MS) {

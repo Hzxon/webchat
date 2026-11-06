@@ -461,7 +461,8 @@ chat got a new key, display names, whether a message is urgent, that someone rea
 band (D-059). It sees pull request titles and repository names (D-033), which docs a project has,
 their section counts, editors, times and size bands, and who is editing now; it could show an older
 section revision as the newest (D-081). It sees the repositories a project links, whose cards it
-writes in plain text and could fake (D-050), and the one an agent's session is open in (D-093). It
+writes in plain text and could fake (D-050), the ones an agent's laptop has folders for, and when
+any Claude Code window there is open (D-094). It
 supplies the member list a new channel's key, or a key after someone leaves, is wrapped for; the New
 channel dialog shows it (D-044). People who leave keep the keys they had (D-044). Someone who writes
 to the database can add unencrypted messages under any member's name, which show as "Not encrypted"
@@ -952,7 +953,8 @@ credentials. The `agent` column of migration 13 is unused. A teammate's agent is
 
 ### D-092: An agent can run as a Claude Code plugin
 
-Accepted 2026-11-05 in #100, proposed in #99. Its runs moved to a background Claude in #117.
+Accepted 2026-11-05 in #100, proposed in #99. Its runs moved to a background Claude in #117, and
+one window serves every folder since #131 (D-094).
 
 An agent can run inside Claude Code as the plugin in `plugin/` (R-030). Its MCP server,
 `agent/plugin.ts`, is the trusted part: it keeps the agent's keys in the plugin's data folder, uses
@@ -963,12 +965,12 @@ guard hook keeps every session's file tools from the secrets. A draft gets three
 for failed CI, conflicts and reviews by writers, each a turn of the run's Claude session. Why: one
 install, and channels need a flag on every start.
 
-Cost: a session must stay open in the repository. A teammate's card runs with the owner's
-credentials; the owner reviews the draft.
+Cost: one Claude Code window must stay open on the laptop. A teammate's card runs with the
+owner's credentials; the owner reviews the draft.
 
 ### D-093: An agent pairs through a one-time code, and runs only in the repository its owner signed
 
-Accepted 2026-11-05 in #100. The code carries the address since #101 (R-031).
+Accepted 2026-11-05 in #100. The code carries the address since #101 (R-031), changed in #131.
 
 The owner's page shows 128 random bits as a code, after its own address as `<address>#<code>`, so
 the agent needs no address setting and a browser never sends the code. The agent sends new keys and
@@ -976,29 +978,31 @@ a random login key with an HMAC of the keys under the code, filed under the code
 checks the HMAC; on approval the server makes the owner's agent account, with a random username and
 no key backup. The approval carries an HMAC of the owner's id and keys and the agent's keys, which
 the agent checks and pins. A pairing works once and lapses after 10 minutes. A plugin's check-ins
-name the GitHub repository its session is open in; the page signs the one its menu showed into the
-request, and the plugin runs it only there. An agent remembers each request's signed client id while
-it could run, across restarts (K-47). Why: no invite code, password or security code to compare.
+name the GitHub repositories its laptop has folders for (D-094); the page signs the one its menu
+showed into the request, and the plugin runs it only in that repository's folder (D-101, D-108). An
+agent remembers each request's signed client id while it could run, across restarts (K-47). Why: no
+invite code, password or security code to compare.
 
-Cost: the server sees the repository an agent's session is in, for repositories its owner
-connected (D-101). Deleting an account deletes its agents. A new code makes a new account, and the old one stays, asleep.
+Cost: the server sees which repositories an agent's laptop has folders for, for those its owner
+connected or had cloned (D-101). Deleting an account deletes its agents. A new code makes a new
+account, and the old one stays, asleep.
 
-### D-094: Each repository's Claude Code session takes that repository's runs
+### D-094: One Claude Code window serves every folder on its laptop
 
-Accepted 2026-11-05 in #104. The doorbell went in #117 (D-097).
+Accepted 2026-11-05 in #104, rewritten in #131 (R-036). The doorbell went in #117 (D-097).
 
-An agent's Claude Code sessions each take the runs of the repository they are open in (R-032), once
-its owner connected it (D-101). A session checks in with its repository, which `agent_repos` keeps
-with its last check-in, and the play menu lists one entry per repository. The
-plugin keeps a folder per repository in its data folder: the connected mark, a copy of the account,
-a lock, its Claude's settings and the watched pull requests, so no two sessions write one file. A
-session says nothing on another repository's request. A second session in one repository takes over
-when the first closes. Why: students keep several repositories open, and the first session to start
-took all.
+The plugin's server starts in any folder, and the window that takes the laptop's lock serves every
+folder the owner connected or had cloned (D-101, D-108); another window waits, and takes over when
+it closes. It keeps one copy of the account, its Claude's settings, the watched pull requests and
+the conversations in `laptop/` of its data folder, and a mark per repository under `repos/`. One
+check-in names every repository with a folder, which `agent_repos` keeps with its last check-in,
+and the level of what the laptop can do, which the agent's own row keeps (migration 20). A request
+for a repository with no folder waits for its owner to have it cloned. Why: a student with three
+projects kept three windows open, and could not work on a repository never cloned on the laptop.
 
-Cost: a request for a repository with no open session goes unanswered, and the board stops waiting
-on it after 30 minutes. The `agent_repo` column of migration 17 is unused. A repository unseen for
-30 days leaves the menu.
+Cost: the server learns that the agent is online whenever any window is open, and the names of its
+folders, never a path. The `agent_repo` column of migration 17 and the copies of the account per
+repository from before are unused. A repository unseen for 30 days leaves the menu.
 
 ### D-096: The owner deletes a channel, but never #general
 
@@ -1072,39 +1076,38 @@ draft.
 Cost: the status changes only while a page of the requester's is open. Two tabs can still each send
 one request before they sync; the agent refuses the second (D-099).
 
-### D-101: A repository takes part once its owner connects it
+### D-101: A folder takes part once its owner connects it or has it cloned
 
-Accepted 2026-11-06 in #117 (R-035), changed in #120. It replaces D-098, and with D-097 it replaces
-D-095.
+Accepted 2026-11-06 in #117 (R-035), changed in #120 and #131 (R-036). It replaces D-098, and with
+D-097 it replaces D-095.
 
-The plugin's server takes part only in a repository whose folder in the plugin's data holds a
-`connected` mark. The owner sets it by typing `/webchat:connect` in a session there; the skill only
-the user can start calls the `connect` tool. That tool carries `requiresUserInteraction`, so Claude
-Code asks the owner on every call, and a repository's files cannot connect it. Its answer says in
-plain words what comes next, and says when cards need GitHub on the laptop: questions need no `gh`
-login, and cards refuse at once without one. Every session in a connected repository may take part,
-and the lock gives its runs to one (D-094). A session anywhere else never pairs, checks in or takes
-a lock. `disconnect` removes the mark. Why: the desktop app starts no session with
-`WEBCHAT_AGENT=1`, and the server should still learn only the repositories the owner chose.
+The plugin works in a folder only while `repos/<owner>__<name>/connected` in its data folder names
+it and it is a checkout of that repository. The owner's click on **Clone it** writes the mark for a
+clone (D-108). `/webchat:connect` writes it for a checkout the owner has: the skill only the user
+can start calls the `connect` tool, which carries `requiresUserInteraction`, so Claude Code asks the
+owner on every call. Either way a repository's files cannot connect themselves. Its answer says
+when cards need GitHub on the laptop. `disconnect` removes the mark, never the files. A mark from
+before #131 names no folder, and a window open in that checkout fills it in. Why: the server should
+learn only the repositories the owner chose, and a student should not need a terminal to start.
 
-Cost: the owner connects each repository once. A session in an unconnected repository looks for the
-mark every 5 seconds. A disconnected repository stays in the play menu, shown asleep, for 30 days
-after its last check-in (D-094).
+Cost: a connected checkout that moves needs connecting again. The plugin reads the marks every 15
+seconds. A repository whose folder is gone stays in the play menu, asleep, for 30 days (D-094).
 
 ### D-102: A conversation is a prompt and the messages that name it
 
-Accepted 2026-11-06 in #119 (R-035).
+Accepted 2026-11-06 in #119 (R-035), changed in #131.
 
 The owner talks with their agent in their direct chat. A prompt is a message whose sealed `prompt`
 field names the repository. Replies, cancels, answers and failures name the prompt's client id,
 which its sender signs, unlike the server's message id. The agent heeds only its owner's prompts,
 replies and cancels, in that direct chat, with a signed send time within 10 minutes, once each
-(D-089, K-47). The session open in the named repository answers. Each conversation is one background
-Claude session in a scratch copy: a repository of its own in the temp folder, holding only the
-latest commit of origin's default branch, so a turn moves none of the owner's branches and nothing
-from it is pushed. A reply resumes the session; turns run one at a time, and a cancel stops them. A
-long answer comes as messages of at most 4,000 characters. A conversation left for 24 hours ends,
-and its copy goes. Why: the owner asks from a phone, and the chat keeps it encrypted.
+(D-089, K-47). The laptop's window answers from the named repository's folder (D-094), and a reply
+it cannot place hears so. Each conversation is one background Claude session in a scratch copy: a
+repository of its own in the temp folder, holding only the latest commit of origin's default branch,
+so a turn moves none of the owner's branches and nothing from it is pushed. A reply resumes the
+session; turns run one at a time, and a cancel stops them. A long answer comes as messages of at
+most 4,000 characters. A conversation left for 24 hours ends, and its copy goes. Why: the owner asks
+from a phone, and the chat keeps it encrypted.
 
 Cost: an answer waits up to 15 seconds for a check-in, plus the turn. Each conversation fetches a
 copy of the default branch. An answer cut inside a code block shows as two messages.
@@ -1160,6 +1163,23 @@ login, so the owner sees it first.
 
 Cost: a card edited between the brief and the claim must be started again. Codex and Hermes no
 longer run cards.
+
+### D-108: The agent clones only on its owner's click, and only a linked repository
+
+Accepted 2026-11-06 in #131 (R-036).
+
+A run or a question that names a repository with no folder on the laptop gets "I have no copy of
+owner/repo on this laptop.", and the pane shows **Clone it**. The click sends a message whose sealed
+`run` or `prompt` field asks for the clone and names the repository, signed like a prompt (D-102).
+The plugin's server, never the background Claude, clones it with the owner's `gh` login into
+`~/WebChat/<owner>/<name>`, blobless, marks the folder (D-101), says where, and lets the run or turn
+that waits go on, for 30 minutes at most. It clones only for its owner, in their direct chat,
+signed within 10 minutes, once (D-089), only a repository that a project of the owner and the agent
+links (D-050), and only into that root; a folder there already counts only as a checkout of it.
+Why: a student should start from WebChat, with no terminal.
+
+Cost: a clone takes the laptop's disk, and minutes. The server answers which repositories a project
+links, so a changed server could offer a clone of another repository the owner reaches.
 
 ## Replies and reactions
 

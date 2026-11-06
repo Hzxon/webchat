@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import type { ProjectDTO } from '../../../shared/types';
+import { AGENT_LEVEL, type ProjectDTO } from '../../../shared/types';
 import { agentOf, ownAgents, ready, THREAD_STATE, useAgentThreads } from '../agents';
 import { sound } from '../alerts';
 import { deleteAccount, deleteChannel, openConversation, previewText, signOut } from '../chat';
@@ -488,7 +488,8 @@ function AgentsListItem() {
   if (agents.length === 0) return null;
   const newest = threads[0];
   const unread = chats.reduce((sum, c) => sum + c.unread, 0);
-  const online = agents.some((agent) => agent.agentRepos.some(ready));
+  // A laptop that serves every folder is online with or without one (R-036).
+  const online = agents.some((agent) => (agent.protocol >= AGENT_LEVEL.answers ? agent.online : agent.agentRepos.some(ready)));
 
   return (
     <li>

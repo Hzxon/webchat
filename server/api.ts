@@ -216,6 +216,15 @@ function envelope(value: unknown, maxLength: number = LIMITS.ciphertextLength): 
 }
 
 /** A doc's id is a chat key id's size: 16 random bytes. */
+/**
+ * The repositories a check-in names: every one an agent's laptop has a folder for (R-036), or the
+ * one an older plugin's session is open in. Names only, never a path.
+ */
+function checkedInRepos({ repos, repo }: Partial<SyncRequest>) {
+  const named = Array.isArray(repos) ? repos.slice(0, LIMITS.agentRepos) : [repo];
+  return [...new Set(named.filter((r): r is string => typeof r === 'string' && isRepoName(r)))];
+}
+
 const docId = (value: unknown) => base64url(value, 'Doc id', 22);
 
 /** "title", or the 8 random bytes a browser names a section with. */
@@ -567,7 +576,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
 
     const editing = input.editing;
     await Promise.all([
-      db.checkIn(me.id, input.attentive === true, tabId, endpoint, typeof input.repo === 'string' && isRepoName(input.repo) ? input.repo : null, Number.isInteger(input.protocol) && input.protocol! > 0 && input.protocol! < 100 ? input.protocol : 0),
+      db.checkIn(me.id, input.attentive === true, tabId, endpoint, checkedInRepos(input), Number.isInteger(input.protocol) && input.protocol! > 0 && input.protocol! < 100 ? input.protocol : 0, Array.isArray(input.repos)),
       typeof editing?.docId === 'string' && typeof editing.section === 'string'
         ? db.renewSectionLock(me.id, editing.docId.slice(0, 64), editing.section.slice(0, 64))
         : undefined,

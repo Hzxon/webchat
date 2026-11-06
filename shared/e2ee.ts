@@ -451,7 +451,7 @@ export function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | u
 }
 
 const CARD_ID = /^[DRK]-\d{1,6}$/;
-const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed', 'fixing', 'review', 'ended'];
+const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed', 'fixing', 'review', 'ended', 'nocopy'];
 const short = (value: unknown, max: number) => (typeof value === 'string' && value.length <= max ? value : undefined);
 
 /** A run request or report, if it has the right shape. A pull request is named by repository and number only. */
@@ -482,6 +482,9 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
     const note = short(raw.note, LIMITS.messageLength);
     return { kind: 'fix', request: raw.request, sentAt: raw.sentAt, ...(note && { note }), ...(isId(raw.review) && { review: raw.review }) };
   }
+  if (raw.kind === 'clone') {
+    return isId(raw.request) && isId(raw.sentAt) && typeof raw.repo === 'string' && isRepoName(raw.repo) ? { kind: 'clone', request: raw.request, repo: raw.repo, sentAt: raw.sentAt } : undefined;
+  }
   const kind = REPORT_KINDS.find((k) => k === raw.kind);
   if (!kind || !isId(raw.request)) return;
   const run: RunReport = { kind, request: raw.request };
@@ -503,7 +506,8 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
   if (raw.kind === 'reply' || raw.kind === 'cancel') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt } : undefined;
-  if (raw.kind === 'failed') return { kind: 'failed', to };
+  if (raw.kind === 'failed' || raw.kind === 'nocopy' || raw.kind === 'note') return { kind: raw.kind, to };
+  if (raw.kind === 'clone') return typeof raw.repo === 'string' && isRepoName(raw.repo) && isId(raw.sentAt) ? { kind: 'clone', to, repo: raw.repo, sentAt: raw.sentAt } : undefined;
   if (raw.kind !== 'answer') return;
   const card = readDraft(raw.card as Record<string, unknown> | undefined);
   return card ? { kind: 'answer', to, card } : { kind: 'answer', to };

@@ -1,11 +1,13 @@
 // The trusted half of the Claude Code plugin (R-030, D-092): the MCP server Claude Code starts with
-// each session. It takes part only in a repository its owner connected (D-101). It holds the agent's
-// keys and uses the owner's `gh` login. It checks in for the repository the session is open in, and
-// takes that repository's run requests, checked as the daemon checks them (D-089, D-094). For each
-// run it adds a worktree inside the checkout and runs a background Claude there, restricted and
-// sandboxed, with the card on stdin (D-097). The turn ends with a JSON answer, and this server pushes
-// the branch and opens the draft pull request. It then watches the draft, and when CI fails on it,
-// it conflicts, or someone who may push reviews it, the same Claude session takes another turn.
+// each session. One window on a laptop, open in any folder, serves every folder the owner connected
+// or had it clone, and another waits (R-036, D-094, D-101). It holds the agent's keys and uses the
+// owner's `gh` login. It checks in once for all those folders, and takes their run requests,
+// checked as the daemon checks them (D-089); a request for a repository with no folder waits for
+// the owner to have it cloned (D-108). For each run it adds a worktree inside the folder and runs a
+// background Claude there, restricted and sandboxed, with the card on stdin (D-097). The turn ends
+// with a JSON answer, and this server pushes the branch and opens the draft pull request. It then
+// watches the draft, and when CI fails on it, it conflicts, or someone who may push reviews it, the
+// same Claude session takes another turn.
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, readlinkSync, realpathSync, unlinkSync } from 'node:fs';
@@ -15,9 +17,9 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
-import { AGENT_LEVEL, isRepoName, LIMITS, type CardDraftDTO, type RunFix, type RunRequest } from '../shared/types.ts';
+import { AGENT_LEVEL, isRepoName, LIMITS, type CardDraftDTO, type ProjectReposDTO, type RunFix, type RunRequest } from '../shared/types.ts';
 import { claudeArgs, claudeSettings } from './claude.ts';
-import { AgentClient, readPairing, type OpenedMessage, type TakenRequest } from './client.ts';
+import { AgentClient, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
 import { addWorktree, claudeResult, fetchOrigin, start } from './runner.ts';
 import { messageOf, REQUEST_TTL_MS, Runs, type Runner, type RunResult } from './runs.ts';
@@ -26,6 +28,8 @@ const exec = promisify(execFile);
 const gh = (args: string[]) => exec('gh', args, { maxBuffer: 32 * 1024 * 1024 }).then((r) => r.stdout.trim());
 const signedIn = () => gh(['auth', 'status', '--hostname', 'github.com']).then(() => true, () => false);
 const GITHUB = 'Cards need GitHub on this laptop: the GitHub CLI signed in with `gh auth login`, and git using it after `gh auth setup-git`.';
+/** How long a run or a turn waits for its owner to have its repository cloned (R-036). */
+const CLONE_WAIT_MS = 30 * 60_000;
 
 /** Rounds of fixes one pull request gets. */
 const MAX_FIXES = 3;
@@ -40,12 +44,23 @@ export interface PluginOptions {
   code: string;
   /** The plugin's own folder: the account, the lock, its Claude's settings. Neither the shell nor the file tools may read it. */
   dataDir: string;
-  /** The checkout the session is open in. */
+  /** The folder the window is open in: any folder, since one window serves them all (R-036). */
   projectDir: string;
+  /** Where the agent clones a repository its owner asks for: `~/WebChat` (D-108). */
+  cloneRoot: string;
   /** The `claude` that runs cards: the session's own, so the background Claude has its version and login. */
   claude: string;
   /** The guard hook's command, which the background Claude runs before each file tool. */
   guard: string;
+}
+
+/** A folder the laptop has for a repository, as its mark names it (R-036, D-101). */
+interface Folder {
+  /** As origin names it, such as "acme/app". */
+  repo: string;
+  dir: string;
+  /** Origin's address as configured, which the background Claude's shell can read in `.git`. */
+  origin: string;
 }
 
 /** Where a run's work happens. */
@@ -141,18 +156,19 @@ const log = (error: unknown) => console.error(`webchat: ${messageOf(error)}`);
 
 export class Plugin {
   client: AgentClient | null = null;
-  repo: string | null = null;
-  /** Why this session takes no runs, for the status tool. Empty while it takes them. */
+  /** Why this window serves nothing, for the status tool. Empty while it serves. */
   problem = 'Starting.';
   private runs: Runs | null = null;
   private conversations: Conversations | null = null;
-  /** The folders the background Claude must never read, and origin's address as configured. */
+  /** The folders the background Claude must never read. */
   private secrets: string[] = [];
-  private origin = '';
-  /** Ends the wait for the connected mark at once, when this session's own connect tool writes it. */
-  private wake = () => {};
-  /** This repository's folder in the plugin's: its mark, its copy of the account, its lock, its Claude's settings and pull requests. */
-  private home = '';
+  /** The laptop's folder in the plugin's: its copy of the account, its Claude's settings, its pull requests and conversations. */
+  private readonly home: string;
+  /** Every folder the laptop has, by repository in lower case, as GitHub ignores case (R-036). */
+  private folders = new Map<string, Folder>();
+  /** The runs and turns that wait for a repository's clone, by repository in lower case, and the clones going. */
+  private readonly waiting = new Map<string, Set<{ resolve: () => void; reject: (error: Error) => void }>>();
+  private readonly cloning = new Set<string>();
   private watched: Watched[] = [];
   private polling = false;
   /** The owner's GitHub login, whose own reviews start a round on their own (D-105). */
@@ -160,33 +176,24 @@ export class Plugin {
   /** Whether a GitHub login may push to a repository, by "repo login". */
   private readonly writers = new Map<string, boolean>();
 
-  constructor(private readonly options: PluginOptions) {}
+  constructor(private readonly options: PluginOptions) {
+    this.home = path.join(options.dataDir, 'laptop');
+  }
 
   private file(name: string) {
     return path.join(this.home, name);
   }
 
   /**
-   * Waits until the owner connected this repository, takes its watch, pairs when a new code was
-   * pasted, and loads the repository's copy of the account. False when this session takes no runs;
-   * `problem` says why.
+   * Takes the laptop's watch, pairs when a new code was pasted, and loads the laptop's copy of the
+   * account and the folders it has. False when this window serves nothing; `problem` says why.
    */
   async start(): Promise<boolean> {
     const { dataDir, projectDir } = this.options;
-    this.repo = await originOf(projectDir);
-    if (!this.repo) {
-      this.problem = 'This folder is no GitHub repository, so this session takes no runs.';
-      return false;
-    }
-    this.home = repoHome(dataDir, this.repo);
-    // Only a repository its owner connected takes part, so the server learns no other (D-101).
-    while (!existsSync(this.file('connected'))) {
-      this.problem = `${this.repo} is not connected to WebChat, so this session takes no runs. To take cards here, type /webchat:connect.`;
-      await new Promise<void>((resolve) => {
-        this.wake = resolve;
-        setTimeout(resolve, 5_000).unref();
-      });
-    }
+    // A mark from before R-036 names no folder; the checkout a window opens in names it (D-101).
+    const here = await originOf(projectDir);
+    const mark = here && markOf(dataDir, here);
+    if (mark && (await fs.readFile(mark, 'utf8').catch(() => undefined)) === '') await fs.writeFile(mark, projectDir);
     this.problem = 'Connecting to WebChat.';
     const { server, code } = this.options.code ? readPairing(this.options.code, '') : { server: '', code: '' };
     const pairedFile = path.join(dataDir, 'account.json');
@@ -195,49 +202,114 @@ export class Plugin {
       this.problem = 'Not paired. In WebChat, choose Connect coding agent, paste its code with /plugin configure webchat@webchat, then start a new session.';
       return false;
     }
-    // Two sessions in one repository would both claim its runs (D-085). The second takes over when the first closes.
-    while (!(await takeLock(this.file('watch.lock')))) {
-      this.problem = `Another Claude Code session in ${this.repo} takes its runs. This one takes over when that one closes.`;
+    // Two windows would both claim the laptop's runs (D-085). The second takes over when the first closes.
+    await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
+    while (!(await takeLock(path.join(dataDir, 'watch.lock')))) {
+      this.problem = 'Another Claude Code window on this laptop serves your agent. This one takes over when that one closes.';
       await sleep(60_000, undefined, { ref: false });
     }
     if (code && paired?.pairing !== (await pairingId(code))) {
       this.problem = 'Waiting for you to approve this agent in WebChat, in the window that shows the code.';
       paired = await AgentClient.pair(pairedFile, server, code);
     }
-    // The repository's own copy, so sessions in several repositories never write one file (D-094).
+    // The laptop's own copy, whose cursor starts now, so messages from before it are history (D-094).
     // Paired just now, or loaded: with neither a file nor a code, start returned above.
     let client = await AgentClient.load(this.file('account.json')).catch(() => null);
     if (!client || client.pairing !== paired!.pairing) client = await paired!.copyTo(this.file('account.json'));
     this.client = client;
-    client.repo = this.repo;
     client.protocol = AGENT_LEVEL.answers;
     // The background Claude runs under the plugin's settings alone, so the owner's do not count (D-097).
     this.secrets = secretDirs(dataDir);
-    const npmCache = path.join(os.tmpdir(), 'webchat-npm', path.basename(this.home));
+    const npmCache = path.join(os.tmpdir(), 'webchat-npm', 'laptop');
     await fs.mkdir(npmCache, { recursive: true });
     await fs.writeFile(this.file('claude.json'), JSON.stringify(claudeSettings({ secrets: this.secrets, npmCache, guard: this.options.guard, env: process.env })));
-    this.origin = await exec('git', ['-C', projectDir, 'config', '--get', 'remote.origin.url']).then((r) => r.stdout.trim(), () => '');
-    this.runs = new Runs(client, (job) => this.run(job), () => this.cardRefusal());
+    this.runs = new Runs(client, (job) => this.run(job), (run) => this.cardRefusal(run));
     this.conversations = new Conversations(client, this.file('conversations.json'), (job) => this.converse(job));
     await this.conversations.load();
     this.watched = JSON.parse(await fs.readFile(this.file('pulls.json'), 'utf8').catch(() => '[]')) as Watched[];
+    // Sessions from before R-036 watched their drafts in each repository's folder.
+    const old = (await fs.readdir(path.join(dataDir, 'repos')).catch(() => [] as string[])).map((name) => path.join(dataDir, 'repos', name, 'pulls.json'));
+    for (const file of old) this.watched.push(...(JSON.parse(await fs.readFile(file, 'utf8').catch(() => '[]')) as Watched[]));
+    await this.saveWatched();
+    for (const file of old) await fs.rm(file, { force: true });
+    await this.scan();
     this.problem = '';
     return true;
   }
 
-  /** Why this repository's questions, runs and fixes fail before they start, or undefined. */
+  /**
+   * Reads the marks: each folder the owner connected or had cloned, while it is still a checkout of
+   * its repository, which every check-in names (R-036). The server learns names, never a path.
+   */
+  async scan() {
+    const { dataDir } = this.options;
+    const names = await fs.readdir(path.join(dataDir, 'repos')).catch(() => [] as string[]);
+    const found = await Promise.all(
+      names.map(async (name): Promise<Folder | null> => {
+        const dir = await fs.readFile(path.join(dataDir, 'repos', name, 'connected'), 'utf8').catch(() => '');
+        const origin = dir && (await originUrl(dir));
+        const repo = repoOfUrl(origin);
+        // A folder moved, deleted, or now pushing to another repository serves nothing.
+        return repo && path.basename(repoHome(dataDir, repo)).toLowerCase() === name.toLowerCase() ? { repo, dir, origin } : null;
+      }),
+    );
+    this.folders = new Map(found.flatMap((f) => (f ? [[f.repo.toLowerCase(), f] as const] : [])));
+    this.client!.repos = [...this.folders.keys()];
+  }
+
+  /** The folder of a repository, whatever the case of its name: GitHub ignores it. */
+  private folderOf(repo: string) {
+    return this.folders.get(repo.toLowerCase());
+  }
+
+  /** Why every question, run and fix fails before it starts, or undefined. */
   private async refusal() {
-    if (!existsSync(this.file('connected'))) return `${this.repo} is disconnected from WebChat.`;
     if (process.platform === 'win32') return 'Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.';
     if (!this.options.claude) return 'I cannot find Claude Code on this laptop.';
+  }
+
+  /** Why the work in one folder fails before it starts, or undefined (D-097). */
+  private folderRefusal(folder: Folder) {
     // The background Claude's shell reads the repository's .git, where an https address can hold a login.
-    if (/^https?:\/\/[^/]*@/i.test(this.origin)) return 'Your repository’s address on this laptop holds a password, which I must not see. Ask Claude Code there to take the login out of the address of origin.';
-    return sandboxProblem(this.options.projectDir, this.secrets, restrictedSettings(this.file('claude.json')));
+    if (/^https?:\/\/[^/]*@/i.test(folder.origin)) return `The address of ${folder.repo} on this laptop holds a password, which I must not see. Ask Claude Code there to take the login out of the address of origin.`;
+    return sandboxProblem(folder.dir, this.secrets, restrictedSettings(this.file('claude.json')));
   }
 
   /** Why its runs fail before they start, which Runs asks before each claim: they also push and open drafts with this laptop's GitHub login (D-092). */
-  private async cardRefusal() {
+  private async cardRefusal(run?: RunRequest) {
+    // A page from before R-030 names no repository, and nothing says where to run.
+    if (run && !run.repo) return 'Reload WebChat, then open the card again and press Start.';
     return (await this.refusal()) ?? ((await signedIn()) ? undefined : 'Cards need a GitHub sign-in on this laptop. In Claude Code there, type /webchat:connect, and it helps you sign in.');
+  }
+
+  /**
+   * The folder of a repository. When the laptop has none, says so with `offer`, which the owner
+   * answers by having it cloned, and waits for that: at most 30 minutes, or until a cancel (R-036).
+   */
+  private async folderFor(repo: string, signal: AbortSignal, offer: () => Promise<unknown>) {
+    if (!this.folderOf(repo)) {
+      await offer();
+      const key = repo.toLowerCase();
+      const stop = AbortSignal.any([signal, AbortSignal.timeout(CLONE_WAIT_MS)]);
+      await new Promise<void>((resolve, reject) => {
+        const waiters = this.waiting.get(key) ?? new Set();
+        const done = () => (waiters.delete(waiter), stop.removeEventListener('abort', aborted));
+        const waiter = { resolve: () => (done(), resolve()), reject: (error: Error) => (done(), reject(error)) };
+        const aborted = () => waiter.reject(new Error(signal.aborted ? 'the owner cancelled the run.' : `Nobody had me clone ${repo} within 30 minutes.`));
+        this.waiting.set(key, waiters.add(waiter));
+        stop.addEventListener('abort', aborted, { once: true });
+      });
+    }
+    const folder = this.folderOf(repo)!;
+    const refused = await this.folderRefusal(folder);
+    if (refused) throw new Error(refused);
+    return folder;
+  }
+
+  /** Lets the runs and turns that wait for a repository's folder go on, or fail with the error. */
+  private settle(key: string, error?: Error) {
+    for (const waiter of [...(this.waiting.get(key) ?? [])]) (error ? waiter.reject(error) : waiter.resolve());
+    this.waiting.delete(key);
   }
 
   /** Checks in every 15 seconds and looks at the pull requests every minute, until the session ends the process. */
@@ -249,6 +321,8 @@ export class Plugin {
     missed.forEach((m) => this.handle(m));
     const level = async () => (this.client!.protocol = (await signedIn()) ? AGENT_LEVEL.cards : AGENT_LEVEL.answers);
     await level();
+    // Another window may connect a folder meanwhile, and a folder may move.
+    setInterval(() => void this.scan().catch(log), SYNC_INTERVAL_MS);
     setInterval(() => {
       void level().then(() => this.pollPulls()).catch(log);
       void this.conversations!.sweep().catch(log);
@@ -258,9 +332,73 @@ export class Plugin {
 
   /** Acts on one message. A turn takes long, so the loop does not wait for it: check-ins go on meanwhile. */
   handle(message: OpenedMessage) {
-    const run = message.content?.run;
+    const { run, prompt } = message.content ?? {};
     if (run?.kind === 'fix') return this.go(message, run).catch(log);
-    return (message.content?.prompt ? this.conversations! : this.runs!).handle(message).catch(log);
+    if (run?.kind === 'clone' || prompt?.kind === 'clone') return this.clone(message).catch(log);
+    return (prompt ? this.conversations! : this.runs!).handle(message).catch(log);
+  }
+
+  /**
+   * Clones a repository the laptop has no folder for, on its owner's signed request, then lets the
+   * runs and turns that wait for it go on (R-036, D-108). Only one that a project of the owner's
+   * links, only into the clone root, and with the owner's `gh` login: the background Claude never
+   * reaches GitHub. Notes go where the owner pressed the button.
+   */
+  private async clone(message: OpenedMessage) {
+    const client = this.client!;
+    const { run, prompt } = message.content!;
+    const chat = message.conversationId;
+    // Notes go where the owner pressed the button: a note leaves the run or turn going, an end says
+    // why nothing waits on it any more.
+    const asked =
+      run?.kind === 'clone'
+        ? { ...run, again: 'Start the card again.', say: (text: string, end = false) => this.runs!.report({ message: run.request, conversation: chat, card: '' }, { kind: end ? 'failed' : 'claimed', note: text }, text) }
+        : prompt?.kind === 'clone'
+          ? { ...prompt, again: 'Reply to ask again.', say: (text: string, end = false) => client.send(chat, { text, prompt: { kind: end ? 'failed' : 'note', to: prompt.to } }) }
+          : undefined;
+    // Only the owner's, in their direct chat, signed lately, once (D-089, K-42, K-47).
+    if (!asked || message.security !== 'encrypted' || message.senderId !== client.owner || client.conversations.get(chat)?.type !== 'direct') return;
+    if (!client.remember(message.clientId ?? '', asked.sentAt) || Math.abs(Date.now() - asked.sentAt) > REQUEST_TTL_MS) return;
+    const { say } = asked;
+    const key = asked.repo.toLowerCase();
+    const fail = (text: string) => (this.waiting.get(key)?.size ? this.settle(key, new Error(text)) : say(text, true));
+    if (this.folderOf(key)) return this.settle(key);
+    if (this.cloning.has(key)) return;
+    if (!isRepoName(asked.repo) || !(await this.linked(key))) return fail(`None of your projects links ${asked.repo}, so I do not clone it.`);
+    if (!(await signedIn())) return fail('Cloning needs GitHub on this laptop. In Claude Code there, type /webchat:connect, and it helps you sign in.');
+    const [owner, name] = asked.repo.split('/') as [string, string];
+    const dir = path.join(this.options.cloneRoot, owner, name);
+    this.cloning.add(key);
+    try {
+      // A folder there already is used only when it is a checkout of this repository.
+      if (existsSync(dir)) {
+        if ((await originOf(dir))?.toLowerCase() !== key) return await fail(`${shown(dir)} holds something else. Move it away, then ask again.`);
+      } else {
+        await say(`Cloning ${asked.repo} into ${shown(dir)}. This can take a while.`);
+        await fs.mkdir(path.dirname(dir), { recursive: true });
+        // Blobless, so a course repository's history comes without every old file.
+        await gh(['repo', 'clone', asked.repo, dir, '--', '--filter=blob:none']).catch((error: unknown) => {
+          throw new Error(`I could not clone ${asked.repo}: ${messageOf(error).split('\n').find((l) => l.trim()) ?? 'gh failed'}`);
+        });
+      }
+      const mark = markOf(this.options.dataDir, asked.repo);
+      await fs.mkdir(path.dirname(mark), { recursive: true, mode: 0o700 });
+      await fs.writeFile(mark, dir);
+      await this.scan();
+      if (this.waiting.get(key)?.size) this.settle(key);
+      else await say(`Cloned ${asked.repo} into ${shown(dir)}. ${asked.again}`, true);
+    } catch (error) {
+      await fail(messageOf(error));
+    } finally {
+      this.cloning.delete(key);
+    }
+  }
+
+  /** Whether a project that holds both the owner and this agent links the repository, in lower case (D-050, D-108). */
+  private async linked(repo: string) {
+    const client = this.client!;
+    const views = await Promise.all(client.projects.filter((p) => p.memberIds.includes(client.owner!)).map((p) => client.request<ProjectReposDTO>('GET', `/projects/${p.id}/repos`)));
+    return views.some((view) => view.repos.some((r) => r.repo.toLowerCase() === repo));
   }
 
   /** The owner's go for another round on a draft: after a review waits, or with their own words (D-105). */
@@ -280,15 +418,16 @@ export class Plugin {
     await this.pollPulls();
   }
 
-  /** A run, as Runs hands it over: a worktree inside the checkout, a turn of the background Claude there, then the draft. */
+  /** A run, as Runs hands it over: a worktree inside the repository's folder, a turn of the background Claude there, then the draft. */
   private async run({ request, taken, card, decisions, signal }: Parameters<Runner>[0]): Promise<RunResult> {
-    const { projectDir } = this.options;
-    const { branch, dir, base } = await addWorktree(projectDir, request, path.join(projectDir, '.claude', 'worktrees'));
+    const text = noCopy(request.repo!);
+    const folder = await this.folderFor(request.repo!, signal, () => this.runs!.report(taken, { kind: 'nocopy', note: text }, text));
+    const { branch, dir, base } = await addWorktree(folder.dir, request, path.join(folder.dir, '.claude', 'worktrees'));
     const place: Place = { branch, worktree: dir, base };
     const session = randomUUID();
     const answer = await this.work(place, session, false, runBrief(request.card, place, card, decisions), signal);
     const head = await this.push(place);
-    const pull = await this.openDraft(place, answer, `${request.card}: ${request.title}`);
+    const pull = await this.openDraft(place, answer, `${request.card}: ${request.title}`, folder.repo);
     this.watched.push({ ...place, taken, request, pull, head, session, fixes: 0, seenHead: '', seenNote: new Date().toISOString() });
     await this.saveWatched();
     return { branch, pull, note: answer.note || undefined };
@@ -320,14 +459,17 @@ export class Plugin {
   private async converse({ conversation, input, resume, signal }: Parameters<Answerer>[0]) {
     const refused = await this.refusal();
     if (refused) throw new Error(refused);
+    const folder = await this.folderFor(conversation.repo, signal, () =>
+      this.client!.send(conversation.chat, { text: noCopy(conversation.repo), prompt: { kind: 'nocopy', to: conversation.root } }),
+    );
     // A link swapped in for the folder would lead the turn elsewhere, so only a real folder counts.
     if (!conversation.scratch || !(await fs.lstat(conversation.scratch).then((s) => s.isDirectory(), () => false))) {
       const dir = path.join(os.tmpdir(), 'webchat-scratch', randomUUID());
-      const base = await fetchOrigin(this.options.projectDir).catch(() => {
+      const base = await fetchOrigin(folder.dir).catch(() => {
         throw new Error('The laptop could not get your team’s code from GitHub. Check that it is online, then ask again.');
       });
       await exec('git', ['init', '-q', dir]);
-      await exec('git', ['-C', dir, 'fetch', '-q', '--depth', '1', this.options.projectDir, `refs/remotes/${base}`]);
+      await exec('git', ['-C', dir, 'fetch', '-q', '--depth', '1', folder.dir, `refs/remotes/${base}`]);
       await exec('git', ['-C', dir, ...NO_HOOKS, 'checkout', '-q', '--detach', 'FETCH_HEAD']);
       conversation.scratch = dir;
     }
@@ -338,7 +480,7 @@ export class Plugin {
     const changed = cards.filter((c) => conversation.seen?.[c.id]?.hash !== seen[c.id]!.hash).map((c) => c.text);
     const message = resume
       ? [`Your owner replies:\n\n${input}`, ...(changed.length ? ['', fence('Cards that changed on the board since', changed)] : [])].join('\n')
-      : promptBrief(this.repo!, input, board);
+      : promptBrief(folder.repo, input, board);
     const answer = (await this.ask(conversation.scratch, conversation.session, resume, message, REPLY, signal)) as { reply?: unknown; card?: Record<string, unknown> };
     // Only once the turn read them, so a turn cut short tells the next one again.
     conversation.seen = seen;
@@ -372,12 +514,12 @@ export class Plugin {
   }
 
   /** Opens the run's draft pull request, with the title and body the answer gave. */
-  private async openDraft(place: Place, answer: Answer, title: string) {
+  private async openDraft(place: Place, answer: Answer, title: string, repo: string) {
     const base = place.base.replace(/^origin\//, '');
-    const opened = await gh(['pr', 'create', '--draft', '--repo', this.repo!, '--base', base, '--head', place.branch, '--title', answer.title?.trim() || title, '--body', answer.body ?? '']);
+    const opened = await gh(['pr', 'create', '--draft', '--repo', repo, '--base', base, '--head', place.branch, '--title', answer.title?.trim() || title, '--body', answer.body ?? '']);
     const number = Number(/\/pull\/(\d+)/.exec(opened)?.[1]);
     if (!number) throw new Error(`gh opened no pull request: ${opened}`);
-    return { repo: this.repo!, number };
+    return { repo, number };
   }
 
   /** Runs a tool the session's model called. Returns what the model reads; throws what it reads as an error. */
@@ -394,31 +536,42 @@ export class Plugin {
     }
   }
 
-  /** Marks the repository connected. Every session open in it sees the mark (D-101). */
+  /**
+   * Marks the window's folder as its repository's, so the agent works in a checkout the owner has
+   * already, rather than cloning one (D-101). The window that serves the laptop reads it.
+   */
   private async connect() {
-    if (!this.repo) throw new Error(this.problem);
-    await fs.mkdir(this.home, { recursive: true, mode: 0o700 });
-    await fs.writeFile(this.file('connected'), '');
-    this.wake();
+    // Questions need no GitHub login, so connecting does not wait for one.
+    const github = (await signedIn()) ? '' : ` ${GITHUB}`;
+    const repo = await originOf(this.options.projectDir);
+    if (!repo) return `This folder is no GitHub repository, so there is nothing to connect here. Your agent works in every folder it knows, and offers to clone the others when you ask it in WebChat.${github}`;
+    const mark = markOf(this.options.dataDir, repo);
+    await fs.mkdir(path.dirname(mark), { recursive: true, mode: 0o700 });
+    await fs.writeFile(mark, this.options.projectDir);
+    if (this.client) await this.scan();
     const paired = existsSync(path.join(this.options.dataDir, 'account.json'));
     let next = paired ? ' Ask your agent about it in WebChat, or hand it cards on the board.' : ' Now approve the agent in WebChat, in the window that shows the code.';
     if (!paired && !this.options.code) next = ' To pair the agent, choose Connect coding agent in WebChat, then type /plugin configure webchat@webchat here and paste the code.';
-    // Questions need no GitHub login, so connecting does not wait for one.
-    return `Connected ${this.repo}.${next}${(await signedIn()) ? '' : ` ${GITHUB}`}`;
+    return `Connected ${repo}: your agent works in this folder.${next}${github}`;
   }
 
+  /** Removes the folder's mark, never its files. */
   private async disconnect() {
-    if (!this.repo) throw new Error(this.problem);
-    await fs.rm(this.file('connected'), { force: true });
-    return `Disconnected ${this.repo}. It takes no more runs or fixes, and the play menu shows it asleep once its sessions close.`;
+    const repo = await originOf(this.options.projectDir);
+    if (!repo) throw new Error('This folder is no GitHub repository, so it was never connected.');
+    await fs.rm(markOf(this.options.dataDir, repo), { force: true });
+    if (this.client) await this.scan();
+    return `Disconnected ${repo}. Your agent no longer works in this folder, and its files stay.`;
   }
 
   private async status() {
     if (this.problem) return this.problem;
     const owner = this.client!.users.get(this.client!.owner!)?.displayName;
     const sandbox = await this.cardRefusal();
+    const folders = [...this.folders.values()].map((f) => `${f.repo} in ${shown(f.dir)}`);
     return [
-      sandbox ? `Every card fails at once: ${sandbox}` : `Taking the cards that ${owner ?? 'your owner'} hands to this agent in ${this.repo}, on ${this.client!.api.baseUrl}.`,
+      sandbox ? `Every card fails at once: ${sandbox}` : `Taking the cards that ${owner ?? 'your owner'} hands to this agent, on ${this.client!.api.baseUrl}.`,
+      folders.length ? `Working in ${folders.join(', ')}.` : 'No folders yet: your agent offers to clone a repository when you ask it about one.',
       ...(this.runs!.running.length ? [`Working on ${this.runs!.running.map((r) => r.card).join(', ')}.`] : []),
       `Watching ${this.watched.length} draft pull requests.`,
     ].join('\n');
@@ -450,6 +603,9 @@ export class Plugin {
       for (const pull of [...this.watched]) {
         // A round waits while its card runs, and the cards beside it go on (R-037).
         if (this.runs.running.some((r) => r.docId === pull.request.docId && r.section === pull.request.section)) continue;
+        // A draft whose folder is gone, or unsafe now, waits until it is back.
+        const folder = this.folderOf(pull.pull.repo);
+        if (!folder || (await this.folderRefusal(folder))) continue;
         const view = JSON.parse(await gh(['pr', 'view', String(pull.pull.number), '--repo', pull.pull.repo, '--json', PULL_FIELDS])) as PullView;
         const ended = this.endOf(pull, view);
         if (ended) {
@@ -577,10 +733,11 @@ export class Plugin {
 
   /** A round of fixes: fetches here, since the shell reaches no GitHub, then resumes the run's Claude session. */
   private async fix(pull: Watched, why: { line: string; details: string }, signal: AbortSignal): Promise<RunResult> {
-    const { projectDir } = this.options;
-    await fetchOrigin(projectDir);
+    const folder = this.folderOf(pull.pull.repo);
+    if (!folder) throw new Error(noCopy(pull.pull.repo));
+    await fetchOrigin(folder.dir);
     // With hooks off: the branch the worktree checks out is the model's.
-    if (!existsSync(pull.worktree)) await exec('git', ['-C', projectDir, ...NO_HOOKS, 'worktree', 'add', '-q', pull.worktree, pull.branch]);
+    if (!existsSync(pull.worktree)) await exec('git', ['-C', folder.dir, ...NO_HOOKS, 'worktree', 'add', '-q', pull.worktree, pull.branch]);
     const place = { branch: pull.branch, worktree: pull.worktree, base: pull.head, pull: pull.pull };
     // A draft from before R-035 has no session to resume, so its first round starts one.
     const session = pull.session ?? randomUUID();
@@ -674,12 +831,26 @@ function fixBrief(pull: Watched, why: { line: string; details: string }) {
   ].join('\n');
 }
 
-/** The GitHub repository a checkout pushes to, as "owner/name", from origin's address as configured. */
-export async function originOf(dir: string) {
-  const url = await exec('git', ['-C', dir, 'config', '--get', 'remote.origin.url']).then((r) => r.stdout.trim(), () => '');
+/** Origin's address as a checkout configures it, or '' for none. */
+const originUrl = (dir: string) => exec('git', ['-C', dir, 'config', '--get', 'remote.origin.url']).then((r) => r.stdout.trim(), () => '');
+
+/** The GitHub repository an address names, as "owner/name", or null. */
+function repoOfUrl(url: string) {
   const name = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(url)?.[1];
   return name && isRepoName(name) ? name : null;
 }
+
+/** The GitHub repository a checkout pushes to, from origin's address as configured. */
+export const originOf = async (dir: string) => repoOfUrl(await originUrl(dir));
+
+/** The mark that names a repository's folder on this laptop, which only the owner's connect or clone writes (D-101, D-108). */
+const markOf = (dataDir: string, repo: string) => path.join(repoHome(dataDir, repo), 'connected');
+
+/** What the agent says when the laptop has no folder of a repository (R-036). */
+const noCopy = (repo: string) => `I have no copy of ${repo} on this laptop.`;
+
+/** A folder as the owner reads it, with their home as ~. */
+const shown = (dir: string) => (dir.startsWith(os.homedir() + path.sep) ? `~${dir.slice(os.homedir().length)}` : dir);
 
 const alive = (pid: number) => {
   try {

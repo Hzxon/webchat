@@ -3,7 +3,7 @@ import { describe, test } from 'node:test';
 
 // In a variable, so the tools tsconfig, which has no DOM types, does not typecheck the client module.
 const clientAgents = '../client/src/agents.ts';
-const { agentOf, threadsOf, THREAD_TTL_MS } = await import(clientAgents);
+const { agentOf, seatFor, threadsOf, THREAD_TTL_MS } = await import(clientAgents);
 
 const ME = 1;
 const AGENT = 2;
@@ -87,6 +87,28 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     // Only the agent reports, and a card's conversation does not end after a day.
     assert.equal(state(sayRun(ME, { kind: 'done', request: request.id })).state, 'working');
     assert.equal(threadsOf([request], ME, AGENT, {}, 1 + THREAD_TTL_MS + 1)[0].state, 'working');
+  });
+
+  test('a run or a question waits for the owner while the laptop has no copy, and works once they have it cloned (R-036)', () => {
+    const sayRun = (senderId: number, run: object) => ({ ...say(senderId, {}, `r${++id}`), prompt: null, run });
+    const request = sayRun(ME, { kind: 'request', card: 'K-7', title: 'Sums', docId: 'd', section: 's', runtime: AGENT, repo: 'team/app', sentAt: 1, hash: 'h' });
+    const offer = sayRun(AGENT, { kind: 'nocopy', request: request.id });
+    const run = (...rest: object[]) => threadsOf([request, ...rest], ME, AGENT, {}, 100)[0].state;
+    assert.deepEqual([run(offer), run(offer, sayRun(ME, { kind: 'clone', request: request.id, repo: 'team/app', sentAt: 2 }))], ['waiting', 'working']);
+    const prompt = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'p9');
+    const turn = (...rest: object[]) => threadsOf([prompt, ...rest], ME, AGENT, {}, 100)[0].state;
+    const clone = say(ME, { kind: 'clone', to: 'p9', repo: 'team/app', sentAt: 2 });
+    // A note says what the agent does meanwhile, and changes nothing.
+    assert.deepEqual([turn(say(AGENT, { kind: 'nocopy', to: 'p9' })), turn(say(AGENT, { kind: 'nocopy', to: 'p9' }), clone, say(AGENT, { kind: 'note', to: 'p9' }))], ['waiting', 'working']);
+  });
+
+  test('a laptop that serves every folder takes a repository it has no folder of, and offers to clone it (R-036)', () => {
+    const seat = { repo: 'team/app', online: true, lastSeen: 5, protocol: 2 };
+    const agent = (extra: object) => ({ id: AGENT, online: true, lastSeen: 5, protocol: 2, agentRepos: [seat], ...extra });
+    assert.equal(seatFor(agent({}), 'Team/App').noFolder, undefined, 'its folder, whatever the case');
+    assert.deepEqual(seatFor(agent({}), 'team/web'), { repo: 'team/web', online: true, lastSeen: 5, protocol: 2, agent: agent({}), noFolder: true });
+    assert.equal(seatFor(agent({ online: false, agentRepos: [] }), 'team/web').online, false, 'asleep');
+    assert.equal(seatFor(agent({ protocol: 0, agentRepos: [] }), 'team/web'), undefined, 'an older plugin clones nothing');
   });
 
   test('only the owner starts or replies, only the agent answers, and only signed messages count', () => {

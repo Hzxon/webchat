@@ -2,6 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type K
 import type { QuotedMessage } from '../../../shared/e2ee';
 import { githubCardEvent } from '../../../shared/github';
 import { LIMITS, RUN_PICKUP_MS, type GithubCardDTO, type PullCardDTO, type PullEvent, type RunReport, type RunRequest } from '../../../shared/types';
+import { seatFor } from '../agents';
 import { holdReloadWhile } from '../build';
 import { cancelRun, discardMessage, loadDraft, loadOlder, quoteOf, react, retryMessage, saveDraft, sendMessage } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
@@ -172,7 +173,7 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
     const reports = new Map<number, RunReport>();
     const shown: ChatMessage[] = [];
     for (const m of messages) {
-      const report = m.run?.kind === 'request' || m.run?.kind === 'cancel' || m.run?.kind === 'fix' ? null : m.run;
+      const report = m.run?.kind === 'request' || m.run?.kind === 'cancel' || m.run?.kind === 'fix' || m.run?.kind === 'clone' ? null : m.run;
       const request = report ? byId.get(report.request)?.run : null;
       if (report && request?.kind === 'request' && request.runtime === m.senderId) reports.set(report.request, report);
       else shown.push(m);
@@ -446,7 +447,7 @@ function RunCard({ run, state, users, onCancel }: { run: RunRequest; state: RunR
   // Nothing runs while the agent, or its session in the request's repository, checks in nowhere.
   // A daemon that starts again reports the run (K-46).
   const agent = users[run.runtime];
-  const seat = run.repo ? agent?.agentRepos.find((s) => s.repo === run.repo) : agent;
+  const seat = run.repo && agent ? seatFor(agent, run.repo) : agent;
   const offline = going && !seat?.online;
   return (
     <span className="pull-card">

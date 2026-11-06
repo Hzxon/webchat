@@ -81,6 +81,7 @@ const user = (id: number, keys: PublicKeysDTO): UserDTO => ({
   lastSeen: null,
   keys,
   agentOwner: null,
+  protocol: 0,
   agentRepos: [],
   deleted: false,
 });

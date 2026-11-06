@@ -783,6 +783,16 @@ export function askFix(conversationId: number, request: number, note: string, re
 }
 
 /**
+ * Has the user's agent clone a repository its laptop has no copy of, for the run or conversation
+ * that waits on it (R-036, D-108). Signed like a prompt, so only its owner's click clones.
+ */
+export function askClone(conversationId: number, repo: string, waiting: { request: number } | { to: string }) {
+  const sentAt = Date.now();
+  const asked = 'request' in waiting ? { run: { kind: 'clone' as const, request: waiting.request, repo, sentAt } } : { prompt: { kind: 'clone' as const, to: waiting.to, repo, sentAt } };
+  return sendContent(conversationId, { text: `Clone ${repo}`, ...asked }, false);
+}
+
+/**
  * Asks one of the user's coding agents about a repository (D-102): a message in their direct chat
  * with it, whose `prompt` field names the repository and when it was sent. The Claude Code session
  * open in that repository answers. Returns the conversation, by the prompt's client id.

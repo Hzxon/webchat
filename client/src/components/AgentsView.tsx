@@ -3,26 +3,25 @@
 // prompt and the messages that name it, in the user's direct chat with the agent (D-102).
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AGENT_LEVEL, LIMITS, type RunRequest } from '../../../shared/types';
-import { ownAgents, ready, seatKey, short, THREAD_STATE, useAgentThreads, type Seat, type Thread } from '../agents';
-import { askAgent, askFix, cancelRun, discardMessage, loadChat, loadOlder, retryMessage, saveDraft, tellAgent } from '../chat';
+import { asleep, ownAgents, ready, seatFor, seatKey, short, THREAD_STATE, useAgentThreads, WAKE, type Seat, type Thread } from '../agents';
+import { askAgent, askClone, askFix, cancelRun, discardMessage, loadChat, loadOlder, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { actions, useAppState } from '../store';
 import { useAutoGrow, useDraft } from './ChatView';
-import { formatListTime, formatSince, formatTime } from './format';
+import { formatListTime, formatTime } from './format';
 import { AlertIcon, BackIcon, SendIcon, TerminalIcon } from './icons';
 import { AgentBrief } from './AgentBrief';
 import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
 import { Tag } from './PullTags';
 
-const asleep = (seat: Seat) => `${short(seat.repo)} is asleep${seat.lastSeen ? ` since ${formatSince(seat.lastSeen)}` : ''}`;
 
 /** Why a question or reply cannot go to a session now, in plain words, or '' when it can. */
-function blockedBy(seat: Seat | undefined, verb: 'ask' | 'reply') {
-  if (!seat) return 'Open Claude Code in your team’s repository on your laptop and type /webchat:connect. Then ask here.';
+function blockedBy(seat: Seat | undefined) {
+  if (!seat) return 'Your agent has no repository on your laptop yet. Start a card from your project’s board, and it offers to clone the repository.';
   // A session on an older plugin checks in, but never answers (D-103).
   if (seat.protocol < AGENT_LEVEL.answers) return `${short(seat.repo)} has an older WebChat plugin, which cannot answer questions. In Claude Code, type /plugin, open Installed, choose webchat, then Update now.`;
-  if (!seat.online) return `${asleep(seat)}. Open ${short(seat.repo)} in Claude Code on your laptop to ${verb}.`;
+  if (!seat.online) return `${asleep(seat)}. ${WAKE}`;
   return '';
 }
 
@@ -33,10 +32,14 @@ export function AgentsView() {
   const open = useAppState((s) => s.agentThread);
   const brief = useAppState((s) => s.agentBrief);
   const { chats, threads } = useAgentThreads();
-  const seats = useMemo(() => ownAgents(users, meId).flatMap((agent) => agent.agentRepos.map((repo): Seat => ({ ...repo, agent }))), [users, meId]);
+  const agents = useMemo(() => ownAgents(users, meId), [users, meId]);
+  const seats = useMemo(() => agents.flatMap((agent) => agent.agentRepos.flatMap((s) => seatFor(agent, s.repo) ?? [])), [agents]);
   const thread = threads.find((t) => t.root === open);
-  // The session that answers a conversation: its agent's, in the repository its prompt names.
-  const seatOf = (t: Thread) => seats.find((s) => s.repo === t.repo && conversations[t.conversationId]?.members.some((m) => m.userId === s.agent.id));
+  // Where a conversation is answered: its agent's folder of the repository its prompt names, or its laptop.
+  const seatOf = (t: Thread) => {
+    const agent = agents.find((a) => conversations[t.conversationId]?.members.some((m) => m.userId === a.id));
+    return agent && seatFor(agent, t.repo);
+  };
 
   // The pane shows every chat with an agent, so it loads them, and they count as read while it shows.
   const ids = chats.map((c) => c.id).join();
@@ -76,7 +79,7 @@ export function AgentsView() {
       {thread ? (
         <ThreadView key={thread.root} thread={thread} seat={seatOf(thread)} agentId={conversations[thread.conversationId]?.members.find((m) => m.userId !== meId)?.userId ?? 0} />
       ) : brief ? (
-        <AgentBrief brief={brief} seats={seats} />
+        <AgentBrief brief={brief} />
       ) : (
         <ThreadList threads={threads} seats={seats} chats={chats} />
       )}
@@ -130,7 +133,7 @@ function ThreadList({ threads, seats, chats }: { threads: Thread[]; seats: Seat[
   // The repository picked, else the newest conversation's while it can answer, else the first that can.
   const seat = seats.find((s) => seatKey(s) === picked) ?? seats.find((s) => ready(s) && s.repo === threads[0]?.repo) ?? seats.find(ready) ?? seats[0];
   const several = new Set(seats.map((s) => s.agent.id)).size > 1;
-  const blocked = blockedBy(seat, 'ask');
+  const blocked = blockedBy(seat);
 
   async function ask(text: string) {
     try {
@@ -209,6 +212,8 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
   // A card's conversation: its request, which a stop and the owner's go name (D-105).
   const request = thread.kind === 'card' ? (thread.messages[0] as ChatMessage & { run: RunRequest }) : undefined;
   const review = thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'review') : undefined;
+  // The laptop has no copy of the repository, and the run or turn waits for the owner's word (R-036).
+  const nocopy = thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'nocopy' || m.prompt?.kind === 'nocopy') : undefined;
   const stop = () => void (request ? cancelRun(request) : tellAgent(thread.conversationId, thread.root, 'cancel', 'Stop'));
   const again = () => {
     const projectId = conversations[docs[request!.run.docId]?.conversationId ?? 0]?.projectId;
@@ -227,11 +232,11 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
     if (el) el.scrollTop = el.scrollHeight;
   }, [thread.messages.length]);
 
-  const blocked = blockedBy(seat, 'reply');
+  const blocked = blockedBy(seat);
   let waiting: string;
   if (stopping) waiting = 'Stopping…';
   else if (!seat?.online) {
-    waiting = `Your laptop isn’t answering, so no answer can come yet. Open ${short(thread.repo)} in Claude Code on your laptop and keep it awake. If this waits more than 10 minutes, your agent will ask you to send it again.`;
+    waiting = `Your laptop isn’t answering, so no answer can come yet. ${WAKE} If this waits more than 10 minutes, your agent will ask you to send it again.`;
   } else {
     const minutes = Math.floor((now - thread.messages.findLast((m) => m.senderId === meId && !isCancel(m))!.createdAt) / 60_000);
     waiting = minutes > 0 ? `Working… ${minutes} min` : 'Working…';
@@ -292,6 +297,13 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
                   </button>
                 </div>
               )}
+              {message === nocopy && (
+                <div className="agents-draft-actions">
+                  <button className="button-primary" disabled={!!blocked} onClick={() => void askClone(thread.conversationId, thread.repo, request ? { request: request.id } : { to: thread.root })}>
+                    Clone it
+                  </button>
+                </div>
+              )}
               {unsent}
             </div>
           );
@@ -319,7 +331,7 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
               Start again
             </button>
           </div>
-        ) : thread.state === 'done' || (request && thread.state === 'unsent') ? null : (
+        ) : thread.state === 'done' || (request && (thread.state === 'unsent' || nocopy)) ? null : (
           <>
             {!working && blocked && <p className="composer-blocked">{blocked}</p>}
             <Box
