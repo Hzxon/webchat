@@ -18,12 +18,14 @@ jobs:
         run: |
           status=0
           check() {
-            dupes=$(grep -oE "^### ($2):" "$1" | tr -d '#: ' | sort | uniq -d)
+            pattern=$1; shift
+            dupes=$(cat "$@" | grep -oE "^### ($pattern):" | tr -d '#: ' | sort | uniq -d)
             if [ -n "$dupes" ]; then
               echo "::error file=$1::Two headings share an id: $(echo $dupes)"
               status=1
             fi
           }
-          check docs/decisions.md 'D-[0-9]+'
-          check docs/roadmap.md '[KRQ]-[0-9]+'
+          check 'D-[0-9]+' docs/decisions.md
+          # Entries not yet folded into roadmap.md live as docs/roadmap/<id>.md (D-106).
+          check '[KRQ]-[0-9]+' docs/roadmap.md $(ls docs/roadmap/[KRQ]-*.md 2>/dev/null)
           exit $status

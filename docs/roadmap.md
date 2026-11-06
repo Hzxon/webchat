@@ -17,6 +17,9 @@ the items under "Next". The decisions these items build on are in [decisions.md]
   deletes the finished entry and adds its row to the Done table, so that two fixes never edit the
   same lines (D-076). Until then the Done table lags, and
   `grep -n '^Status: \(Done\|Fixed\)' docs/roadmap.md` lists what is finished.
+- A new entry starts as its own file, `docs/roadmap/K-59.md`, in the same form as an entry here,
+  so that two pull requests never insert at the same spot (D-106). Edit its status line there.
+  The housekeeping pull request moves it into this file. `ls docs/roadmap` lists what is pending.
 - When you drop an item, keep it, set it to "Dropped", and say why.
 
 ## Next
