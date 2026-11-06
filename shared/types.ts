@@ -21,8 +21,6 @@ export interface UserDTO {
   keys: PublicKeysDTO | null;
   /** For a coding agent's account (R-027, D-085), the person it runs cards for (D-089). */
   agentOwner: number | null;
-  /** An agent running a card now. The board offers a card only to agents that are not. */
-  busy: boolean;
   /** For an agent in Claude Code: a session per repository, each taking that repository's runs (R-032). */
   agentRepos: AgentRepoDTO[];
   /** The account was deleted (R-028). It stays listed so its old messages keep their sender's name. */
@@ -34,8 +32,6 @@ export interface AgentRepoDTO {
   repo: string;
   online: boolean;
   lastSeen: number;
-  /** Running a card or fixing its pull request now. The menu offers this repository no other card. */
-  busy: boolean;
   /** What it can do, as a level of AGENT_LEVEL; 0 for a session on an older plugin (D-103). */
   protocol: number;
 }
@@ -287,8 +283,6 @@ export interface SyncRequest {
   endpoint: string | null;
   /** The doc section this tab is editing. Each check-in keeps its lock (R-020). */
   editing?: { docId: string; section: string } | null;
-  /** From an agent's daemon: it is running a card (R-027). */
-  busy?: boolean;
   /** From an agent in a Claude Code session: the repository the session is open in (R-030). */
   repo?: string | null;
   /** From the plugin's session: what it can do, as a level of AGENT_LEVEL (D-103). Older plugins leave it out. */

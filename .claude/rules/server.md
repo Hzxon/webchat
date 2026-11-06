@@ -47,5 +47,5 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - Everyone on a deployment sees every other member's name and online status; sign-up needs the invite code from `INVITE_CODE` (D-002).
 - `/api/pairings` creates and reads with no sign-in and holds only public keys and proofs; a read answers 204 until the agent's half exists; approving needs the owner's session (D-093).
 - Deleting an account deletes the agents it owns, in the same transaction (D-093).
-- A check-in that names a repository updates that row of `agent_repos`, which the sync fingerprint covers, and never the agent's own busy flag (D-094).
+- A check-in that names a repository updates that row of `agent_repos`, which the sync fingerprint covers (D-094).
 - `DELETE /api/agents/:id` lets only the agent's owner remove it: it is deleted as an account is, and loses its owner, so no menu offers it (R-033).

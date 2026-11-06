@@ -23,9 +23,12 @@ export const REQUEST_TTL_MS = 10 * 60_000;
 
 export const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/** A card is the board's doc and section, since two projects can each have a K-1 (D-099). */
+const cardOf = (run: RunRequest) => `${run.docId}/${run.section}`;
+
 export class Runs {
-  /** The work in progress, one at a time: its request, the request's message, and how to stop it. */
-  private current: { run: RunRequest; message: number; stop: AbortController } | null = null;
+  /** The work in progress, by card: its request, the request's message, and how to stop it (R-037). */
+  private readonly current = new Map<string, { run: RunRequest; message: number; stop: AbortController }>();
   /** Requests their owner cancelled, by message id, so nothing more is done for them (R-030). */
   readonly cancelled = new Set<number>();
 
@@ -36,20 +39,20 @@ export class Runs {
     private readonly refuse: (run: RunRequest) => Promise<string | undefined> = async () => undefined,
   ) {}
 
-  /** The request being run, while one is. */
+  /** The requests being run. */
   get running() {
-    return this.current?.run ?? null;
+    return [...this.current.values()].map((c) => c.run);
   }
 
   /**
-   * Reports the run that the daemon was in when it stopped as failed, so its card does not stay
+   * Reports each run that the daemon was in when it stopped as failed, so its card does not stay
    * claimed with nothing running (K-46). Called once at start, after the first check-in.
    */
   async recover() {
-    const left = this.client.running;
-    if (!left) return;
-    await this.fail(left, 'The daemon stopped during the run.');
-    await this.client.saveRunning(undefined);
+    for (const left of this.client.running) {
+      await this.fail(left, 'The daemon stopped during the run.');
+      await this.client.saveRunning(this.client.running.filter((t) => t !== left));
+    }
   }
 
   /** Runs a request addressed to this account, or stops one its owner cancels, and reports. Anything else is ignored. */
@@ -60,7 +63,7 @@ export class Runs {
       // The id is the server's, so at worst a changed server stops another of the owner's runs.
       if (message.senderId !== this.client.owner) return;
       this.cancelled.add(run.request);
-      if (this.current?.message === run.request) this.current.stop.abort();
+      for (const c of this.current.values()) if (c.message === run.request) c.stop.abort();
       return;
     }
     if (run.kind !== 'request' || run.runtime !== this.client.id) return;
@@ -79,11 +82,8 @@ export class Runs {
     // A page from before D-105 signs no brief, so nothing tells the agent what its owner saw.
     if (!run.hash) return failed('Reload WebChat, then open the card again and press Start.');
     // Two tabs or two devices can each send a request before either has seen the other's, and the
-    // server cannot tell them apart (D-014). The card runs once; the copy hears that, not "busy" (K-51).
-    if (this.running) {
-      const same = this.running.docId === run.docId && this.running.section === run.section;
-      return failed(same ? `${run.card} is already running.` : `I am busy with ${this.running.card}.`);
-    }
+    // server cannot tell them apart (D-014). The card runs once; another card runs beside it (R-037).
+    if (this.current.has(cardOf(run))) return failed(`${run.card} is already running.`);
     return this.execute(taken, run, async (signal) => {
       const refused = await this.refuse(run);
       if (refused) throw new Error(refused);
@@ -104,10 +104,10 @@ export class Runs {
   /**
    * Another round on a request this account ran: fixing its pull request after CI failed, a
    * conflict or a review (R-030). Reports fixing, then done or failed, as a run does. False when
-   * something runs already, so the caller tries again later.
+   * its card runs already, so the caller tries again later.
    */
   async follow(taken: TakenRequest, run: RunRequest, why: string, last: RunResult, work: (signal: AbortSignal) => Promise<RunResult>) {
-    if (this.running) return false;
+    if (this.current.has(cardOf(run))) return false;
     await this.execute(taken, run, async (signal) => {
       await this.report(taken, { kind: 'fixing', note: why, branch: last.branch, pull: last.pull }, `I am fixing ${run.card}: ${why}`);
       return work(signal);
@@ -121,23 +121,22 @@ export class Runs {
 
   /**
    * Does one piece of work and reports how it ended. Taken before the first wait, so a request
-   * from the same check-in finds the account busy. Kept in the file while it runs (K-46).
+   * from the same check-in finds its card running. Kept in the file while it runs (K-46).
    */
   private async execute(taken: TakenRequest, run: RunRequest, work: (signal: AbortSignal) => Promise<RunResult>) {
     const stop = new AbortController();
-    this.current = { run, message: taken.message, stop };
-    this.client.busy = true;
+    const card = cardOf(run);
+    this.current.set(card, { run, message: taken.message, stop });
     try {
-      await this.client.saveRunning(taken);
+      await this.client.saveRunning([...this.client.running, taken]);
       await this.done(taken, await work(stop.signal));
     } catch (error) {
       await this.fail(taken, messageOf(error));
     } finally {
-      this.current = null;
-      this.client.busy = false;
+      this.current.delete(card);
     }
     // Only once a report got through. Otherwise the next start sends one.
-    await this.client.saveRunning(undefined);
+    await this.client.saveRunning(this.client.running.filter((t) => t.message !== taken.message));
   }
 
   private done(taken: TakenRequest, result: RunResult) {

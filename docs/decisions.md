@@ -501,9 +501,9 @@ Accepted 2026-11-01 in 74d53ff.
 ids in their chats, the read and delivered pointers, how many chats they are in, the sum of the
 times their members joined those chats, how many chats have keys, the sum of the times their keys
 were replaced (D-044), a hash of who owns each of their projects and groups (D-045), how many people
-there are and how many have keys, who is online, which agents are busy (R-027), which accounts are
-agents (K-41), a hash of each doc's version, and a hash of the doc locks held now (D-081). Owners
-go in as a hash, not a sum, so two handovers at once cannot cancel out. A check-in whose stamp
+there are and how many have keys, who is online, which accounts are agents (K-41), a hash of each
+doc's version, and a hash of the doc locks held now (D-081). Owners go in as a hash, not a sum, so
+two handovers at once cannot cancel out. A check-in whose stamp
 matches answers "unchanged" without loading anything else.
 
 Cost: any new state that pages must see has to change this string, or pages miss it until
@@ -899,7 +899,7 @@ so an unknown status sorts with the open items.
 
 ### D-085: An agent runtime is a member account, and its daemon a headless client
 
-Accepted 2026-11-05 in #85.
+Accepted 2026-11-05 in #85, changed in #130.
 
 A coding agent a student runs for a project (R-027) joins as an account of its own, made by pairing
 with its owner since #100 (D-093). Its daemon, a headless client in `agent/`, uses the page's `/api`
@@ -907,29 +907,29 @@ routes and keeps its keys, login key, session cookie and pins in `~/.webchat/<na
 or the Claude Code plugin's data folder (D-092). It checks in with `POST /api/sync` every 15
 seconds, opens keys and messages, sends sealed messages and edits doc sections under the section
 lock, with code ported from `client/src/e2ee/keyring.ts` and `client/src/chat.ts` on
-`shared/e2ee.ts`. Check-ins say whether it runs a card; that flag is in the sync fingerprint
-(D-021), so the menu offers only idle agents. Why: rule 5 gives keys only to members, and the
-owner's keys would expose their direct messages.
+`shared/e2ee.ts`. Since #130 its check-ins say nothing about runs: it runs several cards at once
+(D-099), and the owner's pane counts them from the run messages. Why: rule 5 gives keys only to
+members, and the owner's keys would expose their direct messages.
 
 Cost: one account per runtime. Private keys sit in a file in the clear, readable only by its owner,
 since Node has no unexportable key store (README lists this). Two daemons must not share an account
 file. The daemon never makes keys, so after a removal (D-044) it waits for a member's browser. Key
-logic is ported, not shared, until K-40.
+logic is ported, not shared, until K-40. The busy columns of migrations 14 and 18 are unused.
 
 ### D-086: A run is a request message and the reports that name it
 
-Accepted 2026-11-05 in #86, changed in #122.
+Accepted 2026-11-05 in #86, changed in #122 and #130.
 
 Handing a card to an agent (R-027) sends an ordinary message of kind "message" into the owner's
 direct chat with the agent, once #general until D-105. Its sealed content carries a `run` field, as
 a pull request carries `pull` (D-042): the card's id and title, its doc and section, the agent's
 account and the brief's hash. It names the card, not its text: the agent reads the card from the
-board when it claims, with its member key. It runs one request at a time (D-089 says whose). It
-answers with messages whose `run` field names the request's message id and says claimed, done,
-failed, fixing, review or ended, with a note, a branch and a pull request if any; the text says the
-same. A page folds reports into the request's card and shows the latest, only from the agent the
-request names. Why: the signature proves who asked (D-016), and separate report messages stay
-immutable and signed by their author.
+board when it claims, with its member key. It runs several cards at once, each once (D-099), and
+D-089 says whose. It answers with messages whose `run` field names the request's message id and
+says claimed, done, failed, fixing, review or ended, with a note, a branch and a pull request if
+any; the text says the same. A page folds reports into the request's card and shows the latest,
+only from the agent the request names. Why: the signature proves who asked (D-016), and separate
+report messages stay immutable and signed by their author.
 
 Cost: each report is an unread message that alerts, so keep them sparse. The request's id is the
 server's, so a changed server could attach a report to another request, but could forge neither.
@@ -989,7 +989,7 @@ Accepted 2026-11-05 in #104. The doorbell went in #117 (D-097).
 
 An agent's Claude Code sessions each take the runs of the repository they are open in (R-032), once
 its owner connected it (D-101). A session checks in with its repository, which `agent_repos` keeps
-with its own busy flag and last check-in, and the play menu lists one entry per repository. The
+with its last check-in, and the play menu lists one entry per repository. The
 plugin keeps a folder per repository in its data folder: the connected mark, a copy of the account,
 a lock, its Claude's settings and the watched pull requests, so no two sessions write one file. A
 session says nothing on another repository's request. A second session in one repository takes over
@@ -1040,18 +1040,21 @@ word. It replaces D-092's doorbell and D-095's monitor mark.
 
 ### D-099: An agent refuses a second request for the card it runs
 
-Accepted 2026-11-05 in #115 (K-51).
+Accepted 2026-11-05 in #115 (K-51), changed in #130 (R-037).
 
-An agent runs one request at a time (D-086). A request from its owner for the card it is running
-fails at once with "K-1 is already running.", and nothing starts: no run and no worktree. A copy starts no run. A request for another card still gets "I am busy with K-2." The daemon and the
-plugin share the check, which follows the owner and send-time checks. A card is the board's doc and
-section, since two projects can each have a K-1. A run that ended, however it ended, no longer
-counts, so the owner runs the card again at once. Why: two tabs or two devices can each send before
-they sync, the page cannot see the other's request in time, and the server cannot read which card a
-request names (D-014), so the agent is the last place to catch the copy.
+An agent runs several cards at once, with no cap, each in its own worktree and background Claude
+(D-092), and each card once. A request from its owner for the card it is running fails at once
+with "K-1 is already running.", and nothing starts: no run and no worktree. A copy starts no run. A
+request for another card runs beside it. A round of fixes waits while its card runs. The check
+follows the owner and send-time checks. A card is the board's doc and section, since two projects
+can each have a K-1. A run that ended, however it ended, no longer counts, so the owner runs the
+card again at once. Why: two tabs or two devices can each send before they sync, the server cannot
+read which card a request names (D-014), so the agent catches the copy; and students hand an agent
+several cards and expect them all to start.
 
-Cost: a copy that reaches the agent after the first run ended runs as a request of its own. A request
-in the same check-in as a cancel is refused, since the cancelled run has not stopped yet.
+Cost: five cards are five sandboxed Claudes on one laptop and five drafts pushed with the owner's
+login. A copy that reaches the agent after the first run ended runs as a request of its own. A
+request in the same check-in as a cancel is refused, since the cancelled run has not stopped yet.
 
 ### D-100: A card shows its latest run, and its status line follows the run
 

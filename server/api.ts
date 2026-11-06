@@ -567,7 +567,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
 
     const editing = input.editing;
     await Promise.all([
-      db.checkIn(me.id, input.attentive === true, tabId, endpoint, input.busy === true, typeof input.repo === 'string' && isRepoName(input.repo) ? input.repo : null, Number.isInteger(input.protocol) && input.protocol! > 0 && input.protocol! < 100 ? input.protocol : 0),
+      db.checkIn(me.id, input.attentive === true, tabId, endpoint, typeof input.repo === 'string' && isRepoName(input.repo) ? input.repo : null, Number.isInteger(input.protocol) && input.protocol! > 0 && input.protocol! < 100 ? input.protocol : 0),
       typeof editing?.docId === 'string' && typeof editing.section === 'string'
         ? db.renewSectionLock(me.id, editing.docId.slice(0, 64), editing.section.slice(0, 64))
         : undefined,

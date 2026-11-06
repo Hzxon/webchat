@@ -86,14 +86,14 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
   const meId = useAppState((s) => s.me?.id);
   const memberIds = useAppState((s) => s.projects[projectId]?.memberIds ?? NO_MEMBERS);
   // This user's coding agents in the project (D-089), one choice per repository a Claude Code
-  // session of theirs is open in (D-094). A card can be handed to one that is online and idle.
+  // session of theirs is open in (D-094). A card can be handed to one that is online.
   const choices = useMemo(
     () =>
       memberIds
         .map((id) => users[id])
         .filter((u): u is UserDTO => !!u && u.agentOwner === meId)
-        .flatMap((agent): Array<{ agent: UserDTO; repo?: string; online: boolean; busy: boolean; lastSeen: number | null }> =>
-          agent.agentRepos.length ? agent.agentRepos.map((seat) => ({ agent, ...seat })) : [{ agent, online: agent.online, busy: agent.busy, lastSeen: agent.lastSeen }],
+        .flatMap((agent): Array<{ agent: UserDTO; repo?: string; online: boolean; lastSeen: number | null }> =>
+          agent.agentRepos.length ? agent.agentRepos.map((seat) => ({ agent, ...seat })) : [{ agent, online: agent.online, lastSeen: agent.lastSeen }],
         ),
     [memberIds, users, meId],
   );

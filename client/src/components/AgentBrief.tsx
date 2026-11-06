@@ -44,7 +44,7 @@ export function AgentBrief({ brief, seats }: { brief: NonNullable<State['agentBr
   const others = [...new Set(held.map((d) => by(d.authorId)).filter((n): n is string => n !== null))];
   // The agent must be in the card's project to read it.
   const inProject = seats.filter((s) => projects[brief.projectId]?.memberIds.includes(s.agent.id));
-  const can = (s: Seat) => s.online && s.protocol >= AGENT_LEVEL.cards && !s.busy;
+  const can = (s: Seat) => s.online && s.protocol >= AGENT_LEVEL.cards;
   const seat = inProject.find((s) => seatKey(s) === picked) ?? inProject.find(can) ?? inProject[0];
   const lock = doc?.locks.find((l) => l.section === brief.section && l.userId !== meId);
 
@@ -52,7 +52,6 @@ export function AgentBrief({ brief, seats }: { brief: NonNullable<State['agentBr
   if (!seat) blocked = 'Your agent is not in this project. Add it under the project’s people, then start.';
   else if (!seat.online) blocked = `${short(seat.repo)} is asleep${seat.lastSeen ? ` since ${formatSince(seat.lastSeen)}` : ''}. Open it in Claude Code on your laptop to start.`;
   else if (seat.protocol < AGENT_LEVEL.cards) blocked = `${short(seat.repo)} can’t take cards yet. In Claude Code on your laptop, type /webchat:connect: it says what is missing.`;
-  else if (seat.busy) blocked = `${short(seat.repo)} is busy with another card. Start this one when it is done.`;
   else if (lock) blocked = `${senderName(users, lock.userId)} is editing this card. Start once they are done, so your agent gets all of it.`;
 
   async function start() {

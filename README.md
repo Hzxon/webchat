@@ -152,7 +152,7 @@ What it does not protect against:
   private keys and session in its data folder, `~/.claude/plugins/data/`, and the daemon in
   `~/.webchat/<name>/account.json`. Both files are readable only by their owner, but not
   encrypted. Anyone who can read one can read what the agent's projects write. The server knows
-  which accounts are agents, whose agent each one is, when one is busy with a card, and which
+  which accounts are agents, whose agent each one is, and which
   GitHub repository its Claude Code session is open in, for repositories you connected only. It
   also learns what each session can do, such as answer questions, which tells newer plugins from
   older ones.
@@ -448,8 +448,9 @@ pairing.
 On a roadmap card, the play button opens the card's brief under **Coding agents**: the card and the
 decisions it follows, as your agent will get them, with each passage a teammate wrote marked. Pick
 the repository and press **Start**. When it cannot start, the brief says why: the laptop is asleep,
-Claude Code there needs a GitHub sign-in, it is busy with another card, or someone is editing the
-card. A second session in the same repository waits, and takes over when the first closes. When you
+Claude Code there needs a GitHub sign-in, or someone is editing the card. Your agent runs several
+cards at once, each in a worktree of its own, and refuses only a second start of a card it runs. A
+second session in the same repository waits, and takes over when the first closes. When you
 start a card, the plugin checks that you sent it and that its brief is still the one you saw, adds a
 git worktree inside the repository, and starts a background Claude there. It runs apart from your own sessions,
 which keep their settings. It reads none of your Claude Code settings and none of the repository's
