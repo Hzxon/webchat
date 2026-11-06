@@ -243,6 +243,7 @@ export class Plugin {
   /** Checks in every 15 seconds and looks at the pull requests every minute, until the session ends the process. */
   async loop() {
     const missed = await this.client!.sync().catch((error: unknown) => (log(error), []));
+    await this.endStrandedDrafts().catch(log);
     await this.runs!.recover().catch(log);
     await this.conversations!.recover().catch(log);
     missed.forEach((m) => this.handle(m));
@@ -424,6 +425,19 @@ export class Plugin {
   }
 
   /**
+   * Stops watching each draft whose request is not in the owner's direct chat with this agent, as
+   * every draft from before D-105 is. The pane builds a card's thread only from that chat, so it
+   * would show neither a review that waits for the owner's go nor the button that sends it (K-58).
+   */
+  async endStrandedDrafts() {
+    for (const pull of [...this.watched]) {
+      // A chat this session does not know is left alone: its first check-in may have failed.
+      const chat = this.client!.conversations.get(pull.taken.conversation);
+      if (chat && chat.type !== 'direct') await this.end(pull, 'its request is not in your direct chat with me, so the pane cannot show you its reviews');
+    }
+  }
+
+  /**
    * Looks at each pull request this server opened. When CI failed on its last push, it conflicts, or
    * its owner reviewed it, the model gets another round, at most three. A review by someone else who
    * may push waits for the owner's go, and the owner's own rounds count toward no limit (D-105).
@@ -438,8 +452,7 @@ export class Plugin {
         const view = JSON.parse(await gh(['pr', 'view', String(pull.pull.number), '--repo', pull.pull.repo, '--json', PULL_FIELDS])) as PullView;
         const ended = this.endOf(pull, view);
         if (ended) {
-          await this.unwatch(pull);
-          await this.runs.report(pull.taken, { kind: 'ended', note: ended, pull: pull.pull }, `I stopped watching ${pull.pull.repo}#${pull.pull.number}: ${ended}.`);
+          await this.end(pull, ended);
           continue;
         }
         if (pull.go) {
@@ -475,6 +488,12 @@ export class Plugin {
     if (view.state === 'MERGED') return 'it was merged';
     if (view.state !== 'OPEN') return 'it was closed';
     return view.headRefOid !== pull.head ? 'someone else pushed to it' : '';
+  }
+
+  /** Stops watching a pull request and says why in the chat of its request (D-105). */
+  private async end(pull: Watched, why: string) {
+    await this.unwatch(pull);
+    await this.runs!.report(pull.taken, { kind: 'ended', note: why, pull: pull.pull }, `I stopped watching ${pull.pull.repo}#${pull.pull.number}: ${why}.`);
   }
 
   /** What is new to fix: CI that failed on the head, a conflict, or review notes from people who may push. */
