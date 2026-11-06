@@ -157,13 +157,19 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
     const view = linked[projectId];
     return view && !view.configured ? (agentIn(projectId)?.agentRepos.map((s) => s.repo) ?? []) : (view?.repos ?? []);
   };
+  // What a question can be about: a repository, or '' for the board alone, which a project that links
+  // none always offers, and on a server with no GitHub App, every project.
+  const choicesOf = (projectId: number) => {
+    const repos = reposOf(projectId);
+    return repos.length && linked[projectId]?.configured !== false ? repos : [...repos, ''];
+  };
   // Where a conversation belongs: the project its prompt names, or its card's board.
   const projectOf = (t: Thread) => (t.kind === 'question' ? t.project : conversations[docs[t.messages[0]!.run?.kind === 'request' ? t.messages[0]!.run.docId : '']?.conversationId ?? 0]?.projectId);
 
   // The project picked, else the newest conversation's, else the first; then its repository picked, or its first.
   const askable = mine.filter((p) => agentIn(p.id));
   const project = askable.find((p) => p.id === picked.project) ?? askable.find((p) => threads[0] && p.id === projectOf(threads[0])) ?? askable[0];
-  const repos = project ? reposOf(project.id) : [];
+  const repos = project ? choicesOf(project.id) : [];
   const repo = repos.find((r) => r === picked.repo) ?? repos[0];
   const agent = project && agentIn(project.id);
   // With no repository, the agent answers from the board alone, on its laptop (R-038).
@@ -172,7 +178,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
 
   async function ask(text: string) {
     try {
-      actions.setAgentsOpen(true, await askAgent(agent!.id, project!.id, repo, text));
+      actions.setAgentsOpen(true, await askAgent(agent!.id, project!.id, repo || undefined, text));
     } catch (err) {
       actions.addToast({ conversationId: null, title: 'Question not sent', body: (err as Error).message });
       throw err;
@@ -214,7 +220,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
               <select value={repo} onChange={(e) => setPicked({ project: project.id, repo: e.target.value })} aria-label="Repository">
                 {repos.map((r) => (
                   <option key={r} value={r}>
-                    {short(r)}
+                    {r ? short(r) : 'its board'}
                   </option>
                 ))}
               </select>
@@ -226,7 +232,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
         {blocked && <p className="composer-blocked">{blocked}</p>}
         <Box name="agents:ask" placeholder={repo || loading ? 'Ask about your code' : 'Ask about your project'} canSend={!blocked && !loading} onSend={ask} />
         <p className="agents-hint">
-          {repo || loading ? 'It reads your team’s code as it is on GitHub. After a push, ask a new question to see it.' : 'This project links no code, so your agent answers from its board.'}
+          {repo || loading ? 'It reads your team’s code as it is on GitHub. After a push, ask a new question to see it.' : 'Your agent answers from the project’s board alone: its decisions and cards.'}
         </p>
       </div>
       {mine.map((p) => {

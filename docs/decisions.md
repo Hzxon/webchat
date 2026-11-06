@@ -989,16 +989,18 @@ account, and the old one stays, asleep.
 
 ### D-094: One Claude Code window serves every folder on its laptop
 
-Accepted 2026-11-05 in #104, rewritten in #131 (R-036). The doorbell went in #117 (D-097).
+Accepted 2026-11-05 in #104, rewritten in #131 (R-036), changed in #132. The doorbell went in #117
+(D-097).
 
 The plugin's server starts in any folder, and the window that takes the laptop's lock serves every
 folder the owner connected or had cloned (D-101, D-108); another window waits, and takes over when
 it closes. It keeps one copy of the account, its Claude's settings, the watched pull requests and
 the conversations in `laptop/` of its data folder, and a mark per repository under `repos/`. One
-check-in names every repository with a folder, which `agent_repos` keeps with its last check-in,
-and the level of what the laptop can do, which the agent's own row keeps (migration 20). A request
-for a repository with no folder waits for its owner to have it cloned. Why: a student with three
-projects kept three windows open, and could not work on a repository never cloned on the laptop.
+check-in names every repository with a folder, which `agent_repos` keeps with its last check-in, and
+the level of what the laptop can do, which the agent's own row keeps (migration 20); a folder it no
+longer names leaves at once (#132). A request for a repository with no folder waits for its owner to
+have it cloned. Why: a student with three projects kept three windows open, and could not work on a
+repository never cloned on the laptop.
 
 Cost: the server learns that the agent is online whenever any window is open, and the names of its
 folders, never a path. The `agent_repo` column of migration 17 and the copies of the account per

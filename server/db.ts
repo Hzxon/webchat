@@ -964,6 +964,8 @@ export async function openDb(sql: Sql) {
             ),
           ),
         ]);
+        // A laptop names every folder it has, so the folders it no longer names are gone from it (R-038).
+        if (laptop) await sql.query('DELETE FROM webchat.agent_repos WHERE user_id = $1 AND last_seen < $2', [userId, now]);
       } else {
         await sql.query(
           `UPDATE webchat.users SET attentive_until = 0

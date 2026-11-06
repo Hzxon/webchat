@@ -787,6 +787,10 @@ describe('agent client (R-027)', () => {
         await forget(alice, direct);
         await (await checkIn()).handled;
         assert.deepEqual(plugin.client!.repos, []);
+        // The laptop's next check-in names no folder, so the pane shows none at once.
+        await plugin.client!.sync();
+        await alice.sync();
+        assert.deepEqual(alice.users.get(agent.id)?.agentRepos, []);
         assert.ok(existsSync(path.join(project, 'README.md')));
       } finally {
         restore();
