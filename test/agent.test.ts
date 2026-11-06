@@ -724,6 +724,9 @@ describe('agent client (R-027)', () => {
         await waitFor('the second window waits', () => second.problem.startsWith('Another'));
         assert.match(second.problem, /Another Claude Code window on this laptop serves your agent/);
 
+        // Alice and the agent have sent many messages in a few seconds by now (D-091).
+        const unthrottle = () => instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+        await unthrottle();
         // A repository with no folder on the laptop: the agent says so, and the run waits for Alice
         // to have it cloned. It clones only on her word, and only a repository her project links (R-036, D-108).
         const webOrigin = path.join(home, 'web.git');
@@ -765,6 +768,7 @@ describe('agent client (R-027)', () => {
         assert.deepEqual(plugin.client!.repos, ['acme/app', 'acme/web']);
 
         // The folder now takes runs like any other.
+        await unthrottle();
         const askWeb = async () => {
           const id = (await ask(alice, { repo: 'acme/web' })).id;
           await (await checkIn()).handled;
