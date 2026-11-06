@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/Hzxon/webchat/compare/v0.6.0...v0.6.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **agent:** Keep the pairing code across a deploy ([#134](https://github.com/Hzxon/webchat/issues/134)) ([55e46c4](https://github.com/Hzxon/webchat/commit/55e46c4adccdd246c3abbd20f28d8c03dd3d3de1))
+
 ## [0.6.0](https://github.com/Hzxon/webchat/compare/v0.5.0...v0.6.0) (2026-11-06)
 
 
