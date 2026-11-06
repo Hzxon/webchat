@@ -150,6 +150,10 @@ describe('agent client (R-027)', () => {
     hash: await textHash(briefText((await alice.sections(roadmap)).find((c) => c.id === cardId)?.text ?? '', [])),
     ...extra,
   });
+  /** A second card, which the K-51 test puts on the board, to run beside K-1 (R-037). */
+  let k2 = '';
+  const k2Text = '### K-2: Sums are off\n\nStatus: Open.';
+  const runOfK2 = async () => runOf({ card: 'K-2', title: 'Sums are off', section: k2, hash: await textHash(briefText(k2Text, [])) });
 
   before(async () => {
     const config = loadConfig({ PGLITE_DIR: ':memory:', INVITE_CODE: 'friends-only', GITHUB_POLL_SECONDS: '0', SESSION_DAYS: '1' });
@@ -283,13 +287,13 @@ describe('agent client (R-027)', () => {
       ['done', 'I finished K-1 on agent/k1-bad-keys (acme/app#9). Two files changed.'],
     ]);
     assert.deepEqual(jobs.map((j) => [j.request.card, j.card, j.projectId]), [['K-1', written, projectId]]);
-    assert.equal(runs.running, null);
+    assert.deepEqual(runs.running, []);
     // The run leaves the card as it was: the reports in #general are its status (D-089).
     assert.deepEqual((await alice.sections(roadmap)).map((s) => s.text), [written]);
     await alice.editSection(roadmap, cardId, () => ({ text: cardText, pos: 1 }));
   });
 
-  test('runs one request at a time', async () => {
+  test('runs a card once when two requests for it come in one check-in', async () => {
     const reports = async () => (await alice.sync()).filter((m) => m.content?.run?.kind !== 'request').map((m) => m.content?.text);
     let jobs = 0;
     const runs = new Runs(bot, async () => {
@@ -304,31 +308,32 @@ describe('agent client (R-027)', () => {
     assert.equal(jobs, 1);
   });
 
-  test('refuses a second request for the card it runs, however late it comes, and runs the card again once it ended (K-51)', async () => {
-    let started!: () => void;
-    const running = new Promise<void>((resolve) => (started = resolve));
+  test('refuses a second request for the card it runs, however late it comes, runs another card beside it, and runs the card again once it ended (K-51, R-037)', async () => {
+    k2 = newKeyId().slice(0, 11);
+    await alice.editSection(roadmap, k2, () => ({ text: k2Text, pos: 2 }));
     let end!: () => void;
     const gate = new Promise<void>((resolve) => (end = resolve));
-    let jobs = 0;
-    const runs = new Runs(bot, async () => {
-      jobs++;
-      started();
+    const jobs: string[] = [];
+    const runs = new Runs(bot, async ({ request }) => {
+      jobs.push(request.card);
       await gate;
       throw new Error('Not today.');
     });
-    const ask = async (run: RunDTO) => (await alice.send(generalId, { text: 'Run K-1 with Bot', run })).id;
+    const ask = async (run: RunDTO) => (await alice.send(generalId, { text: `Run ${run.kind === 'request' ? run.card : ''} with Bot`, run })).id;
     const handle = async () => {
       for (const m of await bot.sync()) await runs.handle(m);
     };
     const first = await ask(await runOf());
     const handled = Promise.all((await bot.sync()).map((m) => runs.handle(m)));
-    await running;
+    while (!jobs.length) await sleep(10);
     // Another tab or device sent these before it saw the first request's reports, a check-in later.
     const twice = await ask(await runOf());
-    const elsewhere = await ask(await runOf({ card: 'K-2', section: 'other-card' }));
-    await handle();
+    const elsewhere = await ask(await runOfK2());
+    const beside = Promise.all((await bot.sync()).map((m) => runs.handle(m)));
+    while (jobs.length < 2) await sleep(10);
+    assert.deepEqual(runs.running.map((r) => r.card), ['K-1', 'K-2'], 'both cards run at once');
     end();
-    await handled;
+    await Promise.all([handled, beside]);
     // The run failed, so the owner runs the card again.
     const again = await ask(await runOf());
     await handle();
@@ -337,9 +342,9 @@ describe('agent client (R-027)', () => {
     const on = (id: number) => heard.filter((m) => m.content?.run?.kind !== 'request' && m.content?.run?.request === id).map((m) => m.content?.text);
     assert.deepEqual(on(first), ['I am on K-1: Pushes with bad keys', 'I could not run K-1: Not today.']);
     assert.deepEqual(on(twice), ['I could not run K-1: K-1 is already running.']);
-    assert.deepEqual(on(elsewhere), ['I could not run K-2: I am busy with K-1.']);
+    assert.deepEqual(on(elsewhere), ['I am on K-2: Sums are off', 'I could not run K-2: Not today.']);
     assert.deepEqual(on(again), ['I am on K-1: Pushes with bad keys', 'I could not run K-1: Not today.']);
-    assert.equal(jobs, 2);
+    assert.deepEqual(jobs, ['K-1', 'K-2', 'K-1']);
   });
 
   test('runs a request once, however often the server posts it (K-47)', async () => {
@@ -369,7 +374,7 @@ describe('agent client (R-027)', () => {
     await running;
     await carol.send(generalId, { text: 'Cancel K-1 with Bot', run: { kind: 'cancel', request: id } });
     for (const m of await bot.sync()) await runs.handle(m);
-    assert.equal(runs.running?.card, 'K-1', "a teammate's cancel stops nothing");
+    assert.deepEqual(runs.running.map((r) => r.card), ['K-1'], "a teammate's cancel stops nothing");
     await alice.send(generalId, { text: 'Cancel K-1 with Bot', run: { kind: 'cancel', request: id } });
     for (const m of await bot.sync()) await runs.handle(m);
     await handled;
@@ -379,48 +384,46 @@ describe('agent client (R-027)', () => {
     assert.deepEqual(reports, ['I am on K-1: Pushes with bad keys', 'I could not run K-1: the owner cancelled the run.']);
   });
 
-  test('says it is busy in its check-ins while a card runs, so the board offers it no other', async () => {
-    const runs = new Runs(bot, async () => {
-      // The watch loop keeps checking in while the runner works.
-      await bot.sync();
-      const seen = await alice.sync();
-      assert.equal(alice.users.get(bot.id)?.busy, true, `busy mid-run (${seen.length} new)`);
-      return { branch: 'agent/k1' };
-    });
-    assert.equal(alice.users.get(bot.id)?.busy, false);
-    await alice.send(generalId, { text: 'Run K-1 with Bot', run: await runOf() });
-    for (const m of await bot.sync()) await runs.handle(m);
-    await bot.sync();
-    await alice.sync();
-    assert.equal(alice.users.get(bot.id)?.busy, false, 'idle again');
-  });
-
-  test('reports a run that a restart cut short as failed (K-46)', async () => {
-    const id = (await alice.send(generalId, { text: 'Run K-1 with Bot', run: await runOf() })).id;
-    // The daemon stops mid-run: its runner never returns.
-    let started!: () => void;
-    const running = new Promise<void>((resolve) => (started = resolve));
-    const runs = new Runs(bot, () => {
-      started();
-      return new Promise(() => {});
-    });
+  test('reports each run that a restart cut short as failed (K-46, R-037)', async () => {
+    const ids = [
+      (await alice.send(generalId, { text: 'Run K-1 with Bot', run: await runOf() })).id,
+      (await alice.send(generalId, { text: 'Run K-2 with Bot', run: await runOfK2() })).id,
+    ];
+    // The daemon stops mid-run: its runners never return.
+    let started = 0;
+    const runs = new Runs(bot, () => (started++, new Promise(() => {})));
     for (const m of await bot.sync()) void runs.handle(m);
-    await running;
+    while (started < 2) await sleep(10);
     const saved = async () => JSON.parse(await fs.readFile(botFile, 'utf8')).running;
-    assert.deepEqual(await saved(), { message: id, conversation: generalId, card: 'K-1' });
+    assert.deepEqual(await saved(), [
+      { message: ids[0], conversation: generalId, card: 'K-1' },
+      { message: ids[1], conversation: generalId, card: 'K-2' },
+    ]);
 
-    // Started again from its file, it no longer sees the request: the cursor is past it.
+    // Started again from its file, it no longer sees the requests: the cursor is past them.
     bot = await AgentClient.load(botFile);
     assert.deepEqual(await bot.sync(), []);
     const restarted = new Runs(bot, async () => ({ branch: 'agent/k1' }));
     await restarted.recover();
-    assert.equal(await saved(), undefined);
+    assert.deepEqual(await saved(), []);
     await restarted.recover();
-    const reports = (await alice.sync()).filter((m) => m.content?.run?.kind !== 'request' && m.content?.run?.request === id);
-    assert.deepEqual(reports.map((m) => [m.content?.run?.kind, m.content?.text]), [
+    const heard = await alice.sync();
+    const on = (id: number) => heard.filter((m) => m.content?.run?.kind !== 'request' && m.content?.run?.request === id).map((m) => [m.content?.run?.kind, m.content?.text]);
+    assert.deepEqual(on(ids[0]!), [
       ['claimed', 'I am on K-1: Pushes with bad keys'],
       ['failed', 'I could not run K-1: The daemon stopped during the run.'],
     ]);
+    assert.deepEqual(on(ids[1]!), [
+      ['claimed', 'I am on K-2: Sums are off'],
+      ['failed', 'I could not run K-2: The daemon stopped during the run.'],
+    ]);
+  });
+
+  test('reads the one run that a file from before R-037 kept', async () => {
+    const old = path.join(home, 'old-account.json');
+    const taken = { message: 1, conversation: generalId, card: 'K-1' };
+    await fs.writeFile(old, JSON.stringify({ ...JSON.parse(await fs.readFile(botFile, 'utf8')), running: taken }));
+    assert.deepEqual((await AgentClient.load(old)).running, [taken]);
   });
 
   test("names each run's branch after its card, apart from the branches here and on origin", async () => {

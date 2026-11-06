@@ -74,10 +74,10 @@ export interface AccountFile {
   /** Client ids of the run requests seen, with their send times, while a copy could still run (K-47). */
   handled?: Record<string, number>;
   /**
-   * The request being run, while one is. The cursor is past it already, so a daemon that stopped
-   * mid-run finds it only here when it starts again, and reports it failed (K-46).
+   * The requests being run. The cursor is past them already, so a daemon that stopped mid-run
+   * finds them only here when it starts again, and reports them failed (K-46).
    */
-  running?: TakenRequest;
+  running?: TakenRequest[];
 }
 
 /** A run request the daemon took, by its message. */
@@ -144,8 +144,6 @@ export class AgentClient {
   private readonly floor: number;
   /** People whose keys differ from the pinned ones. Nothing from them opens until someone checks. */
   private readonly changedKeys = new Set<number>();
-  /** Said in every check-in while a card runs, so the board offers this account no other (R-027). */
-  busy = false;
   /** Said in every check-in from a Claude Code session: the repository it is open in (R-030). */
   repo: string | null = null;
   /** Said in every check-in from the plugin: what its sessions can do (D-103). */
@@ -236,6 +234,8 @@ export class AgentClient {
   /** Opens the account an earlier sign-up or sign-in wrote. */
   static async load(filePath: string) {
     const file = JSON.parse(await fs.readFile(filePath, 'utf8')) as AccountFile;
+    // A file from before R-037 keeps one request, not a list.
+    if (file.running && !Array.isArray(file.running)) file.running = [file.running];
     return new AgentClient(file, filePath, await importIdentity(file.secrets));
   }
 
@@ -265,14 +265,14 @@ export class AgentClient {
     return this.written;
   }
 
-  /** The request a daemon took and did not report on to the end, as the file keeps it. */
+  /** The requests a daemon took and did not report on to the end, as the file keeps them. */
   get running() {
-    return this.file.running;
+    return this.file.running ?? [];
   }
 
-  /** Keeps the request being run in the file, or clears it with none. */
-  async saveRunning(taken: TakenRequest | undefined) {
-    this.file.running = taken;
+  /** Keeps the requests being run in the file. */
+  async saveRunning(running: TakenRequest[]) {
+    this.file.running = running;
     await this.save();
   }
 
@@ -314,7 +314,7 @@ export class AgentClient {
     const fresh: MessageDTO[] = [];
     let dirty = false;
     for (let rounds = 0; rounds < 10; rounds++) {
-      const body: SyncRequest = { cursor: this.file.cursor, stamp: this.stamp, attentive: true, tabId: this.tabId, endpoint: null, busy: this.busy, repo: this.repo, protocol: this.protocol };
+      const body: SyncRequest = { cursor: this.file.cursor, stamp: this.stamp, attentive: true, tabId: this.tabId, endpoint: null, repo: this.repo, protocol: this.protocol };
       const answer = await this.request<SyncResponse>('POST', '/sync', body);
       dirty ||= answer.cursor !== this.file.cursor;
       this.file.cursor = answer.cursor;

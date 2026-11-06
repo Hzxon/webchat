@@ -419,7 +419,7 @@ export class Plugin {
     const sandbox = await this.cardRefusal();
     return [
       sandbox ? `Every card fails at once: ${sandbox}` : `Taking the cards that ${owner ?? 'your owner'} hands to this agent in ${this.repo}, on ${this.client!.api.baseUrl}.`,
-      ...(this.runs!.running ? [`Working on ${this.runs!.running.card}.`] : []),
+      ...(this.runs!.running.length ? [`Working on ${this.runs!.running.map((r) => r.card).join(', ')}.`] : []),
       `Watching ${this.watched.length} draft pull requests.`,
     ].join('\n');
   }
@@ -448,7 +448,8 @@ export class Plugin {
     this.polling = true;
     try {
       for (const pull of [...this.watched]) {
-        if (this.runs.running) return;
+        // A round waits while its card runs, and the cards beside it go on (R-037).
+        if (this.runs.running.some((r) => r.docId === pull.request.docId && r.section === pull.request.section)) continue;
         const view = JSON.parse(await gh(['pr', 'view', String(pull.pull.number), '--repo', pull.pull.repo, '--json', PULL_FIELDS])) as PullView;
         const ended = this.endOf(pull, view);
         if (ended) {

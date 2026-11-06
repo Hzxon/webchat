@@ -49,6 +49,9 @@ export function AgentsView() {
   else if (brief) subtitle = 'Before it starts';
   else if (seats.length === 1) subtitle = seats[0]!.online ? `${short(seats[0]!.repo)} is online` : asleep(seats[0]!);
   else if (seats.length > 1) subtitle = `${seats.filter((s) => s.online).length} of ${seats.length} repositories online`;
+  // An agent runs several cards at once, so the list says how many go (R-037).
+  const running = threads.filter((t) => t.kind === 'card' && t.state === 'working').length;
+  if (!thread && !brief && running) subtitle += ` · ${running} ${running === 1 ? 'card' : 'cards'} running`;
 
   return (
     <section className="chat agents-pane">
