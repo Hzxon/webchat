@@ -242,16 +242,24 @@ export class Plugin {
    * its repository, which every check-in names (R-036). The server learns names, never a path.
    */
   async scan() {
-    const folders = new Map<string, Folder>();
-    const repos = path.join(this.options.dataDir, 'repos');
-    for (const name of await fs.readdir(repos).catch(() => [] as string[])) {
-      const dir = await fs.readFile(path.join(repos, name, 'connected'), 'utf8').catch(() => '');
-      const repo = dir && (await originOf(dir));
-      // A folder moved, deleted, or now pushing to another repository serves nothing.
-      if (repo && repo.replace('/', '__').toLowerCase() === name.toLowerCase()) folders.set(repo.toLowerCase(), { repo, dir, origin: await originUrl(dir) });
-    }
-    this.folders = folders;
-    this.client!.repos = [...folders.keys()];
+    const { dataDir } = this.options;
+    const names = await fs.readdir(path.join(dataDir, 'repos')).catch(() => [] as string[]);
+    const found = await Promise.all(
+      names.map(async (name): Promise<Folder | null> => {
+        const dir = await fs.readFile(path.join(dataDir, 'repos', name, 'connected'), 'utf8').catch(() => '');
+        const origin = dir && (await originUrl(dir));
+        const repo = repoOfUrl(origin);
+        // A folder moved, deleted, or now pushing to another repository serves nothing.
+        return repo && path.basename(repoHome(dataDir, repo)).toLowerCase() === name.toLowerCase() ? { repo, dir, origin } : null;
+      }),
+    );
+    this.folders = new Map(found.flatMap((f) => (f ? [[f.repo.toLowerCase(), f] as const] : [])));
+    this.client!.repos = [...this.folders.keys()];
+  }
+
+  /** The folder of a repository, whatever the case of its name: GitHub ignores it. */
+  private folderOf(repo: string) {
+    return this.folders.get(repo.toLowerCase());
   }
 
   /** Why every question, run and fix fails before it starts, or undefined. */
@@ -279,19 +287,20 @@ export class Plugin {
    * answers by having it cloned, and waits for that: at most 30 minutes, or until a cancel (R-036).
    */
   private async folderFor(repo: string, signal: AbortSignal, offer: () => Promise<unknown>) {
-    const key = repo.toLowerCase();
-    if (!this.folders.has(key)) {
+    if (!this.folderOf(repo)) {
       await offer();
+      const key = repo.toLowerCase();
+      const stop = AbortSignal.any([signal, AbortSignal.timeout(CLONE_WAIT_MS)]);
       await new Promise<void>((resolve, reject) => {
         const waiters = this.waiting.get(key) ?? new Set();
-        const waiter = { resolve, reject };
+        const done = () => (waiters.delete(waiter), stop.removeEventListener('abort', aborted));
+        const waiter = { resolve: () => (done(), resolve()), reject: (error: Error) => (done(), reject(error)) };
+        const aborted = () => waiter.reject(new Error(signal.aborted ? 'the owner cancelled the run.' : `Nobody had me clone ${repo} within 30 minutes.`));
         this.waiting.set(key, waiters.add(waiter));
-        const end = (error: Error) => (waiters.delete(waiter), reject(error));
-        setTimeout(() => end(new Error(`Nobody had me clone ${repo} within 30 minutes.`)), CLONE_WAIT_MS).unref();
-        signal.addEventListener('abort', () => end(new Error('the owner cancelled the run.')), { once: true });
+        stop.addEventListener('abort', aborted, { once: true });
       });
     }
-    const folder = this.folders.get(key)!;
+    const folder = this.folderOf(repo)!;
     const refused = await this.folderRefusal(folder);
     if (refused) throw new Error(refused);
     return folder;
@@ -299,7 +308,7 @@ export class Plugin {
 
   /** Lets the runs and turns that wait for a repository's folder go on, or fail with the error. */
   private settle(key: string, error?: Error) {
-    for (const waiter of this.waiting.get(key) ?? []) (error ? waiter.reject(error) : waiter.resolve());
+    for (const waiter of [...(this.waiting.get(key) ?? [])]) (error ? waiter.reject(error) : waiter.resolve());
     this.waiting.delete(key);
   }
 
@@ -338,18 +347,22 @@ export class Plugin {
   private async clone(message: OpenedMessage) {
     const client = this.client!;
     const { run, prompt } = message.content!;
-    const asked = run?.kind === 'clone' ? run : prompt?.kind === 'clone' ? prompt : undefined;
+    const chat = message.conversationId;
+    // Notes go where the owner pressed the button: a note leaves the run or turn going, an end says
+    // why nothing waits on it any more.
+    const asked =
+      run?.kind === 'clone'
+        ? { ...run, again: 'Start the card again.', say: (text: string, end = false) => this.runs!.report({ message: run.request, conversation: chat, card: '' }, { kind: end ? 'failed' : 'claimed', note: text }, text) }
+        : prompt?.kind === 'clone'
+          ? { ...prompt, again: 'Reply to ask again.', say: (text: string, end = false) => client.send(chat, { text, prompt: { kind: end ? 'failed' : 'note', to: prompt.to } }) }
+          : undefined;
     // Only the owner's, in their direct chat, signed lately, once (D-089, K-42, K-47).
-    if (!asked || message.security !== 'encrypted' || message.senderId !== client.owner || client.conversations.get(message.conversationId)?.type !== 'direct') return;
+    if (!asked || message.security !== 'encrypted' || message.senderId !== client.owner || client.conversations.get(chat)?.type !== 'direct') return;
     if (!client.remember(message.clientId ?? '', asked.sentAt) || Math.abs(Date.now() - asked.sentAt) > REQUEST_TTL_MS) return;
-    // A note leaves the run or turn going; an end says why nothing waits on it any more.
-    const say = (text: string, end = false) =>
-      'request' in asked
-        ? this.runs!.report({ message: asked.request, conversation: message.conversationId, card: '' }, { kind: end ? 'failed' : 'claimed', note: text }, text)
-        : client.send(message.conversationId, { text, prompt: { kind: end ? 'failed' : 'note', to: asked.to } });
+    const { say } = asked;
     const key = asked.repo.toLowerCase();
     const fail = (text: string) => (this.waiting.get(key)?.size ? this.settle(key, new Error(text)) : say(text, true));
-    if (this.folders.has(key)) return this.settle(key);
+    if (this.folderOf(key)) return this.settle(key);
     if (this.cloning.has(key)) return;
     if (!isRepoName(asked.repo) || !(await this.linked(key))) return fail(`None of your projects links ${asked.repo}, so I do not clone it.`);
     if (!(await signedIn())) return fail('Cloning needs GitHub on this laptop. In Claude Code there, type /webchat:connect, and it helps you sign in.');
@@ -373,7 +386,7 @@ export class Plugin {
       await fs.writeFile(mark, dir);
       await this.scan();
       if (this.waiting.get(key)?.size) this.settle(key);
-      else await say(`Cloned ${asked.repo} into ${shown(dir)}. ${'request' in asked ? 'Start the card again.' : 'Reply to ask again.'}`, true);
+      else await say(`Cloned ${asked.repo} into ${shown(dir)}. ${asked.again}`, true);
     } catch (error) {
       await fail(messageOf(error));
     } finally {
@@ -384,11 +397,8 @@ export class Plugin {
   /** Whether a project that holds both the owner and this agent links the repository, in lower case (D-050, D-108). */
   private async linked(repo: string) {
     const client = this.client!;
-    for (const project of client.projects.filter((p) => p.memberIds.includes(client.owner!))) {
-      const { repos } = await client.request<ProjectReposDTO>('GET', `/projects/${project.id}/repos`);
-      if (repos.some((r) => r.repo.toLowerCase() === repo)) return true;
-    }
-    return false;
+    const views = await Promise.all(client.projects.filter((p) => p.memberIds.includes(client.owner!)).map((p) => client.request<ProjectReposDTO>('GET', `/projects/${p.id}/repos`)));
+    return views.some((view) => view.repos.some((r) => r.repo.toLowerCase() === repo));
   }
 
   /** The owner's go for another round on a draft: after a review waits, or with their own words (D-105). */
@@ -594,7 +604,7 @@ export class Plugin {
         // A round waits while its card runs, and the cards beside it go on (R-037).
         if (this.runs.running.some((r) => r.docId === pull.request.docId && r.section === pull.request.section)) continue;
         // A draft whose folder is gone, or unsafe now, waits until it is back.
-        const folder = this.folders.get(pull.pull.repo.toLowerCase());
+        const folder = this.folderOf(pull.pull.repo);
         if (!folder || (await this.folderRefusal(folder))) continue;
         const view = JSON.parse(await gh(['pr', 'view', String(pull.pull.number), '--repo', pull.pull.repo, '--json', PULL_FIELDS])) as PullView;
         const ended = this.endOf(pull, view);
@@ -723,7 +733,7 @@ export class Plugin {
 
   /** A round of fixes: fetches here, since the shell reaches no GitHub, then resumes the run's Claude session. */
   private async fix(pull: Watched, why: { line: string; details: string }, signal: AbortSignal): Promise<RunResult> {
-    const folder = this.folders.get(pull.pull.repo.toLowerCase());
+    const folder = this.folderOf(pull.pull.repo);
     if (!folder) throw new Error(noCopy(pull.pull.repo));
     await fetchOrigin(folder.dir);
     // With hooks off: the branch the worktree checks out is the model's.
@@ -824,11 +834,14 @@ function fixBrief(pull: Watched, why: { line: string; details: string }) {
 /** Origin's address as a checkout configures it, or '' for none. */
 const originUrl = (dir: string) => exec('git', ['-C', dir, 'config', '--get', 'remote.origin.url']).then((r) => r.stdout.trim(), () => '');
 
-/** The GitHub repository a checkout pushes to, as "owner/name", from origin's address as configured. */
-export async function originOf(dir: string) {
-  const name = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(await originUrl(dir))?.[1];
+/** The GitHub repository an address names, as "owner/name", or null. */
+function repoOfUrl(url: string) {
+  const name = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(url)?.[1];
   return name && isRepoName(name) ? name : null;
 }
+
+/** The GitHub repository a checkout pushes to, from origin's address as configured. */
+export const originOf = async (dir: string) => repoOfUrl(await originUrl(dir));
 
 /** The mark that names a repository's folder on this laptop, which only the owner's connect or clone writes (D-101, D-108). */
 const markOf = (dataDir: string, repo: string) => path.join(repoHome(dataDir, repo), 'connected');

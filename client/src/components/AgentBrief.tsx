@@ -5,13 +5,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { textHash } from '../../../shared/e2ee';
 import { AGENT_LEVEL, briefText, isHeld } from '../../../shared/types';
-import { ownAgents, seatFor, seatKey, short, WAKE, type Seat } from '../agents';
+import { asleep, ownAgents, seatFor, seatKey, short, WAKE, type Seat } from '../agents';
 import { api } from '../api';
 import { boardDocs, parseCard, type Card } from '../board';
 import { requestRun } from '../chat';
 import { loadSections, type DocSection } from '../docs';
 import { actions, senderName, useAppState, type State } from '../store';
-import { formatSince } from './format';
 
 
 export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> }) {
@@ -56,16 +55,21 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
   const by = (authorId: number | undefined) => (authorId === undefined || authorId === meId ? null : senderName(users, authorId, 'Someone'));
   const others = [...new Set(held.map((d) => by(d.authorId)).filter((n): n is string => n !== null))];
   // The agent must be in the card's project to read it. It runs in a repository the project links, or one it has a folder for.
-  const inProject = ownAgents(users, meId)
-    .filter((agent) => projects[brief.projectId]?.memberIds.includes(agent.id))
-    .flatMap((agent) => [...new Set([...linked, ...agent.agentRepos.map((s) => s.repo.toLowerCase())])].flatMap((repo) => seatFor(agent, repo) ?? []));
+  const members = projects[brief.projectId]?.memberIds;
+  const inProject = useMemo(
+    () =>
+      ownAgents(users, meId)
+        .filter((agent) => members?.includes(agent.id))
+        .flatMap((agent) => [...new Set([...linked, ...agent.agentRepos.map((s) => s.repo.toLowerCase())])].flatMap((repo) => seatFor(agent, repo) ?? [])),
+    [users, meId, members, linked],
+  );
   const can = (s: Seat) => s.online && s.protocol >= AGENT_LEVEL.cards;
   const seat = inProject.find((s) => seatKey(s) === picked) ?? inProject.find(can) ?? inProject[0];
   const lock = doc?.locks.find((l) => l.section === brief.section && l.userId !== meId);
 
   let blocked = '';
   if (!seat) blocked = 'Your agent is not in this project. Add it under the project’s people, then start.';
-  else if (!seat.online) blocked = `Your agent is asleep${seat.lastSeen ? ` since ${formatSince(seat.lastSeen)}` : ''}. ${WAKE}`;
+  else if (!seat.online) blocked = `${asleep(seat)}. ${WAKE}`;
   else if (seat.protocol < AGENT_LEVEL.cards) blocked = `${short(seat.repo)} can’t take cards yet. In Claude Code on your laptop, type /webchat:connect: it says what is missing.`;
   else if (lock) blocked = `${senderName(users, lock.userId)} is editing this card. Start once they are done, so your agent gets all of it.`;
 

@@ -952,9 +952,9 @@ export async function openDb(sql: Sql) {
         await Promise.all([
           sql.query(
             `UPDATE webchat.users
-             SET last_active_at = $2, attentive_until = $3, attentive_tab = $4, attentive_endpoint = $5${laptop ? ', protocol = $6' : ''}
+             SET last_active_at = $2, attentive_until = $3, attentive_tab = $4, attentive_endpoint = $5, protocol = COALESCE($6::integer, protocol)
              WHERE id = $1`,
-            [userId, now, now + ATTENTION_TTL_MS, tabId, endpoint, ...(laptop ? [protocol] : [])],
+            [userId, now, now + ATTENTION_TTL_MS, tabId, endpoint, laptop ? protocol : null],
           ),
           ...repos.map((repo) =>
             sql.query(

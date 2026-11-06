@@ -3,6 +3,7 @@
 // prompt's client id, all in the user's direct chat with the agent.
 import { useMemo } from 'react';
 import { AGENT_LEVEL, type AgentRepoDTO, type RunDTO, type UserDTO } from '../../shared/types';
+import { formatSince } from './components/format';
 import type { Tone } from './components/PullTags';
 import type { ChatConversation, ChatMessage } from './e2ee/keyring';
 import { otherMemberId, useAppState, type State } from './store';
@@ -74,6 +75,8 @@ export function seatFor(agent: UserDTO, repo: string): Seat | undefined {
 
 /** What wakes the agent: one window serves every folder on the laptop (R-036). */
 export const WAKE = 'Keep one Claude Code window open on your laptop, and the laptop awake.';
+
+export const asleep = (seat: Seat) => `Your agent is asleep${seat.lastSeen ? ` since ${formatSince(seat.lastSeen)}` : ''}`;
 
 /** A repository by its name alone, as students know it: "capstone-app" for "team/capstone-app". */
 export const short = (repo: string) => repo.slice(repo.indexOf('/') + 1);
