@@ -1,12 +1,12 @@
 import { execFile, spawn } from "node:child_process";
 import { constants, existsSync, readFileSync, readlinkSync, realpathSync, unlinkSync } from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import crypto, { randomUUID } from "node:crypto";
-import os from "node:os";
 import { setTimeout as setTimeout$1 } from "node:timers/promises";
 // shared/types.ts
 /**
@@ -67,7 +67,9 @@ var LIMITS = {
 	/** A run report's note, and a run request's card title. */
 	runNoteLength: 1e3,
 	/** A branch name in a run report. */
-	branchLength: 200
+	branchLength: 200,
+	/** Repositories one laptop's check-in names (R-036). */
+	agentRepos: 50
 };
 /** A GitHub repository as "owner/name". */
 var isRepoName = (name) => name.length <= 200 && /^[\w.-]+\/[\w.-]+$/.test(name);
@@ -337,7 +339,8 @@ var REPORT_KINDS = [
 	"failed",
 	"fixing",
 	"review",
-	"ended"
+	"ended",
+	"nocopy"
 ];
 var short = (value, max) => typeof value === "string" && value.length <= max ? value : void 0;
 /** A run request or report, if it has the right shape. A pull request is named by repository and number only. */
@@ -377,6 +380,12 @@ function readRun(raw) {
 			...isId(raw.review) && { review: raw.review }
 		};
 	}
+	if (raw.kind === "clone") return isId(raw.request) && isId(raw.sentAt) && typeof raw.repo === "string" && isRepoName(raw.repo) ? {
+		kind: "clone",
+		request: raw.request,
+		repo: raw.repo,
+		sentAt: raw.sentAt
+	} : void 0;
 	const kind = REPORT_KINDS.find((k) => k === raw.kind);
 	if (!kind || !isId(raw.request)) return;
 	const run = {
@@ -397,11 +406,12 @@ function readRun(raw) {
 /** A conversation's message, if it has the right shape. */
 function readPrompt(raw) {
 	if (raw?.kind === "prompt") {
-		if (typeof raw.repo !== "string" || !isRepoName(raw.repo) || !isId(raw.sentAt)) return;
+		const repo = typeof raw.repo === "string" && isRepoName(raw.repo) ? raw.repo : void 0;
+		if (raw.repo !== void 0 && !repo || !repo && !isId(raw.project) || !isId(raw.sentAt)) return;
 		return {
 			kind: "prompt",
-			repo: raw.repo,
 			sentAt: raw.sentAt,
+			...repo && { repo },
 			...isId(raw.project) && { project: raw.project }
 		};
 	}
@@ -412,10 +422,16 @@ function readPrompt(raw) {
 		to,
 		sentAt: raw.sentAt
 	} : void 0;
-	if (raw.kind === "failed") return {
-		kind: "failed",
+	if (raw.kind === "failed" || raw.kind === "nocopy" || raw.kind === "note") return {
+		kind: raw.kind,
 		to
 	};
+	if (raw.kind === "clone") return typeof raw.repo === "string" && isRepoName(raw.repo) && isId(raw.sentAt) ? {
+		kind: "clone",
+		to,
+		repo: raw.repo,
+		sentAt: raw.sentAt
+	} : void 0;
 	if (raw.kind !== "answer") return;
 	const card = readDraft(raw.card);
 	return card ? {
@@ -487,6 +503,10 @@ function readContent(value) {
 		to,
 		draft,
 		card
+	};
+	if (typeof raw.forget?.repo === "string" && isRepoName(raw.forget.repo) && isId(raw.forget.sentAt)) content.forget = {
+		repo: raw.forget.repo,
+		sentAt: raw.forget.sentAt
 	};
 	return content;
 }
@@ -705,12 +725,14 @@ var Api = class {
 /** A request older than this when the daemon first sees it is not run: nobody is waiting for it. */
 var REQUEST_TTL_MS = 6e5;
 var messageOf = (error) => error instanceof Error ? error.message : String(error);
+/** A card is the board's doc and section, since two projects can each have a K-1 (D-099). */
+var cardOf = (run) => `${run.docId}/${run.section}`;
 var Runs = class {
 	client;
 	runner;
 	refuse;
-	/** The work in progress, one at a time: its request, the request's message, and how to stop it. */
-	current = null;
+	/** The work in progress, by card: its request, the request's message, and how to stop it (R-037). */
+	current = /* @__PURE__ */ new Map();
 	/** Requests their owner cancelled, by message id, so nothing more is done for them (R-030). */
 	cancelled = /* @__PURE__ */ new Set();
 	constructor(client, runner, refuse = async () => void 0) {
@@ -718,19 +740,19 @@ var Runs = class {
 		this.runner = runner;
 		this.refuse = refuse;
 	}
-	/** The request being run, while one is. */
+	/** The requests being run. */
 	get running() {
-		return this.current?.run ?? null;
+		return [...this.current.values()].map((c) => c.run);
 	}
 	/**
-	* Reports the run that the daemon was in when it stopped as failed, so its card does not stay
+	* Reports each run that the daemon was in when it stopped as failed, so its card does not stay
 	* claimed with nothing running (K-46). Called once at start, after the first check-in.
 	*/
 	async recover() {
-		const left = this.client.running;
-		if (!left) return;
-		await this.fail(left, "The daemon stopped during the run.");
-		await this.client.saveRunning(void 0);
+		for (const left of this.client.running) {
+			await this.fail(left, "The daemon stopped during the run.");
+			await this.client.saveRunning(this.client.running.filter((t) => t !== left));
+		}
 	}
 	/** Runs a request addressed to this account, or stops one its owner cancels, and reports. Anything else is ignored. */
 	async handle(message) {
@@ -739,11 +761,10 @@ var Runs = class {
 		if (run.kind === "cancel") {
 			if (message.senderId !== this.client.owner) return;
 			this.cancelled.add(run.request);
-			if (this.current?.message === run.request) this.current.stop.abort();
+			for (const c of this.current.values()) if (c.message === run.request) c.stop.abort();
 			return;
 		}
 		if (run.kind !== "request" || run.runtime !== this.client.id) return;
-		if (this.client.repo && run.repo !== this.client.repo) return;
 		if (!this.client.remember(message.clientId ?? "", run.sentAt ?? 0)) return;
 		const taken = {
 			message: message.id,
@@ -754,7 +775,7 @@ var Runs = class {
 		if (message.senderId !== this.client.owner) return failed(`Only ${this.client.users.get(this.client.owner)?.displayName ?? "my owner"} hands cards to me.`);
 		if (!run.sentAt || Math.abs(Date.now() - run.sentAt) > 6e5) return failed("I got this more than 10 minutes after you sent it. Open the card again and press Start.");
 		if (!run.hash) return failed("Reload WebChat, then open the card again and press Start.");
-		if (this.running) return failed(this.running.docId === run.docId && this.running.section === run.section ? `${run.card} is already running.` : `I am busy with ${this.running.card}.`);
+		if (this.current.has(cardOf(run))) return failed(`${run.card} is already running.`);
 		return this.execute(taken, run, async (signal) => {
 			const refused = await this.refuse(run);
 			if (refused) throw new Error(refused);
@@ -779,10 +800,10 @@ var Runs = class {
 	/**
 	* Another round on a request this account ran: fixing its pull request after CI failed, a
 	* conflict or a review (R-030). Reports fixing, then done or failed, as a run does. False when
-	* something runs already, so the caller tries again later.
+	* its card runs already, so the caller tries again later.
 	*/
 	async follow(taken, run, why, last, work) {
-		if (this.running) return false;
+		if (this.current.has(cardOf(run))) return false;
 		await this.execute(taken, run, async (signal) => {
 			await this.report(taken, {
 				kind: "fixing",
@@ -802,26 +823,25 @@ var Runs = class {
 	}
 	/**
 	* Does one piece of work and reports how it ended. Taken before the first wait, so a request
-	* from the same check-in finds the account busy. Kept in the file while it runs (K-46).
+	* from the same check-in finds its card running. Kept in the file while it runs (K-46).
 	*/
 	async execute(taken, run, work) {
 		const stop = new AbortController();
-		this.current = {
+		const card = cardOf(run);
+		this.current.set(card, {
 			run,
 			message: taken.message,
 			stop
-		};
-		this.client.busy = true;
+		});
 		try {
-			await this.client.saveRunning(taken);
+			await this.client.saveRunning([...this.client.running, taken]);
 			await this.done(taken, await work(stop.signal));
 		} catch (error) {
 			await this.fail(taken, messageOf(error));
 		} finally {
-			this.current = null;
-			this.client.busy = false;
+			this.current.delete(card);
 		}
-		await this.client.saveRunning(void 0);
+		await this.client.saveRunning(this.client.running.filter((t) => t.message !== taken.message));
 	}
 	done(taken, result) {
 		const where = `${result.branch}${result.pull ? ` (${result.pull.repo}#${result.pull.number})` : ""}`;
@@ -881,10 +901,8 @@ var AgentClient = class AgentClient {
 	floor;
 	/** People whose keys differ from the pinned ones. Nothing from them opens until someone checks. */
 	changedKeys = /* @__PURE__ */ new Set();
-	/** Said in every check-in while a card runs, so the board offers this account no other (R-027). */
-	busy = false;
-	/** Said in every check-in from a Claude Code session: the repository it is open in (R-030). */
-	repo = null;
+	/** Said in every check-in from the plugin: every repository its laptop has a folder for (R-036). */
+	repos = null;
 	/** Said in every check-in from the plugin: what its sessions can do (D-103). */
 	protocol = 0;
 	/** The file's last write, which the next one waits for. */
@@ -996,6 +1014,7 @@ var AgentClient = class AgentClient {
 	/** Opens the account an earlier sign-up or sign-in wrote. */
 	static async load(filePath) {
 		const file = JSON.parse(await fs.readFile(filePath, "utf8"));
+		if (file.running && !Array.isArray(file.running)) file.running = [file.running];
 		return new AgentClient(file, filePath, await importIdentity(file.secrets));
 	}
 	/**
@@ -1026,13 +1045,13 @@ var AgentClient = class AgentClient {
 		});
 		return this.written;
 	}
-	/** The request a daemon took and did not report on to the end, as the file keeps it. */
+	/** The requests a daemon took and did not report on to the end, as the file keeps them. */
 	get running() {
-		return this.file.running;
+		return this.file.running ?? [];
 	}
-	/** Keeps the request being run in the file, or clears it with none. */
-	async saveRunning(taken) {
-		this.file.running = taken;
+	/** Keeps the requests being run in the file. */
+	async saveRunning(running) {
+		this.file.running = running;
 		await this.save();
 	}
 	/**
@@ -1079,8 +1098,7 @@ var AgentClient = class AgentClient {
 				attentive: true,
 				tabId: this.tabId,
 				endpoint: null,
-				busy: this.busy,
-				repo: this.repo,
+				repos: this.repos ?? void 0,
 				protocol: this.protocol
 			};
 			const answer = await this.request("POST", "/sync", body);
@@ -1356,19 +1374,30 @@ var Conversations = class {
 	/** Acts on one message of a conversation. Anything else is ignored. Nothing waits before a turn is queued. */
 	async handle(message) {
 		const prompt = message.content?.prompt;
-		if (message.security !== "encrypted" || !prompt || prompt.kind === "answer" || prompt.kind === "failed") return;
+		if (message.security !== "encrypted" || !prompt || prompt.kind !== "prompt" && prompt.kind !== "reply" && prompt.kind !== "cancel") return;
 		if (message.senderId !== this.client.owner || this.client.conversations.get(message.conversationId)?.type !== "direct") return;
 		const text = message.content.text;
-		const conversation = prompt.kind === "prompt" ? prompt.repo === this.client.repo && message.clientId ? {
+		const conversation = prompt.kind === "prompt" ? message.clientId ? {
 			root: message.clientId,
 			chat: message.conversationId,
+			repo: prompt.repo,
 			session: randomUUID(),
 			answered: false,
 			prompt: text,
 			last: Date.now(),
 			project: prompt.project
 		} : void 0 : this.list.find((c) => c.root === prompt.to && c.chat === message.conversationId);
-		if (!conversation || !this.client.remember(message.clientId ?? "", prompt.sentAt)) return;
+		if (!this.client.remember(message.clientId ?? "", prompt.sentAt)) return;
+		if (!conversation) {
+			if (prompt.kind === "reply") await this.client.send(message.conversationId, {
+				text: "I no longer know this conversation. Start a new one.",
+				prompt: {
+					kind: "failed",
+					to: prompt.to
+				}
+			});
+			return;
+		}
 		if (Math.abs(Date.now() - prompt.sentAt) > 6e5) {
 			if (prompt.kind === "prompt") {
 				this.list.push(conversation);
@@ -1610,6 +1639,8 @@ var signedIn = () => gh([
 	"github.com"
 ]).then(() => true, () => false);
 var GITHUB = "Cards need GitHub on this laptop: the GitHub CLI signed in with `gh auth login`, and git using it after `gh auth setup-git`.";
+/** How long a run or a turn waits for its owner to have its repository cloned (R-036). */
+var CLONE_WAIT_MS = 18e5;
 /** Rounds of fixes one pull request gets. */
 var MAX_FIXES = 3;
 /** Check results that mean the code broke, not that someone stopped or held the check. */
@@ -1687,18 +1718,19 @@ var log = (error) => console.error(`webchat: ${messageOf(error)}`);
 var Plugin = class {
 	options;
 	client = null;
-	repo = null;
-	/** Why this session takes no runs, for the status tool. Empty while it takes them. */
+	/** Why this window serves nothing, for the status tool. Empty while it serves. */
 	problem = "Starting.";
 	runs = null;
 	conversations = null;
-	/** The folders the background Claude must never read, and origin's address as configured. */
+	/** The folders the background Claude must never read. */
 	secrets = [];
-	origin = "";
-	/** Ends the wait for the connected mark at once, when this session's own connect tool writes it. */
-	wake = () => {};
-	/** This repository's folder in the plugin's: its mark, its copy of the account, its lock, its Claude's settings and pull requests. */
-	home = "";
+	/** The laptop's folder in the plugin's: its copy of the account, its Claude's settings, its pull requests and conversations. */
+	home;
+	/** Every folder the laptop has, by repository in lower case, as GitHub ignores case (R-036). */
+	folders = /* @__PURE__ */ new Map();
+	/** The runs and turns that wait for a repository's clone, by repository in lower case, and the clones going. */
+	waiting = /* @__PURE__ */ new Map();
+	cloning = /* @__PURE__ */ new Set();
 	watched = [];
 	polling = false;
 	/** The owner's GitHub login, whose own reviews start a round on their own (D-105). */
@@ -1707,30 +1739,20 @@ var Plugin = class {
 	writers = /* @__PURE__ */ new Map();
 	constructor(options) {
 		this.options = options;
+		this.home = path.join(options.dataDir, "laptop");
 	}
 	file(name) {
 		return path.join(this.home, name);
 	}
 	/**
-	* Waits until the owner connected this repository, takes its watch, pairs when a new code was
-	* pasted, and loads the repository's copy of the account. False when this session takes no runs;
-	* `problem` says why.
+	* Takes the laptop's watch, pairs when a new code was pasted, and loads the laptop's copy of the
+	* account and the folders it has. False when this window serves nothing; `problem` says why.
 	*/
 	async start() {
 		const { dataDir, projectDir } = this.options;
-		this.repo = await originOf(projectDir);
-		if (!this.repo) {
-			this.problem = "This folder is no GitHub repository, so this session takes no runs.";
-			return false;
-		}
-		this.home = repoHome(dataDir, this.repo);
-		while (!existsSync(this.file("connected"))) {
-			this.problem = `${this.repo} is not connected to WebChat, so this session takes no runs. To take cards here, type /webchat:connect.`;
-			await new Promise((resolve) => {
-				this.wake = resolve;
-				setTimeout(resolve, 5e3).unref();
-			});
-		}
+		const here = await originOf(projectDir);
+		const mark = here && markOf(dataDir, here);
+		if (mark && await fs.readFile(mark, "utf8").catch(() => void 0) === "") await fs.writeFile(mark, projectDir);
 		this.problem = "Connecting to WebChat.";
 		const { server, code } = this.options.code ? readPairing(this.options.code, "") : {
 			server: "",
@@ -1742,8 +1764,12 @@ var Plugin = class {
 			this.problem = "Not paired. In WebChat, choose Connect coding agent, paste its code with /plugin configure webchat@webchat, then start a new session.";
 			return false;
 		}
-		while (!await takeLock(this.file("watch.lock"))) {
-			this.problem = `Another Claude Code session in ${this.repo} takes its runs. This one takes over when that one closes.`;
+		await fs.mkdir(dataDir, {
+			recursive: true,
+			mode: 448
+		});
+		while (!await takeLock(path.join(dataDir, "watch.lock"))) {
+			this.problem = "Another Claude Code window on this laptop serves your agent. This one takes over when that one closes.";
 			await setTimeout$1(6e4, void 0, { ref: false });
 		}
 		if (code && paired?.pairing !== await pairingId(code)) {
@@ -1753,10 +1779,9 @@ var Plugin = class {
 		let client = await AgentClient.load(this.file("account.json")).catch(() => null);
 		if (!client || client.pairing !== paired.pairing) client = await paired.copyTo(this.file("account.json"));
 		this.client = client;
-		client.repo = this.repo;
 		client.protocol = AGENT_LEVEL.answers;
 		this.secrets = secretDirs(dataDir);
-		const npmCache = path.join(os.tmpdir(), "webchat-npm", path.basename(this.home));
+		const npmCache = path.join(os.tmpdir(), "webchat-npm", "laptop");
 		await fs.mkdir(npmCache, { recursive: true });
 		await fs.writeFile(this.file("claude.json"), JSON.stringify(claudeSettings({
 			secrets: this.secrets,
@@ -1764,40 +1789,98 @@ var Plugin = class {
 			guard: this.options.guard,
 			env: process.env
 		})));
-		this.origin = await exec("git", [
-			"-C",
-			projectDir,
-			"config",
-			"--get",
-			"remote.origin.url"
-		]).then((r) => r.stdout.trim(), () => "");
-		this.runs = new Runs(client, (job) => this.run(job), () => this.cardRefusal());
+		this.runs = new Runs(client, (job) => this.run(job), (run) => this.cardRefusal(run));
 		this.conversations = new Conversations(client, this.file("conversations.json"), (job) => this.converse(job));
 		await this.conversations.load();
 		this.watched = JSON.parse(await fs.readFile(this.file("pulls.json"), "utf8").catch(() => "[]"));
+		const old = (await fs.readdir(path.join(dataDir, "repos")).catch(() => [])).map((name) => path.join(dataDir, "repos", name, "pulls.json"));
+		for (const file of old) this.watched.push(...JSON.parse(await fs.readFile(file, "utf8").catch(() => "[]")));
+		await this.saveWatched();
+		for (const file of old) await fs.rm(file, { force: true });
+		await this.scan();
 		this.problem = "";
 		return true;
 	}
-	/** Why this repository's questions, runs and fixes fail before they start, or undefined. */
+	/**
+	* Reads the marks: each folder the owner connected or had cloned, while it is still a checkout of
+	* its repository, which every check-in names (R-036). The server learns names, never a path.
+	*/
+	async scan() {
+		const { dataDir } = this.options;
+		const names = await fs.readdir(path.join(dataDir, "repos")).catch(() => []);
+		const found = await Promise.all(names.map(async (name) => {
+			const dir = await fs.readFile(path.join(dataDir, "repos", name, "connected"), "utf8").catch(() => "");
+			const origin = dir && await originUrl(dir);
+			const repo = repoOfUrl(origin);
+			return repo && path.basename(repoHome(dataDir, repo)).toLowerCase() === name.toLowerCase() ? {
+				repo,
+				dir,
+				origin
+			} : null;
+		}));
+		this.folders = new Map(found.flatMap((f) => f ? [[f.repo.toLowerCase(), f]] : []));
+		this.client.repos = [...this.folders.keys()];
+	}
+	/** The folder of a repository, whatever the case of its name: GitHub ignores it. */
+	folderOf(repo) {
+		return this.folders.get(repo.toLowerCase());
+	}
+	/** Why every question, run and fix fails before it starts, or undefined. */
 	async refusal() {
-		if (!existsSync(this.file("connected"))) return `${this.repo} is disconnected from WebChat.`;
 		if (process.platform === "win32") return "Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.";
 		if (!this.options.claude) return "I cannot find Claude Code on this laptop.";
-		if (/^https?:\/\/[^/]*@/i.test(this.origin)) return "Your repository’s address on this laptop holds a password, which I must not see. Ask Claude Code there to take the login out of the address of origin.";
-		return sandboxProblem(this.options.projectDir, this.secrets, restrictedSettings(this.file("claude.json")));
+	}
+	/** Why the work in one folder fails before it starts, or undefined (D-097). */
+	folderRefusal(folder) {
+		if (/^https?:\/\/[^/]*@/i.test(folder.origin)) return `The address of ${folder.repo} on this laptop holds a password, which I must not see. Ask Claude Code there to take the login out of the address of origin.`;
+		return sandboxProblem(folder.dir, this.secrets, restrictedSettings(this.file("claude.json")));
 	}
 	/** Why its runs fail before they start, which Runs asks before each claim: they also push and open drafts with this laptop's GitHub login (D-092). */
-	async cardRefusal() {
+	async cardRefusal(run) {
+		if (run && !run.repo) return "Reload WebChat, then open the card again and press Start.";
 		return await this.refusal() ?? (await signedIn() ? void 0 : "Cards need a GitHub sign-in on this laptop. In Claude Code there, type /webchat:connect, and it helps you sign in.");
+	}
+	/**
+	* The folder of a repository. When the laptop has none, says so with `offer`, which the owner
+	* answers by having it cloned, and waits for that: at most 30 minutes, or until a cancel (R-036).
+	*/
+	async folderFor(repo, signal, offer) {
+		if (!this.folderOf(repo)) {
+			await offer();
+			const key = repo.toLowerCase();
+			const stop = AbortSignal.any([signal, AbortSignal.timeout(CLONE_WAIT_MS)]);
+			await new Promise((resolve, reject) => {
+				const waiters = this.waiting.get(key) ?? /* @__PURE__ */ new Set();
+				const done = () => (waiters.delete(waiter), stop.removeEventListener("abort", aborted));
+				const waiter = {
+					resolve: () => (done(), resolve()),
+					reject: (error) => (done(), reject(error))
+				};
+				const aborted = () => waiter.reject(/* @__PURE__ */ new Error(signal.aborted ? "the owner cancelled the run." : `Nobody had me clone ${repo} within 30 minutes.`));
+				this.waiting.set(key, waiters.add(waiter));
+				stop.addEventListener("abort", aborted, { once: true });
+			});
+		}
+		const folder = this.folderOf(repo);
+		const refused = await this.folderRefusal(folder);
+		if (refused) throw new Error(refused);
+		return folder;
+	}
+	/** Lets the runs and turns that wait for a repository's folder go on, or fail with the error. */
+	settle(key, error) {
+		for (const waiter of [...this.waiting.get(key) ?? []]) error ? waiter.reject(error) : waiter.resolve();
+		this.waiting.delete(key);
 	}
 	/** Checks in every 15 seconds and looks at the pull requests every minute, until the session ends the process. */
 	async loop() {
 		const missed = await this.client.sync().catch((error) => (log(error), []));
+		await this.endStrandedDrafts().catch(log);
 		await this.runs.recover().catch(log);
 		await this.conversations.recover().catch(log);
 		missed.forEach((m) => this.handle(m));
 		const level = async () => this.client.protocol = await signedIn() ? AGENT_LEVEL.cards : AGENT_LEVEL.answers;
 		await level();
+		setInterval(() => void this.scan().catch(log), SYNC_INTERVAL_MS);
 		setInterval(() => {
 			level().then(() => this.pollPulls()).catch(log);
 			this.conversations.sweep().catch(log);
@@ -1806,9 +1889,105 @@ var Plugin = class {
 	}
 	/** Acts on one message. A turn takes long, so the loop does not wait for it: check-ins go on meanwhile. */
 	handle(message) {
-		const run = message.content?.run;
+		const { run, prompt } = message.content ?? {};
 		if (run?.kind === "fix") return this.go(message, run).catch(log);
-		return (message.content?.prompt ? this.conversations : this.runs).handle(message).catch(log);
+		if (run?.kind === "clone" || prompt?.kind === "clone") return this.clone(message).catch(log);
+		if (message.content?.forget) return this.forget(message).catch(log);
+		return (prompt ? this.conversations : this.runs).handle(message).catch(log);
+	}
+	/**
+	* Clones a repository the laptop has no folder for, on its owner's signed request, then lets the
+	* runs and turns that wait for it go on (R-036, D-108). Only one that a project of the owner's
+	* links, only into the clone root, and with the owner's `gh` login: the background Claude never
+	* reaches GitHub. Notes go where the owner pressed the button.
+	*/
+	async clone(message) {
+		const client = this.client;
+		const { run, prompt } = message.content;
+		const chat = message.conversationId;
+		const asked = run?.kind === "clone" ? {
+			...run,
+			again: "Start the card again.",
+			say: (text, end = false) => this.runs.report({
+				message: run.request,
+				conversation: chat,
+				card: ""
+			}, {
+				kind: end ? "failed" : "claimed",
+				note: text
+			}, text)
+		} : prompt?.kind === "clone" ? {
+			...prompt,
+			again: "Reply to ask again.",
+			say: (text, end = false) => client.send(chat, {
+				text,
+				prompt: {
+					kind: end ? "failed" : "note",
+					to: prompt.to
+				}
+			})
+		} : void 0;
+		if (!asked || !this.fromOwner(message, asked.sentAt)) return;
+		const { say } = asked;
+		const key = asked.repo.toLowerCase();
+		const fail = (text) => this.waiting.get(key)?.size ? this.settle(key, new Error(text)) : say(text, true);
+		if (this.folderOf(key)) return this.settle(key);
+		if (this.cloning.has(key)) return;
+		if (!isRepoName(asked.repo) || !await this.linked(key)) return fail(`None of your projects links ${asked.repo}, so I do not clone it.`);
+		if (!await signedIn()) return fail("Cloning needs GitHub on this laptop. In Claude Code there, type /webchat:connect, and it helps you sign in.");
+		const [owner, name] = asked.repo.split("/");
+		const dir = path.join(this.options.cloneRoot, owner, name);
+		this.cloning.add(key);
+		try {
+			if (existsSync(dir)) {
+				if ((await originOf(dir))?.toLowerCase() !== key) return await fail(`${shown(dir)} holds something else. Move it away, then ask again.`);
+			} else {
+				await say(`Cloning ${asked.repo} into ${shown(dir)}. This can take a while.`);
+				await fs.mkdir(path.dirname(dir), { recursive: true });
+				await gh([
+					"repo",
+					"clone",
+					asked.repo,
+					dir,
+					"--",
+					"--filter=blob:none"
+				]).catch((error) => {
+					throw new Error(`I could not clone ${asked.repo}: ${messageOf(error).split("\n").find((l) => l.trim()) ?? "gh failed"}`);
+				});
+			}
+			const mark = markOf(this.options.dataDir, asked.repo);
+			await fs.mkdir(path.dirname(mark), {
+				recursive: true,
+				mode: 448
+			});
+			await fs.writeFile(mark, dir);
+			await this.scan();
+			if (this.waiting.get(key)?.size) this.settle(key);
+			else await say(`Cloned ${asked.repo} into ${shown(dir)}. ${asked.again}`, true);
+		} catch (error) {
+			await fail(messageOf(error));
+		} finally {
+			this.cloning.delete(key);
+		}
+	}
+	/** Whether a message is its owner's, in their direct chat, signed lately, and new (D-089, K-42, K-47). */
+	fromOwner(message, sentAt) {
+		const client = this.client;
+		if (message.security !== "encrypted" || message.senderId !== client.owner || client.conversations.get(message.conversationId)?.type !== "direct") return false;
+		return client.remember(message.clientId ?? "", sentAt) && Math.abs(Date.now() - sentAt) <= 6e5;
+	}
+	/** Forgets a folder on its owner's word in the pane: its mark goes, never its files (R-038, D-101). */
+	async forget(message) {
+		const { forget } = message.content;
+		const folder = forget && this.folderOf(forget.repo);
+		if (!folder || !this.fromOwner(message, forget.sentAt)) return;
+		await fs.rm(markOf(this.options.dataDir, folder.repo), { force: true });
+		await this.scan();
+	}
+	/** Whether a project that holds both the owner and this agent links the repository, in lower case (D-050, D-108). */
+	async linked(repo) {
+		const client = this.client;
+		return (await Promise.all(client.projects.filter((p) => p.memberIds.includes(client.owner)).map((p) => client.request("GET", `/projects/${p.id}/repos`)))).some((view) => view.repos.some((r) => r.repo.toLowerCase() === repo));
 	}
 	/** The owner's go for another round on a draft: after a review waits, or with their own words (D-105). */
 	async go(message, fix) {
@@ -1830,10 +2009,14 @@ var Plugin = class {
 		await this.saveWatched();
 		await this.pollPulls();
 	}
-	/** A run, as Runs hands it over: a worktree inside the checkout, a turn of the background Claude there, then the draft. */
+	/** A run, as Runs hands it over: a worktree inside the repository's folder, a turn of the background Claude there, then the draft. */
 	async run({ request, taken, card, decisions, signal }) {
-		const { projectDir } = this.options;
-		const { branch, dir, base } = await addWorktree(projectDir, request, path.join(projectDir, ".claude", "worktrees"));
+		const text = noCopy(request.repo);
+		const folder = await this.folderFor(request.repo, signal, () => this.runs.report(taken, {
+			kind: "nocopy",
+			note: text
+		}, text));
+		const { branch, dir, base } = await addWorktree(folder.dir, request, path.join(folder.dir, ".claude", "worktrees"));
 		const place = {
 			branch,
 			worktree: dir,
@@ -1842,7 +2025,7 @@ var Plugin = class {
 		const session = randomUUID();
 		const answer = await this.work(place, session, false, runBrief(request.card, place, card, decisions), signal);
 		const head = await this.push(place);
-		const pull = await this.openDraft(place, answer, `${request.card}: ${request.title}`);
+		const pull = await this.openDraft(place, answer, `${request.card}: ${request.title}`, folder.repo);
 		this.watched.push({
 			...place,
 			taken,
@@ -1892,38 +2075,50 @@ var Plugin = class {
 	async converse({ conversation, input, resume, signal }) {
 		const refused = await this.refusal();
 		if (refused) throw new Error(refused);
+		const { repo } = conversation;
+		const folder = repo ? await this.folderFor(repo, signal, () => this.client.send(conversation.chat, {
+			text: noCopy(repo),
+			prompt: {
+				kind: "nocopy",
+				to: conversation.root
+			}
+		})) : void 0;
+		const board = await this.roadmap(conversation.project, !folder && !resume);
+		if (!folder && !board) throw new Error("I am not in that project, so I cannot read its board. Add me to it, then ask again.");
 		if (!conversation.scratch || !await fs.lstat(conversation.scratch).then((s) => s.isDirectory(), () => false)) {
 			const dir = path.join(os.tmpdir(), "webchat-scratch", randomUUID());
-			const base = await fetchOrigin(this.options.projectDir).catch(() => {
-				throw new Error("The laptop could not get your team’s code from GitHub. Check that it is online, then ask again.");
-			});
-			await exec("git", [
-				"init",
-				"-q",
-				dir
-			]);
-			await exec("git", [
-				"-C",
-				dir,
-				"fetch",
-				"-q",
-				"--depth",
-				"1",
-				this.options.projectDir,
-				`refs/remotes/${base}`
-			]);
-			await exec("git", [
-				"-C",
-				dir,
-				...NO_HOOKS,
-				"checkout",
-				"-q",
-				"--detach",
-				"FETCH_HEAD"
-			]);
+			await fs.mkdir(dir, { recursive: true });
+			if (folder) {
+				const base = await fetchOrigin(folder.dir).catch(() => {
+					throw new Error("The laptop could not get your team’s code from GitHub. Check that it is online, then ask again.");
+				});
+				await exec("git", [
+					"init",
+					"-q",
+					dir
+				]);
+				await exec("git", [
+					"-C",
+					dir,
+					"fetch",
+					"-q",
+					"--depth",
+					"1",
+					folder.dir,
+					`refs/remotes/${base}`
+				]);
+				await exec("git", [
+					"-C",
+					dir,
+					...NO_HOOKS,
+					"checkout",
+					"-q",
+					"--detach",
+					"FETCH_HEAD"
+				]);
+			}
 			conversation.scratch = dir;
 		}
-		const board = await this.roadmap(conversation.project);
 		const cards = (board?.cards ?? []).map((c) => ({
 			...c,
 			id: CARD_ID.exec(c.text)?.[1] ?? ""
@@ -1934,7 +2129,7 @@ var Plugin = class {
 			hash: await textHash(c.text)
 		}])));
 		const changed = cards.filter((c) => conversation.seen?.[c.id]?.hash !== seen[c.id].hash).map((c) => c.text);
-		const message = resume ? [`Your owner replies:\n\n${input}`, ...changed.length ? ["", fence("Cards that changed on the board since", changed)] : []].join("\n") : promptBrief(this.repo, input, board);
+		const message = resume ? [`Your owner replies:\n\n${input}`, ...changed.length ? ["", fence("Cards that changed on the board since", changed)] : []].join("\n") : promptBrief(input, board, folder?.repo);
 		const answer = await this.ask(conversation.scratch, conversation.session, resume, message, REPLY, signal);
 		conversation.seen = seen;
 		return {
@@ -1945,21 +2140,24 @@ var Plugin = class {
 	/**
 	* The roadmap cards of the one project its owner's page picked for the prompt, for drafts grounded
 	* in them (D-104). Never every project: anyone can add the agent to theirs, and their cards would
-	* then speak in the owner's brief. A board that does not open is left out, not a failed turn.
+	* then speak in the owner's brief. A board that does not open is left out, not a failed turn. With
+	* no code to read, the decisions the team holds come too (R-038).
 	*/
-	async roadmap(projectId) {
+	async roadmap(projectId, withDecisions = false) {
 		const client = this.client;
 		const project = client.projects.find((p) => p.id === projectId && p.memberIds.includes(client.owner));
 		if (!project) return void 0;
-		const { roadmap } = await client.boardDocs(project.id).catch(() => ({ roadmap: void 0 }));
-		const sections = roadmap ? await client.sections(roadmap).catch(() => []) : [];
+		const { roadmap, decisions } = await client.boardDocs(project.id).catch(() => ({}));
+		const read = async (doc) => doc ? client.sections(doc).catch(() => []) : [];
+		const [sections, held] = await Promise.all([read(roadmap), withDecisions ? read(decisions) : []]);
 		return {
 			project: project.name,
 			cards: sections.map((s) => ({
 				text: s.text.trim(),
 				doc: roadmap.id,
 				section: s.id
-			}))
+			})),
+			decisions: heldDecisions(held.map((s) => s.text))
 		};
 	}
 	/** Pushes the worktree's branch, never forced, and returns the commit it pushed. */
@@ -1976,16 +2174,15 @@ var Plugin = class {
 		return git("rev-parse", "HEAD");
 	}
 	/** Opens the run's draft pull request, with the title and body the answer gave. */
-	async openDraft(place, answer, title) {
-		const base = place.base.replace(/^origin\//, "");
+	async openDraft(place, answer, title, repo) {
 		const opened = await gh([
 			"pr",
 			"create",
 			"--draft",
 			"--repo",
-			this.repo,
+			repo,
 			"--base",
-			base,
+			place.base.replace(/^origin\//, ""),
 			"--head",
 			place.branch,
 			"--title",
@@ -1996,7 +2193,7 @@ var Plugin = class {
 		const number = Number(/\/pull\/(\d+)/.exec(opened)?.[1]);
 		if (!number) throw new Error(`gh opened no pull request: ${opened}`);
 		return {
-			repo: this.repo,
+			repo,
 			number
 		};
 	}
@@ -2009,34 +2206,56 @@ var Plugin = class {
 			default: throw new Error(`There is no tool ${name}.`);
 		}
 	}
-	/** Marks the repository connected. Every session open in it sees the mark (D-101). */
+	/**
+	* Marks the window's folder as its repository's, so the agent works in a checkout the owner has
+	* already, rather than cloning one (D-101). The window that serves the laptop reads it.
+	*/
 	async connect() {
-		if (!this.repo) throw new Error(this.problem);
-		await fs.mkdir(this.home, {
+		const github = await signedIn() ? "" : ` ${GITHUB}`;
+		const repo = await originOf(this.options.projectDir);
+		if (!repo) return `This folder is no GitHub repository, so there is nothing to connect here. Your agent works in every folder it knows, and offers to clone the others when you ask it in WebChat.${github}`;
+		const mark = markOf(this.options.dataDir, repo);
+		await fs.mkdir(path.dirname(mark), {
 			recursive: true,
 			mode: 448
 		});
-		await fs.writeFile(this.file("connected"), "");
-		this.wake();
+		await fs.writeFile(mark, this.options.projectDir);
+		if (this.client) await this.scan();
 		const paired = existsSync(path.join(this.options.dataDir, "account.json"));
 		let next = paired ? " Ask your agent about it in WebChat, or hand it cards on the board." : " Now approve the agent in WebChat, in the window that shows the code.";
 		if (!paired && !this.options.code) next = " To pair the agent, choose Connect coding agent in WebChat, then type /plugin configure webchat@webchat here and paste the code.";
-		return `Connected ${this.repo}.${next}${await signedIn() ? "" : ` ${GITHUB}`}`;
+		return `Connected ${repo}: your agent works in this folder.${next}${github}`;
 	}
+	/** Removes the folder's mark, never its files. */
 	async disconnect() {
-		if (!this.repo) throw new Error(this.problem);
-		await fs.rm(this.file("connected"), { force: true });
-		return `Disconnected ${this.repo}. It takes no more runs or fixes, and the play menu shows it asleep once its sessions close.`;
+		const repo = await originOf(this.options.projectDir);
+		if (!repo) throw new Error("This folder is no GitHub repository, so it was never connected.");
+		await fs.rm(markOf(this.options.dataDir, repo), { force: true });
+		if (this.client) await this.scan();
+		return `Disconnected ${repo}. Your agent no longer works in this folder, and its files stay.`;
 	}
 	async status() {
 		if (this.problem) return this.problem;
 		const owner = this.client.users.get(this.client.owner)?.displayName;
 		const sandbox = await this.cardRefusal();
+		const folders = [...this.folders.values()].map((f) => `${f.repo} in ${shown(f.dir)}`);
 		return [
-			sandbox ? `Every card fails at once: ${sandbox}` : `Taking the cards that ${owner ?? "your owner"} hands to this agent in ${this.repo}, on ${this.client.api.baseUrl}.`,
-			...this.runs.running ? [`Working on ${this.runs.running.card}.`] : [],
+			sandbox ? `Every card fails at once: ${sandbox}` : `Taking the cards that ${owner ?? "your owner"} hands to this agent, on ${this.client.api.baseUrl}.`,
+			folders.length ? `Working in ${folders.join(", ")}.` : "No folders yet: your agent offers to clone a repository when you ask it about one.",
+			...this.runs.running.length ? [`Working on ${this.runs.running.map((r) => r.card).join(", ")}.`] : [],
 			`Watching ${this.watched.length} draft pull requests.`
 		].join("\n");
+	}
+	/**
+	* Stops watching each draft whose request is not in the owner's direct chat with this agent, as
+	* every draft from before D-105 is. The pane builds a card's thread only from that chat, so it
+	* would show neither a review that waits for the owner's go nor the button that sends it (K-58).
+	*/
+	async endStrandedDrafts() {
+		for (const pull of [...this.watched]) {
+			const chat = this.client.conversations.get(pull.taken.conversation);
+			if (chat && chat.type !== "direct") await this.end(pull, "its request is not in your direct chat with me, so the pane cannot show you its reviews");
+		}
 	}
 	/**
 	* Looks at each pull request this server opened. When CI failed on its last push, it conflicts, or
@@ -2049,7 +2268,9 @@ var Plugin = class {
 		this.polling = true;
 		try {
 			for (const pull of [...this.watched]) {
-				if (this.runs.running) return;
+				if (this.runs.running.some((r) => r.docId === pull.request.docId && r.section === pull.request.section)) continue;
+				const folder = this.folderOf(pull.pull.repo);
+				if (!folder || await this.folderRefusal(folder)) continue;
 				const view = JSON.parse(await gh([
 					"pr",
 					"view",
@@ -2061,12 +2282,7 @@ var Plugin = class {
 				]));
 				const ended = this.endOf(pull, view);
 				if (ended) {
-					await this.unwatch(pull);
-					await this.runs.report(pull.taken, {
-						kind: "ended",
-						note: ended,
-						pull: pull.pull
-					}, `I stopped watching ${pull.pull.repo}#${pull.pull.number}: ${ended}.`);
+					await this.end(pull, ended);
 					continue;
 				}
 				if (pull.go) {
@@ -2109,6 +2325,15 @@ var Plugin = class {
 		if (view.state === "MERGED") return "it was merged";
 		if (view.state !== "OPEN") return "it was closed";
 		return view.headRefOid !== pull.head ? "someone else pushed to it" : "";
+	}
+	/** Stops watching a pull request and says why in the chat of its request (D-105). */
+	async end(pull, why) {
+		await this.unwatch(pull);
+		await this.runs.report(pull.taken, {
+			kind: "ended",
+			note: why,
+			pull: pull.pull
+		}, `I stopped watching ${pull.pull.repo}#${pull.pull.number}: ${why}.`);
 	}
 	/** What is new to fix: CI that failed on the head, a conflict, or review notes from people who may push. */
 	async whatToFix(pull, view) {
@@ -2215,11 +2440,12 @@ var Plugin = class {
 	}
 	/** A round of fixes: fetches here, since the shell reaches no GitHub, then resumes the run's Claude session. */
 	async fix(pull, why, signal) {
-		const { projectDir } = this.options;
-		await fetchOrigin(projectDir);
+		const folder = this.folderOf(pull.pull.repo);
+		if (!folder) throw new Error(noCopy(pull.pull.repo));
+		await fetchOrigin(folder.dir);
 		if (!existsSync(pull.worktree)) await exec("git", [
 			"-C",
-			projectDir,
+			folder.dir,
 			...NO_HOOKS,
 			"worktree",
 			"add",
@@ -2289,15 +2515,19 @@ function fence(title, cards) {
 		`${mark} TEAMMATES' CARDS END ${mark}`
 	].join("\n");
 }
-function promptBrief(repo, input, board) {
+/** A conversation's first brief: about a repository's code, or with none, about its project's board alone (R-038). */
+function promptBrief(input, board, repo) {
 	return [
-		`Your owner asks you this through WebChat, about ${repo}. You are in a scratch copy of its default`,
-		"branch, with only its latest commit: nothing you change here is kept or pushed. Your shell reaches",
-		"only the npm registry, and you can search the web and read pages. Put your answer, in Markdown, in reply.",
-		"Only when your owner asks you to draft a card for the board, or a change to one, also fill in card,",
-		"grounded in the code: they add it to the board themselves.",
+		...repo ? [
+			`Your owner asks you this through WebChat, about ${repo}. You are in a scratch copy of its default`,
+			"branch, with only its latest commit: nothing you change here is kept or pushed. Your shell reaches",
+			"only the npm registry, and you can search the web and read pages."
+		] : [`Your owner asks you this through WebChat, about their project ${board.project}. It links no code, so you`, "are in an empty folder: answer from its board below, and search the web and read pages where it helps."],
+		"Put your answer, in Markdown, in reply. Only when your owner asks you to draft a card for the board, or a",
+		"change to one, also fill in card, grounded in what you read: they add it to the board themselves.",
 		"",
 		input,
+		...board?.decisions.length ? ["", fence(`The decisions of ${board.project}`, board.decisions)] : [],
 		...board?.cards.length ? ["", fence(`The roadmap cards of ${board.project}`, board.cards.map((c) => c.text))] : []
 	].join("\n");
 }
@@ -2336,18 +2566,27 @@ function fixBrief(pull, why) {
 		why.details
 	].join("\n");
 }
-/** The GitHub repository a checkout pushes to, as "owner/name", from origin's address as configured. */
-async function originOf(dir) {
-	const url = await exec("git", [
-		"-C",
-		dir,
-		"config",
-		"--get",
-		"remote.origin.url"
-	]).then((r) => r.stdout.trim(), () => "");
+/** Origin's address as a checkout configures it, or '' for none. */
+var originUrl = (dir) => exec("git", [
+	"-C",
+	dir,
+	"config",
+	"--get",
+	"remote.origin.url"
+]).then((r) => r.stdout.trim(), () => "");
+/** The GitHub repository an address names, as "owner/name", or null. */
+function repoOfUrl(url) {
 	const name = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(url)?.[1];
 	return name && isRepoName(name) ? name : null;
 }
+/** The GitHub repository a checkout pushes to, from origin's address as configured. */
+var originOf = async (dir) => repoOfUrl(await originUrl(dir));
+/** The mark that names a repository's folder on this laptop, which only the owner's connect or clone writes (D-101, D-108). */
+var markOf = (dataDir, repo) => path.join(repoHome(dataDir, repo), "connected");
+/** What the agent says when the laptop has no folder of a repository (R-036). */
+var noCopy = (repo) => `I have no copy of ${repo} on this laptop.`;
+/** A folder as the owner reads it, with their home as ~. */
+var shown = (dir) => dir.startsWith(os.homedir() + path.sep) ? `~${dir.slice(os.homedir().length)}` : dir;
 var alive = (pid) => {
 	try {
 		process.kill(pid, 0);
@@ -2491,18 +2730,18 @@ async function claudeProgram() {
 var TOOLS = [
 	{
 		name: "status",
-		description: "Says whether the repository this session is open in is connected to WebChat and takes runs, and what stops it if not.",
+		description: "Says whether this window serves the WebChat agent, which folders it works in, and what stops it if not.",
 		inputSchema: none
 	},
 	{
 		name: "connect",
-		description: "Connects the repository this session is open in to WebChat, so the cards its owner hands to the agent for it run here. Only when the user asks for it.",
+		description: "Lets the WebChat agent work in the repository this session is open in, a copy the owner already has, instead of cloning its own. Only when the user asks for it.",
 		inputSchema: none,
 		_meta: { "anthropic/requiresUserInteraction": true }
 	},
 	{
 		name: "disconnect",
-		description: "Disconnects the repository this session is open in from WebChat, so it takes no more runs.",
+		description: "Stops the WebChat agent working in the repository this session is open in. Its files stay.",
 		inputSchema: none
 	}
 ];
@@ -2512,6 +2751,7 @@ async function serve() {
 		code: process.env.WEBCHAT_PAIRING_CODE ?? "",
 		dataDir,
 		projectDir: process.env.CLAUDE_PROJECT_DIR ?? process.cwd(),
+		cloneRoot: path.join(os.homedir(), "WebChat"),
 		claude: await claudeProgram(),
 		guard: `"${process.execPath}" "${fileURLToPath(import.meta.url)}" guard "${dataDir}"`
 	});

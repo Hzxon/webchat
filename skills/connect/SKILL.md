@@ -1,10 +1,13 @@
 ---
 name: connect
-description: Connects the repository this session is open in to WebChat, so its owner can ask the agent about it and hand it cards.
+description: Lets the WebChat agent work in the repository this session is open in, a copy the user already has, instead of cloning its own. Also says when cards need GitHub on this laptop.
 disable-model-invocation: true
 ---
 
 # Connecting a repository to WebChat
+
+The agent works without this: one open Claude Code window serves every folder it knows, and it
+offers to clone the others from WebChat. Connecting points it at a copy the user already has.
 
 1. Call the webchat `connect` tool once. Claude Code asks the user to approve it.
 2. Tell the user what it answered, in plain words. The user may not be a programmer.
