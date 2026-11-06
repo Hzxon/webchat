@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.0](https://github.com/Hzxon/webchat/compare/v0.4.0...v0.5.0) (2026-11-06)
+
+
+### Features
+
+* **agent:** Add a sandboxed background Claude ([#114](https://github.com/Hzxon/webchat/issues/114)) ([395d0ed](https://github.com/Hzxon/webchat/commit/395d0ed7820eafa72008f664999a8bf0b3201750))
+* **agent:** Answer prompts in the owner's chat ([#119](https://github.com/Hzxon/webchat/issues/119)) ([e47757d](https://github.com/Hzxon/webchat/commit/e47757df7522f062ec27075441eec527f8dfd27e))
+* **agent:** Draft board cards from the pane ([#121](https://github.com/Hzxon/webchat/issues/121)) ([b76efec](https://github.com/Hzxon/webchat/commit/b76efecbb9bf11aa3796e8818e31d00e43f2dc12))
+* **agent:** Run board cards from the pane ([#122](https://github.com/Hzxon/webchat/issues/122)) ([06dad3e](https://github.com/Hzxon/webchat/commit/06dad3e89d9f3d1a035957f02a1e1ab48fe81300))
+* **agent:** Run cards in a background Claude ([#117](https://github.com/Hzxon/webchat/issues/117)) ([3cc8be1](https://github.com/Hzxon/webchat/commit/3cc8be1edf05d6318fa1c0ddf56d9ac3de485f3f))
+* **client:** Add the Coding agents pane ([#120](https://github.com/Hzxon/webchat/issues/120)) ([d944faa](https://github.com/Hzxon/webchat/commit/d944faaaf709ec2fdff852912d86649f07bbd8ba))
+* **projects:** Let the owner delete a channel ([#110](https://github.com/Hzxon/webchat/issues/110)) ([963e270](https://github.com/Hzxon/webchat/commit/963e270bd0e1ca90e2eb01d8898472cee4547bf6))
+
+
+### Bug Fixes
+
+* **agent:** Check in only from WebChat sessions ([#113](https://github.com/Hzxon/webchat/issues/113)) ([80235aa](https://github.com/Hzxon/webchat/commit/80235aa63e2cff595534f6055eb91ad92902d72e))
+* **agent:** Keep a card's model from the secrets ([#118](https://github.com/Hzxon/webchat/issues/118)) ([d89209f](https://github.com/Hzxon/webchat/commit/d89209fda6c437983c2feb0f64e8377fd6ae7837))
+* **agent:** Refuse a second run of a running card ([#115](https://github.com/Hzxon/webchat/issues/115)) ([1a36ad5](https://github.com/Hzxon/webchat/commit/1a36ad53b8497dffa2a500472cfc9bad350f210b))
+* **agent:** Run cards only where a monitor listens ([#108](https://github.com/Hzxon/webchat/issues/108)) ([4b03832](https://github.com/Hzxon/webchat/commit/4b0383273caffe5f993c7e1958aaa7e441ddbff7))
+* **board:** Show run state and stop repeat runs ([#116](https://github.com/Hzxon/webchat/issues/116)) ([406dda0](https://github.com/Hzxon/webchat/commit/406dda0ed46fb5df846bc3e10d0069027f5fcfd2))
+
 ## [0.4.0](https://github.com/Hzxon/webchat/compare/v0.3.0...v0.4.0) (2026-11-05)
 
 
