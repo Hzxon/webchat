@@ -16,6 +16,8 @@ Each line is a constraint the code cannot state on its own. The number names the
 docs/decisions.md that explains it. The process itself is in AGENTS.md.
 
 - `scripts/claim.sh` takes the decision number as a third argument and refuses one an open pull request reserves (D-076).
+- Before a claim, check that the item is still open on main, that no decision since settles it, and that no other entry or pull request covers it; `scripts/claim.sh -c` records the check and refuses a finished item (D-107).
+- An item that no longer holds gets a small pull request that sets its status in place, never a claim (D-107).
 - A pull request that finishes a roadmap item edits only that item's status line, in place; a housekeeping pull request deletes the entry and adds its Done row (D-076).
 - New decision entries go at the end of their topic section; `.gitattributes` merges `docs/decisions.md` with the union driver, so entries are never deleted (D-076).
 - Never use the union driver for `docs/roadmap.md`, where entries move (D-076).

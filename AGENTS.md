@@ -31,7 +31,7 @@ Node host with an embedded PGlite database. The [README](README.md) explains it 
 | `npm run build` | Typechecks, then builds the client, the service worker, the Claude Code plugin and the server. |
 | `npm start` | Runs the built app in one Node process. |
 | `npm run agent -- pair\|watch …` | The agent daemon's command line (R-027, D-085, D-093). |
-| `scripts/claim.sh K-12 "<title>" [D-077]` | Claims a roadmap item and, given one, reserves a decision number. |
+| `scripts/claim.sh -c "<checked>" K-12 "<title>" [D-077]` | Claims a roadmap item after the check that it still holds and, given one, reserves a decision number. |
 
 The server log prints the invite code. Set `INVITE_CODE` to choose one. To test with two accounts in
 one browser, open the app on two hosts, such as `alice.localhost` and `bob.localhost`. Each host
@@ -68,11 +68,18 @@ each rule explains why it exists.
 Several agents work on this repository at the same time, each in its own session, and each picks
 its own roadmap item. Nothing coordinates them except what is on GitHub (D-062).
 
-1. **Claim before you read code.** Fetch main and cut a branch from it whose name carries the item,
-   such as `claude/k12-bad-push-keys`. Run `scripts/claim.sh K-12 "<pull request title>"`, with
-   the next free decision number as a third argument if the change will make a decision. It
-   refuses what an open pull request already names, then pushes an empty commit and opens a draft
-   pull request. If it refuses, pick another item or number. Work that is not a roadmap item, such
+1. **Check that the item still holds, then claim it before you read code.** An entry can go
+   stale: the fix may already be on main, a decision since may settle or forbid it, another entry
+   or an open pull request may cover the same change, or it may depend on an item that was
+   dropped. So read the entry, grep `docs/decisions.md` and the roadmap for its id and for the
+   modules it names, and look at main and the open pull requests (D-107). An item that no longer
+   holds is not claimed: open a small pull request that sets its status to Dropped or Done, in
+   place, with the reason. Otherwise fetch main, cut a branch whose name carries the item, such as
+   `claude/k12-bad-push-keys`, and run `scripts/claim.sh -c "<what you checked>" K-12 "<pull
+   request title>"`, with the next free decision number as a third argument if the change will
+   make a decision. It refuses an item that is finished or that an open pull request already
+   names, prints what names the item, then pushes an empty commit and opens a draft pull request
+   that records the check. If it refuses, pick another item or number. Work that is not a roadmap item, such
    as a process change, claims the same way by hand: a draft first, with a title and body that say
    what it covers.
 2. **Work on that branch** and push to the same pull request. Do not merge or rebase on main to stay
