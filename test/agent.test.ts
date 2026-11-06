@@ -680,6 +680,20 @@ describe('agent client (R-027)', () => {
         assert.deepEqual(await branches(), before, 'nothing of the conversation was pushed');
         assert.equal(await refs(), refsBefore, 'the owner\'s checkout gained no branch or commit');
 
+        // A draft whose request is not in Alice's direct chat with the agent, as every one from before
+        // D-105 is, ends when the plugin loads: the pane shows a card's thread only from that chat (K-58).
+        const old = (await ask(alice)).id;
+        await (await checkIn()).handled;
+        const request: RunRequest = { kind: 'request', card: 'K-7', title: 'Sums are off by one', docId: board.id, section, runtime: agent.id, sentAt: Date.now(), repo: 'acme/app', hash: brief };
+        const current = (await alice.send(direct, { text: 'Run K-7 with Claude Code', run: request })).id;
+        await (await checkIn()).handled;
+        const watching = async () => (JSON.parse(await fs.readFile(path.join(dataDir, 'repos', 'acme__app', 'pulls.json'), 'utf8')) as Array<{ pull: { number: number } }>).map((w) => w.pull.number);
+        assert.deepEqual(await watching(), [2, 3]);
+        await plugin.endStrandedDrafts();
+        assert.deepEqual(await watching(), [3], 'the draft from the direct chat is watched on');
+        assert.equal((await reportsOn(old)).at(-1), 'I stopped watching acme/app#2: its request is not in your direct chat with me, so the pane cannot show you its reviews.');
+        assert.ok(!(await reportsOn(current)).some((text) => text?.startsWith('I stopped')), 'the other draft says nothing');
+
         // A second session in this repository waits until this one closes (D-094).
         const second = new Plugin({ ...options, code: '', dataDir, projectDir: project });
         void second.start();

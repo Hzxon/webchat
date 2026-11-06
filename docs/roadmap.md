@@ -191,8 +191,8 @@ the notes would show it nothing new. They should not count as unread.
 
 ### K-58: A draft started before D-105 posts its reviews where nothing can approve them
 
-Status: Open. Found in the correctness review of R-035's step 6 (#122) on 2026-11-06, and left open
-because it is rare: it needs a draft from before D-105 that someone other than the owner reviews.
+Status: Fixed in #127. Found in the correctness review of R-035's step 6 (#122) on 2026-11-06. It
+was rare: it needed a draft from before D-105 that someone other than the owner reviewed.
 
 A review by anyone but the owner waits for the owner's go, which they give in the pane (D-105). For
 a draft that a run started before D-105, that review never reaches the pane. The plugin posts a
