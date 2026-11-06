@@ -253,77 +253,6 @@ the channel go at their next check-in, with no push.
 Done when: a test shows that only the owner deletes a channel, never #general, and that its
 messages go. The menu has been tried in a browser with two accounts.
 
-### R-035: An Agents pane where the owner talks with their agents
-
-Status: Done in #114, #117, #119, #120, #121 and #122 on 2026-11-06 (D-097, D-101 to D-105).
-Designed in #112 on 2026-11-05, after K-49. The Agents pane became the Coding agents pane.
-
-Why: an agent only runs board cards, and only a terminal session whose monitor hears the doorbell
-starts them. Setup asks the owner to edit sandbox and permission settings by hand, and the sandbox
-rule on `gh`'s folder stops `gh` in the owner's own sessions too. Students want all their agents in
-one place, to ask one anything from the phone, and to set nothing up by hand. Claude Code's Remote
-Control drives one laptop session from the Claude app; the pane holds every agent of the owner,
-beside the board, through WebChat's encryption.
-
-Scope:
-
-- An Agents pane beside the GitHub pane lists each agent its owner has: the repositories with a
-  session open, online, asleep or busy, and its conversations with their state and pull requests.
-  From it the owner prompts, replies, cancels, connects and removes agents. It works at 375 pixels.
-- A conversation is the owner's direct chat with the agent. A prompt is an encrypted message whose
-  signed `prompt` field names the repository, and the card when there is one.
-- The plugin answers each conversation with a background `claude -p --restricted` under a settings
-  file of its own: a sandbox that blocks its keys and `gh`'s folder. The turn ends in a JSON answer
-  that the plugin posts, and the owner's reply resumes that session with `--resume`. The owner's own
-  sessions keep their settings, so `gh` works there.
-- No doorbell and no monitor, so a session in the desktop app takes runs too. One session per
-  repository still takes them (D-094). The owner edits no settings by hand.
-- A prompt may just answer, with no code. A card's conversation always uses a worktree, an
-  `agent/*` branch and a draft pull request.
-- Web search and reading are on for prompts and cards. The shell reaches only the package registry,
-  and never the secrets.
-- The page signs a hash of the whole brief the owner saw, the card and the decisions, and the plugin
-  refuses a brief that changed since. The card shows what Markdown hides, such as HTML comments, and
-  the brief marks the text that others wrote.
-- A fix round that a review by anyone but the owner starts waits for the owner's go in the pane.
-  Failed CI and conflicts start one on their own.
-- When its owner asks, the agent drafts a new card or a change to one, grounded in the code. The
-  draft stays in the conversation until the owner presses Add to board. The owner's page then
-  writes it as the owner, so the agent needs no write access to the board. A change shows the card
-  before and after. An agent writes no card unasked, and none from chat or GitHub issues.
-- Only the owner's messages count: a prompt, reply or cancel from anyone else, an agent included,
-  does nothing (D-089).
-
-Order, one pull request each:
-
-1. A spike: `claude -p --settings` applies the sandbox and loads the guard hook headless, the
-   settings file reaches the plugin's sandbox check, and `--resume` continues a session. It held on
-   Claude Code 2.1.318 (#114), with `--restricted`, no reads outside the working directories, a
-   cache of npm's own and a JSON answer (D-097). The guard resolved no link to a file not made yet
-   (K-55).
-2. The plugin runs cards in the background, and the doorbell goes. Cards work as before. A session
-   takes part once its owner connected the repository with `/webchat:connect` (D-101).
-3. Conversations: the `prompt` message, a Claude session per conversation, replies and resume. Each
-   conversation works in a scratch copy and ends after 24 hours with no reply (D-102).
-4. The Coding agents pane: the list, the conversations, the reply box and Stop (D-103). The Connect
-   dialog and `/webchat:connect` drop their technical steps.
-5. Card drafts: a card draft reply, the Add to board button, and the before and after of a change
-   (D-104).
-6. Cards through the pane: the play button opens a conversation, the card shows its state, the
-   brief hash and the review approval. The run messages in #general retire. (D-105)
-
-Done when: the owner prompts from a phone and reads the answer in the pane; a card runs from a
-desktop app session with no settings edited; a prompt, reply or changed card from a teammate or
-their agent runs nothing; an agent's card draft reaches the board only after its owner adds it;
-and the README's setup has no sandbox or permission step. Each change
-people see has been tried in a browser with two accounts, at 375 pixels, in light and dark mode.
-
-Open questions:
-
-- A reply arrives at the next 15-second check-in. Is that fast enough, or does an open conversation
-  need faster check-ins?
-- The shell reaches only the npm registry. Do projects on Yarn or pip need their registries too?
-
 ## Ideas
 
 ### R-004: Private channels
@@ -520,6 +449,51 @@ Open questions:
   leaving? A member's runtime loses the project's key when they leave (D-044).
 
 ## Known issues
+
+### K-58: A draft started before D-105 posts its reviews where nothing can approve them
+
+Status: Open. Found in the correctness review of R-035's step 6 (#122) on 2026-11-06, and left open
+because it is rare: it needs a draft from before D-105 that someone other than the owner reviews.
+
+A review by anyone but the owner waits for the owner's go, which they give in the pane (D-105). For
+a draft that a run started before D-105, that review never reaches the pane. The plugin posts a
+report in the chat of the run's request, which was #general then (`taken.conversation`, kept in
+`Watched` in `agent/plugin.ts`). The pane builds a card's thread only from a request in the owner's
+direct chat with the agent, so it shows neither the review nor the button that sends the go. The
+card in #general shows the report's tag and note, not the review's text, and has no such button. So
+the review waits for as long as the plugin watches the draft. CI, conflicts and the owner's own
+reviews still start rounds.
+
+Fix: when the plugin loads, it stops watching each draft whose request is not in the owner's direct
+chat with the agent, and reports `ended` with the link to the pull request. That also ends the CI
+and conflict rounds of those drafts. The other way is a pane that builds a thread from a request in
+any chat. It would serve only drafts that no new request can start, since the page now sends every
+request to the direct chat.
+
+### K-57: The agent never pins a teammate's new keys, so Start fails on a board with their text
+
+Status: Open. Found in the correctness review of R-035's step 6 (#122) on 2026-11-06, and left open
+because it is rare: it needs a teammate whose keys changed.
+
+Until the owner checks a teammate's new security code, nothing signed with their keys opens (D-018).
+The owner's page and the agent both leave out the teammate's board sections, so both hash the same
+brief (D-105). Once the owner checks the code, the page opens those sections and puts them in the
+brief. The agent still leaves them out, so the two hashes differ from then on. A decision the
+teammate wrote is part of every card's brief on that board, so every Start there fails with "The
+card or a decision changed since you opened it." A card the teammate wrote fails with "I can’t find
+that card on the board anymore."
+
+The agent pins a person's keys the first time it sees them and never again (`checkKeys` in
+`agent/client.ts`). The page pins again when the owner checks a code (`trust` in
+`client/src/e2ee/keyring.ts`), and the agent has no such step. So `keysOf` keeps answering null for
+the new keys, and `sections` leaves the teammate's text out of the brief that `handle` in
+`agent/runs.ts` hashes. The page hashes what opens for it (`AgentBrief.tsx`). This is the split that
+K-40 warns of.
+
+Fix: when the owner checks a teammate's code, the page sends each of their agents a message that
+names the person and the fingerprint it checked. An agent pins it only when its owner sent it, with
+a signed send time and once per client id (D-089, K-47), and only when it is the person's current
+fingerprint.
 
 ### K-56: A card's model can read the tokens that SessionStart hooks leave for the shell
 
@@ -801,3 +775,4 @@ Nothing here is a candidate for what to do next.
 | K-42: The agent's allow list trusts the username the server sends (D-089) | #95 |
 | K-45: Your own agent refuses a card a teammate wrote (D-089) | #95 |
 | K-46: A card run hangs with no end when its daemon stops | #96 |
+| R-035: A Coding agents pane where the owner talks with their agents (D-097, D-101 to D-105) | #114, #117, #119, #120, #121, #122 |
