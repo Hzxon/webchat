@@ -49,7 +49,7 @@ each rule explains why it exists.
    in the README section "What it does not protect against". See D-014 and D-020.
 2. Bind into the signature every field that the server could change and the client relies on. Add a
    new field so that old messages still verify, the way `kind` was added. See D-016.
-3. Migrations only grow at the end. Add a new entry to `MIGRATIONS` in `server/db.ts`. Never edit,
+3. Migrations only grow at the end. Add a new numbered file under `server/migrations/`. Never edit,
    reorder or renumber an entry that has reached main. See D-010.
 4. No connection stays open. Pages learn about changes from `POST /api/sync` and from Web Push. Any
    new state that pages must see has to change the sync fingerprint in `db.stamp`. See D-004 and
@@ -77,10 +77,13 @@ its own roadmap item. Nothing coordinates them except what is on GitHub (D-062).
    what it covers.
 2. **Work on that branch** and push to the same pull request. Do not merge or rebase on main to stay
    ahead of other pull requests. Resolve conflicts once, when GitHub reports them: merge main, fix,
-   push.
+   push. A branch stacked on another one is the exception: when the branch under it lands, run
+   `scripts/restack.sh <parent-branch>` instead of merging main, because the squash makes the
+   parent's own lines conflict (D-106).
 3. **Edit the docs in place**, so merges stay easy. Change your item's status line where it is;
-   never move the entry or add a table row. Add at most one decision entry, at the end of its topic
-   section, with the number you reserved. Name scratch files outside the repository after the
+   never move the entry or add a table row. A new roadmap entry is its own file, such as
+   `docs/roadmap/K-59.md`; a housekeeping pull request folds it into `docs/roadmap.md` (D-106).
+   Add at most one decision entry, at the end of its topic section, with the number you reserved. Name scratch files outside the repository after the
    item, such as `k12-body.md`, because sessions share the scratch directory.
 4. **Check before you mark ready.** Run `npm run typecheck`, `npm test` and `npm run build`. For a
    change people can see, also try it in a browser with two accounts, at desktop width and at 375

@@ -279,8 +279,8 @@ every page loads. Deleting asks for a confirm, not the password.
 
 Accepted 2026-11-01 in 10ba6d8.
 
-`SCHEMA` in `server/db.ts` creates the original tables. Every later change is an entry at the end of
-`MIGRATIONS`. Each entry runs once, in order, in a transaction that holds an advisory lock, because
+`SCHEMA` in `server/db.ts` creates the original tables. Every later change is a numbered file under
+`server/migrations/` (D-106). Each one runs once, in order, in a transaction that holds an advisory lock, because
 several serverless instances can start at once. `webchat.meta` records how many have run. So far:
 1 is end-to-end encryption, 2 is the GitHub connector, 3 is projects with replies and reactions, 4
 is group owners, 5 is key rotation, leaving and handing over, 6 is sharing new pull requests into
@@ -1570,9 +1570,29 @@ that exist.
 Why: AGENTS.md said that breaking a rule is a bug even when every test passes, which named the gap:
 a rule in prose depends on a reader, and D-090 concluded that such a rule belongs in a test or CI.
 
-Cost: a fix to a comment inside an old migration changes its hash, so the fixture line changes and
-a reviewer asks why. An alias such as `const r = req; r.query` passes the text check. The token
+Cost: the hash covers the SQL without its comments and spacing, so a comment fix passes but so
+would a change hidden in a comment that the SQL later reads; none does. An alias such as `const r = req; r.query` passes the text check. The token
 check sees only the routes the GitHub tests call.
+
+### D-106: Parallel pull requests never append at the same spot
+
+Accepted 2026-11-06 in #124.
+
+A new roadmap entry is its own file under `docs/roadmap/`, named by its id, and a housekeeping pull
+request folds it into `docs/roadmap.md`. Each migration is its own numbered file under
+`server/migrations/`, read in order by `server/db.ts`, which fails on a gap or a repeated number.
+A branch stacked on another one runs `scripts/restack.sh <parent>` when the parent lands, which
+rebases only its own commits onto main.
+
+Why: a replay of every merge of main inside the 120 merged pull requests found 37 with a textual
+conflict; 33 were in `docs/roadmap.md`, where each one inserted its entry at the same spot, and
+git reports two insertions at one spot as a conflict whatever they say. The stacked R-035 steps
+merged main after their parent's squash and conflicted in up to 13 files each; the same steps
+rebased with `--onto` conflict in none, 4 times out of 5. `MIGRATIONS` appended the same way.
+
+Cost: the roadmap is read in two places until housekeeping folds the files in. Vercel ships the
+`.sql` files through `includeFiles`, and `npm run build` copies them into `dist/`. A squash-merged
+parent's last commit must be known to restack; the script says so when it is not.
 
 ## Superseded
 

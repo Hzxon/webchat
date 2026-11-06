@@ -11,7 +11,7 @@
     "dev": "concurrently -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite",
-    "build": "npm run typecheck && npm run build:client && npm run build:plugin && tsc -p tsconfig.server.json",
+    "build": "npm run typecheck && npm run build:client && npm run build:plugin && tsc -p tsconfig.server.json && cp -R server/migrations dist/server/",
     "start": "node dist/server/index.js",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json && tsc -p tsconfig.sw.json && tsc -p tsconfig.tools.json",
     "test": "node --test --test-concurrency=1 --test-timeout=15000 --import tsx test/*.test.ts",

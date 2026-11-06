@@ -19,6 +19,8 @@ docs/decisions.md that explains it. The process itself is in AGENTS.md.
 - A pull request that finishes a roadmap item edits only that item's status line, in place; a housekeeping pull request deletes the entry and adds its Done row (D-076).
 - New decision entries go at the end of their topic section; `.gitattributes` merges `docs/decisions.md` with the union driver, so entries are never deleted (D-076).
 - Never use the union driver for `docs/roadmap.md`, where entries move (D-076).
+- A new roadmap entry is one file under `docs/roadmap/`, named by its id; only a housekeeping pull request folds it into `docs/roadmap.md` (D-106).
+- A stacked branch runs `scripts/restack.sh <parent>` when its parent lands; it never merges main (D-106).
 - A decision entry is the current state, why and the cost, in at most 12 lines; a change rewrites it (D-090).
 - A constraint that people editing an area must hold gets one line in that area's file under `.claude/rules/` (D-090).
 - The `doc-ids` check fails duplicate `### D-0xx:`, `K-n`, `R-nnn` and `Q-n` headings; the later pull request renumbers (D-063).
@@ -39,5 +41,5 @@ docs/decisions.md that explains it. The process itself is in AGENTS.md.
 - Tests in `test/chat.test.ts` run in order and share state (D-036).
 - Changes people see are tried with two accounts, at desktop and 375 pixels, in light and dark mode (D-037).
 - Rules 3, 6, 7 and 8 of AGENTS.md have a test; `test/rules.test.ts` checks migrations and `req.query`, `test/chat.test.ts` the push payload, `test/github.test.ts` the GitHub token (D-091).
-- A new migration appends one line to `FROZEN_MIGRATIONS` in `test/rules.test.ts`, which the failing test prints; never change or remove a line there (D-091).
+- A new migration appends one line to `FROZEN_MIGRATIONS` in `test/rules.test.ts`, which the failing test prints; never change or remove a line there. The hash covers the SQL without comments, so a comment may change (D-091).
 - A new test that sends from Alice in `test/chat.test.ts` may hit her 30 sends per 10 seconds; clear the `send:` rate limit rows after it, as the push payload test does (D-091).

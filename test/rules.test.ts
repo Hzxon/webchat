@@ -4,29 +4,30 @@ import { readdir, readFile } from 'node:fs/promises';
 import { describe, test } from 'node:test';
 import { MIGRATIONS } from '../server/db.ts';
 
-// One SHA-256 per entry of MIGRATIONS in server/db.ts, in order. A migration that has reached
-// main never changes (D-010): each ran once on every database, so an edit, a reorder or a
-// removal fails here. To accept a new migration, run the test and append the line it prints.
-// Replace a line only for a migration that has not reached main yet.
+// One SHA-256 per file under server/migrations/, in order, over the SQL without its comments and
+// spacing, so a comment can change and the SQL cannot. A migration that has reached main never changes (D-010):
+// each ran once on every database, so an edit, a reorder or a removal fails here. To accept a new
+// migration, run the test and append the line it prints. Replace a line only for a migration that
+// has not reached main yet.
 const FROZEN_MIGRATIONS = [
-  '834e58c84904c809613318646275e7171cbb8beb3aaeb1359a6caa863aee5657',
-  '0cc6f23a6d4fa1780c7908e119297592be7fc89d2dbe82a5cf9f199ca1cde0d1',
-  '42917fe8b1e8df7285e9b5f0abfd99a04e24079ed3a3454a5bb9a1ba3961ee7d',
-  'b25cf1a73c9b20ea52a26f531519e10e00fd9845f3c210d61c2bf2efb61d53ce',
-  '4b4739d82f5111e92ec22a0c9137a7baadabab89e3dcc833788b9ff4c3a27d4c',
-  'b44457a1ea668d11301664fd56833edd10ea69ce3f613e6d322d6eb02df183d1',
-  '78451749d88039fa2d71075aaff95e7ca0486b48f09c8c616ab29001d1458b76',
-  'adb454b4d585b1c8794a7efa42e9a281c3a31d084c48bacb119b9c29acba1346',
-  '3873c3eaf909dfbfedfbae2992cc9e3f62adb3d70f87f5c840d6be543c8a6953',
-  '344302324a3ad63f53ebdb795f2376b69e3b0eeca17c6050ee41d39e9383d047',
-  '3b8d2b153e9d40b09e722e05cb4fe679d2416f046606499dea8e7ce34bf1a33f',
-  'f919ae85b095698d42af56eeedc16ba1ea593874bc8f46e2668218da1e1db816',
-  '215f34b0d42c414f92d5b9c02bb00b22dd0b2e4932a330638fd5ba2f286b2e52',
-  '0ebd90899e4c895c72d8f82eb7b7c0c4726a61a184675959817adbf0a201f68e',
-  'c34dad80b0342014d7aa679c6969d5739475ad8675ef2e59b45c4260eba06d4c',
-  '35310df21c9c5bf5c5dc0da6b875a4d83084ad1f96bcf5a273db58e82ee86624',
-  'a5385540cd5a1c2981a8f56f2e56c22ba7fd6313bc43c774eb4d2c1fa7f50637',
-  '38965b69a91577d3f8659961330029d97b4bc83c9eb46d31581e79eba5ca355a',
+  'd2372ecfb052c955a548a4885b3fc376c6d42eb156acf23de7545f7d0d8db304',
+  'ea10acb5ed675abaa57915eaf12ee33b5150729dbebaa1e2062de045833f28b4',
+  '793dabc798731dce29ee909323c95f6240c4f956277c379aa2d94fda3426cff7',
+  'b06fdf91bea5e05f34fd45e08a2e20caee90dfacc6fbc3adc3c22faeec5301d3',
+  '99c0f48cdbfc37275c063c69c532592692fbcb016933bc4f04adc485e48c4ae2',
+  '638aa6201049b05fb106b7a58f96f83874f73b9be7f97e5d28596a3d474e61c9',
+  'f030f55bb830d4fead56296bd8c643d3f7eebda60a631d26b738cc5aa435fa7e',
+  'bc0b586b4e65c1bbb624a525c27ec381fc293c7e57913499d9c220429d871b80',
+  '5902f958a5761c56c0397965e32bf33d598f524c7a13ede7d0c08ca63a8a0f83',
+  'b4f68408bdf6636b89bca6c23feb7194e447e57d653c01087b9acb587c0d9e53',
+  'ebd6a6d117634f4cd3007a3036e51e26e3af4aa5998d855099c7bb78b707569b',
+  'd9a627afb1420268552cbd5f0b69cf1c53b38038b82ae9f12279c4217bc70e43',
+  'add55d53e0efa55e539a6b4dc16e7e5530dbca77a63740a174887640aa0801bb',
+  'f27790226eea1869dbba18b7db86a05ef5775475f09986a51e1d8e6ceab9c3a0',
+  '1f04161d523a8ba3b95af84c6c5325e7a67d3641b0e2e17b7b17b9d934af82f8',
+  '6780beadbac296baee0cd93b88657dc4f640d990c47361a09e013fdcc9d0098a',
+  'b0d04e939a862e3bda3bcea5cc2894dc387d1dcefc473fa6b8d7f719f709f71a',
+  'a80be24d085f7ed4abf275a2d1f85f5859d8baef7d6e8c5a032aca4747fc2de6',
   '39a9fd3cc11af2e86ff954abbaae35153f204f16f9f4a5ab6785e7e985011e9c',
 ];
 
@@ -34,7 +35,8 @@ const FROZEN_MIGRATIONS = [
 // check rule 7, the push payload, and the GitHub tests check rule 8, the token.
 describe('The rules that must hold', () => {
   test('rule 3: migrations only grow at the end (D-010)', () => {
-    const hashes = MIGRATIONS.map((migration) => createHash('sha256').update(migration).digest('hex'));
+    const sqlOf = (migration: string) => migration.replace(/--.*$/gm, '').replace(/\s+/g, ' ').trim();
+    const hashes = MIGRATIONS.map((migration) => createHash('sha256').update(sqlOf(migration)).digest('hex'));
     assert.ok(hashes.length >= FROZEN_MIGRATIONS.length, 'A migration was removed. A migration that reached main stays.');
     FROZEN_MIGRATIONS.forEach((frozen, i) => {
       assert.equal(
