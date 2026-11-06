@@ -68,7 +68,7 @@ reason for D-004.
 
 ### D-083: A work tool's palette and type
 
-Proposed 2026-11-04 for R-022, the first step of the rebrand.
+Accepted 2026-11-04 in #77 (R-022), the first step of the rebrand.
 
 The page uses neutral grays with one indigo accent (`#4f46e5` light, `#818cf8` dark). Success has
 its own green, `--ok`, so passed checks, added lines and the online dot do not borrow the accent.
@@ -934,29 +934,9 @@ immutable and signed by their author.
 Cost: each report is an unread message that alerts, so keep them sparse. The request's id is the
 server's, so a changed server could attach a report to another request, but could forge neither.
 
-### D-087: A run is a worktree, a brief and a headless coding agent
-
-Accepted 2026-11-05 in #87. Superseded by D-105 in #122: the daemon takes no cards, and its
-adapters are gone. The worktree and branch naming stay, for the plugin's runs.
-
-The daemon runs a card in the project's repository on its owner's machine. `config.json` next to the
-account file maps each project name to a local checkout and picks the agent. A run fetches `origin`,
-adds a git worktree on a branch named after the card, such as `agent/k-12-bad-keys`, under the
-account's `runs` folder, and writes a brief outside the repository: the card's Markdown, the board's
-Decisions column and how to finish (small commits, a push, `gh pr create --draft`, never a push to
-main). It runs the agent headless there until its final word. The run fails when no commits are left
-or after 2 hours of silence; else it reports the branch, the pull request `gh` finds and the closing
-line. A rerun gets a numbered branch. Adapters: `claude -p ... --output-format stream-json
---permission-mode acceptEdits` with the shell limited to `git`, `gh pr` and npm scripts; `codex exec
---json`, approvals off, network open; `hermes chat --oneshot --quiet --yolo --format stream-json`.
-
-Cost: finished worktrees and briefs stay on disk. The tool list is no sandbox: it runs with the
-owner's git and GitHub credentials, so D-089 limits who may send runs. The Codex and Hermes
-adapters were wired from their documentation and not run end to end.
-
 ### D-089: An agent runs the cards its owner hands it
 
-Proposed 2026-11-05 in #95.
+Accepted 2026-11-05 in #95 (K-42, K-45).
 
 An agent account belongs to the owner who approved its pairing (D-093, since #100). The server keeps
 the owner on the account, and the sync fingerprint (D-021) carries it. A card's play button lists
@@ -1037,7 +1017,7 @@ owner links it again. Whoever made a channel cannot delete it unless they own th
 
 ### D-097: An agent works in conversations with its owner, each run by a background Claude
 
-Proposed 2026-11-05 in #112 (R-035). Its spike in #114 checked it on Claude Code 2.1.318. Card runs
+Accepted 2026-11-06 in #117, proposed in #112 (R-035). Its spike in #114 checked it on Claude Code 2.1.318. Card runs
 moved to it in #117.
 
 The owner talks with an agent in the Agents pane, in their direct chat. A prompt is an encrypted
@@ -1060,7 +1040,7 @@ word. It replaces D-092's doorbell and D-095's monitor mark.
 
 ### D-099: An agent refuses a second request for the card it runs
 
-Proposed 2026-11-05 in #115 (K-51).
+Accepted 2026-11-05 in #115 (K-51).
 
 An agent runs one request at a time (D-086). A request from its owner for the card it is running
 fails at once with "K-1 is already running.", and nothing starts: no run and no worktree. A copy starts no run. A request for another card still gets "I am busy with K-2." The daemon and the
@@ -1075,7 +1055,7 @@ in the same check-in as a cancel is refused, since the cancelled run has not sto
 
 ### D-100: A card shows its latest run, and its status line follows the run
 
-Proposed 2026-11-05 in #116 (K-52), changed in #122.
+Accepted 2026-11-05 in #116 (K-52), changed in #122.
 
 The board folds the user's run messages, in their chats with their agents, into each roadmap card.
 While a run may still go, the play button is disabled, so a second click asks nothing. A request no
@@ -1091,7 +1071,7 @@ one request before they sync; the agent refuses the second (D-099).
 
 ### D-101: A repository takes part once its owner connects it
 
-Proposed 2026-11-06 in #117 (R-035), changed in #120. It replaces D-098, and with D-097 it replaces
+Accepted 2026-11-06 in #117 (R-035), changed in #120. It replaces D-098, and with D-097 it replaces
 D-095.
 
 The plugin's server takes part only in a repository whose folder in the plugin's data holds a
@@ -1110,7 +1090,7 @@ after its last check-in (D-094).
 
 ### D-102: A conversation is a prompt and the messages that name it
 
-Proposed 2026-11-06 in #119 (R-035).
+Accepted 2026-11-06 in #119 (R-035).
 
 The owner talks with their agent in their direct chat. A prompt is a message whose sealed `prompt`
 field names the repository. Replies, cancels, answers and failures name the prompt's client id,
@@ -1128,7 +1108,7 @@ copy of the default branch. An answer cut inside a code block shows as two messa
 
 ### D-103: The owner asks their agents in a Coding agents pane
 
-Proposed 2026-11-06 in #120 (R-035).
+Accepted 2026-11-06 in #120 (R-035).
 
 A Coding agents row sits at the top of Chats once the user has an agent. Their direct chats with
 their agents leave the list: the pane shows them as conversations, and their unread counts move to
@@ -1145,7 +1125,7 @@ Cost: each page load fetches a page of every agent chat. Messages in an agent ch
 
 ### D-104: An agent drafts cards, and its owner's page adds them
 
-Proposed 2026-11-06 in #121 (R-035).
+Accepted 2026-11-06 in #121 (R-035).
 
 When its owner asks, an agent's answer may carry a card draft: a new idea or issue, or a change to a
 roadmap card, named by its doc and section with the hash of the text the agent saw. The brief holds
@@ -1162,7 +1142,7 @@ card.
 
 ### D-105: A card runs from a brief its owner saw and signed
 
-Proposed 2026-11-06 in #122 (R-035).
+Accepted 2026-11-06 in #122 (R-035).
 
 A card's play button opens its brief in the Coding agents pane: the card and the decisions the team
 holds, without the superseded ones, raw, each teammate's passage marked with their name, and a line
@@ -1652,3 +1632,23 @@ the plugin on, every session in every repository checked in, and the play menu l
 
 Cost: the owner types the variable, or keeps an alias. macOS hides the environment of its own
 system programs, so this needs a `claude` that is not one. Old `doorbell` files stay unused.
+
+### D-087: A run is a worktree, a brief and a headless coding agent
+
+Superseded by D-105 in #122. Accepted 2026-11-05 in #87. The daemon takes no cards, and its
+adapters are gone; the worktree and branch naming stay, for the plugin's runs.
+
+The daemon runs a card in the project's repository on its owner's machine. `config.json` next to the
+account file maps each project name to a local checkout and picks the agent. A run fetches `origin`,
+adds a git worktree on a branch named after the card, such as `agent/k-12-bad-keys`, under the
+account's `runs` folder, and writes a brief outside the repository: the card's Markdown, the board's
+Decisions column and how to finish (small commits, a push, `gh pr create --draft`, never a push to
+main). It runs the agent headless there until its final word. The run fails when no commits are left
+or after 2 hours of silence; else it reports the branch, the pull request `gh` finds and the closing
+line. A rerun gets a numbered branch. Adapters: `claude -p ... --output-format stream-json
+--permission-mode acceptEdits` with the shell limited to `git`, `gh pr` and npm scripts; `codex exec
+--json`, approvals off, network open; `hermes chat --oneshot --quiet --yolo --format stream-json`.
+
+Cost: finished worktrees and briefs stay on disk. The tool list is no sandbox: it runs with the
+owner's git and GitHub credentials, so D-089 limits who may send runs. The Codex and Hermes
+adapters were wired from their documentation and not run end to end.
