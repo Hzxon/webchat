@@ -478,10 +478,10 @@ because it is rare: it needs a teammate whose keys changed.
 Until the owner checks a teammate's new security code, nothing signed with their keys opens (D-018).
 The owner's page and the agent both leave out the teammate's board sections, so both hash the same
 brief (D-105). Once the owner checks the code, the page opens those sections and puts them in the
-brief. The agent still leaves them out, so the two hashes differ from then on. A decision the
-teammate wrote is part of every card's brief on that board, so every Start there fails with "The
-card or a decision changed since you opened it." A card the teammate wrote fails with "I can’t find
-that card on the board anymore."
+brief. The agent still leaves them out, so the two hashes differ from then on. A decision that the
+teammate wrote and the team still holds is part of every card's brief on that board, so every Start
+there fails with "The card or a decision changed since you opened it." A card the teammate wrote
+fails with "I can’t find that card on the board anymore."
 
 The agent pins a person's keys the first time it sees them and never again (`checkKeys` in
 `agent/client.ts`). The page pins again when the owner checks a code (`trust` in
