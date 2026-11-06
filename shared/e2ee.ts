@@ -340,6 +340,8 @@ export interface MessageContent {
    * theirs knows (D-104). Outside `prompt`, which the agent would take as a reply.
    */
   added?: { to: string; draft: string; card: string };
+  /** The owner has their agent forget its folder of a repository: the mark goes, never the files (R-038, D-101). */
+  forget?: { repo: string; sentAt: number };
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -500,8 +502,10 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
 /** A conversation's message, if it has the right shape. */
 export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO | undefined {
   if (raw?.kind === 'prompt') {
-    if (typeof raw.repo !== 'string' || !isRepoName(raw.repo) || !isId(raw.sentAt)) return;
-    return { kind: 'prompt', repo: raw.repo, sentAt: raw.sentAt, ...(isId(raw.project) && { project: raw.project }) };
+    // A project with no repository asks about its board alone (R-038).
+    const repo = typeof raw.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
+    if ((raw.repo !== undefined && !repo) || (!repo && !isId(raw.project)) || !isId(raw.sentAt)) return;
+    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }) };
   }
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
@@ -536,6 +540,7 @@ function readContent(value: unknown): MessageContent {
     run?: Record<string, unknown>;
     prompt?: Record<string, unknown>;
     added?: Record<string, unknown>;
+    forget?: { repo?: unknown; sentAt?: unknown };
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -555,6 +560,7 @@ function readContent(value: unknown): MessageContent {
   if (prompt) content.prompt = prompt;
   const [to, draft, card] = [short(raw.added?.to, 64), short(raw.added?.draft, 64), short(raw.added?.card, 16)];
   if (to && draft && card) content.added = { to, draft, card };
+  if (typeof raw.forget?.repo === 'string' && isRepoName(raw.forget.repo) && isId(raw.forget.sentAt)) content.forget = { repo: raw.forget.repo, sentAt: raw.forget.sentAt };
   return content;
 }
 

@@ -3091,6 +3091,42 @@ a {
   margin-left: auto;
 }
 
+.agents-project {
+  margin-bottom: 16px;
+}
+
+.agents-project-head {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.agents-repos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 0 0 8px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 13px;
+  list-style: none;
+}
+
+.agents-repos li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agents-forget {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: underline;
+}
+
 .agents-empty,
 .agents-note {
   margin: 12px 0;

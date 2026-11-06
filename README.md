@@ -441,6 +441,11 @@ keys from the agent, does not run on Windows. On Linux the sandbox needs `bubble
    type `/webchat:connect`, then approve the `connect` tool: Claude Code asks about it on every
    call. To undo that, ask Claude there to disconnect WebChat. The files stay.
 
+Under **Coding agents**, the pane lists your projects. Each shows its repositories and whether your
+agent has them on the laptop, with **Forget** to drop a folder, which leaves its files. Then come
+the project's conversations. Ask in a project and one of its repositories. A project that links no
+repository gets answers from its board alone: its decisions and cards.
+
 Cards and clones also need GitHub on that laptop: the GitHub CLI signed in with `gh auth login`, and
 git using it after `gh auth setup-git`. `/webchat:connect`, typed in any folder, says when they are
 missing, and Claude Code can set them up with you. Questions about a repository the laptop has need

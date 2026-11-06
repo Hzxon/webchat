@@ -793,28 +793,22 @@ export function askClone(conversationId: number, repo: string, waiting: { reques
 }
 
 /**
- * Asks one of the user's coding agents about a repository (D-102): a message in their direct chat
- * with it, whose `prompt` field names the repository and when it was sent. The Claude Code session
- * open in that repository answers. Returns the conversation, by the prompt's client id.
+ * Asks one of the user's coding agents in a project (D-102, R-038): a message in their direct chat
+ * with it, whose `prompt` field names the project, whose board alone goes in the brief (D-104), and
+ * one of its repositories, or none for a project that links none. The agent's laptop answers.
+ * Returns the conversation, by the prompt's client id.
  */
-export async function askAgent(agentId: number, repo: string, question: string) {
-  const [conversationId, project] = await Promise.all([startDirectChat(agentId), boardFor(agentId, repo)]);
+export async function askAgent(agentId: number, project: number, repo: string | undefined, question: string) {
+  const conversationId = await startDirectChat(agentId);
   const clientId = newClientId();
   // The message shows as sending at once, so the pane can open its conversation.
-  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', repo, sentAt: Date.now(), ...(project && { project }) } }, false, clientId);
+  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, ...(repo && { repo }) } }, false, clientId);
   return clientId;
 }
 
-/**
- * The board a question is about, which alone goes in the agent's brief (D-104): the project the user
- * shares with the agent, or of several, the one whose channel links the repository. None otherwise.
- */
-async function boardFor(agentId: number, repo: string) {
-  const shared = Object.values(store.get().projects).filter((p) => p.memberIds.includes(meId) && p.memberIds.includes(agentId));
-  if (shared.length < 2) return shared[0]?.id;
-  const linked = await Promise.all(shared.map((p) => api.projectRepos(p.id).then((v) => (v.repos.some((r) => r.repo === repo) ? p.id : null), () => null)));
-  const ids = linked.filter((id) => id !== null);
-  return ids.length === 1 ? ids[0] : undefined;
+/** Has the user's agent forget its folder of a repository: the mark goes, never the files (R-038, D-101). */
+export async function forgetFolder(agentId: number, repo: string) {
+  await sendContent(await startDirectChat(agentId), { text: `Forget the folder of ${repo}`, forget: { repo, sentAt: Date.now() } }, false);
 }
 
 /** Replies in a conversation with an agent, or stops its turn. Both name the prompt's client id (D-102). */

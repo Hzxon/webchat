@@ -17,7 +17,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
-import { AGENT_LEVEL, isRepoName, LIMITS, type CardDraftDTO, type ProjectReposDTO, type RunFix, type RunRequest } from '../shared/types.ts';
+import { AGENT_LEVEL, heldDecisions, isRepoName, LIMITS, type CardDraftDTO, type DocDTO, type ProjectReposDTO, type RunFix, type RunRequest } from '../shared/types.ts';
 import { claudeArgs, claudeSettings } from './claude.ts';
 import { AgentClient, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
@@ -335,6 +335,7 @@ export class Plugin {
     const { run, prompt } = message.content ?? {};
     if (run?.kind === 'fix') return this.go(message, run).catch(log);
     if (run?.kind === 'clone' || prompt?.kind === 'clone') return this.clone(message).catch(log);
+    if (message.content?.forget) return this.forget(message).catch(log);
     return (prompt ? this.conversations! : this.runs!).handle(message).catch(log);
   }
 
@@ -356,9 +357,7 @@ export class Plugin {
         : prompt?.kind === 'clone'
           ? { ...prompt, again: 'Reply to ask again.', say: (text: string, end = false) => client.send(chat, { text, prompt: { kind: end ? 'failed' : 'note', to: prompt.to } }) }
           : undefined;
-    // Only the owner's, in their direct chat, signed lately, once (D-089, K-42, K-47).
-    if (!asked || message.security !== 'encrypted' || message.senderId !== client.owner || client.conversations.get(chat)?.type !== 'direct') return;
-    if (!client.remember(message.clientId ?? '', asked.sentAt) || Math.abs(Date.now() - asked.sentAt) > REQUEST_TTL_MS) return;
+    if (!asked || !this.fromOwner(message, asked.sentAt)) return;
     const { say } = asked;
     const key = asked.repo.toLowerCase();
     const fail = (text: string) => (this.waiting.get(key)?.size ? this.settle(key, new Error(text)) : say(text, true));
@@ -392,6 +391,22 @@ export class Plugin {
     } finally {
       this.cloning.delete(key);
     }
+  }
+
+  /** Whether a message is its owner's, in their direct chat, signed lately, and new (D-089, K-42, K-47). */
+  private fromOwner(message: OpenedMessage, sentAt: number) {
+    const client = this.client!;
+    if (message.security !== 'encrypted' || message.senderId !== client.owner || client.conversations.get(message.conversationId)?.type !== 'direct') return false;
+    return client.remember(message.clientId ?? '', sentAt) && Math.abs(Date.now() - sentAt) <= REQUEST_TTL_MS;
+  }
+
+  /** Forgets a folder on its owner's word in the pane: its mark goes, never its files (R-038, D-101). */
+  private async forget(message: OpenedMessage) {
+    const { forget } = message.content!;
+    const folder = forget && this.folderOf(forget.repo);
+    if (!folder || !this.fromOwner(message, forget.sentAt)) return;
+    await fs.rm(markOf(this.options.dataDir, folder.repo), { force: true });
+    await this.scan();
   }
 
   /** Whether a project that holds both the owner and this agent links the repository, in lower case (D-050, D-108). */
@@ -459,28 +474,34 @@ export class Plugin {
   private async converse({ conversation, input, resume, signal }: Parameters<Answerer>[0]) {
     const refused = await this.refusal();
     if (refused) throw new Error(refused);
-    const folder = await this.folderFor(conversation.repo, signal, () =>
-      this.client!.send(conversation.chat, { text: noCopy(conversation.repo), prompt: { kind: 'nocopy', to: conversation.root } }),
-    );
+    // A project that links no repository asks about its board alone, in an empty folder (R-038).
+    const { repo } = conversation;
+    const folder = repo ? await this.folderFor(repo, signal, () => this.client!.send(conversation.chat, { text: noCopy(repo), prompt: { kind: 'nocopy', to: conversation.root } })) : undefined;
+    const board = await this.roadmap(conversation.project, !folder);
+    if (!folder && !board) throw new Error('I am not in that project, so I cannot read its board. Add me to it, then ask again.');
     // A link swapped in for the folder would lead the turn elsewhere, so only a real folder counts.
     if (!conversation.scratch || !(await fs.lstat(conversation.scratch).then((s) => s.isDirectory(), () => false))) {
       const dir = path.join(os.tmpdir(), 'webchat-scratch', randomUUID());
-      const base = await fetchOrigin(folder.dir).catch(() => {
-        throw new Error('The laptop could not get your team’s code from GitHub. Check that it is online, then ask again.');
-      });
-      await exec('git', ['init', '-q', dir]);
-      await exec('git', ['-C', dir, 'fetch', '-q', '--depth', '1', folder.dir, `refs/remotes/${base}`]);
-      await exec('git', ['-C', dir, ...NO_HOOKS, 'checkout', '-q', '--detach', 'FETCH_HEAD']);
+      await fs.mkdir(dir, { recursive: true });
+      if (folder) {
+        const base = await fetchOrigin(folder.dir).catch(() => {
+          throw new Error('The laptop could not get your team’s code from GitHub. Check that it is online, then ask again.');
+        });
+        await exec('git', ['init', '-q', dir]);
+        await exec('git', ['-C', dir, 'fetch', '-q', '--depth', '1', folder.dir, `refs/remotes/${base}`]);
+        await exec('git', ['-C', dir, ...NO_HOOKS, 'checkout', '-q', '--detach', 'FETCH_HEAD']);
+      }
       conversation.scratch = dir;
     }
-    const board = await this.roadmap(conversation.project);
     const cards = (board?.cards ?? []).map((c) => ({ ...c, id: CARD_ID.exec(c.text)?.[1] ?? '' })).filter((c) => c.id);
     const seen = Object.fromEntries(await Promise.all(cards.map(async (c) => [c.id, { doc: c.doc, section: c.section, hash: await textHash(c.text) }])));
     // A reply shows the cards that changed since the agent last saw them, so a draft starts from what they say now.
     const changed = cards.filter((c) => conversation.seen?.[c.id]?.hash !== seen[c.id]!.hash).map((c) => c.text);
     const message = resume
       ? [`Your owner replies:\n\n${input}`, ...(changed.length ? ['', fence('Cards that changed on the board since', changed)] : [])].join('\n')
-      : promptBrief(folder.repo, input, board);
+      : folder
+        ? promptBrief(folder.repo, input, board)
+        : boardBrief(input, board!);
     const answer = (await this.ask(conversation.scratch, conversation.session, resume, message, REPLY, signal)) as { reply?: unknown; card?: Record<string, unknown> };
     // Only once the turn read them, so a turn cut short tells the next one again.
     conversation.seen = seen;
@@ -490,15 +511,17 @@ export class Plugin {
   /**
    * The roadmap cards of the one project its owner's page picked for the prompt, for drafts grounded
    * in them (D-104). Never every project: anyone can add the agent to theirs, and their cards would
-   * then speak in the owner's brief. A board that does not open is left out, not a failed turn.
+   * then speak in the owner's brief. A board that does not open is left out, not a failed turn. With
+   * no code to read, the decisions the team holds come too (R-038).
    */
-  private async roadmap(projectId: number | undefined) {
+  private async roadmap(projectId: number | undefined, withDecisions = false) {
     const client = this.client!;
     const project = client.projects.find((p) => p.id === projectId && p.memberIds.includes(client.owner!));
     if (!project) return undefined;
-    const { roadmap } = await client.boardDocs(project.id).catch(() => ({ roadmap: undefined }));
-    const sections = roadmap ? await client.sections(roadmap).catch(() => []) : [];
-    return { project: project.name, cards: sections.map((s) => ({ text: s.text.trim(), doc: roadmap!.id, section: s.id })) };
+    const { roadmap, decisions } = await client.boardDocs(project.id).catch(() => ({}) as Awaited<ReturnType<AgentClient['boardDocs']>>);
+    const read = (doc: DocDTO | undefined) => (doc ? client.sections(doc).catch(() => []) : Promise.resolve([]));
+    const [sections, held] = await Promise.all([read(roadmap), withDecisions ? read(decisions) : Promise.resolve([])]);
+    return { project: project.name, cards: sections.map((s) => ({ text: s.text.trim(), doc: roadmap!.id, section: s.id })), decisions: heldDecisions(held.map((s) => s.text)) };
   }
 
   /** Pushes the worktree's branch, never forced, and returns the commit it pushed. */
@@ -798,6 +821,19 @@ function promptBrief(repo: string, input: string, board: { project: string; card
     '',
     input,
     ...(board?.cards.length ? ['', fence(`The roadmap cards of ${board.project}`, board.cards.map((c) => c.text))] : []),
+  ].join('\n');
+}
+
+function boardBrief(input: string, board: { project: string; cards: Array<{ text: string }>; decisions: string[] }) {
+  return [
+    `Your owner asks you this through WebChat, about their project ${board.project}. It links no code, so you`,
+    'are in an empty folder: answer from its board below, and search the web and read pages where it helps.',
+    'Put your answer, in Markdown, in reply. Only when your owner asks you to draft a card for the board, or a',
+    'change to one, also fill in card: they add it to the board themselves.',
+    '',
+    input,
+    ...(board.decisions.length ? ['', fence(`The decisions of ${board.project}`, board.decisions)] : []),
+    ...(board.cards.length ? ['', fence(`The roadmap cards of ${board.project}`, board.cards.map((c) => c.text))] : []),
   ].join('\n');
 }
 
