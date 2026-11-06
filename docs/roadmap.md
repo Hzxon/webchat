@@ -24,10 +24,7 @@ the items under "Next". The decisions these items build on are in [decisions.md]
 
 ## Next
 
-### R-001: Task board for projects, like Jira
-
-Status: Dropped on 2026-11-04, replaced by R-021. The owner chose a board of decisions and
-roadmap cards, like this repository's own documents, over a Jira-style task board.
+Nothing is queued. The owner picks the next item from Planned.
 
 ## Planned
 
@@ -74,39 +71,6 @@ user's own (`comparePulls` only looks at the last commenter).
 
 Done when: a comment-only review on the fake GitHub becomes an event, and a test proves it.
 
-### R-022: Rebrand, step 1: a work-tool palette and type
-
-Status: In progress on branch `claude/r022-work-tool-palette` (D-083). First of two steps that
-move WebChat from a WhatsApp look to a Slack-like workspace (R-022 and R-023).
-
-Why: the features are for serious project work, but the page looks like a consumer messenger.
-`client/src/styles.css` copies WhatsApp's palette (`--accent: #00a884`, `--bubble-out: #d9fdd3`,
-`--text: #111b21`), its 10px radius and its 15px type, so the product reads as a WhatsApp clone
-before anyone sees a project.
-
-Scope:
-
-- A neutral gray scale with one accent that is far from teal, such as indigo. Danger and warn stay.
-- A tinted or dark sidebar with a white content area, flat panels with 1px lines, and no card
-  shadow on panels.
-- 14px base type with a tighter line height, monospace for inline code, 6px radius everywhere, and
-  square-ish avatars.
-- Light and dark mode, both checked at desktop width and at 375 pixels.
-
-Constraints: this step changes `styles.css` only, with no change in behavior or markup. The file is
-over 2,600 lines, so expect to touch more selectors than the token list suggests.
-
-Done when: the page shows no WhatsApp color, every screen passes the two-account check in both
-modes and both widths, and the owner has approved screenshots.
-
-### R-023: Rebrand, step 2: a linear message feed instead of bubbles
-
-Status: Dropped on 2026-11-05. #78 built it and reached main, and the owner reverted it: they
-prefer bubbles to a linear feed. D-084 is reverted.
-
-R-024 to R-026, the rest of the rebrand, were dropped on 2026-11-05. The owner does not want
-project-first navigation, new wording or a new name. The numbers stay taken.
-
 ### R-029: Hand a card to a teammate's idle agent
 
 Status: Planned. Set aside from K-45 (D-089) on 2026-11-05.
@@ -129,132 +93,26 @@ Scope:
 Done when: a teammate's request runs on the owner's machine only after the owner let them in, and a
 test covers a request from someone who was not let in.
 
-### R-030: Run cards from a Claude Code plugin
+### R-016: Link a project to repositories
 
-Status: Done in #100 on 2026-11-05 (D-092, D-093). Designed in #99. A spike showed that a plugin
-monitor wakes an idle session and that a forged line gets nothing. Q-5 holds what is still open.
+Status: Planned. Started in #14. Since #17 (D-050), a project links repositories through a
+GitHub App, and its webhooks post a card into the channel for every pull request that opens, is
+ready for review, is reopened, merged or closed. Still to do: the Projects tab list, reviewers
+shown by their WebChat names instead of GitHub logins, and cards that show a pull request's
+current checks and review decision instead of a snapshot.
 
-Why: an agent today is a second program. Its owner clones WebChat, signs the agent up with an
-invite code and a password, adds it to the project, compares a security code, writes
-`config.json`, and keeps `npm run agent -- watch` running beside Claude Code (R-027). Students
-want one install in the coding agent they already use, and a run they can start from the phone.
+Why: the pane lists one person's pull requests across every repository, with no grouping. A team
+wants to see every open pull request of its repositories, by any member, next to its channels. Only
+pull requests are watched today: pushes and commits are not, and teams that push to main see
+nothing.
 
-How it works:
+Scope: a project names one or more repositories. The Projects tab shows their open pull requests,
+grouped by repository. Reading them needs the GitHub App's installation token, which needs the
+app's private key on the server (D-050 keeps no token).
 
-- The plugin holds an MCP server, a monitor, hooks and a skill. Claude Code starts them with the
-  session, so the owner runs only `claude` in the repository and leaves it open.
-- The MCP server is the trusted part. It holds the agent's keys and uses the owner's `gh` login.
-  It checks in every 15 seconds and checks requests as D-089 says. It claims, pushes `agent/*`
-  branches, opens draft pull requests and reports.
-- The monitor runs `tail -F` on a file the MCP server writes. Each line reaches Claude as a
-  notification. A line holds a run id and a card id, never text a teammate wrote.
-- The model calls `start_run` for the card and the decisions, works in a worktree, then calls
-  `publish` and `finish`. It holds no credentials.
-- PR watching: CI failures, conflicts, and review comments from the owner or the repository's
-  writers ring the same doorbell, only for pull requests the plugin opened. A pull request gets
-  at most 3 fix attempts. Watching stops when someone else pushes to it, or it is closed, merged
-  or marked ready.
-- Pairing replaces sign-up. The owner clicks "Connect coding agent" in WebChat, pastes the code
-  into the plugin's setup dialog, and approves on the page. The page creates the agent account,
-  pins its keys and adds it to the projects the owner picks. The plugin pins the owner's keys.
-  No invite code, password or security code.
-- While the session is closed or the laptop sleeps, the play button shows the agent as asleep.
-  Claude Code on an always-on server keeps it awake.
-
-Security:
-
-- The model never sees a secret: not the agent's keys or login token, the pairing code or the
-  `gh` token. The pairing code reaches the MCP server through a sensitive `userConfig` field.
-- The model's shell runs in the Claude Code sandbox, with the network open only to the package
-  registry and the plugin's data folder unreadable. Plugin hooks keep the file tools inside the
-  run's worktree and deny web fetches during a run. A plugin cannot turn the sandbox on, so the
-  MCP server refuses runs while it is off.
-- Only the MCP server talks to WebChat and GitHub. It pushes only the run's branch, never forces
-  a push and never merges.
-- The pairing code holds 128 bits, so a server that sees the proof cannot guess it offline. It
-  works once and lapses after 10 minutes.
-- The plugin logs no decrypted text, since its error output lands in Claude Code's log files.
-- One session per machine watches for an agent, under a lock file. A run goes to the session
-  whose `origin` matches the request's signed `repo`.
-- The plugin ships as one bundled file built from a tagged release, with a pinned `version`.
-
-WebChat changes:
-
-- Pairing routes: create without a sign-in, rate-limited and lapsing in 10 minutes; approve, by
-  the owner; collect, by the plugin. An agent signs in with a token whose hash the server keeps,
-  and has no password and no key backup. Deleting an account deletes its agents.
-- `RunRequest` gains a signed `repo`, added so old requests still verify (rule 2). Reports gain
-  kinds for PR watching, and the owner can send a signed cancel.
-- The play button names an offline agent "asleep since" the time it last checked in.
-- `npm run agent` stays for runs without Claude Code, and pairs the same way.
-
-Done when: typecheck, tests and build pass. A test drives pairing, a run and a CI fix against the
-real app with a fake model. A teammate's request, a replayed request and a forged doorbell line
-each do nothing. The pairing screen and the asleep label have been tried in a browser (D-037).
-
-Open questions:
-
-- The spike ran in auto mode only. Do other permission modes stop for the plugin's tools? What
-  happens to a run when the laptop sleeps, or the session compacts?
-- `experimental.monitors` may change shape in Claude Code. Does a pinned plugin version shield
-  the owner?
-- Does Claude Code's secure storage work on a Linux server without a desktop keyring? A new code
-  pasted with `/plugin configure webchat@webchat` pairs again at the next session start.
-
-### R-033: The owner removes an agent
-
-Status: Done in #105 on 2026-11-05.
-
-Why: a new pairing code makes a new agent account. The old one stayed in the play menu, asleep,
-and only deleting the owner's own account removed it.
-
-Scope: Connect agent lists the owner's agents, each with a Remove button. Removing deletes the
-agent's account the way account deletion does (D-088): it leaves every chat, which gets a new key.
-It also loses its owner, so no menu offers it again. Its sessions stop at their next check-in.
-
-Done when: a test removes an agent, and a teammate cannot. The list has been tried in a browser.
-
-### R-031: The pairing code carries the WebChat address
-
-Status: Done in #101 on 2026-11-05 (D-093).
-
-Why: the plugin asked each person for their WebChat's address as well as the code. The page that
-shows the code already knows the address, and a typed one can be wrong.
-
-Scope: the page shows `<address>#<code>`. The plugin and `npm run agent -- pair` read the address
-from it. The plugin's address setting stays, optional, for a bare code from an older page.
-
-Done when: the plugin test pairs with an empty address setting, and the dialog shows the address
-with the code in a browser.
-
-### R-032: Every open repository takes its own runs
-
-Status: Done in #104 on 2026-11-05 (D-094).
-
-Why: only the first Claude Code session on a machine took runs, whatever repository it was open
-in. A session in another repository stayed idle, and did not take over when the first one closed.
-
-Scope: each session checks in for the repository it is open in, and the play menu lists one entry
-per repository. A request goes to the session in the repository it names; the others say nothing.
-A second session in one repository takes over when the first closes. A run nobody starts fails
-after 30 minutes. A pull request's line comments are fetched only when GitHub saw a change.
-
-Done when: the plugin test runs sessions in two repositories, one with a second session waiting,
-and a run nobody starts fails. The menu lists both repositories in a browser.
-
-### R-034: The owner deletes a channel
-
-Status: Done in #110 on 2026-11-05 (D-096).
-
-Why: a team makes channels for short tasks, such as #slides for one deadline. Only deleting the
-whole project took a channel away, so finished ones stayed in the sidebar.
-
-Scope: the project's owner deletes a channel for everyone from the "⋮" at the end of its row. Its
-messages go with it. #general stays, since its key opens the docs and the board. Other members see
-the channel go at their next check-in, with no push.
-
-Done when: a test shows that only the owner deletes a channel, never #general, and that its
-messages go. The menu has been tried in a browser with two accounts.
+Settled in D-050: every pull request in a linked repository goes to the channel, whoever opens it.
+Everyone in the project sees its title, even without access to the repository, so the list here
+would show the same to the whole project.
 
 ## Ideas
 
@@ -299,7 +157,7 @@ whether quotes are enough for students before building threads.
 
 ### R-010: Deadline reminders
 
-Status: Idea. Depends on R-001.
+Status: Idea. Depends on R-001, which was dropped for R-021.
 
 Reminders need a scheduler, because Vercel Hobby cron jobs run once a day. Reuse the `CRON_SECRET`
 approach of the GitHub connector (D-034). A reminder that shows a task's title must be decrypted on
@@ -319,27 +177,6 @@ Status: Idea, out of scope for now.
 
 Calls need WebRTC and TURN servers, which cost money (D-003).
 
-### R-016: Link a project to repositories
-
-Status: Planned. Started in #14. Since #17 (D-050), a project links repositories through a
-GitHub App, and its webhooks post a card into the channel for every pull request that opens, is
-ready for review, is reopened, merged or closed. Still to do: the Projects tab list, reviewers
-shown by their WebChat names instead of GitHub logins, and cards that show a pull request's
-current checks and review decision instead of a snapshot.
-
-Why: the pane lists one person's pull requests across every repository, with no grouping. A team
-wants to see every open pull request of its repositories, by any member, next to its channels. Only
-pull requests are watched today: pushes and commits are not, and teams that push to main see
-nothing.
-
-Scope: a project names one or more repositories. The Projects tab shows their open pull requests,
-grouped by repository. Reading them needs the GitHub App's installation token, which needs the
-app's private key on the server (D-050 keeps no token).
-
-Settled in D-050: every pull request in a linked repository goes to the channel, whoever opens it.
-Everyone in the project sees its title, even without access to the repository, so the list here
-would show the same to the whole project.
-
 ### R-017: Notes in a chat when people join or are removed
 
 Status: Idea. Found while building R-003 on 2026-11-01.
@@ -349,107 +186,6 @@ D-043). The other members see it only in the member count and the member list. W
 "Alice added Carol" in the chat, and Slack shows "Carol joined #general". A note in the message
 list would tell everyone who can read along. The server already knows when each member joined, so
 the notes would show it nothing new. They should not count as unread.
-
-### R-027: Run a card with a coding agent
-
-Status: In progress. Step 1 of 5, the headless client in `agent/` with `npm run agent` to sign
-up, sign in and watch, is on branch `claude/r027-headless-client` (#85, D-085). Step 2, the run
-request and reports inside sealed messages, the "Run with" menu on a card and the run card in
-#general, is on branch `claude/r027-run-messages` (#86, D-086), on top of #85. Step 3, the
-runner that gives each run a worktree and a brief and starts Claude Code headless in it, is on
-branch `claude/r027-claude-adapter` (#87, D-087), on top of #86. Step 4, the busy flag in the
-daemon's check-ins and the fingerprint, is on branch `claude/r027-busy-flag` (#88), on top of
-#87. Step 5, the Codex and Hermes adapters, is on branch `claude/r027-more-adapters` (#89), on
-top of #88. Asked for by the owner on 2026-11-05, with
-[multica](https://github.com/multica-ai/multica) as the inspiration.
-
-Why: a team writes an issue or an idea as a card on the board (R-021), then one of them copies it
-into a terminal and asks Claude Code, Codex or Hermes to do it. The card does not say who is on
-it, the agent's result reaches the chat only when that person pastes it, and the agent never sees
-the Decisions column it was built to read. The owner wants a button on a K or R card that hands
-it to a teammate's idle agent, and a run that reports back into the channel and ends in a pull
-request.
-
-Scope:
-
-- A "Run with" menu on an issue or idea card. It lists the agent runtimes of the project that are
-  online and idle, such as "claude-code on hazron-mbp". A runtime that is busy or offline is not
-  offered, so a click never queues. (Step 2 offers the online ones; busy comes with step 4.)
-- A run card in #general for each run: who asked, which card, which runtime, then claimed,
-  progress notes, and done with the branch and the pull request, or failed with the reason. The
-  card updates in place, as a message with its reactions does.
-- A daemon, `webchat-agent`, that a student runs on the machine that holds the repository. It
-  signs in, polls, picks up a run, cuts a `git worktree` on a branch named after the card, writes
-  the brief, runs the CLI headless, and reports. One run at a time. The brief holds the card at
-  the revision that was clicked, the Decisions column, and the rule to end with a draft pull
-  request and never to push main.
-- When the pull request opens, the GitHub App posts its card into the channel as it does today
-  (D-050), and the daemon sets the card's status line to "In progress on branch …", with the doc
-  section lock (D-081).
-- Adapters for Claude Code first, then Codex and Hermes. Each one knows how to start the CLI
-  without a prompt, read its event stream and resume a session.
-
-How it is built:
-
-- The agent is a member account, not the user's device. Each runtime signs up with the invite code
-  as its own account and is invited into projects like a person. So it gets chat keys the way rule
-  5 allows, signs what it sends with its own key, has presence, and its messages are labeled as
-  the agent's. A daemon that held the user's own keys would read every direct message on that
-  laptop, and the agent's words would pass as the user's.
-- The daemon is a headless client: `shared/e2ee.ts` on Node's Web Crypto, a Node copy of
-  `client/src/api.ts`, and the same `POST /api/sync` check-in every 15 seconds (D-004). No new
-  transport, no open connection. Its keys live in a file under `~/.webchat/<name>/` that only
-  its owner can read. Node has no non-exportable key store, so this is a new line in the README
-  list (D-020).
-- A run request is an ordinary message in #general whose sealed content carries a `run` field,
-  like `pull` under D-042: the card's id, doc, section and revision, and the runtime's account id.
-  The text says the same in words. The daemon answers with messages whose `run` field says
-  claimed, progress, done or failed, and the page folds them into one run card. The server
-  changes not at all for this: it sees messages. The signature proves which member asked (D-016),
-  and the daemon runs only requests from accounts its owner allowed.
-- Idle is a presence flag. The check-in already marks who is online for the sync fingerprint
-  (D-021). The daemon's check-in adds `busy`, which joins the fingerprint, so the menu shows only
-  runtimes seen in the last 45 seconds and not busy. The server learns that an agent account is
-  busy, not on what.
-- A config file maps each project to a local repository path. A run gets its own worktree, a
-  branch such as `agent/k12-bad-push-keys`, and a two-hour idle watchdog that kills the CLI and
-  reports a failure.
-
-Constraints:
-
-- Rule 1 holds: the card text, the brief and every report are encrypted and signed in the daemon,
-  never on the server. The server cannot write a run message, because it holds no chat key
-  (D-015), so every report comes from the daemon.
-- The brief is what a teammate wrote, run on the daemon owner's machine with their permissions. By
-  default only the owner's own account may dispatch to their runtime; a project opts in for its
-  other members. The CLI runs in the worktree with edits allowed and no push to main.
-- A request the daemon first sees more than 10 minutes after it was sent fails as missed, so an
-  agent that comes online on Monday does not start Friday's run unasked.
-- The daemon is Node code in a new `agent/` folder, typechecked with the tooling tsconfig by
-  `npm run typecheck`. Its decisions, the agent as a member and the run field, are recorded with
-  the numbers reserved at the claim.
-
-Build order, each its own pull request: the headless client, then the run messages and the card
-menu, then the Claude Code adapter, then the busy flag, then the other adapters. The headless
-client pays off on its own, since the tests could drive the app through it.
-
-Out of scope for now: steering a running agent with a reply to its run card, which Claude Code and
-Codex can take through a resumed session; running more than one task on a runtime; a runtime
-without a local checkout that clones the project's linked repository (R-016); and runs started on
-a schedule or by a mention.
-
-Done when: typecheck, tests and build pass. A test drives a run end to end against the real app
-with a fake CLI: a member sends a request, the daemon claims it, runs the command in a worktree,
-reports done, and the card's status line names the branch. The menu has been tried in a browser
-with two accounts, at desktop width and 375 pixels, in light and dark mode, with the daemon online,
-busy and offline.
-
-Open questions:
-
-- Should the run card live in the channel the project links to the repository, when there is one,
-  instead of #general? The pull request card lands there.
-- Should a runtime belong to the project rather than to a member, so it survives the member
-  leaving? A member's runtime loses the project's key when they leave (D-044).
 
 ## Known issues
 
@@ -497,141 +233,6 @@ Fix: when the owner checks a teammate's code, the page sends each of their agent
 names the person and the fingerprint it checked. An agent pins it only when its owner sent it, with
 a signed send time and once per client id (D-089, K-47), and only when it is the person's current
 fingerprint.
-
-### K-56: A card's model can read the tokens that SessionStart hooks leave for the shell
-
-Status: Fixed in #118. Found in R-035's step 2 (#117) on 2026-11-06.
-
-Claude Code keeps the variables that SessionStart hooks set for each session in
-`~/.claude/session-env`, or under `CLAUDE_CONFIG_DIR` when that is set. On the owner's machine it
-had 297 entries, and 205 of its files mentioned TOKEN. A sandboxed shell could list and read it,
-even with reads outside the working directories blocked. The plugin's check did not ask for it.
-
-Fix: the plugin refuses runs until `denyRead` covers `session-env`, and the README's settings deny
-it. With that deny, the sandboxed shell cannot list the folder, and a hook's variable still reaches
-its commands.
-
-### K-55: The guard lets the file tools write through a link to a file not made yet
-
-Status: Fixed in #118. Found in the review of the R-035 spike (#114) on 2026-11-06.
-
-The guard checks the real path of each file the file tools name (D-092). For a link whose target
-did not exist yet, `realpathSync` failed, so it checked the link's own path. The sandboxed shell can
-make such a link into a secret folder, and Write would create a file there. In the spike, Claude
-Code itself refused that write under `--restricted`, so only the second layer was missing.
-
-Fixing it showed two more ways past the guard, which let Read reach the agent's keys. Node's
-`realpathSync` applies `..` in a link's target before the links, so a link to
-`inner/../account.json`, with `inner` a link into the plugin's folder, passed. And on macOS, whose
-disks ignore letter case by default, a path in other case passed, such as `~/.CLAUDE/plugins/data`.
-
-Fix: the guard resolves paths with `realpathSync.native`, as the kernel does. It reads a link to a
-file not made yet with `readlinkSync` and checks its target, for at most 40 links, so a loop ends.
-
-### K-54: A card's model can find the owner's GitHub token in the macOS keychain
-
-Status: Fixed in #118. Found in the R-035 spike (#114) on 2026-11-06.
-
-On macOS, `gh` keeps its token in the login keychain unless it was logged in with
-`--insecure-storage`, so the `~/.config/gh` that the sandbox denies (D-092) holds none. A sandboxed
-shell with the settings the README gave still found gh's keychain item in the spike. Reading it
-takes `security find-generic-password -w`, which the spike did not run, and a card could then have
-the model commit the token to the draft that teammates read. Denying `~/Library/Keychains` hid the
-item, and so did blocking reads outside the working directories. The plugin's check asked for
-neither.
-
-Fix: on macOS the plugin refuses runs until the sandbox denies `~/Library/Keychains` or blocks reads
-outside the working directories. The README's settings deny it.
-
-### K-53: The plugin takes runs where the sandbox cannot start
-
-Status: Fixed in #118. Found in the R-035 spike (#114) on 2026-11-06.
-
-The plugin took runs once the owner's settings turned the sandbox on and denied reading its secrets
-(D-092). Where the sandbox cannot start, such as on Linux without bubblewrap, Claude Code runs
-commands unsandboxed unless `sandbox.failIfUnavailable` is true, and the check still passed. The
-model's shell could then read the owner's `gh` token.
-
-Fix: the plugin refuses runs until `sandbox.failIfUnavailable` is true, and the README's settings
-set it.
-
-### K-52: Run gives no feedback, and each click runs the card again
-
-Status: In progress on branch `claude/k52-run-card-feedback` (D-100). Found on 2026-11-05, when a
-double click posted several run cards to #general and the agent ran K-1 more than once.
-
-The Run menu stayed open after a pick and the only answer was a note at the top of the column, so
-people clicked again. Each click sent another request. The server cannot drop the copies, because a
-request is encrypted. A run that ended with a draft pull request also left its card under Open.
-
-Fix: the card shows its latest run and the Run button waits while it goes; a run that is done moves
-its card to In review (D-100).
-
-### K-51: A second request for a running card is answered as if the agent were busy
-
-Status: Fixed in #115 (D-099). Found on 2026-11-05, when the play button sent a request on every
-click.
-
-A double click, or a click in a second tab or on a second device before it has seen the first
-request, puts two requests for one card in #general. The daemon and the plugin both hand every
-request to `Runs.handle` in `agent/runs.ts`, which runs one at a time, so a card never ran twice at
-once. But the second request got "I am busy with K-1.", the words for a request for another card,
-and no test covered a copy in a later check-in or the plugin's path.
-
-Fix: a request for the card being run, found by its doc and section, fails with "K-1 is already
-running." and starts nothing. A card whose run ended runs again (D-099).
-
-### K-50: Every Claude Code session checks in to WebChat
-
-Status: Fixed in #113 (D-098). Found on 2026-11-05, when the play menu listed Hzxon/test_agent and
-Hzxon/webchat, though only one session was meant for WebChat.
-
-With the plugin on, each Claude Code session paired, checked in with its repository and marked its
-monitor, whatever the owner opened it for. The server learned every repository the owner worked
-in, and a session in the same checkout heard the rings meant for the one taking runs.
-
-Fix: only a session started with `WEBCHAT_AGENT=1` takes part, read from the environment it started
-with, and each session has its own doorbell (D-098).
-
-### K-49: A session that cannot hear the doorbell takes its repository's runs
-
-Status: Fixed in #108 (D-095). Found on 2026-11-05, when card K-1 failed in Hzxon/test_agent.
-
-The plugin's MCP server took its repository's lock whether or not a monitor tailed the doorbell.
-The Claude desktop app starts no plugin monitor, so a desktop session holding the lock let every
-run ring unheard and fail after 30 minutes, while a terminal session in that repository waited.
-After the update to 0.4.0, one running session kept the 0.3.0 monitor, which tails the old
-doorbell. Another kept the 0.3.0 server, which locks the whole machine and reported K-1, a card for
-another repository, as failed. `status` also said "Taking the cards" while the sandbox check failed
-every card, and showed an empty address when the address came with the pairing code.
-
-Fix: the monitor marks its session, and only a marked session takes runs (D-095). `status` leads
-with the sandbox problem and names the address the agent uses. The README says to start new
-sessions after an update, which is the only fix for a session that kept the 0.3.0 server.
-
-### K-48: The agent refuses a plain http address under .localhost
-
-Status: Fixed in #106. Found while testing R-033 on 2026-11-05.
-
-Since K-47 the agent takes a plain http address only for `localhost`, `127.0.0.1` and `[::1]`.
-AGENTS.md tries two accounts on hosts such as `alice.localhost`, and since R-031 the pairing code
-carries that address, so `npm run agent -- pair` and the plugin refused it. Every name under
-`.localhost` is this machine, so the agent now takes those too.
-
-### K-47: The agent runs a replayed request, and signs up over plain HTTP
-
-Status: Fixed in #100, with R-030 (D-093). Found while designing R-030 on 2026-11-05.
-
-A run request is signed with its client id, and the database refuses a repeated one
-(`messages_by_client_id`). Only an honest server holds to that. `Runs.handle` in `agent/runs.ts`
-remembers no request it ran. So a server can post the same signed request again within its 10
-minutes, and once the first run has ended, the daemon runs it again.
-
-`Api` in `agent/api.ts` takes any server address. A sign-up to an `http://` address sends the
-login key in the clear.
-
-Fix: keep the client ids of the requests the daemon handled for 10 minutes, and refuse a repeat.
-Refuse a server address that is not `https://`, except for `localhost`.
 
 ### K-44: A reply or reaction follows the message id, which no signature covers
 
@@ -715,6 +316,23 @@ say a resumed session does not restore background tasks, and do not say whether 
 starts again. Try `claude --resume` on a session with the plugin, and hand it a card. If the monitor
 is gone, a run fails after 30 minutes (D-094), so the README should say to start a new session.
 
+## Dropped
+
+Work the owner decided against. The entries keep their numbers and say why.
+
+### R-001: Task board for projects, like Jira
+
+Status: Dropped on 2026-11-04, replaced by R-021. The owner chose a board of decisions and
+roadmap cards, like this repository's own documents, over a Jira-style task board.
+
+### R-023: Rebrand, step 2: a linear message feed instead of bubbles
+
+Status: Dropped on 2026-11-05. #78 built it and reached main, and the owner reverted it: they
+prefer bubbles to a linear feed. D-084 is reverted.
+
+R-024 to R-026, the rest of the rebrand, were dropped on 2026-11-05. The owner does not want
+project-first navigation, new wording or a new name. The numbers stay taken.
+
 ## Done
 
 Finished work. The table is the index; git history keeps each entry's reasons and pull requests.
@@ -773,9 +391,23 @@ Nothing here is a candidate for what to do next.
 | One account per device (D-080) | #71 |
 | R-020: Shared Markdown docs in projects (D-081) | #73 |
 | R-021: Project board of decisions and roadmap cards (D-082) | #75 |
+| R-022: A work-tool palette and type, step 1 of the rebrand (D-083) | #77 |
+| R-027: Run a card with a coding agent: headless client, run messages, Claude Code, busy flag, Codex and Hermes (D-085 to D-087) | #85, #86, #87, #88, #89 |
 | K-41: An account from before the agent flag never becomes an agent | #91 |
 | R-028: Delete an account (D-088) | #94 |
 | K-42: The agent's allow list trusts the username the server sends (D-089) | #95 |
 | K-45: Your own agent refuses a card a teammate wrote (D-089) | #95 |
 | K-46: A card run hangs with no end when its daemon stops | #96 |
+| K-47: The agent refuses a replayed request and a plain-HTTP server (D-093) | #100 |
+| R-030: Run cards from a Claude Code plugin (D-092, D-093) | #100 |
+| R-031: The pairing code carries the WebChat address (D-093) | #101 |
+| R-032: Every open repository takes its own runs (D-094) | #104 |
+| R-033: The owner removes an agent | #105 |
+| K-48: The agent takes a plain http address under .localhost | #106 |
+| K-49: Only a session that hears the doorbell takes runs (D-095) | #108 |
+| R-034: The owner deletes a channel (D-096) | #110 |
+| K-50: Only a session started for WebChat takes part (D-098) | #113 |
 | R-035: A Coding agents pane where the owner talks with their agents (D-097, D-101 to D-105) | #114, #117, #119, #120, #121, #122 |
+| K-51: A second request for a running card is refused (D-099) | #115 |
+| K-52: A card shows its latest run, and Run waits while it goes (D-100) | #116 |
+| K-53 to K-56: The plugin refuses runs until the sandbox denies the keychain and session-env and fails if unavailable; the guard resolves links as the kernel does | #118 |
