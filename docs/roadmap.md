@@ -71,17 +71,17 @@ user's own (`comparePulls` only looks at the last commenter).
 
 Done when: a comment-only review on the fake GitHub becomes an event, and a test proves it.
 
-### R-029: Hand a card to a teammate's idle agent
+### R-029: Hand a card to a teammate's agent
 
 Status: Planned. Set aside from K-45 (D-089) on 2026-11-05.
 
-Why: since D-089 an agent runs only the cards its owner hands it. A team with one free agent and
+Why: since D-089 an agent runs only the cards its owner hands it. A team with one agent and
 a teammate who has none cannot share it, and a student who runs an agent cannot let a teammate
 start a run while they are away.
 
 Scope:
 
-- The play button also lists teammates' agents that are online and idle, named by owner, such as
+- The play button also lists teammates' agents that are online, named by owner, such as
   "Bob's claude-code", and only those whose owner lets the viewer use them.
 - The owner lets a teammate in from the daemon, which stores the teammate's user id with their
   pinned keys and prints the security code to compare (D-018). The check K-42 asked for holds: a
@@ -189,25 +189,21 @@ the notes would show it nothing new. They should not count as unread.
 
 ## Known issues
 
-### K-58: A draft started before D-105 posts its reviews where nothing can approve them
+### K-59: Two agents can run one card at once
 
-Status: Fixed in #127. Found in the correctness review of R-035's step 6 (#122) on 2026-11-06. It
-was rare: it needed a draft from before D-105 that someone other than the owner reviewed.
+Status: Open. Found on 2026-11-06 while reading `client/src/components/BoardView.tsx` for the
+design of R-036 to R-038.
 
-A review by anyone but the owner waits for the owner's go, which they give in the pane (D-105). For
-a draft that a run started before D-105, that review never reaches the pane. The plugin posts a
-report in the chat of the run's request, which was #general then (`taken.conversation`, kept in
-`Watched` in `agent/plugin.ts`). The pane builds a card's thread only from a request in the owner's
-direct chat with the agent, so it shows neither the review nor the button that sends the go. The
-card in #general shows the report's tag and note, not the review's text, and has no such button. So
-the review waits for as long as the plugin watches the draft. CI, conflicts and the owner's own
-reviews still start rounds.
+The board disables a card's play button only from the viewer's own run messages (D-100,
+`BoardView.tsx` where `cardRun` sets `disabled`). Teammates see no run messages, so their button
+stays enabled while the status line says `In progress: Ann's agent`, and the brief (D-105) does not
+refuse either. A teammate with an agent of their own can start the same card: two branches, two
+drafts, one card.
 
-Fix: when the plugin loads, it stops watching each draft whose request is not in the owner's direct
-chat with the agent, and reports `ended` with the link to the pull request. That also ends the CI
-and conflict rounds of those drafts. The other way is a pane that builds a thread from a request in
-any chat. It would serve only drafts that no new request can start, since the page now sends every
-request to the direct chat.
+Fix: the brief refuses, or at least warns, when the card's status line names another agent's run,
+such as `In progress:` or `In review:`, since the status line is the one thing teammates can see
+(D-100). A refusal is enough; a lock would need the server to know what the request names, which
+it cannot (D-014).
 
 ### K-57: The agent never pins a teammate's new keys, so Start fails on a board with their text
 
@@ -304,7 +300,7 @@ owner decided on 2026-11-01 to keep the OAuth App for the pane.
 
 WebChat stays at 0.y.z while it is in early development (D-055). Version 1.0.0 would promise that
 no upgrade within 1.x needs a step from the person who runs it. Decide what must hold first, for
-example the task board (R-001) and an upgrade path that people who self-host can trust.
+example an upgrade path that people who self-host can trust.
 
 ### Q-5: Does a resumed Claude Code session hear the plugin's doorbell?
 
@@ -411,3 +407,7 @@ Nothing here is a candidate for what to do next.
 | K-51: A second request for a running card is refused (D-099) | #115 |
 | K-52: A card shows its latest run, and Run waits while it goes (D-100) | #116 |
 | K-53 to K-56: The plugin refuses runs until the sandbox denies the keychain and session-env and fails if unavailable; the guard resolves links as the kernel does | #118 |
+| K-58: The plugin unwatches a draft from before D-105 that the pane cannot show | #127 |
+| R-037: An agent runs several cards at once (D-085, D-086, D-099) | #130 |
+| R-036: One Claude Code window serves every repository, and the agent clones on its owner's click (D-094, D-101, D-108) | #131 |
+| R-038: The Coding agents pane lists projects, and a conversation belongs to one (D-102, D-103) | #132 |
