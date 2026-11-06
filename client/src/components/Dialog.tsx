@@ -4,6 +4,7 @@ import { CloseIcon } from './icons';
 /** Native <dialog> as a modal: focus trapping, Escape to close, and the backdrop come from the browser. */
 export function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const pressedBackdrop = useRef(false);
 
   useEffect(() => {
     const dialog = ref.current;
@@ -20,8 +21,13 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
       ref={ref}
       className="dialog"
       onClose={onClose}
+      onPointerDown={(e) => {
+        pressedBackdrop.current = e.target === ref.current;
+      }}
       onClick={(e) => {
-        if (e.target === ref.current) onClose();
+        // A drag from inside that ends on the backdrop, such as selecting a field's text, also
+        // clicks the dialog itself. Only a press that started on the backdrop closes it.
+        if (e.target === ref.current && pressedBackdrop.current) onClose();
       }}
     >
       <div className="dialog-body">
