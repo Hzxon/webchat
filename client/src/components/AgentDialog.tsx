@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { newPairingCode } from '../../../shared/e2ee';
 import { LIMITS, PAIRING_TTL_MS, type PublicKeysDTO, type UserDTO } from '../../../shared/types';
 import { ownAgents } from '../agents';
+import { ApiError } from '../api';
 import { connectAgent, pairingKeys, removeAgent } from '../chat';
 import { useAppState } from '../store';
 import { Dialog } from './Dialog';
@@ -30,21 +31,35 @@ export function AgentDialog({ projectId, onClose }: { projectId: number; onClose
   const [note, setNote] = useState('');
   const sorted = useMemo(() => Object.values(projects).sort((a, b) => a.name.localeCompare(b.name)), [projects]);
 
-  // Looks for the agent's half every 2 seconds, for as long as the code works.
+  // Looks for the agent's half every 2 seconds, for as long as the code works. A failed request, in
+  // a deploy or a network blip, shows its error and the look goes on (K-61).
   useEffect(() => {
     const until = Date.now() + PAIRING_TTL_MS;
     let live = true;
+    let failed = false;
     let timer: ReturnType<typeof setTimeout>;
     const look = async () => {
       try {
         const found = await pairingKeys(code);
         if (!live) return;
-        if (found) setKeys(found);
-        else if (Date.now() > until) setError('The code lapsed. Close this window and open it again for a new one.');
-        else timer = setTimeout(() => void look(), 2000);
+        if (failed) setError('');
+        failed = false;
+        if (found) {
+          setKeys(found);
+          return;
+        }
       } catch (err) {
-        if (live) setError((err as Error).message);
+        if (!live) return;
+        // Keys that did not come with the code are no blip: they stay an error for good (D-093).
+        if (!(err instanceof ApiError)) {
+          setError((err as Error).message);
+          return;
+        }
+        failed = true;
+        setError(`${err.message} Still trying.`);
       }
+      if (Date.now() > until) setError('The code lapsed. Close this window and open it again for a new one.');
+      else timer = setTimeout(() => void look(), 2000);
     };
     void look();
     return () => {
