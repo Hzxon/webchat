@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/Hzxon/webchat/compare/v0.5.0...v0.6.0) (2026-11-06)
+
+
+### Features
+
+* **agent:** Run several cards at once ([#130](https://github.com/Hzxon/webchat/issues/130)) ([bafa605](https://github.com/Hzxon/webchat/commit/bafa60566a6650944dfa61472664ee0d8f3f3662))
+* **agent:** Serve all repos from one window ([#131](https://github.com/Hzxon/webchat/issues/131)) ([eb0bf4b](https://github.com/Hzxon/webchat/commit/eb0bf4b6bebf201a356999fbbda1e09f02c162be))
+* **agents:** List the agent pane by project ([#132](https://github.com/Hzxon/webchat/issues/132)) ([02b6773](https://github.com/Hzxon/webchat/commit/02b67730efce6915762317e09060db7d29c75c6b))
+
+
+### Bug Fixes
+
+* **agent:** Unwatch drafts the pane cannot show ([#127](https://github.com/Hzxon/webchat/issues/127)) ([d20d9d8](https://github.com/Hzxon/webchat/commit/d20d9d84b754471c38f7b8288edbba8f8b83a9de))
+
 ## [0.5.0](https://github.com/Hzxon/webchat/compare/v0.4.0...v0.5.0) (2026-11-06)
 
 
