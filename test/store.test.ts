@@ -5,7 +5,7 @@ import { beforeEach, describe, test } from 'node:test';
 // the client module. tsx still loads it.
 const clientStore = '../client/src/store.ts';
 
-const { actions, localEditCount, store } = await import(clientStore);
+const { actions, localEditCount, reloadPath, store } = await import(clientStore);
 const chat = (id: number) => ({ id, projectId: null });
 const project = (id: number) => ({ id, memberIds: [] });
 
@@ -35,5 +35,16 @@ describe('A check-in answer in client/src/store.ts, against changes this page ma
     actions.upsertProject(project(3));
     assert.equal(actions.applySync([], [], [], [], [], since), false);
     assert.ok(store.get().projects[3]);
+  });
+});
+
+describe('The address a reload after a deploy opens, in client/src/store.ts (D-040, K-60)', () => {
+  beforeEach(() => actions.reset());
+
+  test('names the board that is open, and the page itself once it closes', () => {
+    actions.setBoardOpen(3);
+    assert.equal(reloadPath(store.get()), '/?board=3');
+    actions.setBoardOpen(null);
+    assert.equal(reloadPath(store.get()), '/');
   });
 });

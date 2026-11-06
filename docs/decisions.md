@@ -175,7 +175,8 @@ compares the bundle files under `/assets/`. A tab with the same files keeps the 
 the service worker to update instead (K-36). A tab whose page loads a new file reloads once it is
 hidden or idle for 30 seconds, and it waits while the composer holds a draft, a message is sending
 or failed, or an urgent alert waits (`holdReloadWhile` in `client/src/build.ts`). The reload opens
-the chat or Pull requests pane that was open, through the `/?chat=` link of a notification click.
+the chat, pane, doc or board that was open, through a link such as the `/?chat=` one of a
+notification click (K-60, #135).
 
 Why: a tab from before a deploy keeps its old code, and a format change makes it show messages it
 cannot decrypt (K-1). A check-in is the only channel to a tab (D-004), so the header rides on it.
