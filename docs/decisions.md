@@ -989,16 +989,18 @@ account, and the old one stays, asleep.
 
 ### D-094: One Claude Code window serves every folder on its laptop
 
-Accepted 2026-11-05 in #104, rewritten in #131 (R-036). The doorbell went in #117 (D-097).
+Accepted 2026-11-05 in #104, rewritten in #131 (R-036), changed in #132. The doorbell went in #117
+(D-097).
 
 The plugin's server starts in any folder, and the window that takes the laptop's lock serves every
 folder the owner connected or had cloned (D-101, D-108); another window waits, and takes over when
 it closes. It keeps one copy of the account, its Claude's settings, the watched pull requests and
 the conversations in `laptop/` of its data folder, and a mark per repository under `repos/`. One
-check-in names every repository with a folder, which `agent_repos` keeps with its last check-in,
-and the level of what the laptop can do, which the agent's own row keeps (migration 20). A request
-for a repository with no folder waits for its owner to have it cloned. Why: a student with three
-projects kept three windows open, and could not work on a repository never cloned on the laptop.
+check-in names every repository with a folder, which `agent_repos` keeps with its last check-in, and
+the level of what the laptop can do, which the agent's own row keeps (migration 20); a folder it no
+longer names leaves at once (#132). A request for a repository with no folder waits for its owner to
+have it cloned. Why: a student with three projects kept three windows open, and could not work on a
+repository never cloned on the laptop.
 
 Cost: the server learns that the agent is online whenever any window is open, and the names of its
 folders, never a path. The `agent_repo` column of migration 17 and the copies of the account per
@@ -1078,56 +1080,60 @@ one request before they sync; the agent refuses the second (D-099).
 
 ### D-101: A folder takes part once its owner connects it or has it cloned
 
-Accepted 2026-11-06 in #117 (R-035), changed in #120 and #131 (R-036). It replaces D-098, and with
-D-097 it replaces D-095.
+Accepted 2026-11-06 in #117 (R-035), changed in #120, #131 (R-036) and #132. It replaces D-098, and
+with D-097 it replaces D-095.
 
 The plugin works in a folder only while `repos/<owner>__<name>/connected` in its data folder names
 it and it is a checkout of that repository. The owner's click on **Clone it** writes the mark for a
 clone (D-108). `/webchat:connect` writes it for a checkout the owner has: the skill only the user
 can start calls the `connect` tool, which carries `requiresUserInteraction`, so Claude Code asks the
-owner on every call. Either way a repository's files cannot connect themselves. Its answer says
-when cards need GitHub on the laptop. `disconnect` removes the mark, never the files. A mark from
-before #131 names no folder, and a window open in that checkout fills it in. Why: the server should
-learn only the repositories the owner chose, and a student should not need a terminal to start.
+owner on every call. Either way a repository's files cannot connect themselves. Its answer says when
+cards need GitHub on the laptop. `disconnect`, or Forget in the pane, removes the mark, never the
+files (R-038). A mark from before #131 names no folder, and a window open in that checkout fills it
+in. Why: the server should learn only the repositories the owner chose, and a student should not
+need a terminal to start.
 
 Cost: a connected checkout that moves needs connecting again. The plugin reads the marks every 15
 seconds. A repository whose folder is gone stays in the play menu, asleep, for 30 days (D-094).
 
 ### D-102: A conversation is a prompt and the messages that name it
 
-Accepted 2026-11-06 in #119 (R-035), changed in #131.
+Accepted 2026-11-06 in #119 (R-035), changed in #131 and #132.
 
 The owner talks with their agent in their direct chat. A prompt is a message whose sealed `prompt`
-field names the repository. Replies, cancels, answers and failures name the prompt's client id,
-which its sender signs, unlike the server's message id. The agent heeds only its owner's prompts,
-replies and cancels, in that direct chat, with a signed send time within 10 minutes, once each
-(D-089, K-47). The laptop's window answers from the named repository's folder (D-094), and a reply
-it cannot place hears so. Each conversation is one background Claude session in a scratch copy: a
-repository of its own in the temp folder, holding only the latest commit of origin's default branch,
-so a turn moves none of the owner's branches and nothing from it is pushed. A reply resumes the
-session; turns run one at a time, and a cancel stops them. A long answer comes as messages of at
-most 4,000 characters. A conversation left for 24 hours ends, and its copy goes. Why: the owner asks
-from a phone, and the chat keeps it encrypted.
+field names the project and, unless it links none, one of its repositories. Replies, cancels,
+answers and failures name the prompt's client id, which its sender signs, unlike the server's
+message id. The agent heeds only its owner's prompts, replies and cancels, in that direct chat, with
+a signed send time within 10 minutes, once each (D-089, K-47). The laptop's window answers from the
+named repository's folder (D-094), and a reply it cannot place hears so. Each conversation is one
+background Claude session in a scratch copy: a repository of its own in the temp folder, holding
+only the latest commit of origin's default branch, so a turn moves none of the owner's branches and
+nothing from it is pushed. A question about a board alone runs in an empty folder, with the board
+and the decisions the team holds (R-038). A reply resumes the session; turns run one at a time, and
+a cancel stops them. A long answer comes as messages of at most 4,000 characters. A conversation
+left for 24 hours ends, and its copy goes. Why: the owner asks from a phone, and the chat keeps it
+encrypted.
 
 Cost: an answer waits up to 15 seconds for a check-in, plus the turn. Each conversation fetches a
 copy of the default branch. An answer cut inside a code block shows as two messages.
 
-### D-103: The owner asks their agents in a Coding agents pane
+### D-103: The owner asks their agents in a Coding agents pane, by project
 
-Accepted 2026-11-06 in #120 (R-035).
+Accepted 2026-11-06 in #120 (R-035), rewritten in #132 (R-038).
 
 A Coding agents row sits at the top of Chats once the user has an agent. Their direct chats with
-their agents leave the list: the pane shows them as conversations, and their unread counts move to
-the row. One Ask box names the repository it asks in, with a picker only when there are several. It
-sends only to a session that is online and whose check-ins name the level `AGENT_LEVEL.answers`; a
-session on an older plugin, which ignores prompts, gets the steps to update. While a turn runs, Send
-turns into Stop, so each answer sits under what it answers. A conversation whose newest message is a
-day old shows Ended, since the agent ends it without a word (D-102). Answers render as Markdown, and
-the parts of a long one show as one. Why: students ask from a phone and are not programmers, so
-every state says what to do in plain words.
+their agents leave the list, and their unread counts move to the row. The pane lists the user's
+projects, each with its linked repositories (D-050) and where the agent stands on each: ready, no
+copy yet, or asleep, with Forget for a folder. Then come its conversations, newest first. A project
+the agent is not in offers to add it. The Ask box asks in one project and one of its repositories,
+or its board alone when it links none, and signs both into the prompt. It sends only to an agent
+whose laptop names `AGENT_LEVEL.answers`; an older plugin gets the steps to update. While a turn
+runs, Send turns into Stop. A question a day old shows Ended (D-102). Why: students think in
+projects, and the agent's worth is that it knows the project's board, decisions and code.
 
-Cost: each page load fetches a page of every agent chat. Messages in an agent chat without a
-`prompt` field no longer show. The level, a number later steps raise, costs a migration.
+Cost: each pane load fetches every project's linked repositories. A server with no GitHub App lists
+the agent's folders under every project. Messages in an agent chat without a `prompt` field no
+longer show. The level, a number later steps raise, costs a migration.
 
 ### D-104: An agent drafts cards, and its owner's page adds them
 

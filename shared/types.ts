@@ -596,7 +596,8 @@ export const heldDecisions = (decisions: string[]) => decisions.filter(isHeld).m
  * its own, so the agent can refuse an old one played again (K-42).
  */
 export type PromptDTO =
-  | { kind: 'prompt'; repo: string; sentAt: number; project?: number }
+  // A prompt names its project's board and, unless the project links none, one of its repositories (R-038).
+  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number }
   | { kind: 'reply'; to: string; sentAt: number }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }

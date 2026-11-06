@@ -19,7 +19,10 @@ export interface Thread {
   /** For a card: its request's message id, which the agent's reports name. */
   request?: number;
   conversationId: number;
+  /** The repository it is about, or '' for a question about its project's board alone (R-038). */
   repo: string;
+  /** For a question: the project its prompt names, whose board the agent reads (D-104, R-038). */
+  project?: number;
   /** The prompt first, then the messages that name it, in the chat's order, one per answer. */
   messages: ChatMessage[];
   state: 'working' | 'answered' | 'failed' | 'unsent' | 'ended' | 'draft' | 'waiting' | 'unfinished' | 'done';
@@ -76,7 +79,7 @@ export function seatFor(agent: UserDTO, repo: string): Seat | undefined {
 /** What wakes the agent: one window serves every folder on the laptop (R-036). */
 export const WAKE = 'Keep one Claude Code window open on your laptop, and the laptop awake.';
 
-export const asleep = (seat: Seat) => `Your agent is asleep${seat.lastSeen ? ` since ${formatSince(seat.lastSeen)}` : ''}`;
+export const asleep = (lastSeen: number | null) => `Your agent is asleep${lastSeen ? ` since ${formatSince(lastSeen)}` : ''}`;
 
 /** A repository by its name alone, as students know it: "capstone-app" for "team/capstone-app". */
 export const short = (repo: string) => repo.slice(repo.indexOf('/') + 1);
@@ -143,7 +146,7 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     if (prompt.kind === 'prompt') {
       if (message.senderId === meId && message.clientId) {
         const state = pending[message.clientId] === 'failed' ? 'unsent' : 'working';
-        threads.set(message.clientId, { kind: 'question', root: message.clientId, conversationId: message.conversationId, repo: prompt.repo, messages: [message], state, last: message.createdAt, added: {} });
+        threads.set(message.clientId, { kind: 'question', root: message.clientId, conversationId: message.conversationId, repo: prompt.repo ?? '', project: prompt.project, messages: [message], state, last: message.createdAt, added: {} });
       }
       continue;
     }

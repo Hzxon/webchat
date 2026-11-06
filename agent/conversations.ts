@@ -19,8 +19,8 @@ export interface Conversation {
   /** Its prompt's client id, which every later message names. */
   root: string;
   chat: number;
-  /** The repository its prompt names, as "owner/name". */
-  repo: string;
+  /** The repository its prompt names, as "owner/name", or none for a question about the board alone (R-038). */
+  repo?: string;
   /** The background Claude session its turns share. A new one until a turn has answered. */
   session: string;
   answered: boolean;

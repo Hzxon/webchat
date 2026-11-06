@@ -102,6 +102,11 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.deepEqual([turn(say(AGENT, { kind: 'nocopy', to: 'p9' })), turn(say(AGENT, { kind: 'nocopy', to: 'p9' }), clone, say(AGENT, { kind: 'note', to: 'p9' }))], ['waiting', 'working']);
   });
 
+  test('a question names its project, and one about the board alone names no repository (R-038)', () => {
+    const [thread] = threadsOf([say(ME, { kind: 'prompt', sentAt: 1, project: 4 }, 'b1')], ME, AGENT, {}, 100);
+    assert.deepEqual([thread.project, thread.repo], [4, '']);
+  });
+
   test('a laptop that serves every folder takes a repository it has no folder of, and offers to clone it (R-036)', () => {
     const seat = { repo: 'team/app', online: true, lastSeen: 5, protocol: 2 };
     const agent = (extra: object) => ({ id: AGENT, online: true, lastSeen: 5, protocol: 2, agentRepos: [seat], ...extra });

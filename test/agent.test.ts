@@ -694,6 +694,15 @@ describe('agent client (R-027)', () => {
         ]);
         assert.deepEqual(await branches(), before, 'nothing of the conversation was pushed');
         assert.equal(await refs(), refsBefore, 'the owner\'s checkout gained no branch or commit');
+        // The agent has sent many messages in a few seconds by now (D-091).
+        await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+        // A question about a project's board alone, as one that links no repository asks, runs in an
+        // empty folder, with the board in its brief (R-038).
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"From the board."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', sentAt: Date.now(), project: app.project.id }, 'What is left to do?'));
+        const [boardTurn] = (await turns()).slice(-1);
+        assert.deepEqual(await fs.readdir(boardTurn!.cwd), [], 'an empty folder, with no code');
+        assert.ok(boardTurn!.input.includes('It links no code') && boardTurn!.input.includes('### K-7: Sums are off by one'), 'the brief holds the board');
+        assert.deepEqual(await answers(), ['From the board.']);
 
         // A draft whose request is not in Alice's direct chat with the agent, as every one from before
         // D-105 is, ends when the plugin loads: the pane shows a card's thread only from that chat (K-58).
@@ -774,6 +783,19 @@ describe('agent client (R-027)', () => {
         await plugin.scan();
         assert.deepEqual(plugin.client!.repos, ['acme/app']);
         assert.ok(existsSync(path.join(cloneDir, 'README.md')));
+        // Alice forgets the app's folder from the pane, and Carol cannot: the mark goes, the files stay (R-038).
+        const forget = (from: AgentClient, chat: number) => from.send(chat, { text: 'Forget the folder of acme/app', forget: { repo: 'acme/app', sentAt: Date.now() } });
+        await forget(carol, general);
+        await (await checkIn()).handled;
+        assert.deepEqual(plugin.client!.repos, ['acme/app'], "a teammate's word forgets nothing");
+        await forget(alice, direct);
+        await (await checkIn()).handled;
+        assert.deepEqual(plugin.client!.repos, []);
+        // The laptop's next check-in names no folder, so the pane shows none at once.
+        await plugin.client!.sync();
+        await alice.sync();
+        assert.deepEqual(alice.users.get(agent.id)?.agentRepos, []);
+        assert.ok(existsSync(path.join(project, 'README.md')));
       } finally {
         restore();
       }

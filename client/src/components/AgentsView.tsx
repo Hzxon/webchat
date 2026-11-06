@@ -1,11 +1,13 @@
-// The Coding agents pane (R-035, D-103): the user asks their coding agent about a repository and
-// reads its answers. It takes the chat's place, with a back button on phones. A conversation is a
-// prompt and the messages that name it, in the user's direct chat with the agent (D-102).
+// The Coding agents pane (R-035, D-103): the user asks their coding agent in one of their projects
+// and reads its answers, listed by project with where the agent stands on each repository (R-038).
+// It takes the chat's place, with a back button on phones. A conversation is a prompt and the
+// messages that name it, in the user's direct chat with the agent (D-102).
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AGENT_LEVEL, LIMITS, type RunRequest } from '../../../shared/types';
-import { asleep, ownAgents, ready, seatFor, seatKey, short, THREAD_STATE, useAgentThreads, WAKE, type Seat, type Thread } from '../agents';
-import { askAgent, askClone, askFix, cancelRun, discardMessage, loadChat, loadOlder, retryMessage, saveDraft, tellAgent } from '../chat';
+import { asleep, ownAgents, seatFor, short, THREAD_STATE, useAgentThreads, WAKE, type Seat, type Thread } from '../agents';
+import { addProjectMembers, askAgent, askClone, askFix, cancelRun, discardMessage, forgetFolder, loadChat, loadOlder, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
+import { useLinkedRepos } from '../linkedRepos';
 import { actions, useAppState } from '../store';
 import { useAutoGrow, useDraft } from './ChatView';
 import { formatListTime, formatTime } from './format';
@@ -13,16 +15,24 @@ import { AlertIcon, BackIcon, SendIcon, TerminalIcon } from './icons';
 import { AgentBrief } from './AgentBrief';
 import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
-import { Tag } from './PullTags';
+import { Tag, type Tone } from './PullTags';
 
 
-/** Why a question or reply cannot go to a session now, in plain words, or '' when it can. */
+const UPDATE = 'Your agent’s WebChat plugin is too old for this. In Claude Code, type /plugin, open Installed, choose webchat, then Update now.';
+
+/** Why a question or reply cannot go to the agent now, in plain words, or '' when it can. */
 function blockedBy(seat: Seat | undefined) {
-  if (!seat) return 'Your agent has no repository on your laptop yet. Start a card from your project’s board, and it offers to clone the repository.';
-  // A session on an older plugin checks in, but never answers (D-103).
-  if (seat.protocol < AGENT_LEVEL.answers) return `${short(seat.repo)} has an older WebChat plugin, which cannot answer questions. In Claude Code, type /plugin, open Installed, choose webchat, then Update now.`;
-  if (!seat.online) return `${asleep(seat)}. ${WAKE}`;
+  // An older plugin checks in per repository and answers nothing else (D-103, R-036).
+  if (!seat || seat.protocol < AGENT_LEVEL.answers) return UPDATE;
+  if (!seat.online) return `${asleep(seat.lastSeen)}. ${WAKE}`;
   return '';
+}
+
+/** Where the agent stands on a repository, as a project lists it, and whether it has a folder to forget (R-038). */
+function repoState(seat: Seat | undefined): [Tone, string, boolean?] {
+  if (!seat || seat.protocol < AGENT_LEVEL.answers) return ['warn', 'Plugin too old'];
+  if (!seat.online) return ['muted', 'Asleep'];
+  return seat.noFolder ? ['muted', 'No copy yet'] : ['ok', 'Ready', true];
 }
 
 export function AgentsView() {
@@ -33,7 +43,6 @@ export function AgentsView() {
   const brief = useAppState((s) => s.agentBrief);
   const { chats, threads } = useAgentThreads();
   const agents = useMemo(() => ownAgents(users, meId), [users, meId]);
-  const seats = useMemo(() => agents.flatMap((agent) => agent.agentRepos.flatMap((s) => seatFor(agent, s.repo) ?? [])), [agents]);
   const thread = threads.find((t) => t.root === open);
   // Where a conversation is answered: its agent's folder of the repository its prompt names, or its laptop.
   const seatOf = (t: Thread) => {
@@ -47,11 +56,10 @@ export function AgentsView() {
     for (const id of ids.split(',').filter(Boolean)) void loadChat(Number(id));
   }, [ids]);
 
-  let subtitle = 'Not connected to a repository yet';
-  if (thread) subtitle = `${thread.kind === 'card' ? 'Runs' : 'Asked'} in ${short(thread.repo)} · ${THREAD_STATE[thread.state].label}`;
+  const awake = agents.some((a) => a.online);
+  let subtitle = awake ? 'Your agent is online' : asleep(Math.max(0, ...agents.map((a) => a.lastSeen ?? 0)) || null);
+  if (thread) subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board'} · ${THREAD_STATE[thread.state].label}`;
   else if (brief) subtitle = 'Before it starts';
-  else if (seats.length === 1) subtitle = seats[0]!.online ? `${short(seats[0]!.repo)} is online` : asleep(seats[0]!);
-  else if (seats.length > 1) subtitle = `${seats.filter((s) => s.online).length} of ${seats.length} repositories online`;
   // An agent runs several cards at once, so the list says how many go (R-037).
   const running = threads.filter((t) => t.kind === 'card' && t.state === 'working').length;
   if (!thread && !brief && running) subtitle += ` · ${running} ${running === 1 ? 'card' : 'cards'} running`;
@@ -81,7 +89,7 @@ export function AgentsView() {
       ) : brief ? (
         <AgentBrief brief={brief} />
       ) : (
-        <ThreadList threads={threads} seats={seats} chats={chats} />
+        <ProjectList threads={threads} chats={chats} />
       )}
     </section>
   );
@@ -124,68 +132,159 @@ function Box(props: { name: string; placeholder: string; canSend: boolean; onSen
   );
 }
 
-function ThreadList({ threads, seats, chats }: { threads: Thread[]; seats: Seat[]; chats: ChatConversation[] }) {
-  const [picked, setPicked] = useState('');
+/**
+ * The pane's list (R-038): an Ask box that asks in one of the user's projects, then each project
+ * with its repositories, where the agent stands on each, and its conversations, newest first.
+ */
+function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConversation[] }) {
+  const users = useAppState((s) => s.users);
+  const meId = useAppState((s) => s.me?.id);
+  const projects = useAppState((s) => s.projects);
+  const docs = useAppState((s) => s.docs);
+  const conversations = useAppState((s) => s.conversations);
   const messages = useAppState((s) => s.messages);
   const complete = useAppState((s) => s.historyComplete);
+  const [picked, setPicked] = useState<{ project?: number; repo?: string }>({});
   // A chat loads its newest page first, so older conversations wait for a tap.
   const older = chats.filter((c) => messages[c.id] && !complete[c.id]);
-  // The repository picked, else the newest conversation's while it can answer, else the first that can.
-  const seat = seats.find((s) => seatKey(s) === picked) ?? seats.find((s) => ready(s) && s.repo === threads[0]?.repo) ?? seats.find(ready) ?? seats[0];
-  const several = new Set(seats.map((s) => s.agent.id)).size > 1;
-  const blocked = blockedBy(seat);
+  const agents = useMemo(() => ownAgents(users, meId), [users, meId]);
+  const mine = useMemo(() => Object.values(projects).filter((p) => meId !== undefined && p.memberIds.includes(meId)).sort((a, b) => a.name.localeCompare(b.name)), [projects, meId]);
+  const linked = useLinkedRepos(mine.map((p) => p.id));
+  // The agent that works in a project: the user's own that is a member, since it reads a board only as one (rule 5).
+  const agentIn = (projectId: number) => agents.find((a) => projects[projectId]?.memberIds.includes(a.id));
+  // A project's repositories: those it links (D-050), or on a server with no GitHub App, the agent's folders.
+  const reposOf = (projectId: number) => {
+    const view = linked[projectId];
+    return view && !view.configured ? (agentIn(projectId)?.agentRepos.map((s) => s.repo) ?? []) : (view?.repos ?? []);
+  };
+  // What a question can be about: a repository, or '' for the board alone, which a project that links
+  // none always offers, and on a server with no GitHub App, every project.
+  const choicesOf = (projectId: number) => {
+    const repos = reposOf(projectId);
+    return repos.length && linked[projectId]?.configured !== false ? repos : [...repos, ''];
+  };
+  // Where a conversation belongs: the project its prompt names, or its card's board.
+  const projectOf = (t: Thread) => (t.kind === 'question' ? t.project : conversations[docs[t.messages[0]!.run?.kind === 'request' ? t.messages[0]!.run.docId : '']?.conversationId ?? 0]?.projectId);
+
+  // The project picked, else the newest conversation's, else the first; then its repository picked, or its first.
+  const askable = mine.filter((p) => agentIn(p.id));
+  const project = askable.find((p) => p.id === picked.project) ?? askable.find((p) => threads[0] && p.id === projectOf(threads[0])) ?? askable[0];
+  const repos = project ? choicesOf(project.id) : [];
+  const repo = repos.find((r) => r === picked.repo) ?? repos[0];
+  const agent = project && agentIn(project.id);
+  // With no repository, the agent answers from the board alone, on its laptop (R-038).
+  const blocked = !agent ? 'Add your agent to one of your projects first: Add it, below.' : blockedBy(seatFor(agent, repo ?? ''));
+  const loading = !!project && !linked[project.id];
+  // Until a project's repositories load, the box speaks of code, as most questions are about it.
+  const code = !!repo || loading;
 
   async function ask(text: string) {
     try {
-      actions.setAgentsOpen(true, await askAgent(seat!.agent.id, seat!.repo, text));
+      actions.setAgentsOpen(true, await askAgent(agent!.id, project!.id, repo || undefined, text));
     } catch (err) {
       actions.addToast({ conversationId: null, title: 'Question not sent', body: (err as Error).message });
       throw err;
     }
   }
 
+  const item = (t: Thread, several: boolean) => (
+    <li key={t.root}>
+      <button className="agents-item" onClick={() => actions.setAgentsOpen(true, t.root)}>
+        <span className="agents-item-text">{t.messages[0]!.text}</span>
+        <span className="agents-item-meta">
+          <Tag tone={THREAD_STATE[t.state].tone}>{THREAD_STATE[t.state].label}</Tag>
+          {several && <span>{t.repo ? short(t.repo) : 'Board'}</span>}
+          <time>{formatListTime(t.last)}</time>
+        </span>
+      </button>
+    </li>
+  );
+  const elsewhere = threads.filter((t) => !mine.some((p) => p.id === projectOf(t)));
+
   return (
     <div className="messages agents-list-view">
       <div className="composer agents-ask">
-        {seats.length > 1 ? (
-          <label className="agents-repo">
+        {project && (
+          <div className="agents-repo">
             Asks in
-            <select value={seat ? seatKey(seat) : ''} onChange={(e) => setPicked(e.target.value)}>
-              {seats.map((s) => (
-                <option key={seatKey(s)} value={seatKey(s)}>
-                  {short(s.repo)}
-                  {several ? ` on ${s.agent.displayName}` : ''}
-                  {s.online ? '' : ' (asleep)'}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : (
-          seat && <p className="agents-repo">Asks in {short(seat.repo)}</p>
+            {askable.length > 1 ? (
+              <select value={project.id} onChange={(e) => setPicked({ project: Number(e.target.value) })} aria-label="Project">
+                {askable.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <strong>{project.name}</strong>
+            )}
+            {repos.length > 1 ? (
+              <select value={repo} onChange={(e) => setPicked({ project: project.id, repo: e.target.value })} aria-label="Repository">
+                {repos.map((r) => (
+                  <option key={r} value={r}>
+                    {r ? short(r) : 'its board'}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span>{repo ? short(repo) : 'its board'}</span>
+            )}
+          </div>
         )}
         {blocked && <p className="composer-blocked">{blocked}</p>}
-        <Box name="agents:ask" placeholder="Ask about your code" canSend={!blocked} onSend={ask} />
-        <p className="agents-hint">It reads your team’s code as it is on GitHub. After a push, ask a new question to see it.</p>
+        <Box name="agents:ask" placeholder={code ? 'Ask about your code' : 'Ask about your project'} canSend={!blocked && !loading} onSend={ask} />
+        <p className="agents-hint">
+          {code ? 'It reads your team’s code as it is on GitHub. After a push, ask a new question to see it.' : 'Your agent answers from the project’s board alone: its decisions and cards.'}
+        </p>
       </div>
-      {threads.length > 0 ? (
-        <ul className="agents-list">
-          {threads.map((t) => (
-            <li key={t.root}>
-              <button className="agents-item" onClick={() => actions.setAgentsOpen(true, t.root)}>
-                <span className="agents-item-text">{t.messages[0]!.text}</span>
-                <span className="agents-item-meta">
-                  <Tag tone={THREAD_STATE[t.state].tone}>{THREAD_STATE[t.state].label}</Tag>
-                  {seats.length > 1 && <span>{short(t.repo)}</span>}
-                  <time>{formatListTime(t.last)}</time>
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
+      {mine.map((p) => {
+        const inIt = agentIn(p.id);
+        const own = threads.filter((t) => projectOf(t) === p.id);
+        const list = reposOf(p.id);
+        return (
+          <section key={p.id} className="agents-project">
+            <h3 className="agents-project-head">{p.name}</h3>
+            {!inIt ? (
+              <p className="agents-repos">
+                Your agent is not in this project, so it cannot read its board.
+                <button className="agents-forget" onClick={() => void addProjectMembers(p.id, [agents[0]!.id]).catch((err: Error) => actions.addToast({ conversationId: null, title: 'Agent not added', body: err.message }))}>
+                  Add it
+                </button>
+              </p>
+            ) : linked[p.id] && list.length === 0 ? (
+              <p className="agents-repos">No repository linked, so your agent answers from the board.</p>
+            ) : (
+              <ul className="agents-repos">
+                {list.map((r) => {
+                  const [tone, label, ready] = repoState(seatFor(inIt, r));
+                  return (
+                    <li key={r}>
+                      {short(r)} <Tag tone={tone}>{label}</Tag>
+                      {/* Forgetting takes the folder's mark only, never its files (D-101). */}
+                      {ready && (
+                        <button className="agents-forget" onClick={() => void forgetFolder(inIt.id, r)} aria-label={`Forget the folder of ${short(r)}`}>
+                          Forget
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {own.length > 0 && <ul className="agents-list">{own.map((t) => item(t, list.length > 1))}</ul>}
+          </section>
+        );
+      })}
+      {elsewhere.length > 0 && (
+        <section className="agents-project">
+          <h3 className="agents-project-head">Earlier questions</h3>
+          <ul className="agents-list">{elsewhere.map((t) => item(t, true))}</ul>
+        </section>
+      )}
+      {threads.length === 0 && (
         <p className="agents-empty">
           Ask how something in your team’s code works, where a bug comes from, or what a change would take. Your agent
-          reads the code on your laptop and answers here. To change the code, hand it a card on the board.
+          reads the code, or the board of a project with no code, and answers here. To change the code, hand it a card on the board.
         </p>
       )}
       {older.length > 0 && (

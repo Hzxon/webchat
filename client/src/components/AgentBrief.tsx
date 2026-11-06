@@ -6,12 +6,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { textHash } from '../../../shared/e2ee';
 import { AGENT_LEVEL, briefText, isHeld } from '../../../shared/types';
 import { asleep, ownAgents, seatFor, seatKey, short, WAKE, type Seat } from '../agents';
-import { api } from '../api';
 import { boardDocs, parseCard, type Card } from '../board';
 import { requestRun } from '../chat';
+import { useLinkedRepos } from '../linkedRepos';
 import { loadSections, type DocSection } from '../docs';
 import { actions, senderName, useAppState, type State } from '../store';
 
+
+const NONE: string[] = [];
 
 export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> }) {
   const docs = useAppState((s) => s.docs);
@@ -26,17 +28,7 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   // The repositories the project links (D-050), where an agent with no folder of one clones it first (R-036).
-  const [linked, setLinked] = useState<string[]>([]);
-  useEffect(() => {
-    let live = true;
-    api.projectRepos(brief.projectId).then(
-      (view) => live && setLinked(view.repos.map((r) => r.repo)),
-      () => undefined,
-    );
-    return () => {
-      live = false;
-    };
-  }, [brief.projectId]);
+  const linked = useLinkedRepos([brief.projectId])[brief.projectId]?.repos ?? NONE;
 
   // The card and the decisions as they are now, again whenever either doc changes. The agent reads
   // only the sections that open, so the page leaves out the others too.
@@ -69,7 +61,7 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
 
   let blocked = '';
   if (!seat) blocked = 'Your agent is not in this project. Add it under the project’s people, then start.';
-  else if (!seat.online) blocked = `${asleep(seat)}. ${WAKE}`;
+  else if (!seat.online) blocked = `${asleep(seat.lastSeen)}. ${WAKE}`;
   else if (seat.protocol < AGENT_LEVEL.cards) blocked = `${short(seat.repo)} can’t take cards yet. In Claude Code on your laptop, type /webchat:connect: it says what is missing.`;
   else if (lock) blocked = `${senderName(users, lock.userId)} is editing this card. Start once they are done, so your agent gets all of it.`;
 
