@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.2](https://github.com/Hzxon/webchat/compare/v0.6.1...v0.6.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* **client:** Keep dialogs open after a drag out ([#138](https://github.com/Hzxon/webchat/issues/138)) ([9f5f6d4](https://github.com/Hzxon/webchat/commit/9f5f6d4de081943ab95b4585ab606eaaa0b563e5))
+* **client:** Reopen the board after a reload ([#135](https://github.com/Hzxon/webchat/issues/135)) ([e6bd452](https://github.com/Hzxon/webchat/commit/e6bd45213cbc8c9cebbf1dfff0bfc2680a95a3e2))
+* **client:** Retry the pairing poll after errors ([#136](https://github.com/Hzxon/webchat/issues/136)) ([34bb7cf](https://github.com/Hzxon/webchat/commit/34bb7cf46da63e43e226052a7e44f85d3e37f04b))
+
 ## [0.6.1](https://github.com/Hzxon/webchat/compare/v0.6.0...v0.6.1) (2026-11-06)
 
 
