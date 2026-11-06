@@ -13,6 +13,7 @@ export const RUN_TAGS: Record<RunReport['kind'], [Tone, string]> = {
   fixing: ['info', 'Fixing'],
   review: ['warn', 'Waiting for you'],
   ended: ['muted', 'Done'],
+  nocopy: ['warn', 'Waiting for you'],
 };
 
 const CHECKS: Record<NonNullable<PullChecks>, [Tone, string]> = {

@@ -152,10 +152,10 @@ What it does not protect against:
   private keys and session in its data folder, `~/.claude/plugins/data/`, and the daemon in
   `~/.webchat/<name>/account.json`. Both files are readable only by their owner, but not
   encrypted. Anyone who can read one can read what the agent's projects write. The server knows
-  which accounts are agents, whose agent each one is, and which
-  GitHub repository its Claude Code session is open in, for repositories you connected only. It
-  also learns what each session can do, such as answer questions, which tells newer plugins from
-  older ones.
+  which accounts are agents, whose agent each one is, and the names of the GitHub repositories its
+  laptop has a folder for, the ones you connected or had it clone, never where they are. It learns
+  that the agent is online whenever a Claude Code window is open on that laptop, in any folder, and
+  what the laptop can do, such as answer questions, which tells newer plugins from older ones.
   It sees a run as messages like any other.
   Pairing shows it the agent's public keys and proofs made from the code, never the code.
 - **People who leave keep the keys they had.** Someone who left or was removed could still read the
@@ -430,16 +430,21 @@ keys from the agent, does not run on Windows. On Linux the sandbox needs `bubble
    2.1.275 or later). Paste the code when it asks for one. To pair again later, type
    `/plugin configure webchat@webchat` and paste a new code. The old agent stays, asleep, until you
    remove it under **Connect coding agent**.
-3. Open Claude Code in each repository you want the agent to work in, and type `/webchat:connect`.
-   Approve the `connect` tool: Claude Code asks about it on every call. The plugin remembers the
-   repository, so later sessions in it take part too. Sessions in other repositories stay unseen
-   by WebChat, even with the plugin on. This works in the terminal and in the Claude desktop app.
-   To undo it, ask Claude to disconnect WebChat. Back in WebChat, approve the agent, name it, and
-   pick the projects it joins.
+3. Open Claude Code on that laptop, in any folder, in the terminal or the Claude desktop app. Back
+   in WebChat, approve the agent, name it, and pick the projects it joins. Keep one Claude Code
+   window open: it serves every repository the agent works in, and a second window waits, and takes
+   over when the first closes.
+4. Hand the agent a card, or ask it about a repository. When the laptop has no copy of the
+   repository, the agent says so and offers **Clone it**. On your click it clones the repository
+   into `~/WebChat/<owner>/<name>` with your GitHub login, and goes on. It clones only a repository
+   one of your projects links. To use a copy you already have instead, open Claude Code in it and
+   type `/webchat:connect`, then approve the `connect` tool: Claude Code asks about it on every
+   call. To undo that, ask Claude there to disconnect WebChat. The files stay.
 
-Cards also need GitHub on that laptop: the GitHub CLI signed in with `gh auth login`, and git using
-it after `gh auth setup-git`. `/webchat:connect` says when they are missing, and Claude Code can set
-them up with you. Questions need neither.
+Cards and clones also need GitHub on that laptop: the GitHub CLI signed in with `gh auth login`, and
+git using it after `gh auth setup-git`. `/webchat:connect`, typed in any folder, says when they are
+missing, and Claude Code can set them up with you. Questions about a repository the laptop has need
+neither.
 
 On Linux without a desktop keyring, Claude Code keeps the pairing code in
 `~/.claude/.credentials.json`, readable only by you. The code works once, so it is useless after
@@ -449,10 +454,9 @@ On a roadmap card, the play button opens the card's brief under **Coding agents*
 decisions it follows, as your agent will get them, with each passage a teammate wrote marked. Pick
 the repository and press **Start**. When it cannot start, the brief says why: the laptop is asleep,
 Claude Code there needs a GitHub sign-in, or someone is editing the card. Your agent runs several
-cards at once, each in a worktree of its own, and refuses only a second start of a card it runs. A
-second session in the same repository waits, and takes over when the first closes. When you
-start a card, the plugin checks that you sent it and that its brief is still the one you saw, adds a
-git worktree inside the repository, and starts a background Claude there. It runs apart from your own sessions,
+cards at once, each in a worktree of its own, and refuses only a second start of a card it runs.
+When you start a card, the plugin checks that you sent it and that its brief is still the one you
+saw, adds a git worktree inside the repository's folder, and starts a background Claude there. It runs apart from your own sessions,
 which keep their settings. It reads none of your Claude Code settings and none of the repository's
 hooks or `.mcp.json`.
 

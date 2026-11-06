@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -49,6 +50,15 @@ if (args[0] === 'pr' && args[1] === 'create') {
   console.log('FAIL test/sum.test.js: expected 3, got 4');
 } else if (args[0] === 'api') {
   console.log(args[1].endsWith('/permission') ? '{"permission":"write"}' : '[]');
+} else if (args[0] === 'repo' && args[1] === 'clone') {
+  // From the bare repository the test names, with origin set to GitHub as a real clone has it.
+  const [repo, dir] = [args[2], args[3]];
+  const url = 'https://github.com/' + repo + '.git';
+  execFileSync('git', ['clone', '-q', state.clones[repo], dir]);
+  execFileSync('git', ['-C', dir, 'remote', 'set-url', 'origin', url]);
+  execFileSync('git', ['-C', dir, 'config', 'url.' + state.clones[repo] + '.insteadOf', url]);
+  state.cloned = args.slice(2);
+  fs.writeFileSync(process.env.FAKE_GH_STATE, JSON.stringify(state));
 }
 `;
 /**
@@ -469,7 +479,7 @@ describe('agent client (R-027)', () => {
     assert.equal(file.cookie, again.api.cookie, 'the new session is on disk');
   });
   test(
-    'runs a card in a background Claude, and fixes its pull request when CI fails (R-030, R-035)',
+    'serves every folder from one window, runs a card in a background Claude, fixes its pull request, and clones a repository on its owner\'s word (R-030, R-035, R-036)',
     { timeout: 60_000 },
     async () => {
       // A checkout whose origin is on GitHub, as its config says. Its pushes land in a bare repository here.
@@ -501,7 +511,11 @@ describe('agent client (R-027)', () => {
       // The owner's settings turn the sandbox off, which no longer counts: the background Claude runs under the plugin's.
       await fs.mkdir(path.join(project, '.claude'));
       await fs.writeFile(path.join(project, '.claude', 'settings.local.json'), JSON.stringify({ sandbox: { enabled: false } }));
-      const options = { claude: path.join(bin, 'claude'), guard: 'true' };
+      const cloneRoot = path.join(home, 'WebChat');
+      const options = { claude: path.join(bin, 'claude'), guard: 'true', cloneRoot };
+      // A window open in a folder that is no repository serves the agent all the same (R-036).
+      const anywhere = path.join(home, 'anywhere');
+      await fs.mkdir(anywhere);
       const turns = async () =>
         (await fs.readFile(claudeLog, 'utf8').catch(() => ''))
           .split('\n')
@@ -514,21 +528,23 @@ describe('agent client (R-027)', () => {
       try {
         const code = newPairingCode();
         // The page shows its address with the code, so the address setting stays empty (R-031).
-        const plugin = new Plugin({ ...options, code: `${baseUrl}#${code}`, dataDir, projectDir: project });
+        const plugin = new Plugin({ ...options, code: `${baseUrl}#${code}`, dataDir, projectDir: anywhere });
         const starting = plugin.start();
-        // Nothing pairs, and no run is taken, until the owner connects the repository (D-101).
-        await waitFor('the plugin waits for the connection', () => /acme\/app is not connected to WebChat/.test(plugin.problem));
-        assert.equal(await fs.stat(path.join(dataDir, 'account.json')).catch(() => null), null, 'nothing paired yet');
-        assert.match(await plugin.call('connect'), /Connected acme\/app/);
         const agent = await approve(alice, code, 'Claude Code');
         assert.equal(await starting, true);
-        // Its check-ins say where it is open, so the menu names the repository.
+        // The agent is online with no folder yet, and says what its laptop can do (R-036, D-103).
         await plugin.client!.sync();
         await alice.sync();
-        // The plugin's sessions say they answer questions, which older plugins never do (D-103).
+        assert.deepEqual([alice.users.get(agent.id)?.online, alice.users.get(agent.id)?.protocol, alice.users.get(agent.id)?.agentRepos], [true, 1, []]);
+        assert.match(await plugin.call('connect'), /This folder is no GitHub repository/);
+        // A window in a checkout the owner has connects it, and the serving window works there.
+        assert.match(await new Plugin({ ...options, code: '', dataDir, projectDir: project }).call('connect'), /Connected acme\/app: your agent works in this folder/);
+        await plugin.scan();
+        await plugin.client!.sync();
+        await alice.sync();
         assert.deepEqual(alice.users.get(agent.id)?.agentRepos.map((seat) => [seat.repo, seat.online, seat.protocol]), [['acme/app', true, 1]]);
         // The status names the address that came with the code, whatever the owner's settings say.
-        assert.equal((await plugin.call('status')).split('\n')[0], `Taking the cards that Alice hands to this agent in acme/app, on ${baseUrl}.`);
+        assert.deepEqual((await plugin.call('status')).split('\n').slice(0, 2), [`Taking the cards that Alice hands to this agent, on ${baseUrl}.`, `Working in acme/app in ${project}.`]);
 
         const key = await newChatKey(alice, [alice.id, agent.id, carol.id]);
         const app = await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'App', memberIds: [agent.id, carol.id], key });
@@ -559,15 +575,11 @@ describe('agent client (R-027)', () => {
         const reportsOn = async (request: number, reader = alice) =>
           (await reader.sync()).filter((m) => m.senderId === agent.id && m.content?.run?.kind !== 'request' && m.content?.run?.request === request).map((m) => m.content?.text);
 
-        // A teammate's request is refused. One for another repository is the session there's, so
-        // this one says nothing either (D-094).
+        // A teammate's request is refused.
         const fromCarol = (await ask(carol)).id;
         await (await checkIn()).handled;
         assert.deepEqual(await reportsOn(fromCarol), ['I could not run K-7: Only Alice hands cards to me.']);
-        const elsewhere = (await ask(alice, { repo: 'acme/other' })).id;
-        await (await checkIn()).handled;
-        assert.deepEqual(await reportsOn(elsewhere), []);
-        assert.deepEqual(await turns(), [], 'no Claude ran for either');
+        assert.deepEqual(await turns(), [], 'no Claude ran for it');
 
         // Alice's request starts a run, which holds at the gate.
         const gate = path.join(home, 'gate');
@@ -594,7 +606,7 @@ describe('agent client (R-027)', () => {
         const [first] = await turns();
         const worktree = first!.cwd;
         assert.ok(worktree.startsWith(path.join(await fs.realpath(project), '.claude', 'worktrees')), 'the worktree is in the checkout, where the sandboxed shell may write');
-        const settings = path.join(dataDir, 'repos', 'acme__app', 'claude.json');
+        const settings = path.join(dataDir, 'laptop', 'claude.json');
         assert.ok(first!.args.includes('--restricted'));
         assert.equal(first!.args[first!.args.indexOf('--settings') + 1], settings);
         assert.ok(first!.args.includes('--session-id'));
@@ -636,7 +648,7 @@ describe('agent client (R-027)', () => {
         await git(worktree, 'commit', '-q', '--allow-empty', '-m', 'By hand');
         await git(worktree, 'push', '-q', 'origin', `HEAD:${branch}`);
         await plugin.pollPulls();
-        assert.deepEqual(JSON.parse(await fs.readFile(path.join(dataDir, 'repos', 'acme__app', 'pulls.json'), 'utf8')), []);
+        assert.deepEqual(JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'pulls.json'), 'utf8')), []);
         assert.deepEqual(await reportsOn(asked), ['I stopped watching acme/app#1: someone else pushed to it.']);
         assert.equal((await turns()).length, 3, 'three turns in all');
 
@@ -690,47 +702,74 @@ describe('agent client (R-027)', () => {
         const request: RunRequest = { kind: 'request', card: 'K-7', title: 'Sums are off by one', docId: board.id, section, runtime: agent.id, sentAt: Date.now(), repo: 'acme/app', hash: brief };
         const current = (await alice.send(direct, { text: 'Run K-7 with Claude Code', run: request })).id;
         await (await checkIn()).handled;
-        const watching = async () => (JSON.parse(await fs.readFile(path.join(dataDir, 'repos', 'acme__app', 'pulls.json'), 'utf8')) as Array<{ pull: { number: number } }>).map((w) => w.pull.number);
+        const watching = async () => (JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'pulls.json'), 'utf8')) as Array<{ pull: { number: number } }>).map((w) => w.pull.number);
         assert.deepEqual(await watching(), [2, 3]);
         await plugin.endStrandedDrafts();
         assert.deepEqual(await watching(), [3], 'the draft from the direct chat is watched on');
         assert.equal((await reportsOn(old)).at(-1), 'I stopped watching acme/app#2: its request is not in your direct chat with me, so the pane cannot show you its reviews.');
         assert.ok(!(await reportsOn(current)).some((text) => text?.startsWith('I stopped')), 'the other draft says nothing');
 
-        // A second session in this repository waits until this one closes (D-094).
+        // A second window on the laptop waits until this one closes (D-094).
         const second = new Plugin({ ...options, code: '', dataDir, projectDir: project });
         void second.start();
-        await waitFor('the second session waits', () => second.problem.startsWith('Another'));
-        assert.match(second.problem, /Another Claude Code session in acme\/app takes its runs/);
+        await waitFor('the second window waits', () => second.problem.startsWith('Another'));
+        assert.match(second.problem, /Another Claude Code window on this laptop serves your agent/);
 
-        // A session in another repository takes that repository's runs, with a copy of the account.
+        // A repository with no folder on the laptop: the agent says so, and the run waits for Alice
+        // to have it cloned. It clones only on her word, and only a repository her project links (R-036, D-108).
         const webOrigin = path.join(home, 'web.git');
-        const web = path.join(home, 'web');
-        await sh('git', ['clone', '-q', '--bare', origin, webOrigin]);
-        await sh('git', ['clone', '-q', webOrigin, web]);
-        await git(web, 'remote', 'set-url', 'origin', 'https://github.com/acme/web.git');
-        await git(web, 'config', `url.${webOrigin}.insteadOf`, 'https://github.com/acme/web.git');
-        const webSession = new Plugin({ ...options, code: '', dataDir, projectDir: web });
-        const webStarting = webSession.start();
-        await waitFor('the web session waits for the connection', () => /acme\/web is not connected/.test(webSession.problem));
-        await webSession.call('connect');
-        assert.equal(await webStarting, true);
-        await webSession.client!.sync();
-        await alice.sync();
-        assert.deepEqual(alice.users.get(agent.id)?.agentRepos.map((seat) => seat.repo), ['acme/app', 'acme/web']);
+        await sh('git', ['init', '-q', '--bare', '-b', 'main', webOrigin]);
+        await git(project, 'push', '-q', webOrigin, 'refs/remotes/origin/main:refs/heads/main');
+        await instance.sql.query(
+          'INSERT INTO webchat.project_repos (project_id, repo, repo_id, installation_id, conversation_id, added_by, added_at) VALUES ($1, $2, 7, 8, $3, $4, $5)',
+          [app.project.id, 'acme/web', general, alice.id, Date.now()],
+        );
+        await fs.writeFile(ghState, JSON.stringify({ ...JSON.parse(await fs.readFile(ghState, 'utf8')), clones: { 'acme/web': webOrigin } }));
+        const inDirect = async (repo: string) => (await alice.send(direct, { text: 'Run K-7 with Claude Code', run: { ...request, repo, sentAt: Date.now() } })).id;
+        const offered = async (id: number, repo: string) => {
+          // Each look reads only what came since, so a seen offer stays seen.
+          let seen = false;
+          await waitFor('the agent offers a clone', async () => (seen ||= (await reportsOn(id)).includes(`I have no copy of ${repo} on this laptop.`)));
+        };
+        const clone = (from: AgentClient, chat: number, id: number, repo: string) => from.send(chat, { text: `Clone ${repo}`, run: { kind: 'clone', request: id, repo, sentAt: Date.now() } });
+        const unlinked = await inDirect('acme/other');
+        const waits = (await checkIn()).handled;
+        await offered(unlinked, 'acme/other');
+        await clone(alice, direct, unlinked, 'acme/other');
+        await (await checkIn()).handled;
+        await waits;
+        assert.deepEqual(await reportsOn(unlinked), ['I could not run K-7: None of your projects links acme/other, so I do not clone it.']);
+        const webRun = await inDirect('acme/web');
+        const webWaits = (await checkIn()).handled;
+        await offered(webRun, 'acme/web');
+        // Carol's word is not Alice's, whatever it names.
+        await clone(carol, general, webRun, 'acme/web');
+        await (await checkIn()).handled;
+        const cloneDir = path.join(cloneRoot, 'acme', 'web');
+        assert.equal(existsSync(cloneDir), false, "a teammate's clone request does nothing");
+        await clone(alice, direct, webRun, 'acme/web');
+        await (await checkIn()).handled;
+        await webWaits;
+        assert.deepEqual(await reportsOn(webRun), [`Cloning acme/web into ${cloneDir}. This can take a while.`, `I finished K-7 on ${branch} (acme/web#4). Sums add up now.`]);
+        assert.deepEqual(JSON.parse(await fs.readFile(ghState, 'utf8')).cloned, ['acme/web', cloneDir, '--', '--filter=blob:none']);
+        assert.ok((await turns()).at(-1)!.cwd.startsWith(path.join(await fs.realpath(cloneDir), '.claude', 'worktrees')), 'the run went on in the clone');
+        assert.deepEqual(plugin.client!.repos, ['acme/app', 'acme/web']);
+
+        // The folder now takes runs like any other.
         const askWeb = async () => {
           const id = (await ask(alice, { repo: 'acme/web' })).id;
-          await Promise.all([(await checkIn()).handled, ...(await webSession.client!.sync()).map((m) => webSession.handle(m))]);
+          await (await checkIn()).handled;
           return reportsOn(id);
         };
         const failed = JSON.stringify({ outcome: 'failed', note: 'Not today.' });
         assert.deepEqual(await withEnv({ FAKE_CLAUDE_ANSWER: failed }, askWeb), ['I am on K-7: Sums are off by one', 'I could not run K-7: Not today.']);
         // A turn that says done but commits nothing opens no draft.
         assert.deepEqual(await withEnv({ FAKE_CLAUDE_COMMIT: '0' }, askWeb), ['I am on K-7: Sums are off by one', 'I could not run K-7: I left no new commits.']);
-        // Disconnecting stops its runs at once, in every session open in it, and its status says so.
-        assert.match(await webSession.call('disconnect'), /Disconnected acme\/web/);
-        assert.deepEqual(await askWeb(), ['I could not run K-7: acme/web is disconnected from WebChat.']);
-        assert.match(await webSession.call('status'), /^Every card fails at once: acme\/web is disconnected from WebChat\./);
+        // Disconnecting forgets the folder, never its files.
+        assert.match(await new Plugin({ ...options, code: '', dataDir, projectDir: cloneDir }).call('disconnect'), /Disconnected acme\/web/);
+        await plugin.scan();
+        assert.deepEqual(plugin.client!.repos, ['acme/app']);
+        assert.ok(existsSync(path.join(cloneDir, 'README.md')));
       } finally {
         restore();
       }
@@ -744,7 +783,6 @@ describe('agent client (R-027)', () => {
     const pairing = AgentClient.pair(path.join(home, 'talker.json'), baseUrl, code, 10);
     await approve(owner, code, 'Talker');
     const agent = await pairing;
-    agent.repo = 'acme/app';
     await owner.sync();
     await carol.sync();
     const open = async (person: AgentClient) =>
@@ -784,7 +822,6 @@ describe('agent client (R-027)', () => {
 
     // None of these starts a conversation: nothing runs, and nothing is said.
     await carol.send(carols, { text: 'Hi', prompt: asks() });
-    await owner.send(direct, { text: 'Elsewhere?', prompt: asks({ repo: 'acme/other' }) });
     await owner.send(group, { text: 'In a channel', prompt: asks() });
     const signed = await owner.send(direct, { text: 'Once', prompt: asks() });
     const heard = await agent.sync();
@@ -798,6 +835,10 @@ describe('agent client (R-027)', () => {
     // The same signed message under a new id, as a server could post it again, runs nothing (K-47).
     await conversations.handle({ ...once, id: once.id + 1000 });
     assert.equal(calls.length, 3);
+    // One laptop answers every conversation, so a reply it cannot place hears so (R-036).
+    await owner.send(direct, { text: 'Remember me?', prompt: { kind: 'reply', to: 'gone', sentAt: Date.now() } });
+    await hear();
+    assert.deepEqual(await said(), [[{ kind: 'failed', to: 'gone' }, 'I no longer know this conversation. Start a new one.']]);
     assert.deepEqual(await said(), []);
 
     // A prompt signed 11 minutes ago is refused, and a reply asks it again, afresh.

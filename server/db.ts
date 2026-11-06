@@ -152,6 +152,7 @@ export interface UserRow {
   sign_public: string | null;
   key_backup: string | null;
   agent_owner: number | null;
+  protocol: number;
   deleted_at: number | null;
   /** An agent's sessions, by repository, from listUsers only. */
   repos?: Array<{ repo: string; last_seen: number; protocol: number }>;
@@ -405,6 +406,7 @@ export function toUserDTO(row: UserRow, now = Date.now()): UserDTO {
     lastSeen: row.last_active_at,
     keys: row.dh_public && row.sign_public ? { dh: row.dh_public, sign: row.sign_public } : null,
     agentOwner: row.agent_owner,
+    protocol: row.protocol,
     agentRepos: (row.repos ?? []).map((r) => ({ repo: r.repo, online: now - r.last_seen < ONLINE_WINDOW_MS, lastSeen: r.last_seen, protocol: r.protocol })),
     deleted: row.deleted_at !== null,
   };
@@ -941,24 +943,26 @@ export async function openDb(sql: Sql) {
     /**
      * Records a check-in from a tab. An attentive tab claims the user's attention; when that same
      * tab stops being attentive, the claim ends at once instead of waiting for it to expire. An
-     * agent's Claude Code session checks in for its repository (D-094).
+     * agent's laptop checks in once for every repository it has a folder for, and names what it can
+     * do; an older plugin checks in for the one repository its session is open in (D-094).
      */
-    async checkIn(userId: number, attentive: boolean, tabId: string, endpoint: string | null, repo: string | null = null, protocol = 0) {
+    async checkIn(userId: number, attentive: boolean, tabId: string, endpoint: string | null, repos: string[] = [], protocol = 0, laptop = false) {
       const now = Date.now();
       if (attentive) {
         await Promise.all([
           sql.query(
             `UPDATE webchat.users
-             SET last_active_at = $2, attentive_until = $3, attentive_tab = $4, attentive_endpoint = $5
+             SET last_active_at = $2, attentive_until = $3, attentive_tab = $4, attentive_endpoint = $5${laptop ? ', protocol = $6' : ''}
              WHERE id = $1`,
-            [userId, now, now + ATTENTION_TTL_MS, tabId, endpoint],
+            [userId, now, now + ATTENTION_TTL_MS, tabId, endpoint, ...(laptop ? [protocol] : [])],
           ),
-          repo &&
+          ...repos.map((repo) =>
             sql.query(
               `INSERT INTO webchat.agent_repos (user_id, repo, last_seen, protocol) VALUES ($1, $2, $3, $4)
                ON CONFLICT (user_id, repo) DO UPDATE SET last_seen = EXCLUDED.last_seen, protocol = EXCLUDED.protocol`,
               [userId, repo, now, protocol],
             ),
+          ),
         ]);
       } else {
         await sql.query(
@@ -1683,8 +1687,8 @@ export async function openDb(sql: Sql) {
              ) owned) AS owners,
              (SELECT COUNT(*)::int FROM webchat.users) AS people,
              (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE last_active_at > $2) AS online,
-             -- Agents with their owners, so the board offers each owner theirs (K-45).
-             (SELECT md5(string_agg(id || ':' || agent_owner, ',' ORDER BY id)) FROM webchat.users WHERE agent_owner IS NOT NULL) AS agents,
+             -- Agents with their owners, so the board offers each owner theirs (K-45), and what their laptops can do (R-036).
+             (SELECT md5(string_agg(id || ':' || agent_owner || ':' || protocol, ',' ORDER BY id)) FROM webchat.users WHERE agent_owner IS NOT NULL) AS agents,
              -- Each agent's sessions by repository: which exist, which are online, and what they can do (D-094, D-103).
              (SELECT md5(string_agg(user_id || ':' || repo || ':' || protocol || ':' || (last_seen > $2), ',' ORDER BY user_id, repo))
                FROM webchat.agent_repos) AS repos,

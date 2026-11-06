@@ -5,7 +5,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { textHash } from '../../../shared/e2ee';
 import { AGENT_LEVEL, briefText, isHeld } from '../../../shared/types';
-import { seatKey, short, type Seat } from '../agents';
+import { ownAgents, seatFor, seatKey, short, WAKE, type Seat } from '../agents';
+import { api } from '../api';
 import { boardDocs, parseCard, type Card } from '../board';
 import { requestRun } from '../chat';
 import { loadSections, type DocSection } from '../docs';
@@ -13,7 +14,7 @@ import { actions, senderName, useAppState, type State } from '../store';
 import { formatSince } from './format';
 
 
-export function AgentBrief({ brief, seats }: { brief: NonNullable<State['agentBrief']>; seats: Seat[] }) {
+export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> }) {
   const docs = useAppState((s) => s.docs);
   const conversations = useAppState((s) => s.conversations);
   const projects = useAppState((s) => s.projects);
@@ -25,6 +26,18 @@ export function AgentBrief({ brief, seats }: { brief: NonNullable<State['agentBr
   const [picked, setPicked] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // The repositories the project links (D-050), where an agent with no folder of one clones it first (R-036).
+  const [linked, setLinked] = useState<string[]>([]);
+  useEffect(() => {
+    let live = true;
+    api.projectRepos(brief.projectId).then(
+      (view) => live && setLinked(view.repos.map((r) => r.repo)),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [brief.projectId]);
 
   // The card and the decisions as they are now, again whenever either doc changes. The agent reads
   // only the sections that open, so the page leaves out the others too.
@@ -42,15 +55,17 @@ export function AgentBrief({ brief, seats }: { brief: NonNullable<State['agentBr
   const held = useMemo(() => (loaded?.decisions ?? []).filter((d) => isHeld(d.text)), [loaded]);
   const by = (authorId: number | undefined) => (authorId === undefined || authorId === meId ? null : senderName(users, authorId, 'Someone'));
   const others = [...new Set(held.map((d) => by(d.authorId)).filter((n): n is string => n !== null))];
-  // The agent must be in the card's project to read it.
-  const inProject = seats.filter((s) => projects[brief.projectId]?.memberIds.includes(s.agent.id));
+  // The agent must be in the card's project to read it. It runs in a repository the project links, or one it has a folder for.
+  const inProject = ownAgents(users, meId)
+    .filter((agent) => projects[brief.projectId]?.memberIds.includes(agent.id))
+    .flatMap((agent) => [...new Set([...linked, ...agent.agentRepos.map((s) => s.repo.toLowerCase())])].flatMap((repo) => seatFor(agent, repo) ?? []));
   const can = (s: Seat) => s.online && s.protocol >= AGENT_LEVEL.cards;
   const seat = inProject.find((s) => seatKey(s) === picked) ?? inProject.find(can) ?? inProject[0];
   const lock = doc?.locks.find((l) => l.section === brief.section && l.userId !== meId);
 
   let blocked = '';
   if (!seat) blocked = 'Your agent is not in this project. Add it under the project’s people, then start.';
-  else if (!seat.online) blocked = `${short(seat.repo)} is asleep${seat.lastSeen ? ` since ${formatSince(seat.lastSeen)}` : ''}. Open it in Claude Code on your laptop to start.`;
+  else if (!seat.online) blocked = `Your agent is asleep${seat.lastSeen ? ` since ${formatSince(seat.lastSeen)}` : ''}. ${WAKE}`;
   else if (seat.protocol < AGENT_LEVEL.cards) blocked = `${short(seat.repo)} can’t take cards yet. In Claude Code on your laptop, type /webchat:connect: it says what is missing.`;
   else if (lock) blocked = `${senderName(users, lock.userId)} is editing this card. Start once they are done, so your agent gets all of it.`;
 
@@ -103,7 +118,7 @@ export function AgentBrief({ brief, seats }: { brief: NonNullable<State['agentBr
                   {inProject.map((s) => (
                     <option key={seatKey(s)} value={seatKey(s)}>
                       {short(s.repo)}
-                      {can(s) ? '' : ' (not ready)'}
+                      {can(s) ? (s.noFolder ? ' (clones first)' : '') : ' (not ready)'}
                     </option>
                   ))}
                 </select>
@@ -111,6 +126,7 @@ export function AgentBrief({ brief, seats }: { brief: NonNullable<State['agentBr
             ) : (
               seat && <p className="agents-repo">Runs in {short(seat.repo)}</p>
             )}
+            {!blocked && seat?.noFolder && <p className="agents-hint">Your laptop has no copy of {short(seat.repo)} yet. Your agent asks you before it clones it.</p>}
             {blocked && <p className="composer-blocked">{blocked}</p>}
             <div className="agents-draft-actions">
               <button className="button-primary" disabled={!!blocked || busy} onClick={() => void start()}>

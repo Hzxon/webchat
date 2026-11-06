@@ -148,7 +148,7 @@ export interface CardRun {
 }
 
 /** The states in which a run may still go, so the page asks for no second one. */
-export const GOING = new Set<CardRun['state']>(['sending', 'waiting', 'claimed', 'fixing']);
+export const GOING = new Set<CardRun['state']>(['sending', 'waiting', 'claimed', 'fixing', 'nocopy']);
 
 /**
  * The user's latest run of each card of a board doc, by section id. A request that failed to send
@@ -174,7 +174,7 @@ export function cardRuns(messages: ChatMessage[], meId: number, docId: string, p
     } else if (run.kind === 'cancel') {
       const target = m.senderId === meId ? latest(run.request) : undefined;
       if (target?.state === 'waiting') target.state = 'cancelled';
-    } else if (run.kind !== 'fix') {
+    } else if (run.kind !== 'fix' && run.kind !== 'clone') {
       const target = latest(run.request);
       if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull });
     }

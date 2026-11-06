@@ -1,10 +1,12 @@
 // The Claude Code plugin's program (R-030), bundled into plugin/server.mjs. With no argument it is
 // the MCP server Claude Code starts with each session, speaking JSON-RPC over stdin and stdout,
-// one message per line. It takes part only in a repository its owner connected (D-101). With
+// one message per line. One window on a laptop serves every folder its owner connected or had
+// cloned, wherever it is open (R-036). With
 // "guard" it is the PreToolUse hook: it reads the tool call on stdin and prints a denial, or nothing.
 import { execFile } from 'node:child_process';
 import { constants, readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -34,19 +36,19 @@ async function claudeProgram() {
 const TOOLS = [
   {
     name: 'status',
-    description: 'Says whether the repository this session is open in is connected to WebChat and takes runs, and what stops it if not.',
+    description: 'Says whether this window serves the WebChat agent, which folders it works in, and what stops it if not.',
     inputSchema: none,
   },
   {
     name: 'connect',
-    description: 'Connects the repository this session is open in to WebChat, so the cards its owner hands to the agent for it run here. Only when the user asks for it.',
+    description: 'Lets the WebChat agent work in the repository this session is open in, a copy the owner already has, instead of cloning its own. Only when the user asks for it.',
     inputSchema: none,
     // Claude Code asks the owner on every call, whatever their permission settings, so no repository's files can connect it (D-101).
     _meta: { 'anthropic/requiresUserInteraction': true },
   },
   {
     name: 'disconnect',
-    description: 'Disconnects the repository this session is open in from WebChat, so it takes no more runs.',
+    description: 'Stops the WebChat agent working in the repository this session is open in. Its files stay.',
     inputSchema: none,
   },
 ];
@@ -57,6 +59,7 @@ async function serve() {
     code: process.env.WEBCHAT_PAIRING_CODE ?? '',
     dataDir,
     projectDir: process.env.CLAUDE_PROJECT_DIR ?? process.cwd(),
+    cloneRoot: path.join(os.homedir(), 'WebChat'),
     claude: await claudeProgram(),
     // The folder goes as an argument, since the background Claude's hooks get no plugin variables.
     guard: `"${process.execPath}" "${fileURLToPath(import.meta.url)}" guard "${dataDir}"`,

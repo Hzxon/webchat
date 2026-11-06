@@ -50,12 +50,30 @@ const RUN_STATE: Partial<Record<RunDTO['kind'], Thread['state']>> = {
   review: 'waiting',
   failed: 'unfinished',
   ended: 'done',
+  nocopy: 'waiting',
+  clone: 'working',
 };
 
-/** A Claude Code session of the user's agent, by the repository it is open in (D-094). */
+/** Where the user's agent works on a repository: its folder on the laptop (D-094), or none there yet (R-036). */
 export interface Seat extends AgentRepoDTO {
   agent: UserDTO;
+  /** The laptop has no folder of it, and the agent asks to clone it first. */
+  noFolder?: boolean;
 }
+
+/**
+ * Where an agent would work on a repository: the folder its check-ins name, or on a laptop that
+ * serves every folder, the laptop itself, which offers a clone (R-036). None on an older plugin
+ * with no session in it. GitHub ignores case in names.
+ */
+export function seatFor(agent: UserDTO, repo: string): Seat | undefined {
+  const seat = agent.agentRepos.find((s) => s.repo.toLowerCase() === repo.toLowerCase());
+  if (seat?.online || !agent.protocol) return seat && { ...seat, agent };
+  return { repo, online: agent.online, lastSeen: agent.lastSeen ?? 0, protocol: agent.protocol, agent, noFolder: !seat || agent.online };
+}
+
+/** What wakes the agent: one window serves every folder on the laptop (R-036). */
+export const WAKE = 'Keep one Claude Code window open on your laptop, and the laptop awake.';
 
 /** A repository by its name alone, as students know it: "capstone-app" for "team/capstone-app". */
 export const short = (repo: string) => repo.slice(repo.indexOf('/') + 1);
@@ -106,7 +124,7 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     }
     if (run) {
       const thread = requests.get(run.request);
-      const fromMe = run.kind === 'cancel' || run.kind === 'fix';
+      const fromMe = run.kind === 'cancel' || run.kind === 'fix' || run.kind === 'clone';
       if (!thread || message.senderId !== (fromMe ? meId : agentId)) continue;
       thread.messages.push(message);
       thread.last = Math.max(thread.last, message.createdAt);
@@ -127,7 +145,7 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
       continue;
     }
     const thread = threads.get(prompt.to);
-    const fromMe = prompt.kind === 'reply' || prompt.kind === 'cancel';
+    const fromMe = prompt.kind === 'reply' || prompt.kind === 'cancel' || prompt.kind === 'clone';
     if (!thread || message.senderId !== (fromMe ? meId : agentId)) continue;
     const previous = thread.messages.at(-1)!;
     // A card draft stays a message of its own (D-104).
@@ -136,9 +154,11 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     else thread.messages.push(message);
     thread.last = Math.max(thread.last, message.createdAt);
     // A cancel changes nothing until the agent says it stopped.
-    if (prompt.kind === 'reply') thread.state = pending[message.clientId ?? ''] === 'failed' ? 'unsent' : 'working';
+    if (prompt.kind === 'reply' || prompt.kind === 'clone') thread.state = pending[message.clientId ?? ''] === 'failed' ? 'unsent' : 'working';
     else if (prompt.kind === 'answer') thread.state = 'answered';
     else if (prompt.kind === 'failed') thread.state = 'failed';
+    // The laptop has no copy of the repository, and the turn waits for the owner (R-036).
+    else if (prompt.kind === 'nocopy') thread.state = 'waiting';
   }
   // A card's conversation lasts as long as its draft is watched, so only a question ends.
   return [...threads.values()].map((t) => (t.kind === 'question' && now - t.last > THREAD_TTL_MS ? { ...t, state: 'ended' as const } : t)).sort((a, b) => b.last - a.last);

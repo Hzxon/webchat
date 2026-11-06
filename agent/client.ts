@@ -144,8 +144,8 @@ export class AgentClient {
   private readonly floor: number;
   /** People whose keys differ from the pinned ones. Nothing from them opens until someone checks. */
   private readonly changedKeys = new Set<number>();
-  /** Said in every check-in from a Claude Code session: the repository it is open in (R-030). */
-  repo: string | null = null;
+  /** Said in every check-in from the plugin: every repository its laptop has a folder for (R-036). */
+  repos: string[] | null = null;
   /** Said in every check-in from the plugin: what its sessions can do (D-103). */
   protocol = 0;
   /** The file's last write, which the next one waits for. */
@@ -314,7 +314,7 @@ export class AgentClient {
     const fresh: MessageDTO[] = [];
     let dirty = false;
     for (let rounds = 0; rounds < 10; rounds++) {
-      const body: SyncRequest = { cursor: this.file.cursor, stamp: this.stamp, attentive: true, tabId: this.tabId, endpoint: null, repo: this.repo, protocol: this.protocol };
+      const body: SyncRequest = { cursor: this.file.cursor, stamp: this.stamp, attentive: true, tabId: this.tabId, endpoint: null, repos: this.repos ?? undefined, protocol: this.protocol };
       const answer = await this.request<SyncResponse>('POST', '/sync', body);
       dirty ||= answer.cursor !== this.file.cursor;
       this.file.cursor = answer.cursor;
