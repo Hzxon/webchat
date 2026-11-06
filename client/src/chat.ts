@@ -42,7 +42,7 @@ import { disablePushHere, forgetPushOnServer, getPushState, showLocalNotificatio
 import type { Card } from './board';
 import { keyedQueue } from './queue';
 import { agentChats, agentOf, threadsOf } from './agents';
-import { actions, chatTitle, localEditCount, senderName, store, type State } from './store';
+import { actions, chatTitle, localEditCount, reloadPath, senderName, store, type State } from './store';
 
 const newClientId = () =>
   typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -316,14 +316,8 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
       const state = store.get();
       return state.urgent.length > 0 || Object.keys(state.pending).length > 0 || editing !== null;
     }),
-    // After a deploy, the reload opens the same chat or pane again, as a notification click would.
-    setReloadTarget(() => {
-      const state = store.get();
-      if (state.githubOpen) return '/?github=open';
-      if (state.docOpen) return `/?doc=${state.docOpen}`;
-      if (state.agentsOpen) return `/?agents=${encodeURIComponent(state.agentThread ?? '')}`;
-      return state.activeId === null ? '/' : `/?chat=${state.activeId}`;
-    }),
+    // After a deploy, the reload opens the same chat, pane or board again, as a notification click would.
+    setReloadTarget(() => reloadPath(store.get())),
     attention.subscribe((attentive) => {
       // Tell the server right away, so pushes switch between this tab and the phone.
       void syncNow();
@@ -363,6 +357,11 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
   if (doc && store.get().docs[doc]) {
     history.replaceState(null, '', '/');
     actions.setDocOpen(doc);
+  }
+  const board = Number(query.get('board'));
+  if (board && store.get().projects[board]) {
+    history.replaceState(null, '', '/');
+    actions.setBoardOpen(board);
   }
   const agents = query.get('agents');
   if (agents !== null) {

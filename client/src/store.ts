@@ -433,6 +433,15 @@ export function generalOf(state: State, projectId: number): ChatConversation | u
     .sort((a, b) => a.id - b.id)[0];
 }
 
+/** The address a reload after a deploy opens, so the user keeps their place (D-040). */
+export function reloadPath(state: State): string {
+  if (state.githubOpen) return '/?github=open';
+  if (state.docOpen) return `/?doc=${state.docOpen}`;
+  if (state.boardOpen !== null) return `/?board=${state.boardOpen}`;
+  if (state.agentsOpen) return `/?agents=${encodeURIComponent(state.agentThread ?? '')}`;
+  return state.activeId === null ? '/' : `/?chat=${state.activeId}`;
+}
+
 /** Who sent a message, as the page names them. A card the server wrote from GitHub has no sender. */
 export function senderName(users: State['users'], senderId: number | null, fallback = 'Someone'): string {
   return senderId === null ? 'GitHub' : (users[senderId]?.displayName ?? fallback);
