@@ -477,7 +477,8 @@ export class Plugin {
     // A project that links no repository asks about its board alone, in an empty folder (R-038).
     const { repo } = conversation;
     const folder = repo ? await this.folderFor(repo, signal, () => this.client!.send(conversation.chat, { text: noCopy(repo), prompt: { kind: 'nocopy', to: conversation.root } })) : undefined;
-    const board = await this.roadmap(conversation.project, !folder);
+    // A reply's brief holds only the cards that changed, so it needs no decisions.
+    const board = await this.roadmap(conversation.project, !folder && !resume);
     if (!folder && !board) throw new Error('I am not in that project, so I cannot read its board. Add me to it, then ask again.');
     // A link swapped in for the folder would lead the turn elsewhere, so only a real folder counts.
     if (!conversation.scratch || !(await fs.lstat(conversation.scratch).then((s) => s.isDirectory(), () => false))) {
@@ -499,9 +500,7 @@ export class Plugin {
     const changed = cards.filter((c) => conversation.seen?.[c.id]?.hash !== seen[c.id]!.hash).map((c) => c.text);
     const message = resume
       ? [`Your owner replies:\n\n${input}`, ...(changed.length ? ['', fence('Cards that changed on the board since', changed)] : [])].join('\n')
-      : folder
-        ? promptBrief(folder.repo, input, board)
-        : boardBrief(input, board!);
+      : promptBrief(input, board, folder?.repo);
     const answer = (await this.ask(conversation.scratch, conversation.session, resume, message, REPLY, signal)) as { reply?: unknown; card?: Record<string, unknown> };
     // Only once the turn read them, so a turn cut short tells the next one again.
     conversation.seen = seen;
@@ -518,9 +517,9 @@ export class Plugin {
     const client = this.client!;
     const project = client.projects.find((p) => p.id === projectId && p.memberIds.includes(client.owner!));
     if (!project) return undefined;
-    const { roadmap, decisions } = await client.boardDocs(project.id).catch(() => ({}) as Awaited<ReturnType<AgentClient['boardDocs']>>);
-    const read = (doc: DocDTO | undefined) => (doc ? client.sections(doc).catch(() => []) : Promise.resolve([]));
-    const [sections, held] = await Promise.all([read(roadmap), withDecisions ? read(decisions) : Promise.resolve([])]);
+    const { roadmap, decisions }: { roadmap?: DocDTO; decisions?: DocDTO } = await client.boardDocs(project.id).catch(() => ({}));
+    const read = async (doc: DocDTO | undefined) => (doc ? client.sections(doc).catch(() => []) : []);
+    const [sections, held] = await Promise.all([read(roadmap), withDecisions ? read(decisions) : []]);
     return { project: project.name, cards: sections.map((s) => ({ text: s.text.trim(), doc: roadmap!.id, section: s.id })), decisions: heldDecisions(held.map((s) => s.text)) };
   }
 
@@ -811,29 +810,25 @@ function fence(title: string, cards: string[]) {
   return [`## ${title}`, '', TEAMMATES, '', `${mark} TEAMMATES' CARDS START ${mark}`, ...cards, `${mark} TEAMMATES' CARDS END ${mark}`].join('\n');
 }
 
-function promptBrief(repo: string, input: string, board: { project: string; cards: Array<{ text: string }> } | undefined) {
+/** A conversation's first brief: about a repository's code, or with none, about its project's board alone (R-038). */
+function promptBrief(input: string, board: { project: string; cards: Array<{ text: string }>; decisions: string[] } | undefined, repo?: string) {
   return [
-    `Your owner asks you this through WebChat, about ${repo}. You are in a scratch copy of its default`,
-    'branch, with only its latest commit: nothing you change here is kept or pushed. Your shell reaches',
-    'only the npm registry, and you can search the web and read pages. Put your answer, in Markdown, in reply.',
-    'Only when your owner asks you to draft a card for the board, or a change to one, also fill in card,',
-    'grounded in the code: they add it to the board themselves.',
-    '',
-    input,
-    ...(board?.cards.length ? ['', fence(`The roadmap cards of ${board.project}`, board.cards.map((c) => c.text))] : []),
-  ].join('\n');
-}
-
-function boardBrief(input: string, board: { project: string; cards: Array<{ text: string }>; decisions: string[] }) {
-  return [
-    `Your owner asks you this through WebChat, about their project ${board.project}. It links no code, so you`,
-    'are in an empty folder: answer from its board below, and search the web and read pages where it helps.',
+    ...(repo
+      ? [
+          `Your owner asks you this through WebChat, about ${repo}. You are in a scratch copy of its default`,
+          'branch, with only its latest commit: nothing you change here is kept or pushed. Your shell reaches',
+          'only the npm registry, and you can search the web and read pages.',
+        ]
+      : [
+          `Your owner asks you this through WebChat, about their project ${board!.project}. It links no code, so you`,
+          'are in an empty folder: answer from its board below, and search the web and read pages where it helps.',
+        ]),
     'Put your answer, in Markdown, in reply. Only when your owner asks you to draft a card for the board, or a',
-    'change to one, also fill in card: they add it to the board themselves.',
+    'change to one, also fill in card, grounded in what you read: they add it to the board themselves.',
     '',
     input,
-    ...(board.decisions.length ? ['', fence(`The decisions of ${board.project}`, board.decisions)] : []),
-    ...(board.cards.length ? ['', fence(`The roadmap cards of ${board.project}`, board.cards.map((c) => c.text))] : []),
+    ...(board?.decisions.length ? ['', fence(`The decisions of ${board.project}`, board.decisions)] : []),
+    ...(board?.cards.length ? ['', fence(`The roadmap cards of ${board.project}`, board.cards.map((c) => c.text))] : []),
   ].join('\n');
 }
 

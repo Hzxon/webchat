@@ -28,11 +28,11 @@ function blockedBy(seat: Seat | undefined) {
   return '';
 }
 
-/** Where the agent stands on a repository, as a project lists it (R-038). */
-function repoState(seat: Seat | undefined): [Tone, string] {
+/** Where the agent stands on a repository, as a project lists it, and whether it has a folder to forget (R-038). */
+function repoState(seat: Seat | undefined): [Tone, string, boolean?] {
   if (!seat || seat.protocol < AGENT_LEVEL.answers) return ['warn', 'Plugin too old'];
   if (!seat.online) return ['muted', 'Asleep'];
-  return seat.noFolder ? ['muted', 'No copy yet'] : ['ok', 'Ready'];
+  return seat.noFolder ? ['muted', 'No copy yet'] : ['ok', 'Ready', true];
 }
 
 export function AgentsView() {
@@ -175,6 +175,8 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
   // With no repository, the agent answers from the board alone, on its laptop (R-038).
   const blocked = !agent ? 'Add your agent to one of your projects first: Add it, below.' : blockedBy(seatFor(agent, repo ?? ''));
   const loading = !!project && !linked[project.id];
+  // Until a project's repositories load, the box speaks of code, as most questions are about it.
+  const code = !!repo || loading;
 
   async function ask(text: string) {
     try {
@@ -230,9 +232,9 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
           </div>
         )}
         {blocked && <p className="composer-blocked">{blocked}</p>}
-        <Box name="agents:ask" placeholder={repo || loading ? 'Ask about your code' : 'Ask about your project'} canSend={!blocked && !loading} onSend={ask} />
+        <Box name="agents:ask" placeholder={code ? 'Ask about your code' : 'Ask about your project'} canSend={!blocked && !loading} onSend={ask} />
         <p className="agents-hint">
-          {repo || loading ? 'It reads your team’s code as it is on GitHub. After a push, ask a new question to see it.' : 'Your agent answers from the project’s board alone: its decisions and cards.'}
+          {code ? 'It reads your team’s code as it is on GitHub. After a push, ask a new question to see it.' : 'Your agent answers from the project’s board alone: its decisions and cards.'}
         </p>
       </div>
       {mine.map((p) => {
@@ -254,13 +256,12 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
             ) : (
               <ul className="agents-repos">
                 {list.map((r) => {
-                  const seat = seatFor(inIt, r);
-                  const [tone, label] = repoState(seat);
+                  const [tone, label, ready] = repoState(seatFor(inIt, r));
                   return (
                     <li key={r}>
                       {short(r)} <Tag tone={tone}>{label}</Tag>
                       {/* Forgetting takes the folder's mark only, never its files (D-101). */}
-                      {label === 'Ready' && inIt.protocol >= AGENT_LEVEL.answers && (
+                      {ready && (
                         <button className="agents-forget" onClick={() => void forgetFolder(inIt.id, r)} aria-label={`Forget the folder of ${short(r)}`}>
                           Forget
                         </button>
