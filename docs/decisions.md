@@ -1574,6 +1574,25 @@ Cost: the roadmap is read in two places until housekeeping folds the files in. V
 `.sql` files through `includeFiles`, and `npm run build` copies them into `dist/`. A squash-merged
 parent's last commit must be known to restack; the script says so when it is not.
 
+### D-107: An item is checked against main and the decisions before it is claimed
+
+Accepted 2026-11-06 in #126.
+
+Before a session claims a roadmap item it checks that the item still holds: its status is not
+Done, Fixed or Dropped and it has no Done row; main does not already have the change; no decision
+made since the entry settles or forbids it; no other entry or open pull request covers the same
+change; and nothing it depends on was dropped. `scripts/claim.sh` refuses the cases it can see,
+prints every decision and entry that names the item, and takes the rest of the check as a line
+(`-c`) that it writes into the draft. An item that no longer holds gets a small pull request that
+sets its status in place, with the reason, instead of a claim.
+
+Why: the housekeeping in #125 found R-022, K-52 and R-027 still "In progress" days after they
+reached main, R-016 under Ideas with status Planned, and R-010 depending on the dropped R-001. A
+session that picked one of those would have rebuilt what main had or built on a dropped plan.
+
+Cost: the overlap check is judgment, so the script can only demand that it is written down. A
+claim takes one more line and one more read of the decisions.
+
 ## Superseded
 
 Decisions that no longer hold. They keep their numbers and reasons for the record. Read the entry
