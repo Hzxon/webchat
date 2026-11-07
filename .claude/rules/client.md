@@ -14,7 +14,7 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 
 - Every API request names the account its tab shows in `x-webchat-user`; on `409 account_changed` the tab reloads (D-008).
 - A tab with no push subscription checks in every 3 seconds; a closing tab sends `POST /api/away` (D-007).
-- Reload a tab only when the page's `/assets/` files changed, and never while `holdReloadWhile` holds; a tab in use waits until hidden or idle for 30 seconds (D-040).
+- Reload a tab only when the page's `/assets/` files changed, and never while `holdReloadWhile` holds, as it does for an open section editor (K-63); a tab in use waits until hidden or idle for 30 seconds (D-040).
 - `client/src/viewport.ts` sets `--visible-height`; it runs only while the chat layout shows and leaves a pinch-zoomed page alone (D-053).
 - Every hover style sits behind `@media (hover: hover)`; opening a chat on a touch screen does not focus the message box (D-053).
 - The palette is neutral grays plus one indigo accent; success uses `--ok`, never the accent; every corner uses `--radius`; no font loads from a font host; colors, type and shapes change in `styles.css` only (D-083).
