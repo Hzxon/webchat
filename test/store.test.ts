@@ -48,3 +48,15 @@ describe('The address a reload after a deploy opens, in client/src/store.ts (D-0
     assert.equal(reloadPath(store.get()), '/');
   });
 });
+
+describe('The sidebar tab, in client/src/store.ts (K-62)', () => {
+  beforeEach(() => actions.reset());
+
+  test('turns to Projects when a board or doc opens, as at a reload, so its row shows', () => {
+    actions.setBoardOpen(3);
+    assert.equal(store.get().tab, 'projects');
+    actions.setTab('chats');
+    actions.setDocOpen('d1');
+    assert.equal(store.get().tab, 'projects');
+  });
+});
