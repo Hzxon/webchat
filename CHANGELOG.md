@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.0](https://github.com/Hzxon/webchat/compare/v0.7.0...v0.8.0) (2026-11-07)
+
+
+### Features
+
+* **agent:** Check a new card and number it on the board ([#166](https://github.com/Hzxon/webchat/issues/166)) ([04939dc](https://github.com/Hzxon/webchat/commit/04939dc70241d988a301029a5eb3d09ddd0c01b7))
+* **agent:** Let the owner choose the run's Claude setup ([#165](https://github.com/Hzxon/webchat/issues/165)) ([a7d4a87](https://github.com/Hzxon/webchat/commit/a7d4a87d116d204dd275f3b9f240ba5586f93f96))
+* **agent:** Make a card run follow the workflow ([#168](https://github.com/Hzxon/webchat/issues/168)) ([260bcb7](https://github.com/Hzxon/webchat/commit/260bcb7ab7874161fded82105f268c615a60ff17))
+* **agent:** Refresh a question's copy on reply ([#160](https://github.com/Hzxon/webchat/issues/160)) ([b1e1886](https://github.com/Hzxon/webchat/commit/b1e1886d6f8787a9fd9c7106542dce5af2b53f4a))
+* **board:** Make the board the repository's source ([#167](https://github.com/Hzxon/webchat/issues/167)) ([dbf0c4f](https://github.com/Hzxon/webchat/commit/dbf0c4f3f4e17a0710a0c31ba7c25f72e6d55ff3))
+
+
+### Bug Fixes
+
+* **agent:** Release waiting turns on connect ([#156](https://github.com/Hzxon/webchat/issues/156)) ([2caebcf](https://github.com/Hzxon/webchat/commit/2caebcfa309c9b1ce271372c98fecf1e789063f2))
+* **agent:** Tell questions that cards open PRs ([#158](https://github.com/Hzxon/webchat/issues/158)) ([b719eac](https://github.com/Hzxon/webchat/commit/b719eac80a2d4b75db228baf4c080323a60b93d2))
+* **client:** Cancel a new card or doc section ([#163](https://github.com/Hzxon/webchat/issues/163)) ([8cf52eb](https://github.com/Hzxon/webchat/commit/8cf52eb4c9419995d4ad7f8042c3842c76051147))
+
 ## [0.7.0](https://github.com/Hzxon/webchat/compare/v0.6.2...v0.7.0) (2026-11-07)
 
 

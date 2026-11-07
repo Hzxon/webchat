@@ -1,6 +1,6 @@
 {
   "name": "webchat",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "Self-hosted web chat for friends with realtime and push notifications",
   "type": "module",
