@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { textHash } from '../../../shared/e2ee';
 import { AGENT_LEVEL, briefText, isHeld } from '../../../shared/types';
 import { asleep, ownAgents, seatFor, seatKey, short, WAKE, type Seat } from '../agents';
-import { boardDocs, parseCard, type Card } from '../board';
+import { boardDocs, otherRun, parseCard, type Card } from '../board';
 import { requestRun } from '../chat';
 import { useLinkedRepos } from '../linkedRepos';
 import { loadSections, type DocSection } from '../docs';
@@ -21,6 +21,7 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
   const projects = useAppState((s) => s.projects);
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
+  const meName = useAppState((s) => s.me?.displayName ?? '');
   const doc = docs[brief.docId];
   const decisionsDoc = boardDocs(docs, conversations, brief.projectId).decisions;
   const [loaded, setLoaded] = useState<{ card?: Card; decisions: DocSection[] } | null>(null);
@@ -60,7 +61,10 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
   const lock = doc?.locks.find((l) => l.section === brief.section && l.userId !== meId);
 
   let blocked = '';
-  if (!seat) blocked = 'Your agent is not in this project. Add it under the project’s people, then start.';
+  // The brief's hash covers the status line, so a run that starts after this check makes the agent refuse (D-105).
+  if (loaded?.card && otherRun(loaded.card.status, meName))
+    blocked = `The card says “${loaded.card.status}”, so another run of it goes or waits for review. Start once its status changes.`;
+  else if (!seat) blocked = 'Your agent is not in this project. Add it under the project’s people, then start.';
   else if (!seat.online) blocked = `${asleep(seat.lastSeen)}. ${WAKE}`;
   else if (seat.protocol < AGENT_LEVEL.cards) blocked = `${short(seat.repo)} can’t take cards yet. In Claude Code on your laptop, type /webchat:connect: it says what is missing.`;
   else if (lock) blocked = `${senderName(users, lock.userId)} is editing this card. Start once they are done, so your agent gets all of it.`;

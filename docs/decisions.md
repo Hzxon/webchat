@@ -1065,7 +1065,7 @@ request in the same check-in as a cancel is refused, since the cancelled run has
 
 ### D-100: A card shows its latest run, and its status line follows the run
 
-Accepted 2026-11-05 in #116 (K-52), changed in #122.
+Accepted 2026-11-05 in #116 (K-52), changed in #122 and #143 (K-59).
 
 The board folds the user's run messages, in their chats with their agents, into each roadmap card.
 While a run may still go, the play button is disabled, so a second click asks nothing. A request no
@@ -1073,11 +1073,11 @@ agent answers in 30 minutes stops blocking, on the board and in the chat. Teamma
 messages, so the status line tells them: any open page of the requester's sets it to `In progress:
 Ann's agent` once the agent claims, to `In review: repo#PR` when it is done, and back to what it was
 when the run fails, once per request and state, under the card's lock. The owner moves it to Done or
-Fixed after merging. Why: the server cannot drop copies of an encrypted request, and done means a
-draft.
-
-Cost: the status changes only while a page of the requester's is open. Two tabs can still each send
-one request before they sync; the agent refuses the second (D-099).
+Fixed after merging. The brief refuses a card whose status shows another run: someone else's
+agent `In progress`, or `In review`; its hash covers the status line, so a run that starts later
+makes the agent refuse. Why: the server cannot drop copies of an encrypted request, and done means
+a draft. Cost: the status changes only while a page of the requester's is open. Two tabs can still
+each send one request before they sync; the agent refuses the second (D-099).
 
 ### D-101: A folder takes part once its owner connects it or has it cloned
 

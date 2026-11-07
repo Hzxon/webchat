@@ -5,7 +5,7 @@ import { describe, test } from 'node:test';
 // the client module. tsx still loads it.
 const clientBoard = '../client/src/board.ts';
 
-const { cardRuns, cardTemplate, GOING, columnMarkdown, duplicates, groupOf, nextNumber, parseCard, withStatus } = await import(clientBoard);
+const { cardRuns, cardTemplate, GOING, columnMarkdown, duplicates, groupOf, nextNumber, otherRun, parseCard, withStatus, workingStatus } = await import(clientBoard);
 
 const section = (id: string, text: string) => ({ id, text, pos: 1, failed: false });
 
@@ -86,6 +86,15 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.deepEqual(state([ask(1, 'a'), report(1, 'failed'), ask(2, 'a')]), ['waiting', true], 'a new request replaces the old');
     assert.deepEqual(state([ask(1, 'a'), ask(2, 'a'), report(1, 'done')]), ['waiting', true], 'an old run reports into nothing');
     assert.equal(runs([{ ...ask(1, 'a'), senderId: 3 }, ask(2, 'b', { docId: 'other' })]).size, 0, 'only my requests on this doc');
+  });
+
+  test('a status that shows another run of the card refuses a second one (K-59)', () => {
+    assert.equal(otherRun('In progress: Ann’s agent', 'Bob'), true, 'a teammate’s agent runs it');
+    assert.equal(otherRun(workingStatus('Ann'), 'Ann'), false, 'my own run, which the play button already holds');
+    assert.equal(otherRun('In review: o/r#3', 'Ann'), true, 'a draft is open');
+    assert.equal(otherRun('In review', 'Ann'), true);
+    assert.equal(otherRun('In progress', 'Ann'), false, 'set by hand, no run named');
+    assert.equal(otherRun('Open', 'Ann'), false);
   });
 });
 

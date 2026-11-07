@@ -6,7 +6,7 @@
 // card's lock, read there, never while anyone, another tab included, holds it.
 import { cardStatus, type RunRequest } from '../../shared/types';
 import { agentChats, inOrder } from './agents';
-import { cardRuns, withStatus } from './board';
+import { cardRuns, withStatus, workingStatus } from './board';
 import { syncNow } from './chat';
 import { rewriteSection } from './docs';
 import { store } from './store';
@@ -20,7 +20,7 @@ export async function followRuns() {
   // In id order across chats, so the newest request of a card is the one that counts.
   const messages = inOrder(agentChats(state).flatMap((c) => state.messages[c.id] ?? []));
   const requests = new Map<number, RunRequest>(messages.flatMap((m) => (m.run?.kind === 'request' && m.senderId === me.id ? [[m.id, m.run] as const] : [])));
-  const working = `In progress: ${me.displayName}’s agent`;
+  const working = workingStatus(me.displayName);
   for (const docId of new Set([...requests.values()].map((r) => r.docId))) {
     const doc = state.docs[docId];
     if (!doc) continue;
