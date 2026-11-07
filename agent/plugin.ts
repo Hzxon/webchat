@@ -906,7 +906,9 @@ function promptBrief(input: string, board: { project: string; cards: Array<{ tex
       ? [
           `Your owner asks you this through WebChat, about ${repo}. You are in a scratch copy of its default`,
           'branch, with only its latest commit: nothing you change here is kept or pushed. Your shell reaches',
-          'only the npm registry, and you can search the web and read pages.',
+          'only the npm registry, and you can search the web and read pages. A card your owner starts on the',
+          'board runs otherwise: in a worktree of their copy, after which their laptop pushes its branch and',
+          'opens a draft pull request. Say so when they ask what you can do, so they do not think cards give nothing.',
         ]
       : [
           `Your owner asks you this through WebChat, about their project ${board!.project}. It links no code, so you`,
