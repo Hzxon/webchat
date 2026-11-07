@@ -342,6 +342,11 @@ export interface MessageContent {
   added?: { to: string; draft: string; card: string };
   /** The owner has their agent forget its folder of a repository: the mark goes, never the files (R-038, D-101). */
   forget?: { repo: string; sentAt: number };
+  /**
+   * The owner checked a person's security code, so their agents pin the same keys and open what the
+   * page opens: a card's brief hashes the same on both sides (K-57, D-109).
+   */
+  trust?: { user: number; fingerprint: string; sentAt: number };
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -541,6 +546,7 @@ function readContent(value: unknown): MessageContent {
     prompt?: Record<string, unknown>;
     added?: Record<string, unknown>;
     forget?: { repo?: unknown; sentAt?: unknown };
+    trust?: { user?: unknown; fingerprint?: unknown; sentAt?: unknown };
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -561,6 +567,8 @@ function readContent(value: unknown): MessageContent {
   const [to, draft, card] = [short(raw.added?.to, 64), short(raw.added?.draft, 64), short(raw.added?.card, 16)];
   if (to && draft && card) content.added = { to, draft, card };
   if (typeof raw.forget?.repo === 'string' && isRepoName(raw.forget.repo) && isId(raw.forget.sentAt)) content.forget = { repo: raw.forget.repo, sentAt: raw.forget.sentAt };
+  const fingerprint = short(raw.trust?.fingerprint, 64);
+  if (isId(raw.trust?.user) && fingerprint && isId(raw.trust.sentAt)) content.trust = { user: raw.trust.user, fingerprint, sentAt: raw.trust.sentAt };
   return content;
 }
 
