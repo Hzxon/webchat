@@ -17,7 +17,7 @@ import { CopyRow } from './NotificationDialog';
 /** Adds the plugin's marketplace and installs it in one step, from Claude Code 2.1.275 on. */
 const INSTALL = '/plugin install webchat --marketplace Hzxon/webchat#plugin';
 
-export function AgentDialog({ projectId, onClose }: { projectId: number; onClose: () => void }) {
+export function AgentDialog({ onClose }: { onClose: () => void }) {
   const projects = useAppState((s) => s.projects);
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
@@ -25,7 +25,7 @@ export function AgentDialog({ projectId, onClose }: { projectId: number; onClose
   const [code] = useState(newPairingCode);
   const [keys, setKeys] = useState<PublicKeysDTO | null>(null);
   const [name, setName] = useState('Claude Code');
-  const [picked, setPicked] = useState<Set<number>>(() => new Set([projectId]));
+  const [picked, setPicked] = useState<Set<number>>(() => new Set());
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState('');
@@ -100,7 +100,7 @@ export function AgentDialog({ projectId, onClose }: { projectId: number; onClose
     setError('');
     try {
       const agent = await connectAgent(code, keys!, name.trim(), [...picked]);
-      setDone(`${agent.displayName} is connected. Ask it about your code under Coding agents, at the top of your chats, or hand it a roadmap card with the play button.`);
+      setDone(`${agent.displayName} is connected. Ask it about your code here, or hand it a roadmap card with the play button.`);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -181,7 +181,8 @@ export function AgentDialog({ projectId, onClose }: { projectId: number; onClose
               </li>
             ))}
           </ul>
-          <button className="button-primary" disabled={busy || !name.trim()}>
+          {/* An agent in no project reads no board, so it could answer nothing. */}
+          <button className="button-primary" disabled={busy || !name.trim() || picked.size === 0}>
             Approve
           </button>
         </form>

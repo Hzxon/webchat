@@ -11,8 +11,9 @@ import { useLinkedRepos } from '../linkedRepos';
 import { actions, useAppState } from '../store';
 import { useAutoGrow, useDraft } from './ChatView';
 import { formatListTime, formatTime } from './format';
-import { AlertIcon, BackIcon, SendIcon, TerminalIcon } from './icons';
+import { AlertIcon, BackIcon, PlusIcon, SendIcon, TerminalIcon } from './icons';
 import { AgentBrief } from './AgentBrief';
+import { AgentDialog } from './AgentDialog';
 import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
 import { Tag, type Tone } from './PullTags';
@@ -44,6 +45,7 @@ export function AgentsView() {
   const { chats, threads } = useAgentThreads();
   const agents = useMemo(() => ownAgents(users, meId), [users, meId]);
   const thread = threads.find((t) => t.root === open);
+  const [connecting, setConnecting] = useState(false);
   // Where a conversation is answered: its agent's folder of the repository its prompt names, or its laptop.
   const seatOf = (t: Thread) => {
     const agent = agents.find((a) => conversations[t.conversationId]?.members.some((m) => m.userId === a.id));
@@ -58,7 +60,8 @@ export function AgentsView() {
 
   const awake = agents.some((a) => a.online);
   let subtitle = awake ? 'Your agent is online' : asleep(Math.max(0, ...agents.map((a) => a.lastSeen ?? 0)) || null);
-  if (thread) subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board'} · ${THREAD_STATE[thread.state].label}`;
+  if (agents.length === 0) subtitle = 'No agent connected';
+  else if (thread) subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board'} · ${THREAD_STATE[thread.state].label}`;
   else if (brief) subtitle = 'Before it starts';
   // An agent runs several cards at once, so the list says how many go (R-037).
   const running = threads.filter((t) => t.kind === 'card' && t.state === 'working').length;
@@ -83,14 +86,33 @@ export function AgentsView() {
           <strong>Coding agents</strong>
           <span>{subtitle}</span>
         </div>
+        {!thread && !brief && agents.length > 0 && (
+          <div className="header-end">
+            {/* Connecting another agent, and removing one, live here (R-030, R-033). */}
+            <button className="icon-button" onClick={() => setConnecting(true)} title="Connect coding agent" aria-label="Connect coding agent">
+              <PlusIcon />
+            </button>
+          </div>
+        )}
       </header>
       {thread ? (
         <ThreadView key={thread.root} thread={thread} seat={seatOf(thread)} agentId={conversations[thread.conversationId]?.members.find((m) => m.userId !== meId)?.userId ?? 0} />
       ) : brief ? (
         <AgentBrief brief={brief} />
+      ) : agents.length === 0 ? (
+        <div className="messages agents-list-view">
+          <p className="agents-empty">
+            Your coding agent is Claude Code on your laptop. It answers your questions about your team’s code and works on
+            the roadmap cards you hand it.
+          </p>
+          <button className="button-primary agents-connect" onClick={() => setConnecting(true)}>
+            Connect coding agent
+          </button>
+        </div>
       ) : (
         <ProjectList threads={threads} chats={chats} />
       )}
+      {connecting && <AgentDialog onClose={() => setConnecting(false)} />}
     </section>
   );
 }

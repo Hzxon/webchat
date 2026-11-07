@@ -3135,6 +3135,11 @@ a {
   text-align: center;
 }
 
+.agents-connect {
+  display: block;
+  margin: 0 auto;
+}
+
 .agents-failed {
   box-shadow: inset 3px 0 0 var(--danger);
   padding-left: 13px;

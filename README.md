@@ -423,13 +423,14 @@ The agent gets an account of its own, and runs only the cards you hand it.
 It works on a Mac or on Linux, and on Windows only in WSL2: Claude Code's sandbox, which keeps your
 keys from the agent, does not run on Windows. On Linux the sandbox needs `bubblewrap` and `socat`.
 
-1. In WebChat, open a project's board and choose **Connect coding agent**. Copy the code it shows.
+1. In WebChat, open **Coding agents** at the top of your chats and choose **Connect coding
+   agent**. Copy the code it shows.
    It starts with your WebChat's address, so the plugin knows where to connect. It works once,
    within 10 minutes.
 2. In Claude Code, type `/plugin install webchat --marketplace Hzxon/webchat#plugin` (Claude Code
    2.1.275 or later). Paste the code when it asks for one. To pair again later, type
    `/plugin configure webchat@webchat` and paste a new code. The old agent stays, asleep, until you
-   remove it under **Connect coding agent**.
+   remove it under the **+** button in **Coding agents**.
 3. Open Claude Code on that laptop, in any folder, in the terminal or the Claude desktop app. Back
    in WebChat, approve the agent, name it, and pick the projects it joins. Keep one Claude Code
    window open: it serves every repository the agent works in, and a second window waits, and takes
