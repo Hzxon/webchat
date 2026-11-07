@@ -41,8 +41,42 @@ export interface AgentRepoDTO {
 /**
  * What a plugin session can do, by the level its check-ins name (D-103): 1 answers the owner's
  * questions; 2 also runs cards from the pane, which it names only while `gh` is signed in (D-105).
+ * Since R-039 the level is a set of these bits, with 4 for a plugin that heeds its owner's `setup`:
+ * 5, or 7 with cards (D-115). Every level from 1 up answers, older ones included.
  */
-export const AGENT_LEVEL = { answers: 1, cards: 2 } as const;
+export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4 } as const;
+
+/** Whether a session at this level runs cards, or heeds `setup` (D-105, D-115). */
+export const runsCards = (level: number) => (level & AGENT_LEVEL.cards) !== 0;
+export const takesSetup = (level: number) => (level & AGENT_LEVEL.setup) !== 0;
+
+/** What a choice loads, in words, for the agent's answer and the pane alike (R-039). */
+export const setupWords = (c: SetupChoice) => [c.claudeMd && 'your CLAUDE.md', ...c.skills, c.noAttribution && 'no AI attribution'].filter(Boolean).join(', ') || 'nothing of your Claude setup';
+
+/**
+ * What the owner's agent loads from their Claude setup on its laptop into every run and turn
+ * (R-039, D-115): their `~/.claude/CLAUDE.md`, skills of `~/.claude/skills` by folder name, and no
+ * AI attribution lines in commits and pull requests.
+ */
+export interface SetupChoice {
+  claudeMd: boolean;
+  skills: string[];
+  noAttribution: boolean;
+}
+
+/** The agent's answer to its owner's `setup`: what the laptop offers, the choice it keeps, and what its last run or turn loaded (R-039). */
+export interface SetupState {
+  /** The client id of the `setup` it answers, which the owner's page waits for. */
+  to: string;
+  claudeMd: boolean;
+  /** Each skill in `~/.claude/skills`, by folder name, with the description its SKILL.md gives. */
+  skills: Array<{ name: string; description: string }>;
+  choice: SetupChoice;
+  applied?: SetupChoice & { at: number };
+}
+
+/** A skill's folder name, which cannot lead out of `~/.claude/skills` (R-039). */
+export const SKILL_NAME = /^[\w-][\w.-]{0,63}$/;
 
 /** An encrypted, signed message. The server stores and relays it without being able to read it. */
 export interface EnvelopeDTO {
@@ -867,6 +901,9 @@ export const LIMITS = {
   checkedLength: 500,
   relatedPerDraft: 10,
   relatedWhyLength: 300,
+  /** Skills an agent offers its owner, and a skill's description, so its answer stays one message (R-039). */
+  setupSkills: 40,
+  skillDescriptionLength: 140,
 } as const;
 
 /** Slack-style channel names (D-027): lowercase letters and digits in any script, joined by single hyphens. */

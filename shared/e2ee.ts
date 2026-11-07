@@ -29,6 +29,9 @@ import {
   type RunDTO,
   type RunReport,
   type SealedBackupDTO,
+  type SetupChoice,
+  type SetupState,
+  SKILL_NAME,
 } from './types.js';
 
 /** PBKDF2 rounds: OWASP's 2023 figure for PBKDF2-HMAC-SHA256. Changing it changes every derived key. */
@@ -375,6 +378,12 @@ export interface MessageContent {
   trust?: { user: number; fingerprint: string; sentAt: number };
   /** The owner puts their agent to sleep from the pane; only `/webchat:wake` on the laptop wakes it (K-66, D-113). */
   sleep?: { sentAt: number };
+  /**
+   * The owner asks their agent what its runs load from their Claude setup, and with a choice,
+   * changes it (R-039, D-115). The agent answers with `setupState`, in their direct chat.
+   */
+  setup?: { sentAt: number; choice?: SetupChoice };
+  setupState?: SetupState;
   /** The board's copy in a linked repository, between the owner's page and their agent (R-040, D-117). */
   board?: BoardSyncDTO;
 }
@@ -585,6 +594,27 @@ function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | und
   return card && doc && section && seen ? { ...draft, replaces: { card, doc, section, seen } } : undefined;
 }
 
+/** A setup choice, if it has the right shape: skills only by a folder name that cannot leave `~/.claude/skills` (R-039). */
+function readChoice(raw: unknown): SetupChoice | undefined {
+  const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown } | null | undefined;
+  if (typeof choice?.claudeMd !== 'boolean' || typeof choice.noAttribution !== 'boolean' || !Array.isArray(choice.skills)) return;
+  const skills = choice.skills.filter((s): s is string => typeof s === 'string' && SKILL_NAME.test(s)).slice(0, LIMITS.setupSkills);
+  return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution };
+}
+
+/** An agent's answer to its owner's `setup`, if it has the right shape (R-039). */
+function readSetupState(raw: Record<string, unknown> | undefined): SetupState | undefined {
+  const choice = readChoice(raw?.choice);
+  const to = short(raw?.to, 64);
+  if (!raw || !choice || !to || typeof raw.claudeMd !== 'boolean' || !Array.isArray(raw.skills)) return;
+  const skills = (raw.skills as Array<{ name?: unknown; description?: unknown } | null>).flatMap((s) =>
+    typeof s?.name === 'string' && SKILL_NAME.test(s.name) ? [{ name: s.name, description: short(s.description, LIMITS.skillDescriptionLength) ?? '' }] : [],
+  );
+  const applied = readChoice(raw.applied);
+  const at = (raw.applied as { at?: unknown } | undefined)?.at;
+  return { to, claudeMd: raw.claudeMd, skills: skills.slice(0, LIMITS.setupSkills), choice, ...(applied && isId(at) && { applied: { ...applied, at } }) };
+}
+
 /** A message of the board's copy in a repository, if it has the right shape (R-040). */
 function readBoardSync(raw: Record<string, unknown> | undefined): BoardSyncDTO | undefined {
   const repo = typeof raw?.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
@@ -620,6 +650,8 @@ function readContent(value: unknown): MessageContent {
     forget?: { repo?: unknown; sentAt?: unknown };
     trust?: { user?: unknown; fingerprint?: unknown; sentAt?: unknown };
     sleep?: { sentAt?: unknown };
+    setup?: { sentAt?: unknown; choice?: unknown };
+    setupState?: Record<string, unknown>;
     board?: Record<string, unknown>;
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
@@ -646,6 +678,13 @@ function readContent(value: unknown): MessageContent {
   const fingerprint = short(raw.trust?.fingerprint, 64);
   if (isId(raw.trust?.user) && fingerprint && isId(raw.trust.sentAt)) content.trust = { user: raw.trust.user, fingerprint, sentAt: raw.trust.sentAt };
   if (isId(raw.sleep?.sentAt)) content.sleep = { sentAt: raw.sleep.sentAt };
+  if (isId(raw.setup?.sentAt)) {
+    // A choice of the wrong shape asks only, so it changes nothing.
+    const choice = readChoice(raw.setup.choice);
+    content.setup = { sentAt: raw.setup.sentAt, ...(choice && { choice }) };
+  }
+  const state = readSetupState(raw.setupState);
+  if (state) content.setupState = state;
   const board = readBoardSync(raw.board);
   if (board) content.board = board;
   return content;

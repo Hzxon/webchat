@@ -4,30 +4,21 @@
 // messages that name it, in the user's direct chat with the agent (D-102).
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AGENT_LEVEL, LIMITS, type RunRequest } from '../../../shared/types';
-import { asleep, ownAgents, seatFor, short, THREAD_STATE, threadProject, useAgentThreads, WAKE, type Seat, type Thread } from '../agents';
+import { asleep, blockedBy, ownAgents, seatFor, short, THREAD_STATE, threadProject, useAgentThreads, WAKE, type Seat, type Thread } from '../agents';
 import { addProjectMembers, askAgent, askClone, askFix, cancelRun, discardMessage, forgetFolder, loadChat, loadOlder, putToSleep, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { useLinkedRepos } from '../linkedRepos';
 import { actions, useAppState } from '../store';
 import { useAutoGrow, useDraft } from './ChatView';
 import { formatListTime, formatTime } from './format';
-import { AlertIcon, BackIcon, PlusIcon, SendIcon, TerminalIcon } from './icons';
+import { AlertIcon, BackIcon, PlusIcon, SendIcon, SlidersIcon, TerminalIcon } from './icons';
 import { AgentBrief } from './AgentBrief';
 import { AgentDialog } from './AgentDialog';
 import { AgentDraft } from './AgentDraft';
+import { AgentSetup } from './AgentSetup';
 import { Markdown } from './Markdown';
 import { Tag, type Tone } from './PullTags';
 
-
-const UPDATE = 'Your agent’s WebChat plugin is too old for this. In Claude Code, type /plugin, open Installed, choose webchat, then Update now.';
-
-/** Why a question or reply cannot go to the agent now, in plain words, or '' when it can. */
-function blockedBy(seat: Seat | undefined) {
-  // An older plugin checks in per repository and answers nothing else (D-103, R-036).
-  if (!seat || seat.protocol < AGENT_LEVEL.answers) return UPDATE;
-  if (!seat.online) return `${asleep(seat.lastSeen)}. ${WAKE}`;
-  return '';
-}
 
 /** Where the agent stands on a repository, as a project lists it, and whether it has a folder to forget (R-038). */
 function repoState(seat: Seat | undefined): [Tone, string, boolean?] {
@@ -46,6 +37,7 @@ export function AgentsView() {
   const agents = useMemo(() => ownAgents(users, meId), [users, meId]);
   const thread = threads.find((t) => t.root === open);
   const [connecting, setConnecting] = useState(false);
+  const [setting, setSetting] = useState(false);
   // Where a conversation is answered: its agent's folder of the repository its prompt names, or its laptop.
   const seatOf = (t: Thread) => {
     const agent = agents.find((a) => conversations[t.conversationId]?.members.some((m) => m.userId === a.id));
@@ -108,6 +100,10 @@ export function AgentsView() {
                 {sleeping ? 'Going to sleep…' : 'Put to sleep'}
               </button>
             )}
+            {/* What runs load from the owner's Claude setup (R-039). */}
+            <button className="icon-button" onClick={() => setSetting(true)} title="Agent settings" aria-label="Agent settings">
+              <SlidersIcon />
+            </button>
             {/* Connecting another agent, and removing one, live here (R-030, R-033). */}
             <button className="icon-button" onClick={() => setConnecting(true)} title="Connect coding agent" aria-label="Connect coding agent">
               <PlusIcon />
@@ -133,6 +129,7 @@ export function AgentsView() {
         <ProjectList threads={threads} chats={chats} />
       )}
       {connecting && <AgentDialog onClose={() => setConnecting(false)} />}
+      {setting && <AgentSetup onClose={() => setSetting(false)} />}
     </section>
   );
 }
