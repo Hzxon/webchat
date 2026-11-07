@@ -282,6 +282,8 @@ export class Plugin {
     );
     this.folders = new Map(found.flatMap((f) => (f ? [[f.repo.toLowerCase(), f] as const] : [])));
     this.client!.repos = [...this.folders.keys()];
+    // A folder the owner connected in another window lets the runs and turns that wait for it go on.
+    for (const key of this.waiting.keys()) if (this.folders.has(key)) this.settle(key);
   }
 
   /** The folder of a repository, whatever the case of its name: GitHub ignores it. */
@@ -462,9 +464,10 @@ export class Plugin {
       const mark = markOf(this.options.dataDir, asked.repo);
       await fs.mkdir(path.dirname(mark), { recursive: true, mode: 0o700 });
       await fs.writeFile(mark, dir);
+      // The scan lets what waits go on, so whether anything waited is read before it.
+      const waited = !!this.waiting.get(key)?.size;
       await this.scan();
-      if (this.waiting.get(key)?.size) this.settle(key);
-      else await say(`Cloned ${asked.repo} into ${shown(dir)}. ${asked.again}`, true);
+      if (!waited) await say(`Cloned ${asked.repo} into ${shown(dir)}. ${asked.again}`, true);
     } catch (error) {
       await fail(messageOf(error));
     } finally {

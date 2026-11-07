@@ -848,6 +848,19 @@ describe('agent client (R-027)', () => {
         await plugin.scan();
         assert.deepEqual(plugin.client!.repos, ['acme/app']);
         assert.ok(existsSync(path.join(cloneDir, 'README.md')));
+        // A folder connected in another window lets a run that waits for it go on, with no clone (R-036).
+        const connectWaits = async () => {
+          const id = (await ask(alice, { repo: 'acme/web' })).id;
+          const handled = (await checkIn()).handled;
+          await offered(id, 'acme/web');
+          await new Plugin({ ...options, code: '', dataDir, projectDir: cloneDir }).call('connect');
+          await plugin.scan();
+          await handled;
+          return reportsOn(id);
+        };
+        assert.deepEqual(await withEnv({ FAKE_CLAUDE_ANSWER: failed }, connectWaits), ['I could not run K-7: Not today.'], 'the run went on in the connected folder');
+        await new Plugin({ ...options, code: '', dataDir, projectDir: cloneDir }).call('disconnect');
+        await plugin.scan();
         // Alice forgets the app's folder from the pane, and Carol cannot: the mark goes, the files stay (R-038).
         const forget = (from: AgentClient, chat: number) => from.send(chat, { text: 'Forget the folder of acme/app', forget: { repo: 'acme/app', sentAt: Date.now() } });
         await forget(carol, general);
