@@ -11,10 +11,11 @@
 # The script refuses an item with no entry, one whose status says Done, Fixed
 # or Dropped, or one in the Done table, and prints the decisions and entries
 # that name the item, for the check. It refuses when an open pull request names
-# the item, or the decision number given as the third argument, warns about a
-# remote branch that names the item, then pushes an empty commit and opens a
-# draft pull request whose body names both. Later commits go to the same
-# branch. See D-062, D-076 and D-107.
+# the item, or the decision number given as the third argument, and reserves
+# the number with the tag reserve/D-xxx, warns about a remote branch that names
+# the item, then pushes an empty commit and opens a draft pull request whose
+# body names both. Later commits go to the same branch. See D-062, D-076 and
+# D-107.
 set -eu
 
 usage='usage: scripts/claim.sh -c "<what you checked>" <K-12|R-005|Q-1> "<pull request title>" [D-077]'
@@ -94,6 +95,15 @@ if [ -n "$decision" ]; then
     echo "$decision is already reserved by an open pull request:" >&2
     echo "$reserved" >&2
     echo "Take the next free number." >&2
+    exit 1
+  fi
+  # The check above races a claim made seconds earlier, whose pull request it cannot see yet. The
+  # remote refuses to create a tag that exists, so only one claim gets the number (D-076). The tag
+  # names a commit of this claim's own: two claims cut from one main share HEAD, and pushing the
+  # commit a tag already names succeeds.
+  mark=$(git commit-tree "HEAD^{tree}" -p HEAD -m "Reserve $decision for $branch")
+  if ! git push -q origin "$mark:refs/tags/reserve/$decision"; then
+    echo "$decision was just reserved by another claim (tag reserve/$decision). Take the next free number." >&2
     exit 1
   fi
 fi

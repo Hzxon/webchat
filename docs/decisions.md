@@ -1557,9 +1557,11 @@ A pull request that finishes a roadmap item changes only that item's status line
 does not move the entry to Done or add a row to the Done table; a housekeeping pull request does
 both for every finished item at once. New decision entries go at the end of their topic section,
 and `.gitattributes` merges `docs/decisions.md` with git's union driver. `scripts/claim.sh` takes a
-decision number as a third argument and refuses one that an open pull request already reserves.
-`.github/workflows/ci.yml` runs typecheck, the tests and the build on every pull request, on main,
-and in the merge queue.
+decision number as a third argument, refuses one that an open pull request already reserves, then
+pushes the tag `reserve/D-xxx`. The remote creates a tag only once, so of two claims seconds apart,
+which both passed the check, only one gets the number: #144 and #145 both took D-109 that way.
+`ci.yml` runs typecheck, the tests and the build, and `doc-ids.yml` the id check (D-063), on every
+pull request and on main.
 
 Why: a status line changed in place touches different lines for different items, so parallel merges
 go through clean. The union driver is safe for `decisions.md` because entries are never deleted. It
@@ -1567,9 +1569,10 @@ is not used for the roadmap, where entries move: union would restore what one si
 
 Cost: the Done section and its table lag behind until the next housekeeping pull request, so the
 status lines are the current index. The union driver can interleave two entries added at the same
-place in an odd order, which the next edit tidies. A merge queue is a repository setting, so the
-owner turns it on and requires the `checks` job; until then CI runs, but merges are not
-serialized.
+place in an odd order, which the next edit tidies. Main has no branch protection, and a merge queue
+needs a repository an organization owns, so a pull request is checked only against the main it
+started from: two that clash each pass and both merge, and the check on main shows it after. A
+number whose claim is closed stays taken.
 
 ### D-090: Documents say the current state, and an area's rules load with its code
 
