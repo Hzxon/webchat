@@ -116,7 +116,7 @@ describe('end-to-end encryption', () => {
     const keyId = newKeyId();
     const aliceAsWrapper = { id: alice.id, dh: alice.identity.publicKeys.dh };
     const forBob = await wrapChatKey(raw, alice, { id: bob.id, dh: bob.identity.publicKeys.dh }, keyId, 7);
-    assert.deepEqual(await openChatKeyBytes(forBob, bob, aliceAsWrapper, keyId, 7), raw);
+    assert.deepEqual(await openChatKeyBytes(forBob, bob, aliceAsWrapper, keyId, 7), { raw, namesChat: true });
     await assert.rejects(openChatKeyBytes(forBob, bob, aliceAsWrapper, keyId, 8), 'another chat fails');
   });
 
@@ -139,14 +139,14 @@ describe('end-to-end encryption', () => {
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(keyId) }, pair, raw);
     const old = { iv: toBase64Url(iv), data: toBase64Url(data) };
-    assert.deepEqual(await openChatKeyBytes(old, bob, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId, 7), raw);
+    assert.deepEqual(await openChatKeyBytes(old, bob, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId, 7), { raw, namesChat: false });
   });
 
   test('a member can share a chat key with a newcomer, who opens it only from that member', async () => {
     const raw = newChatKeyBytes();
     const keyId = newKeyId();
     const forBob = await wrapChatKey(raw, alice, { id: bob.id, dh: bob.identity.publicKeys.dh }, keyId, 9);
-    const bobsCopy = await openChatKeyBytes(forBob, bob, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId, 9);
+    const { raw: bobsCopy } = await openChatKeyBytes(forBob, bob, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId, 9);
     assert.deepEqual(bobsCopy, raw);
 
     const forCarol = await wrapChatKey(bobsCopy, bob, { id: carol.id, dh: carol.identity.publicKeys.dh }, keyId, 9);

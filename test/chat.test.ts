@@ -307,7 +307,7 @@ class Client {
   async rotateChatKey(chat: ConversationDTO, wrapperKeys: PublicKeysDTO, members: Client[]) {
     const me = { id: this.id, identity: this.identity! };
     const previousKeyId = chat.keyId!;
-    const previous = await openChatKeyBytes(chat.myKey!, me, { id: chat.myKey!.wrappedBy, dh: wrapperKeys.dh }, previousKeyId, chat.id);
+    const { raw: previous } = await openChatKeyBytes(chat.myKey!, me, { id: chat.myKey!.wrappedBy, dh: wrapperKeys.dh }, previousKeyId, chat.id);
     const { raw, ...key } = await this.newChatKey(
       members.map((m) => ({ id: m.id, keys: m.identity!.publicKeys })),
       chat.id,
@@ -320,7 +320,7 @@ class Client {
   async shareChatKey(conversation: ConversationDTO, wrapperKeys: PublicKeysDTO, recipients: Client[]) {
     const me = { id: this.id, identity: this.identity! };
     const keyId = conversation.keyId!;
-    const raw = await openChatKeyBytes(conversation.myKey!, me, { id: conversation.myKey!.wrappedBy, dh: wrapperKeys.dh }, keyId, conversation.id);
+    const { raw } = await openChatKeyBytes(conversation.myKey!, me, { id: conversation.myKey!.wrappedBy, dh: wrapperKeys.dh }, keyId, conversation.id);
     const wrappedKeys = await Promise.all(
       recipients.map(async (r) => ({
         userId: r.id,
@@ -1080,6 +1080,16 @@ describe('chat server', () => {
     assert.equal(await alice.read(sent.data, keysOf(bob)), 'I will take the results section');
     const history = await alice.request<MessageDTO[]>('GET', `/conversations/${lab.id}/messages`);
     assert.equal(await alice.read(history.data[0]!, keysOf(alice), chat), 'Lab report draft is up');
+  });
+
+  test('a member gives a chat that nobody left a new key, as a page does for a key from before D-111 (K-65)', async () => {
+    const path = `/conversations/${lab.id}/key`;
+    const [bobView, aliceView] = [await viewOf(bob, lab.id), await viewOf(alice, lab.id)];
+    assert.equal(bobView.needsNewKey, false);
+    const replaced = await bob.request<ConversationDTO>('PUT', path, await bob.rotateChatKey(bobView, keysOf(bob), [alice, bob]));
+    assert.equal(replaced.status, 200, JSON.stringify(replaced.data));
+    const late = await alice.request<{ code?: string }>('PUT', path, await alice.rotateChatKey(aliceView, keysOf(bob), [alice, bob]));
+    assert.equal(late.data.code, 'stale_key', 'the first member to replace it wins');
   });
 
   test('the owner hands a group over, and can then leave it', async () => {

@@ -3,16 +3,18 @@ import { before, beforeEach, describe, test } from 'node:test';
 import {
   createIdentity,
   encryptMessage,
+  fromBase64Url,
   importChatKey,
   importIdentity,
   linkChatKey,
   newChatKeyBytes,
   newKeyId,
+  toBase64Url,
   wrapChatKey,
   type Identity,
   type IdentitySecrets,
 } from '../shared/e2ee.ts';
-import { Keyring as SharedKeyring } from '../shared/keyring.ts';
+import { OldKeyCopyError, Keyring as SharedKeyring } from '../shared/keyring.ts';
 import type { ConversationDTO, MessageDTO, PublicKeysDTO, UserDTO } from '../shared/types.ts';
 
 // The keyring keeps keys in IndexedDB, which Node lacks. This stands in for the little of it that
@@ -242,6 +244,29 @@ describe('The key checks in shared/keyring.ts, which the page and the agent shar
   test('refuses a chain of links the server looped, instead of waiting on it forever', () => {
     const looped = { ...chat, id: CHAT + 1, keyId: newKeyId(), keyLinks: [link, { ...link, keyId: older, previousKeyId: newer }] };
     assert.equal(ring.keyFor(looped, older, keysOf), null);
+  });
+
+  test('seals with a key whose copy names its chat', async () => {
+    assert.ok(await ring.sealingKey(chat, keysOf));
+  });
+
+  test('never seals with a key whose copy names no chat, which the server could take from another chat (K-65)', async () => {
+    // What wrapChatKey made before D-111: the pair key's info named only the two people.
+    const keyId = newKeyId();
+    const raw = newChatKeyBytes();
+    const shared = await crypto.subtle.deriveBits({ name: 'ECDH', public: await crypto.subtle.importKey('raw', fromBase64Url(ring.self.identity.publicKeys.dh), { name: 'ECDH', namedCurve: 'P-256' }, false, []) }, other.dhPrivate, 256);
+    const pair = await crypto.subtle.deriveKey(
+      { name: 'HKDF', hash: 'SHA-256', salt: fromBase64Url(keyId), info: new TextEncoder().encode(`webchat/chat-key/v1|from:${OTHER}|to:${ME}`) },
+      await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']),
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt'],
+    );
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(keyId) }, pair, raw);
+    const old = { ...chat, id: CHAT + 2, keyId, myKey: { wrappedBy: OTHER, iv: toBase64Url(iv), data: toBase64Url(data) }, keyLinks: [] };
+    await assert.rejects(ring.sealingKey(old, keysOf), OldKeyCopyError);
+    assert.ok(await ring.keyFor(old, keyId, keysOf), 'it still opens what was sealed with it');
   });
 });
 

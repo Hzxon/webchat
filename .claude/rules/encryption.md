@@ -35,9 +35,10 @@ docs/decisions.md that explains it.
 - A feature that shows the server something new must be added to D-020's list and to the README section "What it does not protect against" (D-020).
 - On leave or removal, make a new chat key for everyone who stays, never for the leaver, and link the old key under it in `key_links` (D-044).
 - The server checks each new key under the project's or group's lock: it names the current key and is wrapped for exactly the people who stay (D-044).
-- A chat with `needs_new_key` refuses messages with `409 needs_new_key`; a losing `PUT /conversations/:id/key` gets `409 stale_key` (D-044).
+- A chat with `needs_new_key` refuses messages with `409 needs_new_key`; a losing `PUT /conversations/:id/key` gets `409 stale_key`; any member may replace a key without `needs_new_key` (D-044, D-112).
 - A page or agent never encrypts with a key a link says was replaced, and keeps those key ids per chat on the device, since the server can drop a link (D-044, K-43).
 - Every copy of a chat key names its chat (`webchat/chat-key/v2`); a new chat's first key is wrapped for the id `POST /conversations/ids` reserves, and opening still falls back to v1 for older copies (D-111).
+- Seal only with `Keyring.sealingKey`, which refuses a key whose copy names no chat; such a key opens old messages, and a page replaces it before it sends or shares it; an agent waits (D-112).
 - The page and the agent take the chat-key checks, the key cache and the pins from `shared/keyring.ts`; never copy them into one side (K-40, D-085).
 - Message content is padded to powers of two from 256 bytes inside the AES-GCM ciphertext; `decryptContent` tells it from older unpadded content by the last byte, and both open (D-059).
 - The service worker never shows a reaction notification; it hands it to open pages, under the tag `reaction-` plus the chat id (D-070).

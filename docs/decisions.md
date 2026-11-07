@@ -429,9 +429,9 @@ user checks them, the page refuses to wrap a new chat key for that person. Two p
 page also trusts nothing signed or wrapped with the changed keys. It refuses to open a new chat key
 that person wrapped, so it never sends under a key the server could know. It shows their new
 messages as unreadable, and the service worker shows their pushes without text. A chat key stored
-before the change still works. The pins stay on the device when someone signs out or in, so a swap
-made while nobody was signed in still shows a warning. They hold only fingerprints of other people's
-public keys.
+before the change still opens messages, but seals only once its copy opens with checked keys
+(D-112). The pins stay on the device when someone signs out or in, so a swap made while nobody was
+signed in still shows a warning. They hold only fingerprints of other people's public keys.
 
 Cost: a device trusts the first keys it sees for a person without proof. After someone's keys change
 for a real reason, their new messages stay unreadable until the user checks the code. The page keeps
@@ -507,8 +507,26 @@ reserved for can use it, and only once. A channel's id must be above #general's,
 by the lowest id (D-081). A copy that fails as v2 is tried as v1, so copies made before still open.
 
 Cost: making a chat takes one more request. A copy made before this change names no chat, so the
-server can still move it to another chat between the same two people. An unused id stays until the
-first sign-in an hour after it was reserved.
+server can still move it to another chat between the same two people, where it opens messages but
+never seals (D-112). An unused id stays until the first sign-in an hour after it was reserved.
+
+### D-112: A key whose copy names no chat never seals
+
+Accepted 2026-11-07 in #152. Fixes K-65.
+
+`openChatKeyBytes` says whether a copy named its chat (D-111). `Keyring.sealingKey` in
+`shared/keyring.ts` refuses a key whose copy did not, for the page and the agent, and `shareChatKey`
+will not wrap it for newcomers. Such a key still opens messages and goes inside a new key's link.
+Before a page sends or adds people in such a chat, it makes a new key for exactly the members, with
+the old one linked inside, through `PUT /conversations/:id/key` as after a leave (D-044). The server
+cannot tell such a key, so any member may now replace a key without `needs_new_key`, under the same
+lock and checks.
+
+Cost: the first send in each old chat makes a new key first. The agent never makes keys (D-085), so
+it cannot send in an old chat until a member sends there from a page. Any member can replace a
+chat's key at will. A stored key whose copy no longer opens, because its wrapper's keys changed, no
+longer seals (D-018). A key the server moved in from another chat lands in this chat's
+links, so this chat's members hold it.
 
 ## Messaging
 
