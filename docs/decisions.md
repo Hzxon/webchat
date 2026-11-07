@@ -1204,6 +1204,19 @@ Cost: a check of any age counts, unlike a run (D-089), since Claude Code may hav
 server that withheld a newer check could play an older one again, along with the keys it named.
 The owner verified those keys once.
 
+### D-113: The owner puts the agent to sleep, and only the laptop wakes it
+
+Accepted 2026-11-07 in #153 (K-66).
+
+A file `asleep` in the plugin's data folder is the one switch. The pane's **Put to sleep** sends a
+sealed `sleep` message, which counts only from the owner, in their direct chat, signed within 10
+minutes, once (D-089). `/webchat:sleep` writes the file too. The serving window then starts nothing
+new, finishes what runs, stops checking in and frees `watch.lock`. No window takes the lock while
+the file exists, new ones included. Only `/webchat:wake` removes it. A background job of Claude Code
+never serves. Why: closing every session was the only off switch, and a hidden job took over.
+
+Cost: a sleeping agent hears nothing, so the page cannot wake it. Waking needs the laptop.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope

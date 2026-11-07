@@ -352,6 +352,8 @@ export interface MessageContent {
    * page opens: a card's brief hashes the same on both sides (K-57, D-110).
    */
   trust?: { user: number; fingerprint: string; sentAt: number };
+  /** The owner puts their agent to sleep from the pane; only `/webchat:wake` on the laptop wakes it (K-66, D-113). */
+  sleep?: { sentAt: number };
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -552,6 +554,7 @@ function readContent(value: unknown): MessageContent {
     added?: Record<string, unknown>;
     forget?: { repo?: unknown; sentAt?: unknown };
     trust?: { user?: unknown; fingerprint?: unknown; sentAt?: unknown };
+    sleep?: { sentAt?: unknown };
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -576,6 +579,7 @@ function readContent(value: unknown): MessageContent {
   if (typeof raw.forget?.repo === 'string' && isRepoName(raw.forget.repo) && isId(raw.forget.sentAt)) content.forget = { repo: raw.forget.repo, sentAt: raw.forget.sentAt };
   const fingerprint = short(raw.trust?.fingerprint, 64);
   if (isId(raw.trust?.user) && fingerprint && isId(raw.trust.sentAt)) content.trust = { user: raw.trust.user, fingerprint, sentAt: raw.trust.sentAt };
+  if (isId(raw.sleep?.sentAt)) content.sleep = { sentAt: raw.sleep.sentAt };
   return content;
 }
 
