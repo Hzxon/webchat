@@ -266,7 +266,9 @@ open. Remember on each device the newest key id per chat, and refuse to seal wit
 
 ### K-40: The keyring logic exists twice, in the page and in the agent
 
-Status: Open. Found while building R-027 step 1 (#85).
+Status: Done in #147. Both now use `shared/keyring.ts`. It walks a key chain before it caches, so
+a chain the server looped no longer leaves the page's open waiting forever. Found while building
+R-027 step 1 (#85).
 
 `agent/client.ts` ports `chatKey`, `keyFor`, the key cache, the pins and the signature checks
 from `client/src/e2ee/keyring.ts`, because that module reaches into IndexedDB and cannot load in

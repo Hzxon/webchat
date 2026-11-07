@@ -1,9 +1,10 @@
 // A headless WebChat account for a coding agent (R-027, D-085), run by the daemon or the Claude
 // Code plugin (R-030). It does what a browser tab does with no page: pairs with its owner, keeps its
 // keys in a file, checks in with POST /api/sync, opens chat keys and messages, sends sealed
-// messages, and edits doc sections under the section lock. The logic follows
-// client/src/e2ee/keyring.ts and client/src/chat.ts; what is browser-only there (IndexedDB, push,
-// alerts, the store) has no counterpart here. Tests also sign people up with it.
+// messages, and edits doc sections under the section lock. The key checks come from
+// shared/keyring.ts, as the page's do; the rest follows client/src/chat.ts. What is browser-only
+// there (IndexedDB, push, alerts, the store) has no counterpart here. Tests also sign people up
+// with it.
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -17,19 +18,18 @@ import {
   encryptMessage,
   importIdentity,
   keyFingerprint,
-  openKeyLink,
   pairingId,
   pairingProof,
   randomBytes,
   sealIdentity,
   toBase64Url,
-  unwrapChatKey,
   type DocContent,
   type DocMeta,
   type Identity,
   type IdentitySecrets,
   type MessageContent,
 } from '../shared/e2ee.ts';
+import { Keyring } from '../shared/keyring.ts';
 import {
   PAIRING_TTL_MS,
   type BootstrapDTO,
@@ -138,7 +138,8 @@ export class AgentClient {
   docs: DocDTO[] = [];
   private stamp = '';
   private readonly tabId = crypto.randomUUID();
-  private readonly chatKeys = new Map<string, Promise<CryptoKey>>();
+  /** Chat keys and whose keys changed: what nothing from them opens until someone checks. */
+  private readonly keys: Keyring;
   /**
    * Messages already returned, by id, with when they were sent: a check-in answer repeats the last
    * 15 seconds of the one before (D-021), so an id stays here until it is older than that.
@@ -146,8 +147,6 @@ export class AgentClient {
   private readonly seen = new Map<number, number>();
   /** Where this run started. Anything up to here was returned by an earlier run, or is history. */
   private readonly floor: number;
-  /** People whose keys differ from the pinned ones. Nothing from them opens until someone checks. */
-  private readonly changedKeys = new Set<number>();
   /** Said in every check-in from the plugin: every repository its laptop has a folder for (R-036). */
   repos: string[] | null = null;
   /** Said in every check-in from the plugin: what its sessions can do (D-103). */
@@ -163,6 +162,10 @@ export class AgentClient {
     this.api = new Api(file.server, file.cookie);
     this.id = file.userId;
     this.identity = identity;
+    this.keys = new Keyring({ id: file.userId, identity }, file.replaced ?? {}, (replaced) => {
+      this.file.replaced = replaced;
+      this.save().catch(() => undefined);
+    });
     this.floor = file.cursor;
   }
 
@@ -328,7 +331,7 @@ export class AgentClient {
       this.projects = answer.projects;
       this.conversations = new Map(answer.conversations.map((c) => [c.id, c]));
       this.docs = answer.docs;
-      dirty = (await this.checkKeys(answer.users)) || dirty;
+      dirty = (await this.keys.checkPins(answer.users, this.file.pins)) || dirty;
       fresh.push(...answer.messages);
       if (!answer.more) break;
     }
@@ -360,7 +363,7 @@ export class AgentClient {
     if (trust.sentAt <= (trusted[trust.user] ?? 0) || trust.fingerprint !== (await keyFingerprint(keys))) return false;
     trusted[trust.user] = trust.sentAt;
     this.file.pins[trust.user] = trust.fingerprint;
-    this.changedKeys.delete(trust.user);
+    this.keys.changed.delete(trust.user);
     return true;
   }
 
@@ -381,32 +384,11 @@ export class AgentClient {
     }
   }
 
-  /**
-   * Pins each person's keys the first time they are seen, and notes whose keys changed since
-   * (D-018). True when a new pin needs saving.
-   */
-  private async checkKeys(users: UserDTO[]) {
-    let pinned = false;
-    this.changedKeys.clear();
-    const fingerprints = await Promise.all(users.map((u) => (u.keys ? keyFingerprint(u.keys) : null)));
-    users.forEach((user, i) => {
-      const fingerprint = fingerprints[i];
-      if (!fingerprint) return;
-      if (!this.file.pins[user.id]) {
-        this.file.pins[user.id] = fingerprint;
-        pinned = true;
-      } else if (this.file.pins[user.id] !== fingerprint) {
-        this.changedKeys.add(user.id);
-      }
-    });
-    return pinned;
-  }
-
   /** A person's public keys: one's own from the file, others from the server, unless they changed. */
-  keysOf(userId: number): PublicKeysDTO | null {
+  keysOf = (userId: number): PublicKeysDTO | null => {
     if (userId === this.id) return this.identity.publicKeys;
-    return this.changedKeys.has(userId) ? null : (this.users.get(userId)?.keys ?? null);
-  }
+    return this.keys.unchecked(userId) ? null : (this.users.get(userId)?.keys ?? null);
+  };
 
   /** The chat's current key, for sealing. */
   private async currentKey(conversationId: number) {
@@ -417,44 +399,12 @@ export class AgentClient {
 
   /** Opens this account's copy of the chat's current key, after checking that a member wrapped it. */
   private chatKey(conversation: ConversationDTO): Promise<CryptoKey> {
-    const { id, keyId, myKey } = conversation;
-    if (!keyId || !myKey) return Promise.reject(new Error('The chat has no key.'));
-    const seen = this.file.replaced?.[id] ?? [];
-    const fresh = conversation.keyLinks.map((link) => link.previousKeyId).filter((k) => !seen.includes(k));
-    if (fresh.length) {
-      this.file.replaced = { ...this.file.replaced, [id]: [...seen, ...fresh] };
-      this.save().catch(() => undefined);
-    }
-    if (this.file.replaced?.[id]?.includes(keyId)) return Promise.reject(new Error('The key was replaced.'));
-    return this.cached(id, keyId, async () => {
-      const wrapperKeys = this.keysOf(myKey.wrappedBy);
-      if (!wrapperKeys || !conversation.members.some((m) => m.userId === myKey.wrappedBy)) {
-        throw new Error('The chat key was not created by a member of this chat, or their keys changed.');
-      }
-      return unwrapChatKey(myKey, { id: this.id, identity: this.identity }, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
-    });
+    return this.keys.chatKey(conversation, this.keysOf) ?? Promise.reject(new Error('The chat has no key, or it was replaced.'));
   }
 
   /** The key a message names: the current one, or an earlier one found through the key links. */
-  private keyFor(conversation: ConversationDTO, keyId: string, steps = 0): Promise<CryptoKey> {
-    if (keyId === conversation.keyId) return this.chatKey(conversation);
-    const link = conversation.keyLinks.find((l) => l.previousKeyId === keyId);
-    // Each step goes from a key to the one before it, so a chain the server looped stops here.
-    if (!link || steps > conversation.keyLinks.length) return Promise.reject(new Error('No key for this message.'));
-    return this.cached(conversation.id, keyId, async () =>
-      openKeyLink(await this.keyFor(conversation, link.keyId, steps + 1), link.keyId, conversation.id, link, keyId),
-    );
-  }
-
-  private cached(conversationId: number, keyId: string, open: () => Promise<CryptoKey>) {
-    const name = `${conversationId}:${keyId}`;
-    let pending = this.chatKeys.get(name);
-    if (!pending) {
-      pending = open();
-      this.chatKeys.set(name, pending);
-      pending.catch(() => this.chatKeys.delete(name));
-    }
-    return pending;
+  private keyFor(conversation: ConversationDTO, keyId: string): Promise<CryptoKey> {
+    return this.keys.keyFor(conversation, keyId, this.keysOf) ?? Promise.reject(new Error('No key for this message.'));
   }
 
   /** Decrypts a message and checks its sender's signature. Never throws: failures come back as "failed". */

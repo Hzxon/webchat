@@ -13,17 +13,15 @@ import {
   newChatKeyBytes,
   newKeyId,
   openChatKeyBytes,
-  openKeyLink,
-  unwrapChatKey,
   wrapChatKey,
   type DocContent,
   type DocMeta,
-  type Identity,
   type IdentitySecrets,
   type MessageContent,
   type QuotedMessage,
 } from '../../../shared/e2ee';
 import { describeGithubCard, readGithubCard } from '../../../shared/github';
+import { EncryptionUnavailableError, Keyring, WRAPPER_CHANGED, type ChatKeyStore, type KeyedConversation, type KeyLookup } from '../../../shared/keyring';
 import type {
   ChatKeyInput,
   ConversationDTO,
@@ -81,13 +79,15 @@ export interface ChatDoc extends DocDTO {
   board?: DocContent['board'];
 }
 
-/** Looks up a person's public keys: the server's list for others, the unlocked keys for oneself. */
-export type KeyLookup = (userId: number) => PublicKeysDTO | null;
+export { EncryptionUnavailableError, type KeyLookup };
 
-export class EncryptionUnavailableError extends Error {}
-
-let me: { id: number; identity: Identity } | null = null;
-const chatKeys = new Map<string, Promise<CryptoKey>>();
+const chatKeyStore: ChatKeyStore = {
+  get: (conversationId, keyId) => keystore.getChatKey(conversationId, keyId).catch(() => undefined),
+  set: (conversationId, keyId, key) => keystore.setChatKey(conversationId, keyId, key).catch(() => undefined),
+};
+const saveReplaced = (replaced: Record<number, string[]>) => void keystore.setReplaced(replaced).catch(() => undefined);
+/** The unlocked account's keyring, with its chat keys and whose keys changed. Null when locked. */
+let keys: Keyring | null = null;
 /** Content already decrypted, by message id, with the signed fields it was checked against. */
 const opened = new Map<number, { content: Opened; signed: string }>();
 /**
@@ -131,33 +131,19 @@ function checkRecipients(members: Array<{ id: number; name: string; keys: Public
   }
 }
 let pins: Record<number, string> | null = null;
-/**
- * By chat id, the key ids a key link showed replaced. The server could drop a link and name the old
- * key current again, so the device keeps what it saw (K-43).
- */
-let replaced: Record<number, string[]> = {};
-/** People whose keys differ from the ones pinned on this device, as of the last checkKeys. */
-let changedKeys = new Set<number>();
-
-/**
- * Keys this device has not checked since they changed. A key the server swapped would let it open
- * chat keys it wrapped and sign messages in that person's name, so nothing trusts them (D-018).
- * One's own keys come from this device, never from the server.
- */
-const unchecked = (userId: number) => userId !== me?.id && changedKeys.has(userId);
-const WRAPPER_CHANGED = "The security code of whoever shared this chat's key changed. Check it first.";
-
-const chatKeyName = (conversationId: number, keyId: string) => `${conversationId}:${keyId}`;
 
 export const keyring = {
-  myKeys: (): PublicKeysDTO => me!.identity.publicKeys,
+  myKeys: (): PublicKeysDTO => keys!.self.identity.publicKeys,
 
   /** Loads this device's keys for the user. False means the user must unlock with their password. */
   async load(userId: number): Promise<boolean> {
     const stored = await keystore.getIdentity().catch(() => undefined);
     if (!stored || stored.userId !== userId) return false;
-    me = { id: userId, identity: stored.identity };
-    replaced = (await keystore.getReplaced().catch(() => undefined)) ?? {};
+    // A reload of the same account keeps whose keys changed until checkKeys runs again.
+    if (keys?.self.id !== userId) {
+      const replaced = (await keystore.getReplaced().catch(() => undefined)) ?? {};
+      keys = new Keyring({ id: userId, identity: stored.identity }, replaced, saveReplaced, chatKeyStore);
+    }
     return true;
   },
 
@@ -166,21 +152,16 @@ export const keyring = {
     const identity = await importIdentity(secrets);
     await keystore.clearKeys();
     await keystore.setIdentity({ userId, identity });
-    me = { id: userId, identity };
+    keys = new Keyring({ id: userId, identity }, {}, saveReplaced, chatKeyStore);
     pins = null;
-    replaced = {};
-    changedKeys = new Set();
   },
 
   createSecrets: () => createIdentity(),
 
   /** Drops every key from memory and from this device. The pins of other people's keys stay. */
   async forget() {
-    me = null;
+    keys = null;
     pins = null;
-    replaced = {};
-    changedKeys = new Set();
-    chatKeys.clear();
     opened.clear();
     held.clear();
     openedDocs.clear();
@@ -193,25 +174,13 @@ export const keyring = {
    * out of the service worker's directory, so a push signed with them shows no text.
    */
   async checkKeys(users: UserDTO[]): Promise<Set<number>> {
-    const changed = new Set<number>();
+    const ring = keys!;
     pins ??= (await keystore.getPins().catch(() => undefined)) ?? {};
-    let pinned = false;
-    const directory: Record<number, PublicKeysDTO> = { [me!.id]: me!.identity.publicKeys };
-    for (const user of users) {
-      if (!user.keys) continue;
-      const fingerprint = await keyFingerprint(user.keys);
-      if (!pins[user.id]) {
-        pins[user.id] = fingerprint;
-        pinned = true;
-      } else if (pins[user.id] !== fingerprint) {
-        changed.add(user.id);
-        continue;
-      }
-      directory[user.id] = user.keys;
-    }
-    changedKeys = changed;
+    const pinned = await ring.checkPins(users, pins);
+    const directory: Record<number, PublicKeysDTO> = { [ring.self.id]: ring.self.identity.publicKeys };
+    for (const user of users) if (user.keys && !ring.changed.has(user.id)) directory[user.id] = user.keys;
     await Promise.all([keystore.setDirectory(directory), pinned ? keystore.setPins(pins) : undefined]).catch(() => undefined);
-    return changed;
+    return ring.changed;
   },
 
   /** Accepts a person's new keys after the user checked the security code with them. */
@@ -223,72 +192,10 @@ export const keyring = {
   },
 
   /** Opens this user's copy of a chat key, after checking that a member of the chat created it. */
-  chatKey(conversation: Pick<ConversationDTO, 'id' | 'keyId' | 'myKey' | 'members' | 'keyLinks'>, keysOf: KeyLookup) {
-    const { id, keyId, myKey } = conversation;
-    if (!keyId || !myKey || !me) return null;
-    // A key that a newer one replaced never encrypts again, even if the server names it current.
-    const seen = replaced[id] ?? [];
-    const fresh = conversation.keyLinks.map((link) => link.previousKeyId).filter((k) => !seen.includes(k));
-    if (fresh.length) {
-      replaced = { ...replaced, [id]: [...seen, ...fresh] };
-      void keystore.setReplaced(replaced).catch(() => undefined);
-    }
-    if (replaced[id]?.includes(keyId)) return null;
-    const name = chatKeyName(id, keyId);
-    let pending = chatKeys.get(name);
-    if (!pending) {
-      const self = me;
-      pending = (async () => {
-        const stored = await keystore.getChatKey(id, keyId).catch(() => undefined);
-        if (stored) return stored;
-        const wrapperKeys = keysOf(myKey.wrappedBy);
-        if (!wrapperKeys || !conversation.members.some((m) => m.userId === myKey.wrappedBy)) {
-          throw new Error('The chat key was not created by a member of this chat.');
-        }
-        // A key stored before the change stays usable above; a new one waits for the check.
-        if (unchecked(myKey.wrappedBy)) {
-          throw new EncryptionUnavailableError(WRAPPER_CHANGED);
-        }
-        const key = await unwrapChatKey(myKey, self, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
-        await keystore.setChatKey(id, keyId, key).catch(() => undefined);
-        return key;
-      })();
-      chatKeys.set(name, pending);
-      pending.catch(() => chatKeys.delete(name));
-    }
-    return pending;
-  },
+  chatKey: (conversation: KeyedConversation, keysOf: KeyLookup) => keys?.chatKey(conversation, keysOf) ?? null,
 
-  /**
-   * Opens the key a message names: the chat's current key, or an earlier one, which the key that
-   * replaced it holds inside (see ConversationDTO.keyLinks).
-   */
-  keyFor(conversation: Pick<ConversationDTO, 'id' | 'keyId' | 'myKey' | 'members' | 'keyLinks'>, keyId: string, keysOf: KeyLookup) {
-    const { id, keyLinks } = conversation;
-    // Each step goes from a key to the one before it, so a chain the server looped stops here.
-    const open = (wanted: string, steps: number): Promise<CryptoKey> | null => {
-      if (wanted === conversation.keyId) return keyring.chatKey(conversation, keysOf);
-      const link = keyLinks.find((l) => l.previousKeyId === wanted);
-      if (!link || steps > keyLinks.length) return null;
-      const name = chatKeyName(id, wanted);
-      let pending = chatKeys.get(name);
-      if (!pending) {
-        pending = (async () => {
-          const stored = await keystore.getChatKey(id, wanted).catch(() => undefined);
-          if (stored) return stored;
-          const newer = await open(link.keyId, steps + 1);
-          if (!newer) throw new Error('The chat key that replaced this one is not available.');
-          const key = await openKeyLink(newer, link.keyId, id, link, wanted);
-          await keystore.setChatKey(id, wanted, key).catch(() => undefined);
-          return key;
-        })();
-        chatKeys.set(name, pending);
-        pending.catch(() => chatKeys.delete(name));
-      }
-      return pending;
-    };
-    return open(keyId, 0);
-  },
+  /** Opens the key a message names: the chat's current key, or an earlier one through its links. */
+  keyFor: (conversation: KeyedConversation, keyId: string, keysOf: KeyLookup) => keys?.keyFor(conversation, keyId, keysOf) ?? null,
 
   /** Makes a new chat key and wraps it for every member. Refuses members without keys or with changed keys. */
   async createChatKey(members: Array<{ id: number; name: string; keys: PublicKeysDTO | null }>, changed: Set<number>) {
@@ -296,7 +203,7 @@ export const keyring = {
     const raw = newChatKeyBytes();
     const keyId = newKeyId();
     const wrappedKeys = await Promise.all(
-      members.map(async (m) => ({ userId: m.id, ...(await wrapChatKey(raw, me!, { id: m.id, dh: m.keys!.dh }, keyId)) })),
+      members.map(async (m) => ({ userId: m.id, ...(await wrapChatKey(raw, keys!.self, { id: m.id, dh: m.keys!.dh }, keyId)) })),
     );
     const input: ChatKeyInput = { keyId, wrappedKeys };
     return { input, key: await importChatKey(raw) };
@@ -318,11 +225,11 @@ export const keyring = {
     if (!keyId || !myKey || !wrapperKeys || !conversation.members.some((m) => m.userId === myKey.wrappedBy)) {
       throw new EncryptionUnavailableError('This device cannot open one of the channel keys. Reload the page.');
     }
-    if (unchecked(myKey.wrappedBy)) {
+    if (keys!.unchecked(myKey.wrappedBy)) {
       throw new EncryptionUnavailableError(WRAPPER_CHANGED);
     }
-    const raw = await openChatKeyBytes(myKey, me!, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
-    return Promise.all(recipients.map(async (r) => ({ userId: r.id, ...(await wrapChatKey(raw, me!, { id: r.id, dh: r.keys!.dh }, keyId)) })));
+    const raw = await openChatKeyBytes(myKey, keys!.self, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
+    return Promise.all(recipients.map(async (r) => ({ userId: r.id, ...(await wrapChatKey(raw, keys!.self, { id: r.id, dh: r.keys!.dh }, keyId)) })));
   },
 
   /**
@@ -341,17 +248,14 @@ export const keyring = {
     // Unlike chatKey, the wrapper need not be a member still: after someone leaves, they may have
     // wrapped this copy. The old key only goes inside the new one, to read old messages, and never
     // encrypts anything again.
-    const previous = await openChatKeyBytes(myKey, me!, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
+    const previous = await openChatKeyBytes(myKey, keys!.self, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
     const { input, key } = await keyring.createChatKey(members, changed);
     const link = await linkChatKey(key, input.keyId, id, previous, keyId);
     return { input: { ...input, link: { previousKeyId: keyId, ...link } }, key };
   },
 
   /** Keeps a chat key this device created, once the server has assigned the chat its id. */
-  async remember(conversationId: number, keyId: string, key: CryptoKey) {
-    chatKeys.set(chatKeyName(conversationId, keyId), Promise.resolve(key));
-    await keystore.setChatKey(conversationId, keyId, key).catch(() => undefined);
-  },
+  remember: (conversationId: number, keyId: string, key: CryptoKey) => keys!.remember(conversationId, keyId, key),
 
   async seal(
     chatKey: CryptoKey,
@@ -359,11 +263,11 @@ export const keyring = {
     meta: { conversationId: number; urgent: boolean; clientId: string; kind: MessageKind },
     content: MessageContent,
   ) {
-    return encryptMessage(chatKey, keyId, me!.identity.signPrivate, { ...meta, senderId: me!.id }, content);
+    return encryptMessage(chatKey, keyId, keys!.self.identity.signPrivate, { ...meta, senderId: keys!.self.id }, content);
   },
 
   sealDoc(chatKey: CryptoKey, keyId: string, meta: Omit<DocMeta, 'authorId'>, content: DocContent) {
-    return encryptDoc(chatKey, keyId, me!.identity.signPrivate, { ...meta, authorId: me!.id }, content);
+    return encryptDoc(chatKey, keyId, keys!.self.identity.signPrivate, { ...meta, authorId: keys!.self.id }, content);
   },
 
   /** Decrypts a doc revision and checks its author's signature. Null when either fails. */
@@ -428,7 +332,7 @@ export const keyring = {
  */
 async function signedWith(conversation: ChatConversation | ConversationDTO, keyId: string, signerId: number, keysOf: KeyLookup) {
   const key = await keyring.keyFor(conversation, keyId, keysOf);
-  const signerKeys = unchecked(signerId) ? null : keysOf(signerId);
+  const signerKeys = keys?.unchecked(signerId) ? null : keysOf(signerId);
   if (!key || !signerKeys) throw new Error('Missing keys.');
   return { key, signKey: signerKeys.sign };
 }

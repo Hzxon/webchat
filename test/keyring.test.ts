@@ -3,13 +3,16 @@ import { before, beforeEach, describe, test } from 'node:test';
 import {
   createIdentity,
   encryptMessage,
+  importChatKey,
   importIdentity,
+  linkChatKey,
   newChatKeyBytes,
   newKeyId,
   wrapChatKey,
   type Identity,
   type IdentitySecrets,
 } from '../shared/e2ee.ts';
+import { Keyring as SharedKeyring } from '../shared/keyring.ts';
 import type { ConversationDTO, MessageDTO, PublicKeysDTO, UserDTO } from '../shared/types.ts';
 
 // The keyring keeps keys in IndexedDB, which Node lacks. This stands in for the little of it that
@@ -200,6 +203,45 @@ describe('The keyring in client/src/e2ee/keyring.ts, after a key change nobody c
       ],
     );
     assert.deepEqual(await keyring.reopen({ [CHAT]: conversation }, keysOf), []);
+  });
+});
+
+describe('The key checks in shared/keyring.ts, which the page and the agent share (K-40)', () => {
+  let ring: SharedKeyring;
+  let other: Identity;
+  let keysOf: KeyLookup;
+  // A chat whose key `newer` replaced `older`, linked as a removal leaves it (D-044).
+  const older = newKeyId();
+  const newer = newKeyId();
+  const olderRaw = newChatKeyBytes();
+  let chat: ConversationDTO;
+  let link: ConversationDTO['keyLinks'][number];
+
+  before(async () => {
+    const mine = await importIdentity(await createIdentity());
+    other = await importIdentity(await createIdentity());
+    ring = new SharedKeyring({ id: ME, identity: mine }, {}, () => {});
+    keysOf = (id) => (id === ME ? mine.publicKeys : other.publicKeys);
+    const newerRaw = newChatKeyBytes();
+    const wrapped = await wrapChatKey(newerRaw, { id: OTHER, identity: other }, { id: ME, dh: mine.publicKeys.dh }, newer);
+    link = { keyId: newer, previousKeyId: older, ...(await linkChatKey(await importChatKey(newerRaw), newer, CHAT, olderRaw, older)) };
+    chat = { id: CHAT, keyId: newer, myKey: { wrappedBy: OTHER, ...wrapped }, members: [member(ME), member(OTHER)], keyLinks: [link] } as unknown as ConversationDTO;
+  });
+
+  test('opens an earlier key through the link in the key that replaced it', async () => {
+    const key = (await ring.keyFor(chat, older, keysOf))!;
+    const iv = new Uint8Array(12);
+    const sealed = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await importChatKey(olderRaw), new Uint8Array([7]));
+    assert.deepEqual(new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, sealed)), new Uint8Array([7]));
+  });
+
+  test('never hands out a replaced key as current, even when the server names it so', () => {
+    assert.equal(ring.chatKey({ ...chat, keyId: older }, keysOf), null);
+  });
+
+  test('refuses a chain of links the server looped, instead of waiting on it forever', () => {
+    const looped = { ...chat, id: CHAT + 1, keyId: newKeyId(), keyLinks: [link, { ...link, keyId: older, previousKeyId: newer }] };
+    assert.equal(ring.keyFor(looped, older, keysOf), null);
   });
 });
 

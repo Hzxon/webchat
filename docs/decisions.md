@@ -903,22 +903,22 @@ so an unknown status sorts with the open items.
 
 ### D-085: An agent runtime is a member account, and its daemon a headless client
 
-Accepted 2026-11-05 in #85, changed in #130.
+Accepted 2026-11-05 in #85, changed in #130 and #147.
 
 A coding agent a student runs for a project (R-027) joins as an account of its own, made by pairing
 with its owner since #100 (D-093). Its daemon, a headless client in `agent/`, uses the page's `/api`
 routes and keeps its keys, login key, session cookie and pins in `~/.webchat/<name>/account.json`,
 or the Claude Code plugin's data folder (D-092). It checks in with `POST /api/sync` every 15
 seconds, opens keys and messages, sends sealed messages and edits doc sections under the section
-lock, with code ported from `client/src/e2ee/keyring.ts` and `client/src/chat.ts` on
-`shared/e2ee.ts`. Since #130 its check-ins say nothing about runs: it runs several cards at once
-(D-099), and the owner's pane counts them from the run messages. Why: rule 5 gives keys only to
-members, and the owner's keys would expose their direct messages.
+lock, with code ported from `client/src/chat.ts` and the page's key checks in `shared/keyring.ts`
+(K-40). Since #130 its check-ins say nothing about runs: it runs several cards at once (D-099), and
+the owner's pane counts them from the run messages. Why: rule 5 gives keys only to members, and the
+owner's keys would expose their direct messages.
 
 Cost: one account per runtime. Private keys sit in a file in the clear, readable only by its owner,
 since Node has no unexportable key store (README lists this). Two daemons must not share an account
-file. The daemon never makes keys, so after a removal (D-044) it waits for a member's browser. Key
-logic is ported, not shared, until K-40. The busy columns of migrations 14 and 18 are unused.
+file. The daemon never makes keys, so after a removal (D-044) it waits for a member's browser. The
+busy columns of migrations 14 and 18 are unused.
 
 ### D-086: A run is a request message and the reports that name it
 
