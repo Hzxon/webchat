@@ -5,7 +5,7 @@ import { describe, test } from 'node:test';
 // the client module. tsx still loads it.
 const clientBoard = '../client/src/board.ts';
 
-const { cardRuns, cardTemplate, GOING, columnMarkdown, duplicates, groupOf, nextNumber, otherRun, parseCard, withStatus, workingStatus } = await import(clientBoard);
+const { cardRuns, cardTemplate, GOING, columnMarkdown, duplicates, groupOf, nextNumber, otherRun, parseCard, unchecked, withChecked, withStatus, workingStatus } = await import(clientBoard);
 
 const section = (id: string, text: string) => ({ id, text, pos: 1, failed: false });
 
@@ -35,6 +35,28 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.deepEqual([moved.status, moved.body], ['In review: o/r#3', 'Seen: here']);
     const added = card(withStatus('### K-1: Bug\n\nSeen: here', 'In review'));
     assert.deepEqual([added.title, added.status, added.body], ['Bug', 'In review', 'Seen: here']);
+  });
+
+  test('a card reads its Checked line, and has an empty check without one (R-041)', () => {
+    const checked = (body: string) => parseCard(section('a', `### K-1: Bug\n\nStatus: Open.\n\n${body}`)).checked;
+    assert.equal(checked('Checked: 2026-11-07. Read 3 cards.\n\nSeen: here'), '2026-11-07. Read 3 cards.');
+    assert.equal(checked('Seen: here'), '');
+  });
+
+  test('a new check goes on top of the body and replaces the old one (R-041)', () => {
+    const body = 'Why: x.\n\nChecked: 2026-01-01. Old.';
+    // Built from local parts, since withChecked writes the day in the local time zone.
+    assert.equal(withChecked(body, 'Read 3 cards.', new Date(2026, 10, 7)), 'Checked: 2026-11-07. Read 3 cards.\n\nWhy: x.');
+  });
+
+  test('only an open idea or issue with no check shows as unchecked (R-041)', () => {
+    const isUnchecked = (text: string) => unchecked(parseCard(section('a', text)));
+    const issue = '### K-1: Bug\n\nStatus: Open.\n\nSeen: here';
+    assert.equal(isUnchecked(issue), true);
+    assert.equal(isUnchecked(`${issue}\n\nChecked: 2026-11-07. Read 3 cards.`), false, 'a Checked line clears it');
+    assert.equal(isUnchecked('### R-2: Idea\n\nStatus: Done in #12.'), false, 'a done idea needs no check');
+    assert.equal(isUnchecked('### R-3: Idea\n\nStatus: Dropped on 2026-11-04.'), false, 'nor does a dropped one');
+    assert.equal(isUnchecked('### D-1: Keys rotate\n\nStatus: Proposed.'), false, 'a decision is never unchecked');
   });
 
   test('a card without the heading is titled by its first line and has no number', () => {

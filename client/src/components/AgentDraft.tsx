@@ -1,14 +1,16 @@
 // A card a coding agent drafted in its answer (R-035, D-104). It stays in the conversation until
 // its owner adds it. Their page then writes it to the board as them: a new card with the next free
-// number of its kind, taken when they press the button, or the change to the card it replaces, but
-// only while that card says what the agent saw.
+// number of its kind, taken under its column's lock when they press the button (D-116), or the
+// change to the card it replaces, but only while that card says what the agent saw. Above the
+// button stand the cards, decisions and pull requests the agent's check found it repeats or goes
+// against, and the card it writes carries the check's line (R-041).
 import { useEffect, useMemo, useState } from 'react';
 import { textHash } from '../../../shared/e2ee';
 import type { CardDraftDTO } from '../../../shared/types';
 import type { Thread } from '../agents';
-import { boardDocs, cardText, KIND_NAMES, NEW_STATUS, nextNumber, parseCard, type Card } from '../board';
+import { boardDocs, cardText, COLUMNS, KIND_NAMES, NEW_STATUS, nextNumber, parseCard, withChecked, type Card } from '../board';
 import { noteAdded, syncNow, tellAgent } from '../chat';
-import { loadSections, newSectionId, replaceSection, rewriteSection, sectionHistory } from '../docs';
+import { addCard, loadSections, newSectionId, rewriteSection, sectionHistory } from '../docs';
 import type { ChatMessage } from '../e2ee/keyring';
 import { actions, senderName, useAppState } from '../store';
 import { createBoard } from './BoardView';
@@ -53,24 +55,30 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
   const board = asked?.kind === 'prompt' && shared.some((p) => p.id === asked.project) ? asked.project! : shared.length === 1 ? shared[0]!.id : null;
   const projectId = change ? (conversations[docs[change.doc]?.conversationId ?? 0]?.projectId ?? null) : (picked ?? board);
   const [redone, setRedone] = useState(false);
-  const roadmap = projectId === null ? undefined : boardDocs(docs, conversations, projectId).roadmap;
+  // A decision goes in the Decisions column, an idea or issue in the Roadmap.
+  const column = draft.kind === 'D' ? 'decisions' : 'roadmap';
+  const columns = projectId === null ? {} : boardDocs(docs, conversations, projectId);
+  const target = columns[column];
   const [cards, setCards] = useState<Card[] | null>(null);
   const [stale, setStale] = useState<Stale | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  // The board as it is now, again whenever its doc changes, and whether a change's card still says
-  // what the agent saw. A draft already added needs neither.
+  // The draft's column, and the other one only when a related id is there, so most drafts load one doc.
+  const needed = COLUMNS.filter((c) => c === column || draft.related?.some((r) => (r.id.startsWith('D-') ? 'decisions' : 'roadmap') === c && !r.id.startsWith('#')));
+
+  // The board as it is now, again whenever a column it reads changes, and whether a change's card
+  // still says what the agent saw. A draft already added needs neither.
   useEffect(() => {
     if (added) return;
     let live = true;
     void (async () => {
-      const fresh = roadmap ? (await loadSections(roadmap)).map(parseCard) : [];
+      const fresh = (await Promise.all(needed.map(async (c) => (columns[c] ? (await loadSections(columns[c]!)).map(parseCard) : [])))).flat();
       const card = change && fresh.find((c) => c.id === change.section);
       let gone: Stale | null = null;
       if (change && !card) gone = 'deleted';
       else if (change && card && (await textHash(card.text.trim())) !== change.seen) {
-        const [newest] = await sectionHistory(roadmap!, card.id);
+        const [newest] = await sectionHistory(target!, card.id);
         const author = newest?.revision.authorId ?? null;
         gone = { by: author === meId ? 'You' : senderName(users, author, 'Someone'), at: newest?.revision.createdAt ?? Date.now() };
       }
@@ -81,34 +89,33 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
     return () => {
       live = false;
     };
-  }, [roadmap?.id, roadmap?.version, added]);
+  }, [...needed.flatMap((c) => [columns[c]?.id, columns[c]?.version]), added]);
 
   const current = change ? cards?.find((c) => c.id === change.section) : undefined;
+  // A card or decision the board no longer has is left out; a pull request the page cannot look up stays (R-041).
+  const related = (draft.related ?? []).filter((r) => r.id.startsWith('#') || cards?.some((c) => `${c.kind}-${c.number}` === r.id));
 
   async function add() {
     if (projectId === null) return;
     setBusy(true);
     setError('');
     try {
-      const doc = roadmap ?? (await createBoard(projectId, 'roadmap'));
-      // The numbers and the card as they are now, not as the page last loaded them.
-      const fresh = (await loadSections(doc)).map(parseCard);
+      const doc = target ?? (await createBoard(projectId, column));
+      // The check's line goes on top, so the board shows the card checked (R-041).
+      const body = draft.checked ? withChecked(draft.body.trim(), draft.checked) : draft.body.trim();
       let id: string;
       if (change) {
         // Read and written under the card's lock, so nobody's save lands in between.
         const written = await rewriteSection(doc, change.section, async (section) => {
           const card = section && parseCard(section);
           if (!card || (await textHash(card.text.trim())) !== change.seen) return null;
-          return { text: cardText(card.kind!, card.number!, draft.title, card.status, draft.body.trim()), pos: card.pos };
+          return { text: cardText(card.kind!, card.number!, draft.title, card.status, body), pos: card.pos };
         });
         // Changed since the page last looked: the next load says how.
         if (!written) return void syncNow();
         id = change.card;
       } else {
-        const number = nextNumber(fresh, draft.kind);
-        const pos = Math.max(0, ...fresh.map((c) => c.pos)) + 1;
-        await replaceSection(doc, newSectionId(), { text: cardText(draft.kind, number, draft.title, NEW_STATUS[draft.kind], draft.body.trim()), pos });
-        id = `${draft.kind}-${number}`;
+        ({ id } = await addCard(doc, newSectionId(), draft.kind, (number) => cardText(draft.kind, number, draft.title, NEW_STATUS[draft.kind], body)));
       }
       await noteAdded(thread.conversationId, thread.root, message.clientId!, id);
       void syncNow();
@@ -143,6 +150,27 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
           <Markdown text={p} />
         </div>
       ))}
+      {draft.checked && <p className="agents-draft-label">Checked: {draft.checked}</p>}
+      {/* Nothing is blocked: the owner weighs what the check found (R-041). */}
+      {!added && related.length > 0 && (
+        <ul className="agents-related">
+          {related.map((r) => (
+            <li key={r.id} className={r.kind === 'conflict' ? 'agents-related-conflict' : undefined}>
+              <strong>
+                {r.kind === 'conflict' ? 'Goes against' : 'Repeats'}{' '}
+                {r.id.startsWith('#') && thread.repo ? (
+                  <a href={`https://github.com/${thread.repo}/pull/${r.id.slice(1)}`} target="_blank" rel="noopener noreferrer">
+                    {r.id}
+                  </a>
+                ) : (
+                  r.id
+                )}
+              </strong>
+              {r.why && `: ${r.why}`}
+            </li>
+          ))}
+        </ul>
+      )}
       {added ? (
         <p className="agents-draft-done">
           {change ? `Updated ${added}` : `Added as ${kind} ${added}`}.{' '}

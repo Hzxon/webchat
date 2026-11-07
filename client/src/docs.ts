@@ -3,7 +3,8 @@
 // a time: editing locks it on the server, and every check-in of the editing tab keeps the lock.
 import { newKeyId, randomBytes, toBase64Url, type DocContent } from '../../shared/e2ee';
 import type { DocRevisionDTO } from '../../shared/types';
-import { api } from './api';
+import { api, ApiError } from './api';
+import { nextNumber, parseCard, type CardKind } from './board';
 import { currentLookup, loadDraft, openDocs, setEditing, withChatKey } from './chat';
 import { keystore } from './e2ee/keystore';
 import { keyring, type ChatDoc } from './e2ee/keyring';
@@ -83,14 +84,17 @@ export interface Editing {
   saved: string;
   /** What the editor starts with: the server's text, or a draft this device kept. */
   text: string;
-  /** Not saved yet, so there is nothing to delete. */
+  /**
+   * Just added, so the editor offers Cancel, which takes it back, instead of Delete. The server holds
+   * it already when `saved` has text, as a new card does (D-116).
+   */
   isNew: boolean;
 }
 
-/** Locks a section and picks up the device's draft of it, if any. A new section starts from `start`. */
-export async function beginEditing(docId: string, section: string, saved: string, pos: number, isNew: boolean, start = saved): Promise<Editing> {
+/** Locks a section and picks up the device's draft of it, if any. */
+export async function beginEditing(docId: string, section: string, saved: string, pos: number, isNew: boolean): Promise<Editing> {
   await startEditing(docId, section);
-  return { id: section, pos, saved, isNew, text: (await loadDraft(draftName(docId, section))) || start };
+  return { id: section, pos, saved, isNew, text: (await loadDraft(draftName(docId, section))) || saved };
 }
 
 export async function stopEditing(docId: string, section: string) {
@@ -123,6 +127,34 @@ export async function rewriteSection(doc: ChatDoc, section: string, make: (curre
     return content !== null;
   } finally {
     await api.unlockSection(doc.id, section);
+  }
+}
+
+/**
+ * Saves a new card with the next free number of its kind, under the lock of its column doc's title
+ * (D-116): it takes the lock, reads the numbers, saves the card, then lets the lock go, so two pages
+ * never give one number. Nobody edits a board's title, so the lock blocks nothing else, and a tab
+ * that dies holding it loses it after 2 minutes. A page that finds it held tries again for 5 seconds.
+ */
+export async function addCard(doc: ChatDoc, section: string, kind: CardKind, text: (number: number) => string) {
+  for (let tries = 1; ; tries++) {
+    try {
+      await api.lockSection(doc.id, 'title');
+      break;
+    } catch (err) {
+      if (!(err instanceof ApiError && err.code === 'locked')) throw err;
+      if (tries === 10) throw new Error('Someone is adding a card to this column. Try again in a moment.');
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  try {
+    const cards = (await loadSections(doc)).map(parseCard);
+    const number = nextNumber(cards, kind);
+    const content = { text: text(number), pos: Math.max(0, ...cards.map((c) => c.pos)) + 1 };
+    await replaceSection(doc, section, content);
+    return { id: `${kind}-${number}`, ...content };
+  } finally {
+    await api.unlockSection(doc.id, 'title').catch(() => undefined);
   }
 }
 

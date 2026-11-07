@@ -20,6 +20,8 @@ export interface Card extends DocSection {
   status: string;
   /** What is under the heading and the status line. */
   body: string;
+  /** The line after "Checked:" that an agent's check left, or '' for a card never checked (R-041). */
+  checked: string;
 }
 
 export const COLUMNS: BoardColumn[] = ['decisions', 'roadmap'];
@@ -45,6 +47,7 @@ export function parseCard(section: DocSection): Card {
   const next = rest.findIndex((l) => l.trim() !== '');
   const status = heading && next >= 0 ? STATUS.exec(rest[next]!) : null;
   if (status) rest = rest.slice(next + 1);
+  const body = (heading ? rest : lines).join('\n').trim();
   return {
     ...section,
     kind: heading ? (heading[1] as CardKind) : null,
@@ -52,9 +55,25 @@ export function parseCard(section: DocSection): Card {
     // A card without the heading is titled by its first line, bare of Markdown heading marks.
     title: heading ? heading[3]! : (lines[first]?.replace(/^#+\s*/, '') ?? ''),
     status: status?.[1] ?? '',
-    body: (heading ? rest : lines).join('\n').trim(),
+    body,
+    checked: CHECKED.exec(body)?.[1]?.trim() ?? '',
   };
 }
+
+const CHECKED = /^Checked:(.*)$/m;
+
+/**
+ * A card body with this check's line on top, in place of any it had: "Checked: 2026-11-07. Read the
+ * cards, …", as `scripts/claim.sh -c` records a check (R-041, D-116). An edit keeps it.
+ */
+export const withChecked = (body: string, checked: string, today = new Date()) =>
+  [`Checked: ${dateOf(today)}. ${checked}`, body.replace(new RegExp(CHECKED.source, 'gm'), '').trim()].filter(Boolean).join('\n\n');
+
+/** A day as the cards write it, 2026-11-07, in the user's time zone. */
+const dateOf = (day: Date) => `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+
+/** Whether a card shows as Unchecked: an idea or issue still open that no agent has checked (R-041). */
+export const unchecked = (card: Card) => (card.kind === 'R' || card.kind === 'K') && !card.checked && GROUPS.roadmap[groupOf('roadmap', card.status)]!.name !== 'Done';
 
 /** The groups a column shows, in order. A folded group opens on a click. */
 export const GROUPS: Record<BoardColumn, Array<{ name: string; statuses: string[]; folded?: true }>> = {

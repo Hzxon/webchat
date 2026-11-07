@@ -652,15 +652,19 @@ export type PromptDTO =
   | { kind: 'note'; to: string };
 
 /**
- * A board card an agent drafted when its owner asked (D-104): a new idea or issue, or a change to
- * the card it replaces, named by its doc and section, with a hash of the text the agent saw. It goes
- * on the board only when the owner's page writes it.
+ * A board card an agent drafted when its owner asked (D-104): a new decision, idea or issue, or a
+ * change to the card it replaces, named by its doc and section, with a hash of the text the agent
+ * saw. It goes on the board only when the owner's page writes it. Since R-041 it says what the
+ * agent's check read, and which cards, decisions or open pull requests (`#12`) it repeats or goes
+ * against, each one the brief held (D-116).
  */
 export interface CardDraftDTO {
-  kind: 'R' | 'K';
+  kind: 'D' | 'R' | 'K';
   title: string;
   body: string;
   replaces?: { card: string; doc: string; section: string; seen: string };
+  checked?: string;
+  related?: Array<{ id: string; kind: 'duplicate' | 'conflict'; why: string }>;
 }
 
 /**
@@ -869,6 +873,10 @@ export const LIMITS = {
   branchLength: 200,
   /** Repositories one laptop's check-in names (R-036). */
   agentRepos: 50,
+  /** A card draft's check line, and its related cards with their reasons (R-041). */
+  checkedLength: 500,
+  relatedPerDraft: 10,
+  relatedWhyLength: 300,
   /** Skills an agent offers its owner, and a skill's description, so its answer stays one message (R-039). */
   setupSkills: 40,
   skillDescriptionLength: 140,

@@ -176,9 +176,10 @@ export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing
   const latest = useRef(text);
   latest.current = text;
   const saved = useRef(editing.saved);
-  // A new section reaches the server on its first save, which a cancel takes back. Once cancelled,
-  // nothing saves, not even the save on leaving.
-  const stored = useRef(!editing.isNew);
+  // A new section reaches the server on its first save, which a cancel takes back. A new card is on
+  // the server already, saved with its number (D-116). Once cancelled, nothing saves, not even the
+  // save on leaving.
+  const stored = useRef(!editing.isNew || editing.saved !== '');
   const dropped = useRef(false);
   const mounted = useRef(true);
   const draft = draftName(doc.id, editing.id);

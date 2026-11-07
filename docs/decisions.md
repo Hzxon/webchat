@@ -918,7 +918,7 @@ newest (D-020). Docs are Markdown only, exported only as PDF through print.
 
 ### D-082: The project board is two docs whose sections are cards
 
-Accepted 2026-11-04 in #75.
+Accepted 2026-11-04 in #75, changed in #166 (R-041).
 
 A project's board (R-021) is a view over two docs: Decisions, and Roadmap for ideas and issues. A
 card is a section of that doc, with its lock and history (D-081). A `board` field inside the sealed
@@ -929,10 +929,10 @@ number, title and status come from its first two lines, `### D-3: Title` and `St
 column's cards into that file. Why: needs no migration, route, key code or fingerprint change, and
 a team pastes a column into its repository for its agents to read.
 
-Cost: the browser numbers a new card from the cards it has, so two tabs can take one number; the
-board warns and someone renumbers (D-063). Two tabs making the board doc at once make two; the
-board shows the oldest and the other appears in Docs for deletion. Status is wording, not a field,
-so an unknown status sorts with the open items.
+Cost: the browser numbers a new card under its column's title lock (D-116); a page from before
+that could still take a number twice, which the board warns about. Two tabs making the board doc at
+once make two; the board shows the oldest and the other appears in Docs for deletion. Status is
+wording, not a field, so an unknown status sorts with the open items.
 
 ### D-085: An agent runtime is a member account, and its daemon a headless client
 
@@ -1178,12 +1178,13 @@ row too.
 
 ### D-104: An agent drafts cards, and its owner's page adds them
 
-Accepted 2026-11-06 in #121 (R-035).
+Accepted 2026-11-06 in #121 (R-035), changed in #166 (R-041).
 
-When its owner asks, an agent's answer may carry a card draft: a new idea or issue, or a change to a
-roadmap card, named by its doc and section with the hash of the text the agent saw. The brief holds
-only the board the owner's page named in the signed prompt, fenced as teammates' text: anyone can
-add an agent to their project. A reply also shows the cards that changed since. Nothing reaches the
+When its owner asks, an agent's answer may carry drafts: a new decision, idea or issue, or a change
+to one, named by its doc and section with the hash of the text the agent saw, and checked first
+(D-116). The brief holds only the board the owner's page named in the signed prompt, fenced as
+teammates' text: anyone can add an agent to their project. A reply also shows the cards and
+decisions that changed since. Nothing reaches the
 board until the owner presses the draft's button. Their page then writes it as them: a new card with
 the next free number of its kind at that moment, or the change, read and written under the card's
 lock, only while it has the text the agent saw; otherwise it says who changed it. A note outside
@@ -1267,6 +1268,21 @@ never serves. Why: closing every session was the only off switch, and a hidden j
 
 Cost: a sleeping agent hears nothing, so the page cannot wake it. Waking needs the laptop.
 
+### D-116: The agent checks a new card, and the board numbers it under a lock
+
+Accepted 2026-11-07 in #166 (R-041).
+
+Every conversation turn reads the decisions the team holds, and with a repository, its open pull
+requests, which the plugin lists with its own `gh`. Before it drafts, the agent checks the draft
+against the cards, the decisions, the code and those pull requests. A draft may be a decision, and
+carries `checked`, one line on what it read, and `related`: the ids the brief held that it repeats
+or goes against. The pane lists them, conflicts as warnings, and blocks nothing. An added draft's
+card gets a `Checked:` line; an open idea or issue without one shows as Unchecked, and Check again
+asks the clicker's agent. A page numbers a new card under the lock of its column doc's title: lock,
+read, save, unlock. Why: a card repeated or contradicted the board, unseen until it ran (#159).
+
+Cost: every turn carries all held decisions. The check is the model's judgment, and an edited card
+keeps its mark until checked again. Two pages adding a card wait for each other.
 ### D-115: The owner chooses what their agent's runs load from their Claude setup
 
 Accepted 2026-11-07 in #165 (R-039).
