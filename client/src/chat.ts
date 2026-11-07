@@ -20,6 +20,7 @@ import {
   type RunDTO,
   type RunRequest,
   type SendMessageInput,
+  type SetupChoice,
   type SyncResponse,
   type UserDTO,
   type WorkerToPageMessage,
@@ -823,6 +824,18 @@ export async function putToSleep(agentId: number) {
   await sendContent(await startDirectChat(agentId), { text: 'Go to sleep', sleep: { sentAt: Date.now() } }, false);
 }
 
+/**
+ * Asks the user's agent what its runs load from their Claude setup, and with a choice, changes it
+ * (R-039, D-115). Returns the ask's client id, which the agent's answer names.
+ */
+export async function askSetup(agentId: number, choice?: SetupChoice) {
+  const conversationId = await startDirectChat(agentId);
+  const clientId = newClientId();
+  const text = choice ? 'Change what your runs load from my Claude setup' : 'What do your runs load from my Claude setup?';
+  void sendContent(conversationId, { text, setup: { sentAt: Date.now(), ...(choice && { choice }) } }, false, clientId);
+  return clientId;
+}
+
 /** Has the user's agent forget its folder of a repository: the mark goes, never the files (R-038, D-101). */
 export async function forgetFolder(agentId: number, repo: string) {
   await sendContent(await startDirectChat(agentId), { text: `Forget the folder of ${repo}`, forget: { repo, sentAt: Date.now() } }, false);
@@ -920,6 +933,7 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     run: entry.content.run ?? null,
     prompt: entry.content.prompt ?? null,
     added: entry.content.added ?? null,
+    setupState: null,
     security: 'encrypted',
   };
 }

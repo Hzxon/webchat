@@ -1518,6 +1518,7 @@ a {
 }
 
 .person input {
+  flex: none;
   width: 18px;
   height: 18px;
   accent-color: var(--accent);
@@ -3243,6 +3244,18 @@ a {
 /* Answers hold code, so they take more of the width, and a long line scrolls inside its block. */
 .agents-pane .bubble-line {
   max-width: min(92%, 760px);
+}
+
+/* The header holds Put to sleep, Settings and Connect: the button keeps one line, and on a phone the
+   pane's icon makes room for them. */
+.agents-pane .header-end .button-secondary {
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .agents-pane .chat-header > .github-mark {
+    display: none;
+  }
 }
 
 .bubble .markdown {
