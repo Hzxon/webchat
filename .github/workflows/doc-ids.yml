@@ -30,6 +30,36 @@ jobs:
             fi
           }
           check 'D-[0-9]+' docs/decisions.md
-          # Entries not yet folded into roadmap.md live as docs/roadmap/<id>.md (D-106).
-          check '[KRQ]-[0-9]+' docs/roadmap.md $(ls docs/roadmap/[KRQ]-*.md 2>/dev/null)
+          if grep -q '^This file is a copy of the' docs/roadmap.md; then
+            # A file docs/roadmap/<id>.md then changes an entry that the copy has (R-040).
+            check '[KRQ]-[0-9]+' docs/roadmap.md
+          else
+            # Entries not yet folded into roadmap.md live as docs/roadmap/<id>.md (D-106).
+            check '[KRQ]-[0-9]+' docs/roadmap.md $(ls docs/roadmap/[KRQ]-*.md 2>/dev/null)
+          fi
+          exit $status
+
+  # The board in WebChat is the source of truth. Once the base branch holds a
+  # copy of it, only the owner's agent edits docs/roadmap.md and
+  # docs/decisions.md, on agent/board; everyone else proposes a file. Before
+  # the board is linked this fails nothing (R-040, D-117).
+  board-copy:
+    if: github.event_name == 'pull_request' && github.head_ref != 'agent/board'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check that no copy of the board was edited by hand
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          status=0
+          changed=$(git diff --name-only "origin/$BASE...HEAD" -- docs/roadmap.md docs/decisions.md)
+          for file in $changed; do
+            if git grep -q -e '^This file is a copy of the' "origin/$BASE" -- "$file"; then
+              echo "::error file=$file::$file is a copy of the project's board, so propose the change as a file under ${file%.md}/ instead (R-040)."
+              status=1
+            fi
+          done
           exit $status

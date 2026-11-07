@@ -16,9 +16,17 @@ Node host with an embedded PGlite database. The [README](README.md) explains it 
   person reads the file for the area they touch. Each line names the decision behind it.
 - [docs/decisions.md](docs/decisions.md) is the log of why. When a rule or a code comment names a
   decision, such as D-021, grep that number and read that entry. Do not read the file top to
-  bottom.
+  bottom. Once the project's board in WebChat is linked to this repository, it is a copy of the
+  board's decisions, which the owner's agent writes.
 - [docs/roadmap.md](docs/roadmap.md) lists what to do next, known issues and open questions. Pick
-  from it when you are asked what to do next.
+  from it when you are asked what to do next. Once the board is linked, it is a copy of the
+  board's cards, written the same way. Step 3 of "How to work here" says how to change both files.
+
+Roadmap entries are R-items for features and other work, K-items for known issues and Q-items for
+open questions. Each says why it matters, what it covers and when it is done. A question that
+belongs to an item goes under that item. An item's status is one of Next, Planned, Idea, Blocked,
+In progress, Done, Fixed or Dropped. Numbers never change and are never reused. A dropped item
+keeps its number and says why.
 
 ## Commands
 
@@ -31,7 +39,7 @@ Node host with an embedded PGlite database. The [README](README.md) explains it 
 | `npm run build` | Typechecks, then builds the client, the service worker, the Claude Code plugin and the server. |
 | `npm start` | Runs the built app in one Node process. |
 | `npm run agent -- pair\|watch …` | The agent daemon's command line (R-027, D-085, D-093). |
-| `scripts/claim.sh -c "<checked>" K-12 "<title>" [D-077]` | Claims a roadmap item after the check that it still holds and, given one, reserves a decision number. |
+| `scripts/claim.sh -c "<checked>" K-12 "<title>" [D-077]` | Claims a roadmap item after the check that it still holds and, until the board is linked, reserves the decision number given as the third argument. |
 
 The server log prints the invite code. Set `INVITE_CODE` to choose one. To test with two accounts in
 one browser, open the app on two hosts, such as `alice.localhost` and `bob.localhost`. Each host
@@ -73,25 +81,45 @@ its own roadmap item. Nothing coordinates them except what is on GitHub (D-062).
    or an open pull request may cover the same change, or it may depend on an item that was
    dropped. So read the entry, grep `docs/decisions.md` and the roadmap for its id and for the
    modules it names, and look at main and the open pull requests (D-107). An item that no longer
-   holds is not claimed: open a small pull request that sets its status to Dropped or Done, in
-   place, with the reason. Otherwise fetch main, cut a branch whose name carries the item, such as
-   `claude/k12-bad-push-keys`, and run `scripts/claim.sh -c "<what you checked>" K-12 "<pull
-   request title>"`, with the next free decision number as a third argument if the change will
-   make a decision. It refuses an item that is finished or that an open pull request already
-   names, prints what names the item, then pushes an empty commit and opens a draft pull request
-   that records the check. If it refuses, pick another item or number. Work that is not a roadmap item, such
-   as a process change, claims the same way by hand: a draft first, with a title and body that say
-   what it covers.
+   holds is not claimed: open a small pull request that sets its status to Dropped or Done, with
+   the reason, the way step 3 says. Otherwise fetch main, cut a branch whose name carries the item,
+   such as `claude/k12-bad-push-keys`, and run `scripts/claim.sh -c "<what you checked>" K-12 "<pull
+   request title>"`. Until the board is linked, give it the next free decision number as a third
+   argument if the change will make a decision. After that it refuses a number: a new decision is a
+   file that the owner numbers on the board (step 3). The script refuses an item that is finished or
+   that an open pull request already names, prints what names the item, then pushes an empty commit
+   and opens a draft pull request that records the check. Its body starts with `Claims K-12`; once
+   the board is linked, WebChat's agent reads that to mark the card In progress on the board. If it
+   refuses, pick another item or number. Work that is not a roadmap item, such as a process change,
+   claims the same way by hand: a draft first, with a title and body that say what it covers.
 2. **Work on that branch** and push to the same pull request. Do not merge or rebase on main to stay
    ahead of other pull requests. Resolve conflicts once, when GitHub reports them: merge main, fix,
    push. A branch stacked on another one is the exception: when the branch under it lands, run
    `scripts/restack.sh <parent-branch>` instead of merging main, because the squash makes the
    parent's own lines conflict (D-106).
-3. **Edit the docs in place**, so merges stay easy. Change your item's status line where it is;
-   never move the entry or add a table row. A new roadmap entry is its own file, such as
-   `docs/roadmap/K-59.md`; a housekeeping pull request folds it into `docs/roadmap.md` (D-106).
-   Add at most one decision entry, at the end of its topic section, with the number you reserved. Name scratch files outside the repository after the
-   item, such as `k12-body.md`, because sessions share the scratch directory.
+3. **Change the roadmap and the decisions.** The way depends on whether the project's board is
+   linked to this repository (R-040, D-117). Until it is, edit them in place, so merges stay easy:
+   change your item's status line where it is, and never move the entry or add a table row. A new
+   roadmap entry is its own file, such as `docs/roadmap/K-59.md`. Add at most one decision entry,
+   at the end of its topic section, with the number you reserved (D-076, D-106). Once it is
+   linked, `docs/roadmap.md` and `docs/decisions.md` are copies of the board. A copy has near its
+   top the line "This file is a copy of the…". Never edit a copy: the owner's agent writes it, and
+   CI fails a pull request that edits one, unless it comes from `agent/board`. Propose the change
+   as a file instead:
+   - A new entry is a file with a short name, such as `docs/roadmap/new-bark-banner.md`. It holds
+     the card: `### K: Title` (or `### R:`, `### Q:` or `### D:`), then the `Status:` line and
+     the body. A new decision goes under `docs/decisions/` the same way.
+   - A change to an entry is a file named by its id, such as `docs/roadmap/K-12.md` or
+     `docs/decisions/D-12.md`. It holds the whole entry as it should read: `### K-12: Title`, the
+     `Status:` line and the body. A pull request that finishes an item adds one with the new status
+     line, such as `Status: Done in #170.`
+   - Never number an entry: the board gives out every number. Once a file is on main, the agent
+     hands it to the owner as a card draft, and the owner adds it on the board, which numbers a new
+     card. The next `agent/board` pull request deletes the file and writes the card into the copy.
+     A session that needs a new decision proposes it and waits for the owner to add it.
+
+   Name scratch files outside the repository after the item, such as `k12-body.md`, because
+   sessions share the scratch directory.
 4. **Check before you mark ready.** Run `npm run typecheck`, `npm test` and `npm run build`. For a
    change people can see, also try it in a browser with two accounts, at desktop width and at 375
    pixels, in light and dark mode.
@@ -118,16 +146,18 @@ Rules that hold throughout:
 These files are the source of truth only while they stay current and short. Update them in the same
 pull request as the change they describe.
 
-- When you make a decision, add it to `docs/decisions.md`: the decision as it stands, why, and what
-  it costs, in at most 12 lines. When a decision changes, rewrite its entry to the new state and
-  name the pull request. Git keeps the history. When it replaces an older decision, mark the old one
-  superseded and link the new one.
+- When you make a decision, add it to `docs/decisions.md`, or once the board is linked, propose it
+  as a file under `docs/decisions/` (step 3): the decision as it stands, why, and what it costs, in
+  at most 12 lines. When a decision changes, rewrite its entry to the new state, the same way, and
+  name the pull request. Git keeps the history. When it replaces an older decision, mark the old
+  one superseded and link the new one.
 - When a decision adds a constraint that someone editing an area must hold, add one line to that
-  area's file in `.claude/rules/`, with the decision number.
+  area's file in `.claude/rules/`, with the decision number once the board has given it.
 - When an agent does something wrong that the code could not have told it, add one line to the
   rules file for that area, or to this file if it holds everywhere. Delete lines that stop earning
   their place.
-- When you start, finish or set aside work, update its entry in `docs/roadmap.md` in place. When
-  you find a gap or a bug you are not fixing, add it there.
+- When you start, finish or set aside work, update its entry in `docs/roadmap.md` in place, or once
+  the board is linked, in a file named by its id under `docs/roadmap/` (step 3). When you find a
+  gap or a bug you are not fixing, add an entry for it the same way.
 - When a document and the code disagree, the code is what runs. Fix the document, or record the bug
   in the roadmap.

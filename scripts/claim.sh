@@ -16,6 +16,14 @@
 # the item, then pushes an empty commit and opens a draft pull request whose
 # body names both. Later commits go to the same branch. See D-062, D-076 and
 # D-107.
+#
+# The entry is read from docs/roadmap.md, which is a copy of the project's board
+# once the board is linked, or from docs/roadmap/<id>.md, which comes first
+# (R-040).
+#
+# Once docs/decisions.md is a copy of the board, the board gives out every
+# number: the script refuses a decision number and reserves no tag (R-040,
+# D-117).
 set -eu
 
 usage='usage: scripts/claim.sh -c "<what you checked>" <K-12|R-005|Q-1> "<pull request title>" [D-077]'
@@ -42,8 +50,13 @@ case "$decision" in
   ''|D-[0-9][0-9][0-9]) ;;
   *) echo "The decision is a number such as D-077, or left out." >&2; exit 1 ;;
 esac
-# The entry is in docs/roadmap.md or, until housekeeping folds it in, docs/roadmap/<id>.md (D-106).
-entry=$(grep -l "^### $item:" docs/roadmap.md "docs/roadmap/$item.md" 2>/dev/null | head -1 || true)
+if [ -n "$decision" ] && grep -q '^This file is a copy of the' docs/decisions.md; then
+  echo "Decisions come from the board now: docs/decisions.md is a copy of it. Claim without $decision, and propose the decision as a file under docs/decisions/. The project's owner adds it on the board, which numbers it (R-040, D-117)." >&2
+  exit 1
+fi
+# The entry is in docs/roadmap.md or, until it is folded in, docs/roadmap/<id>.md (D-106). The file
+# comes first: it is the newer text, such as a status the copy does not show yet (R-040).
+entry=$(grep -l "^### $item:" "docs/roadmap/$item.md" docs/roadmap.md 2>/dev/null | head -1 || true)
 if [ -z "$entry" ]; then
   echo "$item has no entry in docs/roadmap.md or docs/roadmap/$item.md. Add one first, or pick an item that exists." >&2
   exit 1
@@ -113,6 +126,7 @@ if [ -n "$others" ]; then
   echo "$others" >&2
 fi
 
+# WebChat's agent reads open pull requests for this start, "Claims K-12", and sets the card In progress (R-040).
 body="Claims $item. Checked $(date +%Y-%m-%d): $checked"
 [ -n "$decision" ] && body="$body Reserves $decision."
 git commit -q --allow-empty -m "chore: Claim $item"
