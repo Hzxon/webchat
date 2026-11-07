@@ -58,7 +58,7 @@ const COPIES = {
 
 const SECTIONS = ['In progress', 'Next', 'Ideas', 'Known issues', 'Open questions', 'Dropped', 'Done'];
 const BY_STATUS: Array<[RegExp, string]> = [
-  [/^in (progress|review)/i, 'In progress'],
+  [/^(in (progress|review)|waiting)/i, 'In progress'],
   [/^(next|planned)/i, 'Next'],
   [/^dropped/i, 'Dropped'],
   [/^(done|fixed)/i, 'Done'],

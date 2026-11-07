@@ -14,6 +14,10 @@ export const RUN_TAGS: Record<RunReport['kind'], [Tone, string]> = {
   review: ['warn', 'Waiting for you'],
   ended: ['muted', 'Done'],
   nocopy: ['warn', 'Waiting for you'],
+  stale: ['warn', 'No longer holds'],
+  decision: ['warn', 'Waiting for a decision'],
+  merged: ['ok', 'Merged'],
+  draft: ['ok', 'Draft ready'],
 };
 
 const CHECKS: Record<NonNullable<PullChecks>, [Tone, string]> = {

@@ -504,8 +504,25 @@ secret, password, API key, access key, private key, credential or auth. It gets 
 known token prefix or a password in a URL. It can search the web and read pages, so a page it reads
 could make it leak the repository's code. The card goes in on stdin, and the turn ends with a JSON answer.
 
-The plugin then pushes the `agent/*` branch, never forced, and opens a draft pull request with your
-`gh` login. It never pushes anywhere else and never merges. It then watches the draft: when CI
+A run takes the steps a session in this repository takes. The plugin first refuses a card that an
+open pull request claims, and names that pull request. The background Claude's first turn checks
+that the card still holds, against the code, the decisions and the other cards, and changes
+nothing. When the card no longer holds, the run ends there and pushes nothing, and the card's
+conversation offers its new status, Done or Dropped with the reason, for you to add. Otherwise the
+plugin pushes an empty commit on the `agent/*` branch, never forced, and opens a draft pull request
+with your `gh` login and the check in its body. That claims the card before any code. The same
+session then does the work, and the plugin pushes it and gives the draft its title and body. It
+never pushes anywhere else and never merges.
+
+When the work needs a decision nobody made, the run stops and drafts it, and the card shows `Waiting
+for a decision`. Add the decision on the board, which numbers it, then press **Go on with D-12**:
+the same session goes on with that number. A reminder comes after a day, and after 7 days the run
+fails. A run that fails before its work is done closes its draft, with a comment that says why, and
+keeps the branch. The finished work drafts its changes to decisions and a card for each gap it
+found. They wait in the conversation until you add them. The sandbox cannot listen on localhost, so
+tests that need a server run only in CI, and the draft's body says which.
+
+The plugin then watches the draft: when CI
 fails, it conflicts, or you review it, the same background Claude session gets another round, at
 most three. A review by anyone else waits for you: the card's conversation shows the comments, and
 **Let the agent fix it** starts the round. A reply there asks for changes in your own words.
@@ -521,10 +538,12 @@ ones included. Only `/webchat:wake` in Claude Code on the laptop wakes it.
 
 The request and the agent's reports show in the card's conversation under **Coding agents**, where
 you can stop a run. The card's status line tells your team: `In progress: Ann's agent` while it
-works, `In review: repo#12` once its draft is open, and what it was before if the run fails. Your
-page writes it while it is open. The agent reads the card as it is on the board, whoever wrote it,
-and the board's decisions. It works with your git and GitHub credentials, so run only cards you
-would do yourself.
+works, `Waiting for a decision` while it waits for one, `In review: repo#12` once its work is in the
+draft, `Done in repo#12` or `Fixed in repo#12` once that is merged, and what it was before if the
+run fails or the card no longer holds. A merge also sets the decisions the work made true to
+Accepted. Your page writes these while it is open. The agent reads the card as it is on the board,
+whoever wrote it, and the board's decisions. It works with your git and GitHub credentials, so run
+only cards you would do yourself.
 
 `npm run agent` no longer takes cards: they run through the plugin, in its sandbox, from a brief
 you saw.

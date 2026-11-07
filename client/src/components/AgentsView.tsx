@@ -4,7 +4,7 @@
 // messages that name it, in the user's direct chat with the agent (D-102).
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AGENT_LEVEL, LIMITS, type RunRequest } from '../../../shared/types';
-import { asleep, blockedBy, ownAgents, seatFor, short, THREAD_STATE, useAgentThreads, WAKE, type Seat, type Thread } from '../agents';
+import { asleep, blockedBy, ownAgents, seatFor, short, THREAD_STATE, threadProject, useAgentThreads, WAKE, type Seat, type Thread } from '../agents';
 import { addProjectMembers, askAgent, askClone, askFix, cancelRun, discardMessage, forgetFolder, loadChat, loadOlder, putToSleep, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { useLinkedRepos } from '../linkedRepos';
@@ -202,8 +202,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
     const repos = reposOf(projectId);
     return repos.length && linked[projectId]?.configured !== false ? repos : [...repos, ''];
   };
-  // Where a conversation belongs: the project its prompt names, or its card's board.
-  const projectOf = (t: Thread) => (t.kind !== 'card' ? t.project : conversations[docs[t.messages[0]!.run?.kind === 'request' ? t.messages[0]!.run.docId : '']?.conversationId ?? 0]?.projectId);
+  const projectOf = (t: Thread) => threadProject(t, docs, conversations);
 
   // The project picked, else the newest conversation's, else the first; then its repository picked, or its first.
   const askable = mine.filter((p) => agentIn(p.id));
@@ -352,9 +351,12 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
   const review = thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'review') : undefined;
   // The laptop has no copy of the repository, and the run or turn waits for the owner's word (R-036).
   const nocopy = thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'nocopy' || m.prompt?.kind === 'nocopy') : undefined;
+  // A run that waits for a decision goes on once its owner added the decision and gave the go (R-042).
+  const decision = thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'decision' && m.run.card) : undefined;
+  const decided = decision && thread.added[decision.clientId ?? ''];
   const stop = () => void (request ? cancelRun(request) : tellAgent(thread.conversationId, thread.root, 'cancel', 'Stop'));
   const again = () => {
-    const projectId = conversations[docs[request!.run.docId]?.conversationId ?? 0]?.projectId;
+    const projectId = threadProject(thread, docs, conversations);
     if (projectId) actions.openBrief({ projectId, docId: request!.run.docId, section: request!.run.section });
   };
   // A turn can take long, so the time it has taken shows, a minute at a time.
@@ -405,6 +407,8 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
           }
           const mine = message.senderId === meId;
           const first = thread.messages[i - 1]?.senderId !== message.senderId;
+          // What a run asks of the board: its card's new status, a decision it waits for, or a change after its work (R-042).
+          const draft = message.run?.kind === 'stale' || message.run?.kind === 'decision' || message.run?.kind === 'draft' ? message.run.card : undefined;
           return (
             <div key={message.clientId ?? message.id} className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}>
               <div className="bubble-line">
@@ -416,6 +420,11 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
                     <AgentDraft message={message} draft={message.prompt.card} thread={thread} agentId={agentId} />
                   ) : message.board?.kind === 'proposal' ? (
                     <AgentDraft message={message} draft={message.board.card} thread={thread} agentId={agentId} />
+                  ) : draft ? (
+                    <>
+                      {message.run?.kind !== 'draft' && <Markdown text={message.text} />}
+                      <AgentDraft message={message} draft={draft} thread={thread} agentId={agentId} />
+                    </>
                   ) : (
                     <Markdown text={message.text} />
                   )}
@@ -434,6 +443,13 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
                   </button>
                   <button className="button-secondary" onClick={() => setNotNow(true)}>
                     Not now
+                  </button>
+                </div>
+              )}
+              {message === decision && decided && (
+                <div className="agents-draft-actions">
+                  <button className="button-primary" disabled={!!blocked} onClick={() => void askFix(thread.conversationId, request!.id, `I added the decision as ${decided}. Go on with the work.`)}>
+                    Go on with {decided}
                   </button>
                 </div>
               )}
@@ -472,7 +488,7 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
               Start again
             </button>
           </div>
-        ) : thread.state === 'done' || (request && (thread.state === 'unsent' || nocopy)) ? null : (
+        ) : thread.state === 'done' || thread.state === 'stale' || (request && (thread.state === 'unsent' || nocopy)) ? null : (
           <>
             {!working && blocked && <p className="composer-blocked">{blocked}</p>}
             <Box

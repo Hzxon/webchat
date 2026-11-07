@@ -574,15 +574,23 @@ export interface RunReport {
    * (R-030). "review" says someone other than the owner reviewed it, and the round waits for the
    * owner's go; its text holds their comments. "ended" says the watching stopped (D-105). "nocopy"
    * says the laptop has no folder of the request's repository, and the run waits for the owner to
-   * have it cloned (R-036).
+   * have it cloned (R-036). Since R-042: "stale" says the card no longer holds, why in the note,
+   * nothing was pushed, and the card is the change of its status the owner can add; "decision" says
+   * the run waits for a decision nobody foresaw, whose draft is the card; "draft" hands the owner a
+   * change the run asks of the board; "merged" says the draft was merged, so the owner's page
+   * finishes the card and accepts its decisions (D-118).
    */
-  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended' | 'nocopy';
+  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended' | 'nocopy' | 'stale' | 'decision' | 'merged' | 'draft';
   request: number;
   /** What happened, in a line. */
   note?: string;
   /** For a run that is done: the branch it left, and the pull request it opened. */
   branch?: string;
   pull?: { repo: string; number: number };
+  /** For a "stale", "decision" or "draft": the card or change the run asks the board for, which only the owner's page adds (D-104). */
+  card?: CardDraftDTO;
+  /** For a "merged": the Proposed decisions the work made true, which the owner's page marks Accepted (R-042). */
+  decisions?: string[];
 }
 
 /** The owner stops a run, or the watching of its pull request (R-030). The agent heeds only its owner. */

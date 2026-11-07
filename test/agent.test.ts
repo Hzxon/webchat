@@ -21,7 +21,7 @@ import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, textHash, wrapChatKey } from '../shared/e2ee.ts';
-import { briefText, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
+import { briefText, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
 import { copyOf, readCard } from '../shared/board.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
@@ -38,11 +38,17 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 const state = JSON.parse(fs.readFileSync(process.env.FAKE_GH_STATE, 'utf8'));
 const args = process.argv.slice(2);
-const flag = (name) => args[args.indexOf(name) + 1];
+const flag = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
 if (args[0] === 'pr' && args[1] === 'create') {
-  state.pulls.push({ head: flag('--head'), base: flag('--base'), draft: args.includes('--draft') });
+  state.pulls.push({ head: flag('--head'), base: flag('--base'), draft: args.includes('--draft'), title: flag('--title'), body: flag('--body') });
   fs.writeFileSync(process.env.FAKE_GH_STATE, JSON.stringify(state));
   console.log('https://github.com/' + flag('--repo') + '/pull/' + state.pulls.length);
+} else if (args[0] === 'pr' && (args[1] === 'edit' || args[1] === 'close')) {
+  // What the plugin changed later, beside what it opened the pull request with.
+  const pull = state.pulls[Number(args[2]) - 1];
+  if (args[1] === 'close') pull.closed = flag('--comment');
+  else pull.edited = { title: flag('--title'), body: flag('--body') };
+  fs.writeFileSync(process.env.FAKE_GH_STATE, JSON.stringify(state));
 } else if (args[0] === 'pr' && args[1] === 'view') {
   const pull = state.pulls[Number(args[2]) - 1];
   const head = execFileSync('git', ['--git-dir', state.origin, 'rev-parse', 'refs/heads/' + pull.head], { encoding: 'utf8' }).trim();
@@ -68,7 +74,8 @@ if (args[0] === 'pr' && args[1] === 'create') {
 `;
 /**
  * Stands in for the background Claude: logs how it was run, waits at a gate when told to, commits
- * a file like the work of a turn, and prints the lines a -p run ends with.
+ * a file like the work of a turn, and prints the lines a -p run ends with. A run's first turn only
+ * checks that its card holds, and commits nothing (R-042).
  */
 const FAKE_CLAUDE = `#!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
@@ -81,14 +88,19 @@ fs.appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ args, input, cwd
 const resume = args.includes('--resume');
 const id = args[args.indexOf(resume ? '--resume' : '--session-id') + 1];
 while (process.env.FAKE_CLAUDE_GATE && !fs.existsSync(process.env.FAKE_CLAUDE_GATE)) await new Promise((resolve) => setTimeout(resolve, 20));
-if (process.env.FAKE_CLAUDE_COMMIT !== '0') {
+const check = input.includes('Change and commit nothing in this turn');
+if (process.env.FAKE_CLAUDE_COMMIT !== '0' && !check) {
   const file = resume ? 'sum.test.js' : 'sum.js';
   // A change of its own each turn, so a later round has something to commit.
   fs.writeFileSync(file, file + ' ' + Date.now() + '\\n');
   execFileSync('git', ['add', file]);
   execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-q', '-m', 'Change ' + file]);
 }
-const answer = process.env.FAKE_CLAUDE_ANSWER ? JSON.parse(process.env.FAKE_CLAUDE_ANSWER) : { outcome: 'done', note: 'Sums add up now.', title: 'Fix sums', body: 'Sums were off by one.' };
+const answer = check
+  ? JSON.parse(process.env.FAKE_CLAUDE_CHECK ?? '{"outcome":"holds","note":"","checked":"Read K-7 and sum.js on main."}')
+  : process.env.FAKE_CLAUDE_ANSWER
+    ? JSON.parse(process.env.FAKE_CLAUDE_ANSWER)
+    : { outcome: 'done', note: 'Sums add up now.', title: 'Fix sums', body: 'Sums were off by one.' };
 console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: id }));
 console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: id, structured_output: answer }));
 `;
@@ -571,7 +583,10 @@ describe('agent client (R-027)', () => {
       const ghState = path.join(home, 'gh.json');
       await fs.writeFile(ghState, JSON.stringify({ origin, pulls: [] }));
       const claudeLog = path.join(home, 'claude.log');
+      const gitConfig = path.join(home, 'gitconfig');
+      await fs.writeFile(gitConfig, '[user]\n\tname = Alice\n\temail = alice@example.com\n');
       const restore = setEnv({
+        GIT_CONFIG_GLOBAL: gitConfig,
         PATH: `${bin}${path.delimiter}${process.env.PATH}`,
         FAKE_GH_STATE: ghState,
         FAKE_CLAUDE_LOG: claudeLog,
@@ -629,6 +644,7 @@ describe('agent client (R-027)', () => {
         });
         // The hash of the brief Alice saw: the card, and no decisions on this board (D-105).
         const brief = await textHash(briefText('### K-7: Sums are off by one\n\nStatus: Open.', []));
+        const today = new Date().toISOString().slice(0, 10);
         const ask = (from: AgentClient, extra: Partial<RunRequest> = {}) =>
           from.send(general, {
             text: 'Run K-7 with Claude Code',
@@ -639,8 +655,14 @@ describe('agent client (R-027)', () => {
           const heard: OpenedMessage[] = await plugin.client!.sync();
           return { heard, handled: Promise.all(heard.map((m) => plugin.handle(m))) };
         };
-        const reportsOn = async (request: number, reader = alice) =>
-          (await reader.sync()).filter((m) => m.senderId === agent.id && m.content?.run?.kind !== 'request' && m.content?.run?.request === request).map((m) => m.content?.text);
+        // The agent's reports on a request, each with its run field, or only their texts.
+        const reports = async (request: number, reader = alice) =>
+          (await reader.sync())
+            .filter((m) => m.senderId === agent.id && m.content?.run?.kind !== 'request' && m.content?.run?.request === request)
+            .map((m) => ({ text: m.content!.text, run: m.content!.run as RunReport }));
+        const reportsOn = async (request: number, reader = alice) => (await reports(request, reader)).map((r) => r.text);
+        type FakePull = { head: string; base: string; draft: boolean; title: string; body: string; edited?: object; closed?: string; view?: object };
+        const pullsNow = async () => JSON.parse(await fs.readFile(ghState, 'utf8')).pulls as FakePull[];
 
         // A teammate's request is refused.
         const fromCarol = (await ask(carol)).id;
@@ -674,8 +696,9 @@ describe('agent client (R-027)', () => {
         const branch = 'agent/k-7-sums-are-off-by-one';
         assert.deepEqual(await reportsOn(asked), ['I am on K-7: Sums are off by one', `I finished K-7 on ${branch} (acme/app#1). Sums add up now.`]);
 
-        // One turn ran in a worktree of the checkout, restricted, under the plugin's settings.
-        const [first] = await turns();
+        // Two turns ran in a worktree of the checkout, restricted, under the plugin's settings: the
+        // check that the card holds, then the work, in the same session (R-042).
+        const [first, work] = await turns();
         const worktree = first!.cwd;
         assert.ok(worktree.startsWith(path.join(await fs.realpath(project), '.claude', 'worktrees')), 'the worktree is in the checkout, where the sandboxed shell may write');
         const settings = path.join(dataDir, 'laptop', 'claude.json');
@@ -683,38 +706,45 @@ describe('agent client (R-027)', () => {
         assert.equal(first!.args[first!.args.indexOf('--settings') + 1], settings);
         assert.ok(first!.args.includes('--session-id'));
         assert.ok(first!.input.includes('### K-7: Sums are off by one'), 'the brief holds the card');
+        assert.ok(first!.input.includes('check that the card still holds'), 'the first turn checks the card');
+        assert.equal(work!.args[work!.args.indexOf('--resume') + 1], first!.args[first!.args.indexOf('--session-id') + 1], 'the work resumes the check');
+        assert.ok(work!.input.includes('acme/app#1 claims it'), 'the draft claims the card before the work');
         const denied = JSON.parse(await fs.readFile(settings, 'utf8')).sandbox.filesystem.denyRead;
         assert.ok(denied.includes(dataDir) && denied.includes(process.env.GH_CONFIG_DIR), 'the shell cannot read the plugin or gh');
 
-        // It pushed its own branch only, and opened a draft.
+        // It pushed its own branch only, the claim before the work, and opened the draft with the
+        // check in its body, which the work's title and body then replaced (R-042).
         assert.deepEqual((await sh('git', ['--git-dir', origin, 'branch', '--format=%(refname:short)'])).stdout.trim().split('\n').sort(), [branch, 'main']);
+        const log = async (head: string) => (await sh('git', ['--git-dir', origin, 'log', '--format=%s', `main..${head}`])).stdout.trim().split('\n');
+        assert.deepEqual(await log(branch), ['Change sum.test.js', 'chore: Claim K-7']);
         const gh = JSON.parse(await fs.readFile(ghState, 'utf8'));
-        assert.deepEqual(gh.pulls, [{ head: branch, base: 'main', draft: true }]);
+        const claim = { title: 'K-7: Sums are off by one', body: `Claims K-7. Checked ${today}: Read K-7 and sum.js on main.` };
+        assert.deepEqual(gh.pulls, [{ head: branch, base: 'main', draft: true, ...claim, edited: { title: 'Fix sums', body: 'Sums were off by one.' } }]);
 
         // CI fails on it: Claude gets another round, in the same session, with the log.
         const failing = { statusCheckRollup: [{ name: 'test', conclusion: 'FAILURE', detailsUrl: 'https://github.com/acme/app/actions/runs/7/job/8' }] };
         await fs.writeFile(ghState, JSON.stringify({ ...gh, pulls: [{ ...gh.pulls[0], view: failing }] }));
         await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'done', note: 'The test passes.' }) }, () => plugin.pollPulls());
-        const [, fix] = await turns();
+        const [, , fix] = await turns();
         assert.equal(fix!.args[fix!.args.indexOf('--resume') + 1], first!.args[first!.args.indexOf('--session-id') + 1], 'the fix resumes the first turn');
         assert.equal(fix!.cwd, worktree);
         assert.ok(fix!.input.includes('CI failed: test') && fix!.input.includes('expected 3, got 4'), 'the brief says what failed, with the end of its log');
-        assert.deepEqual(await reportsOn(asked), ['I am fixing K-7: CI failed: test', `I finished K-7 on ${branch} (acme/app#1). The test passes.`]);
+        assert.deepEqual(await reportsOn(asked), ['I am back on K-7: CI failed: test', `I finished K-7 on ${branch} (acme/app#1). The test passes.`]);
         assert.equal(JSON.parse(await fs.readFile(ghState, 'utf8')).pulls.length, 1, 'the fix went to the same pull request');
 
         // A teammate's review waits for Alice's go, with the comments in full (D-105).
         const reviewed = { reviews: [{ author: { login: 'bob' }, body: 'Please rename sum.', submittedAt: new Date().toISOString() }], updatedAt: new Date().toISOString() };
         await fs.writeFile(ghState, JSON.stringify({ ...gh, pulls: [{ ...gh.pulls[0], view: reviewed }] }));
         await plugin.pollPulls();
-        assert.equal((await turns()).length, 2, 'nothing runs before the go');
+        assert.equal((await turns()).length, 3, 'nothing runs before the go');
         const [review] = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.run?.kind === 'review');
         assert.equal(review?.content?.text, 'bob asked for changes on acme/app#1:\n\n- bob: Please rename sum.');
         // A go without the review runs only Alice's words, and none of Bob's text she did not approve.
         await alice.send(general, { text: 'Let the agent fix it', run: { kind: 'fix', request: asked, review: review!.id, note: 'Call it add.', sentAt: Date.now() } });
         await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'done', note: 'Renamed.' }) }, async () => (await checkIn()).handled);
-        const [, , go] = await turns();
+        const [, , , go] = await turns();
         assert.ok(go!.input.includes('Please rename sum.') && go!.input.includes('Call it add.'), "the round has the review and Alice's words");
-        assert.deepEqual(await reportsOn(asked), ['I am fixing K-7: review from bob', `I finished K-7 on ${branch} (acme/app#1). Renamed.`]);
+        assert.deepEqual(await reportsOn(asked), ['I am back on K-7: review from bob', `I finished K-7 on ${branch} (acme/app#1). Renamed.`]);
 
         // Someone else pushes to it: it is theirs now, and Claude runs no more.
         await git(worktree, 'commit', '-q', '--allow-empty', '-m', 'By hand');
@@ -722,7 +752,7 @@ describe('agent client (R-027)', () => {
         await plugin.pollPulls();
         assert.deepEqual(JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'pulls.json'), 'utf8')), []);
         assert.deepEqual(await reportsOn(asked), ['I stopped watching acme/app#1: someone else pushed to it.']);
-        assert.equal((await turns()).length, 3, 'three turns in all');
+        assert.equal((await turns()).length, 4, 'four turns in all');
 
         // Its owner's prompt in their direct chat is answered in a scratch repository of its own, never pushed (R-035).
         const direct = (await alice.request<{ id: number }>('POST', '/conversations/direct', { userId: agent.id, key: await newChatKey(alice, [alice.id, agent.id]) })).id;
@@ -944,8 +974,10 @@ describe('agent client (R-027)', () => {
         };
         const failed = JSON.stringify({ outcome: 'failed', note: 'Not today.' });
         assert.deepEqual(await withEnv({ FAKE_CLAUDE_ANSWER: failed }, askWeb), ['I am on K-7: Sums are off by one', 'I could not run K-7: Not today.']);
-        // A turn that says done but commits nothing opens no draft.
+        assert.equal((await pullsNow()).at(-1)!.closed, 'The agent stopped: Not today. The branch stays.', 'a run that fails after its claim closes its draft (R-042)');
+        // A turn that says done but commits nothing fails, and its draft closes.
         assert.deepEqual(await withEnv({ FAKE_CLAUDE_COMMIT: '0' }, askWeb), ['I am on K-7: Sums are off by one', 'I could not run K-7: I left no new commits.']);
+        assert.equal((await pullsNow()).at(-1)!.closed, 'The agent stopped: I left no new commits. The branch stays.');
         // Disconnecting forgets the folder, never its files.
         assert.match(await new Plugin({ ...options, code: '', dataDir, projectDir: cloneDir }).call('disconnect'), /Disconnected acme\/web/);
         await plugin.scan();
@@ -1032,7 +1064,11 @@ describe('agent client (R-027)', () => {
         assert.equal(await atBoard('docs/decisions.md'), copyOf('decisions', []));
         assert.equal(await atBoard('docs/roadmap/K-9.md'), null, 'the entry the import took in leaves its file');
         assert.ok((await atBoard('docs/roadmap/new-thing.md'))?.includes('A new thing'), 'a proposal stays until it is on the board');
-        assert.deepEqual(JSON.parse(await fs.readFile(ghState, 'utf8')).pulls.slice(pullsBefore), [{ head: 'agent/board', base: 'main', draft: true }], 'one draft, on agent/board');
+        assert.deepEqual(
+          JSON.parse(await fs.readFile(ghState, 'utf8')).pulls.slice(pullsBefore).map((p: { head: string; base: string; draft: boolean; title: string }) => [p.head, p.base, p.draft, p.title]),
+          [['agent/board', 'main', true, 'docs: Copy the board']],
+          'one draft, on agent/board',
+        );
         // Alice adds the proposal; the board changes, and the next copy drops its file, on the same draft.
         await alice.send(direct, { text: 'Added R-1 to the board.', added: { to: proposal!.clientId, draft: proposal!.clientId, card: 'R-1' } });
         await (await checkIn()).handled;
@@ -1043,6 +1079,107 @@ describe('agent client (R-027)', () => {
         assert.equal(await atBoard('docs/roadmap/new-thing.md'), null, 'the added proposal leaves its file');
         assert.ok((await atBoard('docs/roadmap.md'))?.includes('### R-1: A new thing'));
         assert.equal(JSON.parse(await fs.readFile(ghState, 'utf8')).pulls.length, pullsBefore + 1, 'still one draft');
+
+        // A card run follows the repository's workflow (R-042, D-118).
+        await unthrottle();
+        const k7Now = async () => (await plugin.client!.sections(plugin.client!.docs.find((d) => d.id === board.id)!)).find((s) => s.id === section)!.text;
+        // The brief as Alice's page hashes it now: the card, then the decisions the team holds (D-105).
+        const briefNow = async () => {
+          const { decisions: held } = await plugin.client!.boardDocs(app.project.id);
+          return textHash(briefText(await k7Now(), held ? (await plugin.client!.sections(held)).map((s) => s.text) : []));
+        };
+        const runK7 = async (env: Record<string, string> = {}) =>
+          withEnv(env, async () => {
+            const id = (await ask(alice, { hash: await briefNow() })).id;
+            await (await checkIn()).handled;
+            return { id, said: await reports(id) };
+          });
+        const DAY = 24 * 60 * 60_000;
+
+        // An open pull request that claims the card refuses the run, before the agent takes it.
+        const turnsBefore = (await turns()).length;
+        assert.deepEqual((await runK7()).said.map((r) => r.text), ['I could not run K-7: acme/app#8 claims K-7 already. Pick another card, or ask whoever opened it.']);
+        assert.equal((await turns()).length, turnsBefore, 'no Claude ran for it');
+
+        // A card the code already does ends at its check, pushes nothing, and offers its new status
+        // as a change Alice adds (D-104).
+        await fs.writeFile(ghState, JSON.stringify({ ...JSON.parse(await fs.readFile(ghState, 'utf8')), open: [] }));
+        const [pullsBeforeRuns, branchesBeforeRuns] = [(await pullsNow()).length, await branches()];
+        const check = { outcome: 'stale', status: 'Done', note: 'sum.js adds exactly already.', checked: 'Read K-7 and sum.js on main.' };
+        const stale = await runK7({ FAKE_CLAUDE_CHECK: JSON.stringify(check) });
+        assert.deepEqual(stale.said.map((r) => r.text), ['I am on K-7: Sums are off by one', 'K-7 no longer holds: sum.js adds exactly already.']);
+        assert.deepEqual(stale.said[1]!.run.card, {
+          kind: 'K',
+          title: 'Sums are off by one',
+          body: '',
+          status: `Done on ${today}: sum.js adds exactly already`,
+          checked: 'Read K-7 and sum.js on main.',
+          replaces: { card: 'K-7', doc: board.id, section, seen: await textHash((await k7Now()).trim()) },
+        });
+        assert.equal((await turns()).length, turnsBefore + 1, 'only the check ran');
+        assert.deepEqual([(await pullsNow()).length, await branches()], [pullsBeforeRuns, branchesBeforeRuns], 'nothing was pushed or opened');
+
+        // A run that finds a decision nobody foresaw stops for it, with its claim and its work so far
+        // pushed, and holds the card.
+        const needed = { kind: 'decision', title: 'Sums round half to even', body: 'Why: money.', checked: 'Read sum.js.' };
+        const paused = await runK7({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'decision', note: 'Rounding needs a rule.', drafts: [needed] }) });
+        assert.deepEqual(paused.said.map((r) => r.text), ['I am on K-7: Sums are off by one', 'K-7 needs a decision first: Sums round half to even. Add it on the board, then tell me to go on.']);
+        assert.deepEqual(paused.said[1]!.run.card, { kind: 'D', title: 'Sums round half to even', body: 'Why: money.', checked: 'Read sum.js.' });
+        const number = pullsBeforeRuns + 1;
+        const pausedPull = (await pullsNow())[number - 1]!;
+        assert.deepEqual(pausedPull, { head: pausedPull.head, base: 'main', draft: true, ...claim }, 'the claim opened the draft, and nothing edited it');
+        assert.deepEqual(await log(pausedPull.head), ['Change sum.test.js', 'chore: Claim K-7']);
+        // It waits for the go, with one reminder after a day.
+        const [pausedCheck] = (await turns()).slice(-2);
+        const turnsPaused = (await turns()).length;
+        await plugin.pollPulls(Date.now() + 2 * DAY);
+        await plugin.pollPulls(Date.now() + 3 * DAY);
+        assert.deepEqual((await reports(paused.id)).map((r) => r.text), ['I still wait for your decision on K-7. Add it on the board, then tell me to go on.']);
+        assert.equal((await turns()).length, turnsPaused, 'nothing runs before the go');
+        // Alice adds the decision, which the board numbers D-1, and says go: the run goes on in its session.
+        const decisionsNow = { id: newKeyId(), conversationId: general };
+        const d1 = newKeyId().slice(0, 11);
+        await alice.request('POST', '/docs', {
+          ...decisionsNow,
+          revisions: [
+            { section: 'title', envelope: await alice.sealDoc(decisionsNow, 'title', { text: 'Decisions', board: 'decisions' }) },
+            { section: d1, envelope: await alice.sealDoc(decisionsNow, d1, { text: '### D-1: Sums round half to even\n\nStatus: Proposed.\n\nWhy: money.', pos: 1 }) },
+          ],
+        });
+        const gap = { kind: 'issue', title: 'Totals round twice', body: 'Seen: in totals.js.', checked: 'Read totals.js.' };
+        const finished = { outcome: 'done', note: 'Sums round half to even.', title: 'fix: Round sums half to even', body: 'As D-1 says.', decisions: ['D-1', 'D-9'], drafts: [gap] };
+        await alice.send(general, { text: 'Go on with D-1', run: { kind: 'fix', request: paused.id, note: 'I added the decision as D-1. Go on with the work.', sentAt: Date.now() } });
+        await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify(finished) }, async () => (await checkIn()).handled);
+        const resumed = (await turns()).at(-1)!;
+        assert.equal(resumed.args[resumed.args.indexOf('--resume') + 1], pausedCheck!.args[pausedCheck!.args.indexOf('--session-id') + 1], 'it resumes the run');
+        assert.ok(resumed.input.includes('I added the decision as D-1') && resumed.input.includes('Your owner added the decision you waited for'), 'the round has the number');
+        const goneOn = await reports(paused.id);
+        assert.deepEqual(goneOn.map((r) => r.text), [
+          'I am back on K-7: you added the decision',
+          `I finished K-7 on ${pausedPull.head} (acme/app#${number}). Sums round half to even.`,
+          'Card draft: Totals round twice',
+        ]);
+        assert.deepEqual(goneOn[2]!.run.card, { kind: 'K', title: 'Totals round twice', body: 'Seen: in totals.js.', checked: 'Read totals.js.' }, 'a gap the run found waits for Alice');
+        assert.deepEqual((await pullsNow())[number - 1]!.edited, { title: 'fix: Round sums half to even', body: 'As D-1 says.' });
+        // Once it is merged, the agent says so, with the decision the work made true, which Alice's
+        // page accepts; a decision the board does not have is left out.
+        const merging = await pullsNow();
+        merging[number - 1] = { ...merging[number - 1]!, view: { state: 'MERGED' } };
+        await fs.writeFile(ghState, JSON.stringify({ ...JSON.parse(await fs.readFile(ghState, 'utf8')), pulls: merging }));
+        await plugin.pollPulls();
+        assert.deepEqual(await reports(paused.id), [
+          { text: `I stopped watching acme/app#${number}: it was merged.`, run: { kind: 'merged', request: paused.id, note: 'it was merged', pull: { repo: 'acme/app', number }, decisions: ['D-1'] } },
+        ]);
+
+        // A run left waiting for 7 days fails, and its draft closes with its branch kept.
+        await unthrottle();
+        const left = await runK7({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'decision', note: 'Totals need a rule.', drafts: [{ ...needed, title: 'Totals round once' }] }) });
+        assert.equal(left.said.at(-1)!.text, 'K-7 needs a decision first: Totals round once. Add it on the board, then tell me to go on.');
+        await plugin.pollPulls(Date.now() + 8 * DAY);
+        assert.deepEqual((await reports(left.id)).map((r) => r.text), ['I could not run K-7: No decision came within 7 days.']);
+        const leftPull = (await pullsNow()).at(-1)!;
+        assert.equal(leftPull.closed, 'The agent stopped: No decision came within 7 days. The branch stays.');
+        assert.ok((await branches()).includes(leftPull.head), 'the branch stays');
       } finally {
         restore();
       }

@@ -28,6 +28,7 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.equal(groupOf('roadmap', 'In review: o/r#3'), 1);
     assert.equal(groupOf('roadmap', 'Fixed in #12'), 4);
     assert.equal(groupOf('roadmap', 'Something else'), 3);
+    assert.equal(groupOf('roadmap', 'Waiting for a decision'), 0, 'a run that waits for a decision still holds its card (R-042)');
   });
 
   test('a new status replaces the status line, or goes under the heading', () => {
@@ -115,6 +116,13 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.deepEqual(state([ask(1, 'a'), report(1, 'failed'), ask(2, 'a')]), ['waiting', true], 'a new request replaces the old');
     assert.deepEqual(state([ask(1, 'a'), ask(2, 'a'), report(1, 'done')]), ['waiting', true], 'an old run reports into nothing');
     assert.equal(runs([{ ...ask(1, 'a'), senderId: 3 }, ask(2, 'b', { docId: 'other' })]).size, 0, 'only my requests on this doc');
+    // A run that waits for a decision still goes; a draft after the work changes nothing; a merge
+    // names the decisions the work made true, and each state names its report (R-042).
+    assert.deepEqual(state([ask(1, 'a'), report(1, 'claimed'), report(1, 'decision')]), ['decision', true]);
+    assert.deepEqual(state([ask(1, 'a'), report(1, 'stale')]), ['stale', false]);
+    assert.deepEqual(state([ask(1, 'a'), report(1, 'done'), { ...report(1, 'draft'), id: 300 }]), ['done', false]);
+    const merged = runs([ask(1, 'a'), { id: 400, senderId: 9, run: { kind: 'merged', request: 1, decisions: ['D-2'] } }]).get('a');
+    assert.deepEqual([merged?.state, merged?.at, merged?.decisions], ['merged', 400, ['D-2']]);
   });
 
   test('a status that shows another run of the card refuses a second one (K-59)', () => {
@@ -124,6 +132,7 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.equal(otherRun('In review', 'Ann'), true);
     assert.equal(otherRun('In progress', 'Ann'), false, 'set by hand, no run named');
     assert.equal(otherRun('Open', 'Ann'), false);
+    assert.equal(otherRun('Waiting for a decision', 'Ann'), true, 'a run waits for a decision (R-042)');
   });
 });
 

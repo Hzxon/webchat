@@ -497,7 +497,7 @@ export function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | u
 }
 
 const CARD_ID = /^[DRKQ]-\d{1,6}$/;
-const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed', 'fixing', 'review', 'ended', 'nocopy'];
+const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed', 'fixing', 'review', 'ended', 'nocopy', 'stale', 'decision', 'merged', 'draft'];
 const short = (value: unknown, max: number) => (typeof value === 'string' && value.length <= max ? value : undefined);
 
 /** A run request or report, if it has the right shape. A pull request is named by repository and number only. */
@@ -540,6 +540,10 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
   if (branch) run.branch = branch;
   const pull = raw.pull as { repo?: unknown; number?: unknown } | undefined;
   if (typeof pull?.repo === 'string' && isRepoName(pull.repo) && isId(pull.number)) run.pull = { repo: pull.repo, number: pull.number };
+  const card = readDraft(raw.card as Record<string, unknown> | undefined);
+  if (card) run.card = card;
+  const decisions = Array.isArray(raw.decisions) ? raw.decisions.filter((d): d is string => typeof d === 'string' && CARD_ID.test(d) && d.startsWith('D-')) : [];
+  if (decisions.length) run.decisions = decisions.slice(0, LIMITS.relatedPerDraft);
   return run;
 }
 

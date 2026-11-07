@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { textHash } from '../../../shared/e2ee';
 import type { CardDraftDTO } from '../../../shared/types';
-import type { Thread } from '../agents';
+import { threadProject, type Thread } from '../agents';
 import { boardDocs, cardText, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, parseCard, withChecked, type Card } from '../board';
 import { noteAdded, syncNow, tellAgent } from '../chat';
 import { addCard, createBoard, loadSections, newSectionId, rewriteSection, sectionHistory } from '../docs';
@@ -50,8 +50,7 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
     [projects, meId, agentId],
   );
   const [picked, setPicked] = useState<number | null>(null);
-  const asked = thread.messages[0]!.prompt;
-  const named = asked?.kind === 'prompt' ? asked.project : thread.project;
+  const named = threadProject(thread, docs, conversations);
   const board = named !== undefined && shared.some((p) => p.id === named) ? named : shared.length === 1 ? shared[0]!.id : null;
   const projectId = change ? (conversations[docs[change.doc]?.conversationId ?? 0]?.projectId ?? null) : (picked ?? board);
   const [redone, setRedone] = useState(false);
@@ -146,6 +145,7 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
         </>
       )}
       <strong className={marked(current?.title !== draft.title)}>{change ? `${change.card}: ${draft.title}` : draft.title}</strong>
+      {draft.status && <p className={marked(current?.status !== draft.status)}>Status: {draft.status}.</p>}
       {paragraphsOf(draft.body).map((p, i) => (
         <div key={i} className={marked(!now.has(p))}>
           <Markdown text={p} />
@@ -188,7 +188,7 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
               ? `${change.card} was deleted from the board after this draft.`
               : `${stale.by} changed ${change.card} after this draft, at ${formatSince(stale.at)}.`}
           </p>
-          {thread.kind !== 'proposal' && <button
+          {thread.kind === 'question' && <button
             className="button-secondary"
             disabled={redone || thread.state === 'working' || thread.state === 'ended'}
             onClick={() => {

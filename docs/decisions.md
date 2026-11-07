@@ -990,16 +990,17 @@ credentials. The `agent` column of migration 13 is unused. A teammate's agent is
 ### D-092: An agent can run as a Claude Code plugin
 
 Accepted 2026-11-05 in #100, proposed in #99. Its runs moved to a background Claude in #117, and
-one window serves every folder since #131 (D-094).
+one window serves every folder since #131 (D-094). Changed in #168 (R-042).
 
 An agent can run inside Claude Code as the plugin in `plugin/` (R-030). Its MCP server,
 `agent/plugin.ts`, is the trusted part: it keeps the agent's keys in the plugin's data folder, uses
 the owner's `gh` login, checks requests as D-089 says, adds a worktree under `.claude/worktrees`
-and pushes only that `agent/*` branch, never forced and with git hooks off. The model works in a
-background Claude with no credentials (D-097), and the owner's own sessions keep their settings. A
-guard hook keeps every session's file tools from the secrets. A draft gets three rounds of fixes
-for failed CI, conflicts and reviews by writers, each a turn of the run's Claude session. Why: one
-install, and channels need a flag on every start.
+and pushes only that `agent/*` branch, never forced and with git hooks off. Its draft opens on an
+empty claim commit before any code, and closes, keeping the branch, when the run fails (D-118). The
+model works in a background Claude with no credentials (D-097), and the owner's own sessions keep
+their settings. A guard hook keeps every session's file tools from the secrets. A draft gets three
+rounds of fixes for failed CI, conflicts and reviews by writers, each a turn of the run's Claude
+session. Why: one install, and channels need a flag on every start.
 
 Cost: one Claude Code window must stay open on the laptop. A teammate's card runs with the
 owner's credentials; the owner reviews the draft.
@@ -1101,16 +1102,17 @@ request in the same check-in as a cancel is refused, since the cancelled run has
 
 ### D-100: A card shows its latest run, and its status line follows the run
 
-Accepted 2026-11-05 in #116 (K-52), changed in #122 and #143 (K-59).
+Accepted 2026-11-05 in #116 (K-52), changed in #122, #143 (K-59) and #168 (R-042).
 
 The board folds the user's run messages, in their chats with their agents, into each roadmap card.
 While a run may still go, the play button is disabled, so a second click asks nothing. A request no
 agent answers in 30 minutes stops blocking, on the board and in the chat. Teammates see no run
 messages, so the status line tells them: any open page of the requester's sets it to `In progress:
-Ann's agent` once the agent claims, to `In review: repo#PR` when it is done, and back to what it was
-when the run fails, once per request and state, under the card's lock. The owner moves it to Done or
-Fixed after merging. The brief refuses a card whose status shows another run: someone else's
-agent `In progress`, or `In review`; its hash covers the status line, so a run that starts later
+Ann's agent` once the agent claims, `Waiting for a decision` while it waits for one, `In review:
+repo#PR` when it is done, `Done in repo#PR` or `Fixed in repo#PR` once that is merged, and back to
+what it was when the run fails or the card no longer holds, once per report, under the card's lock.
+The brief refuses a card whose status shows another run: someone else's agent `In progress`, `In
+review` or `Waiting for a decision`; its hash covers the status line, so a run that starts later
 makes the agent refuse. Why: the server cannot drop copies of an encrypted request, and done means
 a draft. Cost: the status changes only while a page of the requester's is open. Two tabs can still
 each send one request before they sync; the agent refuses the second (D-099).
@@ -1178,13 +1180,14 @@ row too.
 
 ### D-104: An agent drafts cards, and its owner's page adds them
 
-Accepted 2026-11-06 in #121 (R-035), changed in #166 (R-041).
+Accepted 2026-11-06 in #121 (R-035), changed in #166 (R-041) and #168 (R-042).
 
 When its owner asks, an agent's answer may carry drafts: a new decision, idea or issue, or a change
 to one, named by its doc and section with the hash of the text the agent saw, and checked first
-(D-116). The brief holds only the board the owner's page named in the signed prompt, fenced as
-teammates' text: anyone can add an agent to their project. A reply also shows the cards and
-decisions that changed since. Nothing reaches the
+(D-116). A card run's reports carry them too: the card's new status when it no longer holds, the
+decision it waits for, and what its work asks of the board (D-118). The brief holds only the board
+the owner's page named in the signed prompt, fenced as teammates' text: anyone can add an agent to
+their project. A reply also shows the cards and decisions that changed since. Nothing reaches the
 board until the owner presses the draft's button. Their page then writes it as them: a new card with
 the next free number of its kind at that moment, or the change, read and written under the card's
 lock, only while it has the text the agent saw; otherwise it says who changed it. A note outside
@@ -1196,7 +1199,7 @@ card.
 
 ### D-105: A card runs from a brief its owner saw and signed
 
-Accepted 2026-11-06 in #122 (R-035).
+Accepted 2026-11-06 in #122 (R-035), changed in #168 (R-042).
 
 A card's play button opens its brief in the Coding agents pane: the card and the decisions the team
 holds, without the superseded ones, raw, each teammate's passage marked with their name, and a line
@@ -1205,7 +1208,8 @@ direct chat with the agent, with the hash of that brief and the card's status; t
 without the hash or whose brief changed. Plugin sessions name `AGENT_LEVEL.cards` only while `gh` is
 signed in. A review by anyone but the owner waits for the owner's go, which names the review's
 report; only the text that report showed runs. CI, conflicts and the owner's reviews start a round
-on their own, and the owner's rounds count toward no limit. Watching outlasts Ready for review and
+on their own, and the owner's rounds count toward no limit. A go also resumes a run that waits for a
+decision (D-118). Watching outlasts Ready for review and
 ends with a report. The daemon takes no cards. Why: text teammates wrote runs with the owner's
 login, so the owner sees it first.
 
@@ -1299,6 +1303,25 @@ answers, naming the ask, with what its last run loaded. The level is now bits: 4
 
 Cost: a teammate's card can steer a run through the owner's skills, whose scripts run in the same
 sandbox. Skills and CLAUDE.md go to Anthropic with each turn. Opening Settings waits for a check-in.
+
+### D-118: A card run follows the repository's workflow
+
+Accepted 2026-11-07 in #168 (R-042).
+
+The plugin refuses a card that an open pull request claims, as `scripts/claim.sh` does. The run's
+first turn checks, changing nothing, that the card still holds (D-107). If not, it ends `stale`
+with nothing pushed, and the pane offers the card's new status, Done or Dropped with the reason, as
+a change the owner adds (D-104). Otherwise an empty commit and the draft, with the check in its
+body, claim the card before any code, and the work resumes that session. A decision nobody foresaw
+ends a turn as `decision` with its draft: the card shows `Waiting for a decision`, a reminder comes
+after a day, and the owner's go, once they added it, resumes the session; after 7 days the run
+fails. A run that fails before its work is done closes its draft and keeps the branch. The answer
+names the Proposed decisions the work makes true, and its new cards wait in the pane. On merge the
+owner's page sets the card Done or Fixed and those decisions Accepted. Why: runs skipped the
+workflow every session follows (#159).
+
+Cost: a failed run leaves a closed draft. A paused run holds its card and worktree for up to 7
+days. Server tests fail only in CI, since the sandbox cannot listen on localhost.
 
 ## Replies and reactions
 

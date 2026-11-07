@@ -25,7 +25,7 @@ export interface Thread {
   project?: number;
   /** The prompt first, then the messages that name it, in the chat's order, one per answer. */
   messages: ChatMessage[];
-  state: 'working' | 'answered' | 'failed' | 'unsent' | 'ended' | 'draft' | 'waiting' | 'unfinished' | 'done';
+  state: 'working' | 'answered' | 'failed' | 'unsent' | 'ended' | 'draft' | 'waiting' | 'unfinished' | 'done' | 'stale';
   /** When its newest message was sent. */
   last: number;
   /** The cards its drafts became on the board, by the draft's client id (D-104). */
@@ -43,6 +43,7 @@ export const THREAD_STATE: Record<Thread['state'], { label: string; tone: Tone }
   waiting: { label: 'Waiting for you', tone: 'warn' },
   unfinished: { label: 'Couldn’t finish', tone: 'danger' },
   done: { label: 'Done', tone: 'muted' },
+  stale: { label: 'No longer holds', tone: 'warn' },
 };
 
 /** What each run message makes of its card's conversation; a cancel changes nothing until the agent says it stopped. */
@@ -56,6 +57,9 @@ const RUN_STATE: Partial<Record<RunDTO['kind'], Thread['state']>> = {
   ended: 'done',
   nocopy: 'waiting',
   clone: 'working',
+  stale: 'stale',
+  decision: 'waiting',
+  merged: 'done',
 };
 
 /** Where the user's agent works on a repository: its folder on the laptop (D-094), or none there yet (R-036). */
@@ -187,6 +191,13 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
   }
   // A card's conversation lasts as long as its draft is watched, so only a question ends.
   return [...threads.values()].map((t) => (t.kind === 'question' && now - t.last > THREAD_TTL_MS ? { ...t, state: 'ended' as const } : t)).sort((a, b) => b.last - a.last);
+}
+
+/** Where a conversation belongs: the project its prompt names, a proposal's board's, or a card's board's. */
+export function threadProject(thread: Thread, docs: State['docs'], conversations: State['conversations']) {
+  const run = thread.messages[0]!.run;
+  if (thread.kind !== 'card') return thread.project;
+  return run?.kind === 'request' ? conversations[docs[run.docId]?.conversationId ?? 0]?.projectId : undefined;
 }
 
 /** The user's chats with their agents. */
