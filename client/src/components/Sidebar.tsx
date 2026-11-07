@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { AGENT_LEVEL, type ProjectDTO } from '../../../shared/types';
 import { agentOf, ownAgents, ready, THREAD_STATE, useAgentThreads } from '../agents';
+import { alertsReady, pushWarning } from '../alertSetup';
 import { sound } from '../alerts';
 import { deleteAccount, deleteChannel, openConversation, previewText, signOut } from '../chat';
 import { deleteDoc } from '../docs';
@@ -56,6 +57,7 @@ export function Sidebar(props: SidebarProps) {
   const tab = useAppState((s) => s.tab);
   const connected = useAppState((s) => s.connected);
   const push = useAppState((s) => s.push);
+  const bark = useAppState((s) => s.bark);
   const [query, setQuery] = useState('');
 
   const { chats, channels, chatUnread, projectUnread } = useMemo(() => {
@@ -102,7 +104,7 @@ export function Sidebar(props: SidebarProps) {
   }, [projects, channels, docs, conversations, q]);
 
   if (!me) return null;
-  const notificationsReady = push?.permission === 'granted';
+  const notificationsReady = alertsReady(push, bark);
 
   async function removeAccount() {
     const warning = 'You leave every project and group, your direct chats are deleted for both people, and your username is freed.';
@@ -414,17 +416,11 @@ function RowMenu(props: { name: string; question: string; onRename?: () => void;
 /** Nudges the user until alerts can reach them: notifications allowed and sound unlocked. */
 function AlertSetupBanner({ onOpen }: { onOpen: () => void }) {
   const push = useAppState((s) => s.push);
+  const bark = useAppState((s) => s.bark);
   const soundUnlocked = useSyncExternalStore(sound.subscribe, sound.unlocked);
 
-  if (push && push.permission !== 'granted') {
-    const text =
-      push.permission === 'denied'
-        ? 'Notifications are blocked for this site. Allow them in the browser’s site settings.'
-        : push.oldIos
-          ? 'Notifications on iPhone need iOS 16.4. Tap to get alerts through the Bark app instead.'
-          : push.needsInstall
-            ? 'On iPhone, add this site to your Home Screen to get notifications.'
-            : 'Turn on notifications so urgent messages reach you when this tab is closed.';
+  const text = pushWarning(push, bark);
+  if (text) {
     return (
       <button className="banner banner-warn" onClick={onOpen}>
         <BellIcon width={18} height={18} />

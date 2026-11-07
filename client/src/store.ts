@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { GithubDTO, ProjectDTO, UserDTO } from '../../shared/types';
+import type { BarkDTO, GithubDTO, ProjectDTO, UserDTO } from '../../shared/types';
 import type { ChatConversation, ChatDoc, ChatMessage } from './e2ee/keyring';
 import type { PushState } from './push';
 
@@ -51,6 +51,8 @@ export interface State {
   toasts: Toast[];
   /** Notification setup of this browser; null until checked. */
   push: PushState | null;
+  /** The user's Bark setup, asked for on iOS before 16.4 and by the bell dialog; undefined until asked (K-1). */
+  bark: BarkDTO | null | undefined;
   /** People whose encryption keys differ from the ones this device saw first. */
   keyWarnings: Record<number, true>;
   /** The GitHub connector's state; null until loaded. */
@@ -89,6 +91,7 @@ const initialState: State = {
   urgent: [],
   toasts: [],
   push: null,
+  bark: undefined,
   keyWarnings: {},
   github: null,
   githubOpen: false,
@@ -381,6 +384,7 @@ export const actions = {
     store.set((s) => withConversation(s, conversationId, (c) => (c.unread === unread ? c : { ...c, unread }))),
 
   setPush: (push: PushState) => store.set((s) => ({ ...s, push })),
+  setBark: (bark: BarkDTO | null) => store.set((s) => ({ ...s, bark })),
 
   setKeyWarnings: (ids: Set<number>) =>
     store.set((s) => {

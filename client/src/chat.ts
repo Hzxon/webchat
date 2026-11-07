@@ -464,6 +464,8 @@ export async function refreshPushState() {
   pushActiveHere = state.subscribed;
   pushEndpoint = state.endpoint;
   actions.setPush(state);
+  // These phones never allow notifications, so only a Bark phone can end the sidebar's warning (K-1).
+  if (state.oldIos) void api.bark().then(actions.setBark, () => undefined);
   return state;
 }
 
