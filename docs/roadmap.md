@@ -232,7 +232,7 @@ fingerprint.
 
 ### K-44: A reply or reaction follows the message id, which no signature covers
 
-Status: Open. Found in a security review of main on 2026-11-05.
+Status: Fixed in #144 (D-109). Found in a security review of main on 2026-11-05.
 
 A reply signs its original's id, sender and quoted text. But `Quote` in
 `client/src/components/ChatView.tsx` shows whatever message now has that id, and never compares

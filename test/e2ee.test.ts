@@ -152,7 +152,7 @@ describe('end-to-end encryption', () => {
     const key = await importChatKey(newChatKeyBytes());
     const keyId = newKeyId();
     const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'r1', kind: 'reaction' };
-    const content = { text: '', reaction: { messageId: 12, emoji: '👍' } };
+    const content = { text: '', reaction: { messageId: 12, emoji: '👍', senderId: bob.id, clientId: 'b7' } };
     const envelope = await encryptMessage(key, keyId, alice.identity.signPrivate, meta, content);
     assert.deepEqual(await decryptContent(key, alice.identity.publicKeys.sign, meta, envelope), content);
     await assert.rejects(decryptContent(key, alice.identity.publicKeys.sign, { ...meta, kind: 'message' }, envelope), /bad signature/);
@@ -293,8 +293,13 @@ describe('end-to-end encryption', () => {
       encryptMessage(key, keyId, sign, reaction('r1'), { text: '', reaction: { messageId: 12, emoji: '❤️' } }),
       encryptMessage(key, keyId, sign, reaction('r2'), { text: '', reaction: { messageId: 12, emoji: '👍' } }),
       encryptMessage(key, keyId, sign, reaction('r3'), { text: '', reaction: { messageId: 12, emoji: '' } }),
+      // A reaction that names its target (K-44), with a family emoji and the UUID a page sends.
+      encryptMessage(key, keyId, sign, reaction('r4'), {
+        text: '',
+        reaction: { messageId: 2 ** 31 - 1, emoji: '👨‍👩‍👧‍👦', senderId: 2 ** 31 - 1, clientId: crypto.randomUUID() },
+      }),
     ]).then((envelopes) => envelopes.map((e) => fromBase64Url(e.ct).length));
-    assert.deepEqual(lengths, Array(5).fill(PAD_MIN_BYTES + 16), 'the smallest band plus the AES-GCM tag');
+    assert.deepEqual(lengths, Array(6).fill(PAD_MIN_BYTES + 16), 'the smallest band plus the AES-GCM tag');
 
     const longer = await encryptMessage(key, keyId, sign, message('m3'), 'x'.repeat(300));
     assert.equal(fromBase64Url(longer.ct).length, 2 * PAD_MIN_BYTES + 16);

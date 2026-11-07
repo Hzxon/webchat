@@ -1245,6 +1245,19 @@ the page has no alert of its own for it. Project names are not encrypted, so the
 this text itself. Being added to a group sends the same kind of push, which opens the group
 (D-043).
 
+### D-109: Replies and reactions check the message at their id
+
+Accepted 2026-11-07 in #144, for K-44.
+
+The server picks message ids, and no signature covers them (D-016). So a quote shows the message
+that now has its id only when that message's sender and text match the signed quote. Otherwise it
+shows the signed quote and does not jump. A reaction also signs its target's sender, 0 for a card
+from GitHub, and client id, which the target's header signs. The page shows it only on a message
+with that sender and client id. Reactions from before this name neither and show as before.
+
+Cost: a reaction on a message whose id the server swapped disappears instead of moving to the
+right message. Old reactions stay open to the swap.
+
 ## GitHub connector
 
 ### D-032: GitHub links to an account and is not a way to sign in

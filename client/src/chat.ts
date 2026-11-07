@@ -989,13 +989,13 @@ export async function react(message: ChatMessage, emoji: string) {
   if (!me || message.id <= 0) return;
   const { conversationId } = message;
   const previous = state.reactions[conversationId]?.[message.id]?.[me.id] ?? { eventId: 0, emoji: '' };
-  const next = previous.emoji === emoji ? '' : emoji;
-  actions.setMyReaction(conversationId, message.id, me.id, { eventId: Number.MAX_SAFE_INTEGER, emoji: next });
+  const mark = { emoji: previous.emoji === emoji ? '' : emoji, senderId: message.senderId ?? 0, ...(message.clientId && { clientId: message.clientId }) };
+  actions.setMyReaction(conversationId, message.id, me.id, { eventId: Number.MAX_SAFE_INTEGER, ...mark });
   try {
-    const content = { text: '', reaction: { messageId: message.id, emoji: next } };
+    const content = { text: '', reaction: { messageId: message.id, ...mark } };
     const event = await sealAndSend(conversationId, { urgent: false, clientId: newClientId(), kind: 'reaction' }, content);
     seen.add(event.id);
-    actions.setMyReaction(conversationId, message.id, me.id, { eventId: event.id, emoji: next });
+    actions.setMyReaction(conversationId, message.id, me.id, { eventId: event.id, ...mark });
   } catch (error) {
     actions.setMyReaction(conversationId, message.id, me.id, previous);
     actions.addToast({ conversationId, title: 'Reaction not sent', body: (error as Error).message });
