@@ -202,3 +202,33 @@ describe('The keyring in client/src/e2ee/keyring.ts, after a key change nobody c
     assert.deepEqual(await keyring.reopen({ [CHAT]: conversation }, keysOf), []);
   });
 });
+
+describe('The keyring in client/src/e2ee/keyring.ts, when the server drops a key link (K-43)', () => {
+  let keyring: Keyring & { load: (userId: number) => Promise<boolean> };
+  const OLD = newKeyId();
+  const NEW = newKeyId();
+
+  before(async () => {
+    keyring = (await import(clientKeyring)).keyring;
+    rows.clear();
+    await keyring.adopt(ME, await createIdentity());
+    const key = await crypto.subtle.importKey('raw', newChatKeyBytes(), 'AES-GCM', false, ['encrypt', 'decrypt']);
+    await keyring.remember(CHAT, OLD, key);
+    await keyring.remember(CHAT, NEW, key);
+  });
+
+  // The device holds both keys, so neither wrapped copy is opened.
+  const chat = (keyId: string, keyLinks: unknown[]) =>
+    ({ id: CHAT, keyId, myKey: { wrappedBy: ME, iv: '', data: '' }, members: [member(ME)], keyLinks }) as unknown as Conversation;
+  const keysOf: KeyLookup = () => null;
+
+  test('never seals again with a key it saw replaced, though the server names it current with no link', async () => {
+    assert.ok(await keyring.chatKey(chat(NEW, [{ keyId: NEW, previousKeyId: OLD, iv: '', data: '' }]), keysOf));
+    assert.equal(keyring.chatKey(chat(OLD, []), keysOf), null);
+  });
+
+  test('remembers the replaced key after the page loads again', async () => {
+    assert.equal(await keyring.load(ME), true);
+    assert.equal(keyring.chatKey(chat(OLD, []), keysOf), null);
+  });
+});
