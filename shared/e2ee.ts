@@ -533,7 +533,7 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
   if (typeof pull?.repo === 'string' && isRepoName(pull.repo) && isId(pull.number)) run.pull = { repo: pull.repo, number: pull.number };
   const card = readDraft(raw.card as Record<string, unknown> | undefined);
   if (card) run.card = card;
-  const decisions = Array.isArray(raw.decisions) ? raw.decisions.filter((d): d is string => typeof d === 'string' && /^D-\d{1,6}$/.test(d)) : [];
+  const decisions = Array.isArray(raw.decisions) ? raw.decisions.filter((d): d is string => typeof d === 'string' && CARD_ID.test(d) && d.startsWith('D-')) : [];
   if (decisions.length) run.decisions = decisions.slice(0, LIMITS.relatedPerDraft);
   return run;
 }

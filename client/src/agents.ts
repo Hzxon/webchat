@@ -183,6 +183,13 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
   return [...threads.values()].map((t) => (t.kind === 'question' && now - t.last > THREAD_TTL_MS ? { ...t, state: 'ended' as const } : t)).sort((a, b) => b.last - a.last);
 }
 
+/** Where a conversation belongs: the project its prompt names, a proposal's board's, or a card's board's. */
+export function threadProject(thread: Thread, docs: State['docs'], conversations: State['conversations']) {
+  const run = thread.messages[0]!.run;
+  if (thread.kind !== 'card') return thread.project;
+  return run?.kind === 'request' ? conversations[docs[run.docId]?.conversationId ?? 0]?.projectId : undefined;
+}
+
 /** The user's chats with their agents. */
 export function useAgentChats() {
   const conversations = useAppState((s) => s.conversations);

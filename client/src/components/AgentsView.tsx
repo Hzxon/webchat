@@ -4,7 +4,7 @@
 // messages that name it, in the user's direct chat with the agent (D-102).
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AGENT_LEVEL, LIMITS, type RunRequest } from '../../../shared/types';
-import { asleep, ownAgents, seatFor, short, THREAD_STATE, useAgentThreads, WAKE, type Seat, type Thread } from '../agents';
+import { asleep, ownAgents, seatFor, short, THREAD_STATE, threadProject, useAgentThreads, WAKE, type Seat, type Thread } from '../agents';
 import { addProjectMembers, askAgent, askClone, askFix, cancelRun, discardMessage, forgetFolder, loadChat, loadOlder, putToSleep, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { useLinkedRepos } from '../linkedRepos';
@@ -205,8 +205,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
     const repos = reposOf(projectId);
     return repos.length && linked[projectId]?.configured !== false ? repos : [...repos, ''];
   };
-  // Where a conversation belongs: the project its prompt names, or its card's board.
-  const projectOf = (t: Thread) => (t.kind !== 'card' ? t.project : conversations[docs[t.messages[0]!.run?.kind === 'request' ? t.messages[0]!.run.docId : '']?.conversationId ?? 0]?.projectId);
+  const projectOf = (t: Thread) => threadProject(t, docs, conversations);
 
   // The project picked, else the newest conversation's, else the first; then its repository picked, or its first.
   const askable = mine.filter((p) => agentIn(p.id));
@@ -360,7 +359,7 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
   const decided = decision && thread.added[decision.clientId ?? ''];
   const stop = () => void (request ? cancelRun(request) : tellAgent(thread.conversationId, thread.root, 'cancel', 'Stop'));
   const again = () => {
-    const projectId = conversations[docs[request!.run.docId]?.conversationId ?? 0]?.projectId;
+    const projectId = threadProject(thread, docs, conversations);
     if (projectId) actions.openBrief({ projectId, docId: request!.run.docId, section: request!.run.section });
   };
   // A turn can take long, so the time it has taken shows, a minute at a time.

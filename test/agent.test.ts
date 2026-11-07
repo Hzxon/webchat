@@ -653,8 +653,14 @@ describe('agent client (R-027)', () => {
           const heard: OpenedMessage[] = await plugin.client!.sync();
           return { heard, handled: Promise.all(heard.map((m) => plugin.handle(m))) };
         };
-        const reportsOn = async (request: number, reader = alice) =>
-          (await reader.sync()).filter((m) => m.senderId === agent.id && m.content?.run?.kind !== 'request' && m.content?.run?.request === request).map((m) => m.content?.text);
+        // The agent's reports on a request, each with its run field, or only their texts.
+        const reports = async (request: number, reader = alice) =>
+          (await reader.sync())
+            .filter((m) => m.senderId === agent.id && m.content?.run?.kind !== 'request' && m.content?.run?.request === request)
+            .map((m) => ({ text: m.content!.text, run: m.content!.run as RunReport }));
+        const reportsOn = async (request: number, reader = alice) => (await reports(request, reader)).map((r) => r.text);
+        type FakePull = { head: string; base: string; draft: boolean; title: string; body: string; edited?: object; closed?: string; view?: object };
+        const pullsNow = async () => JSON.parse(await fs.readFile(ghState, 'utf8')).pulls as FakePull[];
 
         // A teammate's request is refused.
         const fromCarol = (await ask(carol)).id;
@@ -721,7 +727,7 @@ describe('agent client (R-027)', () => {
         assert.equal(fix!.args[fix!.args.indexOf('--resume') + 1], first!.args[first!.args.indexOf('--session-id') + 1], 'the fix resumes the first turn');
         assert.equal(fix!.cwd, worktree);
         assert.ok(fix!.input.includes('CI failed: test') && fix!.input.includes('expected 3, got 4'), 'the brief says what failed, with the end of its log');
-        assert.deepEqual(await reportsOn(asked), ['I am fixing K-7: CI failed: test', `I finished K-7 on ${branch} (acme/app#1). The test passes.`]);
+        assert.deepEqual(await reportsOn(asked), ['I am back on K-7: CI failed: test', `I finished K-7 on ${branch} (acme/app#1). The test passes.`]);
         assert.equal(JSON.parse(await fs.readFile(ghState, 'utf8')).pulls.length, 1, 'the fix went to the same pull request');
 
         // A teammate's review waits for Alice's go, with the comments in full (D-105).
@@ -736,7 +742,7 @@ describe('agent client (R-027)', () => {
         await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'done', note: 'Renamed.' }) }, async () => (await checkIn()).handled);
         const [, , , go] = await turns();
         assert.ok(go!.input.includes('Please rename sum.') && go!.input.includes('Call it add.'), "the round has the review and Alice's words");
-        assert.deepEqual(await reportsOn(asked), ['I am fixing K-7: review from bob', `I finished K-7 on ${branch} (acme/app#1). Renamed.`]);
+        assert.deepEqual(await reportsOn(asked), ['I am back on K-7: review from bob', `I finished K-7 on ${branch} (acme/app#1). Renamed.`]);
 
         // Someone else pushes to it: it is theirs now, and Claude runs no more.
         await git(worktree, 'commit', '-q', '--allow-empty', '-m', 'By hand');
@@ -927,12 +933,11 @@ describe('agent client (R-027)', () => {
           return reportsOn(id);
         };
         const failed = JSON.stringify({ outcome: 'failed', note: 'Not today.' });
-        const lastPull = async () => JSON.parse(await fs.readFile(ghState, 'utf8')).pulls.at(-1) as { closed?: string };
         assert.deepEqual(await withEnv({ FAKE_CLAUDE_ANSWER: failed }, askWeb), ['I am on K-7: Sums are off by one', 'I could not run K-7: Not today.']);
-        assert.equal((await lastPull()).closed, 'The agent stopped: Not today. The branch stays.', 'a run that fails after its claim closes its draft (R-042)');
+        assert.equal((await pullsNow()).at(-1)!.closed, 'The agent stopped: Not today. The branch stays.', 'a run that fails after its claim closes its draft (R-042)');
         // A turn that says done but commits nothing fails, and its draft closes.
         assert.deepEqual(await withEnv({ FAKE_CLAUDE_COMMIT: '0' }, askWeb), ['I am on K-7: Sums are off by one', 'I could not run K-7: I left no new commits.']);
-        assert.equal((await lastPull()).closed, 'The agent stopped: I left no new commits. The branch stays.');
+        assert.equal((await pullsNow()).at(-1)!.closed, 'The agent stopped: I left no new commits. The branch stays.');
         // Disconnecting forgets the folder, never its files.
         assert.match(await new Plugin({ ...options, code: '', dataDir, projectDir: cloneDir }).call('disconnect'), /Disconnected acme\/web/);
         await plugin.scan();
@@ -1043,20 +1048,12 @@ describe('agent client (R-027)', () => {
           const { decisions: held } = await plugin.client!.boardDocs(app.project.id);
           return textHash(briefText(await k7Now(), held ? (await plugin.client!.sections(held)).map((s) => s.text) : []));
         };
-        // The agent's reports on a request, each with its run field.
-        const reports = async (request: number) =>
-          (await alice.sync())
-            .filter((m) => m.senderId === agent.id && m.content?.run?.kind !== 'request' && m.content?.run?.request === request)
-            .map((m) => ({ text: m.content!.text, run: m.content!.run as RunReport }));
         const runK7 = async (env: Record<string, string> = {}) =>
           withEnv(env, async () => {
             const id = (await ask(alice, { hash: await briefNow() })).id;
             await (await checkIn()).handled;
             return { id, said: await reports(id) };
           });
-        type FakePull = { head: string; base: string; draft: boolean; title: string; body: string; edited?: object; closed?: string; view?: object };
-        const pullsNow = async () => JSON.parse(await fs.readFile(ghState, 'utf8')).pulls as FakePull[];
-        const branchesNow = async () => (await sh('git', ['--git-dir', origin, 'branch', '--format=%(refname:short)'])).stdout.trim().split('\n').sort();
         const DAY = 24 * 60 * 60_000;
 
         // An open pull request that claims the card refuses the run, before the agent takes it.
@@ -1067,7 +1064,7 @@ describe('agent client (R-027)', () => {
         // A card the code already does ends at its check, pushes nothing, and offers its new status
         // as a change Alice adds (D-104).
         await fs.writeFile(ghState, JSON.stringify({ ...JSON.parse(await fs.readFile(ghState, 'utf8')), open: [] }));
-        const [pullsBeforeRuns, branchesBeforeRuns] = [(await pullsNow()).length, await branchesNow()];
+        const [pullsBeforeRuns, branchesBeforeRuns] = [(await pullsNow()).length, await branches()];
         const check = { outcome: 'stale', status: 'Done', note: 'sum.js adds exactly already.', checked: 'Read K-7 and sum.js on main.' };
         const stale = await runK7({ FAKE_CLAUDE_CHECK: JSON.stringify(check) });
         assert.deepEqual(stale.said.map((r) => r.text), ['I am on K-7: Sums are off by one', 'K-7 no longer holds: sum.js adds exactly already.']);
@@ -1080,13 +1077,13 @@ describe('agent client (R-027)', () => {
           replaces: { card: 'K-7', doc: board.id, section, seen: await textHash((await k7Now()).trim()) },
         });
         assert.equal((await turns()).length, turnsBefore + 1, 'only the check ran');
-        assert.deepEqual([(await pullsNow()).length, await branchesNow()], [pullsBeforeRuns, branchesBeforeRuns], 'nothing was pushed or opened');
+        assert.deepEqual([(await pullsNow()).length, await branches()], [pullsBeforeRuns, branchesBeforeRuns], 'nothing was pushed or opened');
 
         // A run that finds a decision nobody foresaw stops for it, with its claim and its work so far
         // pushed, and holds the card.
         const needed = { kind: 'decision', title: 'Sums round half to even', body: 'Why: money.', checked: 'Read sum.js.' };
         const paused = await runK7({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'decision', note: 'Rounding needs a rule.', drafts: [needed] }) });
-        assert.deepEqual(paused.said.map((r) => r.text), ['I am on K-7: Sums are off by one', 'K-7 needs a decision first: Sums round half to even. Add it on the board, then reply with its number.']);
+        assert.deepEqual(paused.said.map((r) => r.text), ['I am on K-7: Sums are off by one', 'K-7 needs a decision first: Sums round half to even. Add it on the board, then tell me to go on.']);
         assert.deepEqual(paused.said[1]!.run.card, { kind: 'D', title: 'Sums round half to even', body: 'Why: money.', checked: 'Read sum.js.' });
         const number = pullsBeforeRuns + 1;
         const pausedPull = (await pullsNow())[number - 1]!;
@@ -1097,7 +1094,7 @@ describe('agent client (R-027)', () => {
         const turnsPaused = (await turns()).length;
         await plugin.pollPulls(Date.now() + 2 * DAY);
         await plugin.pollPulls(Date.now() + 3 * DAY);
-        assert.deepEqual((await reports(paused.id)).map((r) => r.text), ['I still wait for your decision on K-7. Add it on the board, then reply with its number.']);
+        assert.deepEqual((await reports(paused.id)).map((r) => r.text), ['I still wait for your decision on K-7. Add it on the board, then tell me to go on.']);
         assert.equal((await turns()).length, turnsPaused, 'nothing runs before the go');
         // Alice adds the decision, which the board numbers D-1, and says go: the run goes on in its session.
         const decisionsNow = { id: newKeyId(), conversationId: general };
@@ -1115,10 +1112,10 @@ describe('agent client (R-027)', () => {
         await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify(finished) }, async () => (await checkIn()).handled);
         const resumed = (await turns()).at(-1)!;
         assert.equal(resumed.args[resumed.args.indexOf('--resume') + 1], pausedCheck!.args[pausedCheck!.args.indexOf('--session-id') + 1], 'it resumes the run');
-        assert.ok(resumed.input.includes('I added the decision as D-1') && resumed.input.includes('If you were waiting for a decision'), 'the round has the number');
+        assert.ok(resumed.input.includes('I added the decision as D-1') && resumed.input.includes('Your owner added the decision you waited for'), 'the round has the number');
         const goneOn = await reports(paused.id);
         assert.deepEqual(goneOn.map((r) => r.text), [
-          'I am fixing K-7: you asked for changes',
+          'I am back on K-7: you added the decision',
           `I finished K-7 on ${pausedPull.head} (acme/app#${number}). Sums round half to even.`,
           'Card draft: Totals round twice',
         ]);
@@ -1137,12 +1134,12 @@ describe('agent client (R-027)', () => {
         // A run left waiting for 7 days fails, and its draft closes with its branch kept.
         await unthrottle();
         const left = await runK7({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'decision', note: 'Totals need a rule.', drafts: [{ ...needed, title: 'Totals round once' }] }) });
-        assert.equal(left.said.at(-1)!.text, 'K-7 needs a decision first: Totals round once. Add it on the board, then reply with its number.');
+        assert.equal(left.said.at(-1)!.text, 'K-7 needs a decision first: Totals round once. Add it on the board, then tell me to go on.');
         await plugin.pollPulls(Date.now() + 8 * DAY);
-        assert.deepEqual((await reports(left.id)).map((r) => r.text), ['I could not run K-7: I stopped, as no decision came within 7 days. I closed the draft and kept its branch.']);
+        assert.deepEqual((await reports(left.id)).map((r) => r.text), ['I could not run K-7: No decision came within 7 days.']);
         const leftPull = (await pullsNow()).at(-1)!;
-        assert.equal(leftPull.closed, 'The agent stopped: no decision came within 7 days. The branch stays.');
-        assert.ok((await branchesNow()).includes(leftPull.head), 'the branch stays');
+        assert.equal(leftPull.closed, 'The agent stopped: No decision came within 7 days. The branch stays.');
+        assert.ok((await branches()).includes(leftPull.head), 'the branch stays');
       } finally {
         restore();
       }

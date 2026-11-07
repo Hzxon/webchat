@@ -336,7 +336,7 @@ export class Plugin {
     const npmCache = path.join(os.tmpdir(), 'webchat-npm', 'laptop');
     await fs.mkdir(npmCache, { recursive: true });
     await fs.writeFile(this.file('claude.json'), JSON.stringify(claudeSettings({ secrets: this.secrets, npmCache, guard: this.options.guard, env: process.env })));
-    this.runs = new Runs(client, (job) => this.run(job), (run) => this.cardRefusal(run));
+    this.runs = new Runs(client, (job) => this.run(job), (run) => this.cardRefusal(run), (taken, why) => this.abandon(taken, why));
     this.conversations = new Conversations(client, this.file('conversations.json'), (job) => this.converse(job));
     await this.conversations.load();
     this.watched = JSON.parse(await fs.readFile(this.file('pulls.json'), 'utf8').catch(() => '[]')) as Watched[];
@@ -440,10 +440,6 @@ export class Plugin {
     this.stop = new AbortController();
     const missed = await this.client!.sync().catch((error: unknown) => (log(error), []));
     await this.endStrandedDrafts().catch(log);
-    // A run whose turn went on when the daemon stopped never finished: its draft closes, and recover fails it (R-042, K-46).
-    for (const pull of this.watched.filter((w) => w.unfinished && this.client!.running.some((t) => t.message === w.taken.message))) {
-      await this.abandon(pull, 'the daemon stopped during the run');
-    }
     await this.runs!.recover().catch(log);
     await this.conversations!.recover().catch(log);
     missed.forEach((m) => this.handle(m));
@@ -801,6 +797,8 @@ export class Plugin {
       return void (await this.runs!.report(pull.taken, { kind: 'failed', note: text }, text));
     }
     pull.go = { review: fix.review, note: fix.note ?? '' };
+    // A run that waits for a decision waits no longer (R-042).
+    if (pull.unfinished) delete pull.unfinished.paused;
     await this.saveWatched();
     await this.pollPulls();
   }
@@ -812,26 +810,25 @@ export class Plugin {
    * an empty commit and the draft claim it before any code (D-062), and the work goes on in the same
    * session.
    */
-  private async run({ request, taken, card, decisions, projectId, signal }: Parameters<Runner>[0]): Promise<RunResult> {
+  private async run({ request, taken, card, cards, decisions, signal }: Parameters<Runner>[0]): Promise<RunResult> {
     const text = noCopy(request.repo!);
     const folder = await this.folderFor(request.repo!, signal, () => this.runs!.report(taken, { kind: 'nocopy', note: text }, text));
     const { branch, dir, base } = await addWorktree(folder.dir, request, path.join(folder.dir, '.claude', 'worktrees'));
     const place: Place = { branch, worktree: dir, base };
     const session = randomUUID();
-    const check = (await this.ask(dir, session, false, checkBrief(request.card, place, card, decisions, await this.board(projectId)), CHECK, signal)) as Record<string, unknown>;
-    const line = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 500);
+    const check = (await this.ask(dir, session, false, checkBrief(request.card, place, card, decisions, cards), CHECK, signal)) as Record<string, unknown>;
     const date = new Date().toISOString().slice(0, 10);
     if (check.outcome === 'stale') {
       // The owner's page offers the card's new status, with the reason, as a change they add (D-104).
       const now = readCard(card)!;
-      const why = line(check.note).replace(/\.$/, '') || 'It no longer holds';
+      const why = line(check.note, 500).replace(/\.$/, '') || 'It no longer holds';
       const status = `${check.status === 'Done' ? 'Done' : 'Dropped'} on ${date}: ${why}`.slice(0, LIMITS.checkedLength);
       const replaces = { card: now.id, doc: request.docId, section: request.section, seen: await textHash(card.trim()) };
-      return { branch, note: why, stale: { kind: now.kind, title: now.title, body: now.body, status, checked: line(check.checked), replaces } };
+      return { kind: 'stale', branch, note: why, card: { kind: now.kind, title: now.title, body: now.body, status, checked: line(check.checked, 500), replaces } };
     }
     await exec('git', ['-C', dir, ...NO_HOOKS, 'commit', '-q', '--allow-empty', '-m', `chore: Claim ${request.card}`]);
     const head = await this.push(place);
-    const body = `Claims ${request.card}. Checked ${date}: ${line(check.checked)}`;
+    const body = `Claims ${request.card}. Checked ${date}: ${line(check.checked, 500)}`;
     const pull = await this.openDraft(place, `${request.card}: ${request.title}`, body, folder.repo);
     const watched: Watched = { ...place, taken, request, pull, head, session, fixes: 0, seenHead: '', seenNote: new Date().toISOString(), unfinished: {} };
     this.watched.push(watched);
@@ -842,32 +839,24 @@ export class Plugin {
   /**
    * A turn of work on a claimed card, in its session: done, with a title and body that replace the
    * claim's, or stopped for a decision nobody foresaw, which waits for its owner's go (R-042). What
-   * it commits is pushed, never forced. Its drafts are what it asks of the board. A run that fails
-   * before its work is done closes its draft.
+   * it commits is pushed, never forced. Its drafts are what it asks of the board.
    */
   private async finish(pull: Watched, brief: string, resume: boolean, signal: AbortSignal): Promise<RunResult> {
-    try {
-      return await this.turn(pull, brief, resume, signal);
-    } catch (error) {
-      if (pull.unfinished) await this.abandon(pull, messageOf(error));
-      throw error;
-    }
-  }
-
-  private async turn(pull: Watched, brief: string, resume: boolean, signal: AbortSignal): Promise<RunResult> {
     const answer = await this.work(pull, pull.session!, resume, brief, signal);
-    const { seen } = await seenOf(await this.board(this.projectOf(pull.request)));
-    const drafts = (Array.isArray(answer.drafts) ? answer.drafts : []).flatMap((d) => draftOf(d, seen, new Set(Object.keys(seen))) ?? []);
+    // The board is read only for an answer that names cards or decisions.
+    const named = [answer.drafts, answer.decisions].some((list) => Array.isArray(list) && list.length);
+    const { seen } = await seenOf(named ? await this.board(this.projectOf(pull.request)) : undefined);
+    // A few drafts at most, since each is a message of its own.
+    const drafts = draftsOf(answer.drafts, seen, new Set(Object.keys(seen))).slice(0, 5);
     // Only what this turn added: the claim, or the last round, is pushed already.
     const place: Place = { ...pull, base: pull.head };
-    const added = (await exec('git', ['-C', pull.worktree, 'log', '--oneline', `${pull.head}..HEAD`])).stdout.trim();
     if (answer.outcome === 'decision') {
       const decision = drafts.find((d) => d.kind === 'D');
       if (!decision) throw new Error(answer.note || 'I stopped for a decision, but drafted none.');
-      if (added) pull.head = await this.push(place);
+      if (await newCommits(place)) pull.head = await this.push(place);
       pull.unfinished = { paused: Date.now() };
       await this.saveWatched();
-      return { branch: pull.branch, pull: pull.pull, note: answer.note || undefined, decision };
+      return { kind: 'decision', branch: pull.branch, pull: pull.pull, note: answer.note || undefined, card: decision };
     }
     pull.head = await this.push(place);
     delete pull.unfinished;
@@ -880,8 +869,10 @@ export class Plugin {
     return { branch: pull.branch, pull: pull.pull, note: answer.note || undefined, drafts };
   }
 
-  /** Closes the draft of a run that ended before its work was done, saying why, and stops watching it; the branch stays (R-042). */
-  private async abandon(pull: Watched, why: string) {
+  /** Closes the draft of a run that fails before its work is done, saying why, and stops watching it; the branch stays (R-042). */
+  private async abandon(taken: TakenRequest, why: string) {
+    const pull = this.watched.find((w) => w.unfinished && w.taken.message === taken.message);
+    if (!pull) return;
     await this.unwatch(pull);
     await gh(['pr', 'close', String(pull.pull.number), '--repo', pull.pull.repo, '--comment', `The agent stopped: ${why.replace(/\.?$/, '.')} The branch stays.`]).catch(log);
   }
@@ -971,8 +962,7 @@ export class Plugin {
     conversation.seen = seen;
     conversation.pulls = listed;
     const held = new Set([...Object.keys(seen), ...(pulls ?? []).map((p) => `#${p.number}`)]);
-    const drafts = (Array.isArray(answer.drafts) ? answer.drafts : []).flatMap((d) => draftOf(d, seen, held) ?? []);
-    return { reply: String(answer.reply ?? ''), drafts: drafts.slice(0, 2) };
+    return { reply: String(answer.reply ?? ''), drafts: draftsOf(answer.drafts, seen, held).slice(0, 2) };
   }
 
   /**
@@ -996,7 +986,7 @@ export class Plugin {
     if ((await git('symbolic-ref', '--short', 'HEAD').catch(() => '')) !== place.branch) {
       throw new Error(`The work is not on ${place.branch}, the branch the worktree started on.`);
     }
-    if (!(await git('log', '--oneline', `${place.base}..HEAD`))) throw new Error('I left no new commits.');
+    if (!(await newCommits(place))) throw new Error('I left no new commits.');
     // Only this branch, and never forced: a push that would drop someone's commits fails.
     await git('push', '-q', 'origin', `refs/heads/${place.branch}:refs/heads/${place.branch}`);
     return git('rev-parse', 'HEAD');
@@ -1102,33 +1092,32 @@ export class Plugin {
         // A draft whose folder is gone, or unsafe now, waits until it is back.
         const folder = this.folderOf(pull.pull.repo);
         if (!folder || (await this.folderRefusal(folder))) continue;
-        const view = JSON.parse(await gh(['pr', 'view', String(pull.pull.number), '--repo', pull.pull.repo, '--json', PULL_FIELDS])) as PullView;
-        // A run that waits for a decision goes on only on its owner's go, and gets a reminder after a day (R-042).
-        const paused = !pull.go && pull.unfinished?.paused;
-        const merged = view.state === 'MERGED';
-        const ended = this.endOf(pull, view) || (paused && now - paused > 7 * DAY_MS ? 'no decision came within 7 days' : '');
-        if (ended && pull.unfinished && !merged) {
-          // A run that ends before its work is done fails, and its draft closes with the branch kept.
-          await this.abandon(pull, ended);
-          await this.runs.fail(pull.taken, `I stopped, as ${ended}. I closed the draft and kept its branch.`);
+        // A run that waits for a decision needs only whether its draft ended.
+        const fields = pull.unfinished?.paused ? 'state,headRefOid' : PULL_FIELDS;
+        const view = JSON.parse(await gh(['pr', 'view', String(pull.pull.number), '--repo', pull.pull.repo, '--json', fields])) as PullView;
+        const ended = this.endOf(pull, view, now);
+        if (ended && pull.unfinished && view.state !== 'MERGED') {
+          // A run that ends before its work is done fails, which closes its draft (R-042).
+          await this.runs.fail(pull.taken, `${ended[0]!.toUpperCase()}${ended.slice(1)}.`);
           continue;
         }
         if (ended) {
-          await this.end(pull, ended, merged);
+          await this.end(pull, ended, view.state === 'MERGED');
           continue;
         }
-        if (paused) {
-          if (now - paused > DAY_MS && !pull.unfinished!.reminded) {
-            pull.unfinished!.reminded = true;
+        // It goes on only on its owner's go, and reminds them once after a day (R-042).
+        if (pull.unfinished?.paused) {
+          if (now - pull.unfinished.paused > DAY_MS && !pull.unfinished.reminded) {
+            pull.unfinished.reminded = true;
             await this.saveWatched();
-            await this.runs.report(pull.taken, { kind: 'decision', note: 'I still wait for the decision.', pull: pull.pull }, `I still wait for your decision on ${pull.request.card}. Add it on the board, then reply with its number.`);
+            await this.runs.report(pull.taken, { kind: 'decision', note: 'I still wait for the decision.', pull: pull.pull }, `I still wait for your decision on ${pull.request.card}. Add it on the board, then tell me to go on.`);
           }
           continue;
         }
         if (pull.go) {
           // Only the review the owner approved, as it showed it, and their words; a reply alone runs only those.
           const asked = pull.go.review === undefined ? undefined : pull.waiting?.find((w) => w.report === pull.go!.review);
-          const why = { line: asked?.line ?? 'you asked for changes', details: [asked?.details, pull.go.note && `Your owner asks:\n\n${pull.go.note}`].filter(Boolean).join('\n\n') };
+          const why = { line: asked?.line ?? (pull.unfinished ? 'you added the decision' : 'you asked for changes'), details: [asked?.details, pull.go.note && `Your owner asks:\n\n${pull.go.note}`].filter(Boolean).join('\n\n') };
           pull.waiting = pull.waiting?.filter((w) => w !== asked);
           delete pull.go;
           await this.saveWatched();
@@ -1152,12 +1141,13 @@ export class Plugin {
     }
   }
 
-  /** Why watching a pull request stops, or '' while it goes on. */
-  private endOf(pull: Watched, view: PullView) {
+  /** Why watching a pull request stops, or '' while it goes on. A run that waits for a decision waits 7 days at most (R-042). */
+  private endOf(pull: Watched, view: PullView, now: number) {
     if (this.runs!.cancelled.has(pull.taken.message)) return 'you stopped it';
     if (view.state === 'MERGED') return 'it was merged';
     if (view.state !== 'OPEN') return 'it was closed';
-    return view.headRefOid !== pull.head ? 'someone else pushed to it' : '';
+    if (view.headRefOid !== pull.head) return 'someone else pushed to it';
+    return pull.unfinished?.paused && now - pull.unfinished.paused > 7 * DAY_MS ? 'no decision came within 7 days' : '';
   }
 
   /** Stops watching a pull request and says why in the chat of its request (D-105). */
@@ -1255,7 +1245,7 @@ export class Plugin {
     // A draft from before R-035 has no session to resume, so its first round starts one.
     const resume = pull.session !== undefined;
     pull.session ??= randomUUID();
-    return this.finish(pull, fixBrief(pull, why), resume, signal);
+    return this.finish(pull, (pull.unfinished ? goBrief : fixBrief)(pull, why), resume, signal);
   }
 
   private async unwatch(pull: Watched) {
@@ -1274,8 +1264,8 @@ const RULES = [
 ];
 
 /** A run's first turn: the check that its card still holds, before anything changes (R-042, D-107). */
-function checkBrief(cardId: string, place: Place, card: string, decisions: string, board?: Board) {
-  const others = (board?.cards ?? []).map((c) => c.text).filter((text) => text !== card.trim());
+function checkBrief(cardId: string, place: Place, card: string, decisions: string, cards: string[]) {
+  const others = cards.filter((text) => text.trim() !== card.trim());
   return [
     `You are running card ${cardId} from your owner's WebChat board, in this worktree, on branch \`${place.branch}\` from ${place.base}.`,
     '',
@@ -1367,13 +1357,22 @@ function promptBrief(input: string, board: Board | undefined, repo: string | und
   ].join('\n');
 }
 
+/** A value the model gave, as one line of at most `max` characters, or '' when it is no text. */
+const line = (value: unknown, max: number) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
+
+/** The drafts in a turn's answer that have the right shape, as `draftOf` reads each. */
+const draftsOf = (raw: unknown, seen: NonNullable<Conversation['seen']>, held: Set<string>) =>
+  (Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : []).flatMap((d) => draftOf(d, seen, held) ?? []);
+
+/** The commits of a place's branch since its base, a line each, or '' when there are none. */
+const newCommits = (place: Place) => exec('git', ['-C', place.worktree, 'log', '--oneline', `${place.base}..HEAD`]).then((r) => r.stdout.trim());
+
 /**
  * A draft in a turn's answer, if it has the right shape (D-104). A change names a card or decision
  * the brief held, with the hash of its text there; a draft naming another becomes a new one. It
  * keeps only related ids the brief held: cards, decisions and open pull requests (D-116).
  */
 function draftOf(raw: Record<string, unknown> | undefined, seen: NonNullable<Conversation['seen']>, held: Set<string>): CardDraftDTO | undefined {
-  const line = (value: unknown, max: number) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
   const title = line(raw?.title, LIMITS.docTitleLength);
   const asked = raw?.kind === 'idea' ? 'R' : raw?.kind === 'issue' ? 'K' : raw?.kind === 'decision' ? 'D' : undefined;
   if (!raw || !asked || !title || typeof raw.body !== 'string') return;
@@ -1401,14 +1400,24 @@ function fixBrief(pull: Watched, why: { line: string; details: string }) {
   return [
     `You are fixing the draft pull request ${pull.pull.repo}#${pull.pull.number} of card ${pull.request.card}: ${why.line}.`,
     '',
-    `Work in this worktree, on branch \`${pull.branch}\`. origin is fetched, so \`git log HEAD..${pull.base}\` shows what`,
-    'moved on the default branch since. Commit the fix on this branch and end with the outcome "done" and a note; the',
-    'plugin pushes it. If you were waiting for a decision, your owner names its number below: go on with the work, and',
-    'end as the brief before said. If you cannot fix it, end with the outcome "failed".',
+    `Work in this worktree, on branch \`${pull.branch}\`. origin is fetched. Commit the fix on this branch and end`,
+    'with the outcome "done" and a note; the plugin pushes it. If you cannot fix it, end with the outcome "failed".',
     '',
     ...RULES,
     '',
     '## What to fix',
+    '',
+    why.details,
+  ].join('\n');
+}
+
+/** A paused run's next turn, in its session, once its owner added the decision it waited for (R-042). */
+function goBrief(pull: Watched, why: { details: string }) {
+  return [
+    `Your owner added the decision you waited for, and says go. origin is fetched, so \`git log HEAD..${pull.base}\``,
+    'shows what moved on the default branch since. Go on with the work on this branch, and end as the brief before said.',
+    '',
+    ...RULES,
     '',
     why.details,
   ].join('\n');
