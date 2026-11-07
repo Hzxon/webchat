@@ -787,7 +787,8 @@ database, as Apple refuses refreshes under 20 minutes.
 Cost: depends on Bark and a key its author could withdraw; it goes in `BARK_APNS_KEY`, never the
 repository. Apple sees push timing and collapse id, and without encryption the names; Bark sees
 the alert (README lists this). No delivered tick until WebChat opens. Link state is not in the sync
-fingerprint (D-021).
+fingerprint (D-021): on iOS before 16.4 the page asks for it on load and the bell dialog updates it,
+so the sidebar warning ends once a phone has registered (K-1).
 
 ### D-024: Every project member is in every channel
 
