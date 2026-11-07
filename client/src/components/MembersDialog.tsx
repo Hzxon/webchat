@@ -38,7 +38,7 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
   const rank = (id: number) => (id === ownerId ? 0 : id === me.id ? 1 : 2);
   const people = memberIds
     .map((id) => ({ id, user: id === me.id ? me : users[id] }))
-    .map(({ id, user }) => ({ id, name: user?.displayName ?? 'Someone', username: user?.username ?? '', online: user?.online }))
+    .map(({ id, user }) => ({ id, name: user?.displayName ?? 'Someone', username: user?.username ?? '', online: user?.online, agent: user?.agentOwner != null }))
     .sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));
   const owner = people.find((p) => p.id === ownerId);
   // The owner hands it over first, so it always has one. The last person in it deletes it instead.
@@ -108,14 +108,17 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
             </span>
             {canManage && person.id !== me.id && person.id !== ownerId && (
               <span className="member-actions">
-                <button
-                  className="member-hand-over"
-                  onClick={() => handOver(person)}
-                  disabled={busy}
-                  aria-label={`Make ${person.name} the owner of ${name}`}
-                >
-                  Make owner
-                </button>
+                {/* An agent can neither remove people nor hand it back, so it never owns one (D-114). */}
+                {!person.agent && (
+                  <button
+                    className="member-hand-over"
+                    onClick={() => handOver(person)}
+                    disabled={busy}
+                    aria-label={`Make ${person.name} the owner of ${name}`}
+                  >
+                    Make owner
+                  </button>
+                )}
                 <button
                   className="member-remove"
                   onClick={() => remove(person)}

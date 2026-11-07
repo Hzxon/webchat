@@ -1204,6 +1204,19 @@ Cost: a check of any age counts, unlike a run (D-089), since Claude Code may hav
 server that withheld a newer check could play an older one again, along with the keys it named.
 The owner verified those keys once.
 
+### D-114: Only a person owns a project or group
+
+Accepted 2026-11-07 in #154 (K-67).
+
+The members dialog offers "Make owner" only for people, and the server answers `400 agent_owner`
+to a handover to an agent. Why: an owner removes people, hands over and deletes (D-045). An agent
+makes no keys, so it cannot remove anyone (D-085, D-044), and it never opens the page, so it cannot
+hand the project back. A project it owned would also block removing the agent and its owner's
+account deletion (D-093).
+
+Cost: a project whose only other member is an agent can never be handed over, so its owner
+deletes it instead of leaving.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope

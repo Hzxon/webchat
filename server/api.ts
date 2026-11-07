@@ -341,6 +341,16 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     }
   }
 
+  /**
+   * Whom a project or group is handed to: a person, never an agent, which can neither remove people
+   * nor hand it back (D-114). No account becomes an agent later, so this needs no lock.
+   */
+  async function newOwnerOf(body: { userId?: unknown } | undefined) {
+    const userId = positiveInt(body?.userId, 'userId');
+    if ((await db.getUser(userId))?.agent_owner) throw new HttpError(400, 'An agent cannot own a project or group.', 'agent_owner');
+    return userId;
+  }
+
   /** True when the user owns the project. For page loads, which answer with redirects instead of errors. */
   const ownsProject = async (projectId: number, userId: number) =>
     Number.isInteger(projectId) &&
@@ -716,7 +726,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const me = currentUser(res);
     const conversationId = positiveInt(req.params.id, 'Chat id');
     await requireGroupOwner(conversationId, me.id);
-    if (!(await db.handOverGroup(conversationId, me.id, positiveInt(req.body?.userId, 'userId')))) {
+    if (!(await db.handOverGroup(conversationId, me.id, await newOwnerOf(req.body)))) {
       throw new HttpError(409, 'The group changed while you were editing. Try again.', 'stale_group');
     }
     res.json(await db.conversationFor(me.id, conversationId));
@@ -879,7 +889,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const me = currentUser(res);
     const projectId = positiveInt(req.params.id, 'Project id');
     await requireProjectOwner(projectId, me.id);
-    if (!(await db.handOverProject(projectId, me.id, positiveInt(req.body?.userId, 'userId')))) {
+    if (!(await db.handOverProject(projectId, me.id, await newOwnerOf(req.body)))) {
       throw projectRefusal('stale');
     }
     res.json(await db.projectFor(me.id, projectId));
