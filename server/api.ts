@@ -38,6 +38,7 @@ import {
   type CreateDocInput,
   type CreateProjectResponse,
   type EnvelopeDTO,
+  type FirstChatKeyInput,
   type GithubDTO,
   type LoginResponse,
   type KeyLinkInput,
@@ -375,6 +376,17 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     }
   }
 
+  /**
+   * A new chat's first key, for an id reserved for this user and not used yet, which its copies
+   * name (D-111). Wrapped exactly once for each of `memberIds` when given.
+   */
+  async function firstKey(value: unknown, userId: number, memberIds?: number[]): Promise<FirstChatKeyInput> {
+    const key = memberIds ? chatKey(value, memberIds) : wrappedChatKey(value);
+    const conversationId = positiveInt((value as { conversationId?: unknown } | undefined)?.conversationId, 'Chat id');
+    if (!(await db.takeConversationId(conversationId, userId))) throw new HttpError(400, 'That chat id was not reserved for you.');
+    return { ...key, conversationId };
+  }
+
   /** Marks the newest message from others in each chat as delivered to this user. */
   function markDeliveredFrom(userId: number, messages: MessageDTO[]) {
     const upTo = new Map<number, number>();
@@ -624,6 +636,11 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     res.status(204).end();
   });
 
+  /** Reserves the id of a chat this user is about to create, for the copies of its first key to name (D-111). */
+  router.post('/conversations/ids', requireAuth, async (_req, res) => {
+    res.json({ id: await db.reserveConversationId(currentUser(res).id) });
+  });
+
   router.post('/conversations/direct', requireAuth, async (req, res) => {
     const me = currentUser(res);
     const otherId = positiveInt(req.body?.userId, 'userId');
@@ -632,7 +649,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     if (id === undefined) {
       const memberIds = [me.id, otherId];
       await requireKeys(memberIds);
-      const key = chatKey(req.body?.key, memberIds);
+      const key = await firstKey(req.body?.key, me.id, memberIds);
       id = await db.createConversation('direct', null, memberIds, { ...key, wrappedBy: me.id });
     }
     res.json(await db.conversationFor(me.id, id));
@@ -645,7 +662,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     if (memberIds.length === 0) throw new HttpError(400, 'Pick at least one person.');
     const allIds = [me.id, ...memberIds];
     await requireKeys(allIds);
-    const key = chatKey(req.body?.key, allIds);
+    const key = await firstKey(req.body?.key, me.id, allIds);
     const id = await db.createConversation('group', title, allIds, { ...key, wrappedBy: me.id });
     res.status(201).json(await db.conversationFor(me.id, id));
   });
@@ -742,7 +759,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     if (memberIds.length > LIMITS.addMembersAtOnce) throw new HttpError(400, 'Too many people at once.');
     const allIds = [me.id, ...memberIds];
     await requireKeys(allIds);
-    const key = chatKey(req.body?.key, allIds);
+    const key = await firstKey(req.body?.key, me.id, allIds);
     const { projectId, channelId } = await db.createProject(name, me.id, allIds, key);
     const project = (await db.projectFor(me.id, projectId))!;
     if (memberIds.length > 0) inBackground(notifyAddedToProject(push, config, project, channelId, me, memberIds), config.logger);
@@ -756,7 +773,8 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     await requireProjectMember(projectId, me.id);
     const name = channelName(req.body?.name);
     // Whether the key covers exactly the project's members is checked while the project is locked.
-    const created = await db.createChannel(projectId, name, me.id, wrappedChatKey(req.body?.key));
+    const key = await firstKey(req.body?.key, me.id);
+    const created = await db.createChannel(projectId, name, me.id, key);
     if (typeof created !== 'number') throw projectRefusal(created);
     res.status(201).json(await db.conversationFor(me.id, created));
   });

@@ -247,11 +247,10 @@ otherwise. Bind a reaction to something its target's sender signed, such as the 
 
 ### K-43: A chat key's wrap does not name its chat
 
-Status: Open, half fixed in #146: pages and agents now keep the key ids a link showed replaced, so
-a dropped link no longer brings an old key back. The wrap still does not name its chat: a new
-chat's first key is wrapped before the server gives the chat its id, in `startDirectChat`,
-`startGroupChat`, `createProject` and `createChannel`, so binding it needs those to change first.
-Found in a security review of main on 2026-11-05.
+Status: Fixed in #150 (D-111): each copy of a chat key names its chat, and a new chat's first key
+is made for an id the page reserves first. Since #146, pages and agents keep the key ids a link
+showed replaced, so a dropped link no longer brings an old key back. Found in a security review of
+main on 2026-11-05.
 
 `pairKey` in `shared/e2ee.ts` binds the key id and the two users into the wrap, but not the
 conversation. The key link binds it. The only check that a replaced key never encrypts again

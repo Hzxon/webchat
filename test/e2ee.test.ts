@@ -95,36 +95,67 @@ describe('end-to-end encryption', () => {
   test('a wrapped chat key opens only for its member, from its real creator, under its key id', async () => {
     const raw = newChatKeyBytes();
     const keyId = newKeyId();
-    const forBob = await wrapChatKey(raw, alice, { id: bob.id, dh: bob.identity.publicKeys.dh }, keyId);
+    const forBob = await wrapChatKey(raw, alice, { id: bob.id, dh: bob.identity.publicKeys.dh }, keyId, 7);
     const aliceAsWrapper = { id: alice.id, dh: alice.identity.publicKeys.dh };
 
-    const bobKey = await unwrapChatKey(forBob, bob, aliceAsWrapper, keyId);
+    const bobKey = await unwrapChatKey(forBob, bob, aliceAsWrapper, keyId, 7);
     const meta: MessageMeta = { conversationId: 7, senderId: alice.id, urgent: false, clientId: 'c1' };
     const envelope = await encryptMessage(await importChatKey(raw), keyId, alice.identity.signPrivate, meta, 'hi');
     assert.equal(await decryptMessage(bobKey, alice.identity.publicKeys.sign, meta, envelope), 'hi');
 
-    await assert.rejects(unwrapChatKey(forBob, carol, aliceAsWrapper, keyId), 'another member cannot open it');
+    await assert.rejects(unwrapChatKey(forBob, carol, aliceAsWrapper, keyId, 7), 'another member cannot open it');
     await assert.rejects(
-      unwrapChatKey(forBob, bob, { id: carol.id, dh: carol.identity.publicKeys.dh }, keyId),
+      unwrapChatKey(forBob, bob, { id: carol.id, dh: carol.identity.publicKeys.dh }, keyId, 7),
       'a different claimed creator fails',
     );
-    await assert.rejects(unwrapChatKey(forBob, bob, aliceAsWrapper, newKeyId()), 'a different key id fails');
+    await assert.rejects(unwrapChatKey(forBob, bob, aliceAsWrapper, newKeyId(), 7), 'a different key id fails');
+  });
+
+  test('a wrapped chat key opens only in the chat it names, so the server cannot move it to another (K-43)', async () => {
+    const raw = newChatKeyBytes();
+    const keyId = newKeyId();
+    const aliceAsWrapper = { id: alice.id, dh: alice.identity.publicKeys.dh };
+    const forBob = await wrapChatKey(raw, alice, { id: bob.id, dh: bob.identity.publicKeys.dh }, keyId, 7);
+    assert.deepEqual(await openChatKeyBytes(forBob, bob, aliceAsWrapper, keyId, 7), raw);
+    await assert.rejects(openChatKeyBytes(forBob, bob, aliceAsWrapper, keyId, 8), 'another chat fails');
+  });
+
+  test('a chat key wrapped before wraps named their chat still opens', async () => {
+    const raw = newChatKeyBytes();
+    const keyId = newKeyId();
+    // What wrapChatKey made before K-43: the pair key's info named only the two people.
+    const shared = await crypto.subtle.deriveBits(
+      { name: 'ECDH', public: await crypto.subtle.importKey('raw', fromBase64Url(bob.identity.publicKeys.dh), { name: 'ECDH', namedCurve: 'P-256' }, false, []) },
+      alice.identity.dhPrivate,
+      256,
+    );
+    const pair = await crypto.subtle.deriveKey(
+      { name: 'HKDF', hash: 'SHA-256', salt: fromBase64Url(keyId), info: new TextEncoder().encode(`webchat/chat-key/v1|from:${alice.id}|to:${bob.id}`) },
+      await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']),
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt'],
+    );
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(keyId) }, pair, raw);
+    const old = { iv: toBase64Url(iv), data: toBase64Url(data) };
+    assert.deepEqual(await openChatKeyBytes(old, bob, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId, 7), raw);
   });
 
   test('a member can share a chat key with a newcomer, who opens it only from that member', async () => {
     const raw = newChatKeyBytes();
     const keyId = newKeyId();
-    const forBob = await wrapChatKey(raw, alice, { id: bob.id, dh: bob.identity.publicKeys.dh }, keyId);
-    const bobsCopy = await openChatKeyBytes(forBob, bob, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId);
+    const forBob = await wrapChatKey(raw, alice, { id: bob.id, dh: bob.identity.publicKeys.dh }, keyId, 9);
+    const bobsCopy = await openChatKeyBytes(forBob, bob, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId, 9);
     assert.deepEqual(bobsCopy, raw);
 
-    const forCarol = await wrapChatKey(bobsCopy, bob, { id: carol.id, dh: carol.identity.publicKeys.dh }, keyId);
+    const forCarol = await wrapChatKey(bobsCopy, bob, { id: carol.id, dh: carol.identity.publicKeys.dh }, keyId, 9);
     const meta: MessageMeta = { conversationId: 9, senderId: alice.id, urgent: false, clientId: 'old' };
     const history = await encryptMessage(await importChatKey(raw), keyId, alice.identity.signPrivate, meta, 'from before Carol joined');
-    const carolKey = await unwrapChatKey(forCarol, carol, { id: bob.id, dh: bob.identity.publicKeys.dh }, keyId);
+    const carolKey = await unwrapChatKey(forCarol, carol, { id: bob.id, dh: bob.identity.publicKeys.dh }, keyId, 9);
     assert.equal(await decryptMessage(carolKey, alice.identity.publicKeys.sign, meta, history), 'from before Carol joined');
     await assert.rejects(
-      unwrapChatKey(forCarol, carol, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId),
+      unwrapChatKey(forCarol, carol, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId, 9),
       'the copy names Bob as its wrapper, not Alice',
     );
   });
@@ -259,8 +290,8 @@ describe('end-to-end encryption', () => {
   test('the creator can wrap the chat key for their own other devices', async () => {
     const raw = newChatKeyBytes();
     const keyId = newKeyId();
-    const forSelf = await wrapChatKey(raw, alice, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId);
-    const key = await unwrapChatKey(forSelf, alice, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId);
+    const forSelf = await wrapChatKey(raw, alice, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId, 1);
+    const key = await unwrapChatKey(forSelf, alice, { id: alice.id, dh: alice.identity.publicKeys.dh }, keyId, 1);
     assert.equal(key.extractable, false);
   });
 

@@ -121,7 +121,7 @@ describe('The keyring in client/src/e2ee/keyring.ts, after a key change nobody c
   /** A chat whose new key the swapped keys wrapped for this user, as a server holding them could. */
   async function keyedBySwappedKeys(): Promise<ConversationDTO> {
     const keyId = newKeyId();
-    const wrapped = await wrapChatKey(newChatKeyBytes(), { id: OTHER, identity: swapped }, { id: ME, dh: mine.publicKeys.dh }, keyId);
+    const wrapped = await wrapChatKey(newChatKeyBytes(), { id: OTHER, identity: swapped }, { id: ME, dh: mine.publicKeys.dh }, keyId, CHAT);
     return {
       id: CHAT,
       keyId,
@@ -223,7 +223,7 @@ describe('The key checks in shared/keyring.ts, which the page and the agent shar
     ring = new SharedKeyring({ id: ME, identity: mine }, {}, () => {});
     keysOf = (id) => (id === ME ? mine.publicKeys : other.publicKeys);
     const newerRaw = newChatKeyBytes();
-    const wrapped = await wrapChatKey(newerRaw, { id: OTHER, identity: other }, { id: ME, dh: mine.publicKeys.dh }, newer);
+    const wrapped = await wrapChatKey(newerRaw, { id: OTHER, identity: other }, { id: ME, dh: mine.publicKeys.dh }, newer, CHAT);
     link = { keyId: newer, previousKeyId: older, ...(await linkChatKey(await importChatKey(newerRaw), newer, CHAT, olderRaw, older)) };
     chat = { id: CHAT, keyId: newer, myKey: { wrappedBy: OTHER, ...wrapped }, members: [member(ME), member(OTHER)], keyLinks: [link] } as unknown as ConversationDTO;
   });

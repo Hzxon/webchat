@@ -205,18 +205,27 @@ export const newChatKeyBytes = () => randomBytes(32);
 export const importChatKey = (raw: Uint8Array<ArrayBuffer>) =>
   subtle().importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
 
-/** The key that wraps a chat key between two people. Both sides derive the same one. */
-async function pairKey(myDhPrivate: CryptoKey, theirDhPublic: string, keyId: string, from: number, to: number) {
+/** The secret two people share, from which the keys that wrap chat keys between them come. */
+async function pairSecret(myDhPrivate: CryptoKey, theirDhPublic: string) {
   const shared = await subtle().deriveBits({ name: 'ECDH', public: await importDhPublic(theirDhPublic) }, myDhPrivate, 256);
-  const hkdf = await subtle().importKey('raw', shared, 'HKDF', false, ['deriveKey']);
-  return subtle().deriveKey(
-    { name: 'HKDF', hash: 'SHA-256', salt: fromBase64Url(keyId), info: utf8(`webchat/chat-key/v1|from:${from}|to:${to}`) },
-    hkdf,
+  return subtle().importKey('raw', shared, 'HKDF', false, ['deriveKey']);
+}
+
+/**
+ * What a key that wraps a chat key names: the chat, so the server cannot hand a copy made for one
+ * chat out as another chat's key (D-111), and who wrapped it for whom.
+ */
+const pairInfo = (conversationId: number, from: number, to: number) => `webchat/chat-key/v2|conv:${conversationId}|from:${from}|to:${to}`;
+
+/** The key that wraps a chat key between two people. Both sides derive the same one. */
+const pairKey = (secret: CryptoKey, keyId: string, info: string) =>
+  subtle().deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: fromBase64Url(keyId), info: utf8(info) },
+    secret,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt'],
   );
-}
 
 export interface WrappedKey {
   iv: string;
@@ -228,8 +237,9 @@ export async function wrapChatKey(
   me: { id: number; identity: Identity },
   member: { id: number; dh: string },
   keyId: string,
+  conversationId: number,
 ): Promise<WrappedKey> {
-  const key = await pairKey(me.identity.dhPrivate, member.dh, keyId, me.id, member.id);
+  const key = await pairKey(await pairSecret(me.identity.dhPrivate, member.dh), keyId, pairInfo(conversationId, me.id, member.id));
   const iv = randomBytes(12);
   const data = await subtle().encrypt({ name: 'AES-GCM', iv, additionalData: utf8(keyId) }, key, raw);
   return { iv: toBase64Url(iv), data: toBase64Url(data) };
@@ -237,31 +247,37 @@ export async function wrapChatKey(
 
 /**
  * The raw bytes of a chat key, to wrap it again for a new member. Throws unless the named
- * wrapper's key really made it for this user.
+ * wrapper's key really made it for this user, in this chat or before copies named their chat.
  */
 export async function openChatKeyBytes(
   wrapped: WrappedKey,
   me: { id: number; identity: Identity },
   wrapper: { id: number; dh: string },
   keyId: string,
+  conversationId: number,
 ): Promise<Uint8Array<ArrayBuffer>> {
-  const key = await pairKey(me.identity.dhPrivate, wrapper.dh, keyId, wrapper.id, me.id);
-  const raw = await subtle().decrypt(
-    { name: 'AES-GCM', iv: fromBase64Url(wrapped.iv), additionalData: utf8(keyId) },
-    key,
-    fromBase64Url(wrapped.data),
-  );
-  return new Uint8Array(raw);
+  const secret = await pairSecret(me.identity.dhPrivate, wrapper.dh);
+  const open = async (info: string) =>
+    new Uint8Array(
+      await subtle().decrypt(
+        { name: 'AES-GCM', iv: fromBase64Url(wrapped.iv), additionalData: utf8(keyId) },
+        await pairKey(secret, keyId, info),
+        fromBase64Url(wrapped.data),
+      ),
+    );
+  // A copy made before D-111 names no chat.
+  return open(pairInfo(conversationId, wrapper.id, me.id)).catch(() => open(`webchat/chat-key/v1|from:${wrapper.id}|to:${me.id}`));
 }
 
-/** Unwraps a chat key. Throws unless the named wrapper's key really made it for this user. */
+/** Unwraps a chat key. Throws unless the named wrapper's key really made it for this user, in this chat. */
 export async function unwrapChatKey(
   wrapped: WrappedKey,
   me: { id: number; identity: Identity },
   wrapper: { id: number; dh: string },
   keyId: string,
+  conversationId: number,
 ): Promise<CryptoKey> {
-  return importChatKey(await openChatKeyBytes(wrapped, me, wrapper, keyId));
+  return importChatKey(await openChatKeyBytes(wrapped, me, wrapper, keyId, conversationId));
 }
 
 // A link is bound to its chat and to both key ids, so the server cannot move it to another chat

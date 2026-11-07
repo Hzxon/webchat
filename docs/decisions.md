@@ -495,6 +495,21 @@ security code check (D-018). Until a page opens the key, a push shows "New encry
 (D-017). A device signed in after the link was dropped never saw it, and a database restored to
 before a new key leaves its chat unable to send on devices that saw the link.
 
+### D-111: A chat key's copies name their chat
+
+Accepted 2026-11-07 in #150. Fixes K-43.
+
+The pair key that wraps each copy of a chat key names the chat id in its HKDF info
+(`webchat/chat-key/v2`). So the server cannot hand out a copy made for one chat as another chat's
+key. A new chat's first key needs the id before the chat exists. The page reserves one with
+`POST /conversations/ids`, and the chat is created with that id. Only the person an id was
+reserved for can use it, and only once. A channel's id must be above #general's, which pages tell
+by the lowest id (D-081). A copy that fails as v2 is tried as v1, so copies made before still open.
+
+Cost: making a chat takes one more request. A copy made before this change names no chat, so the
+server can still move it to another chat between the same two people. An unused id stays until the
+first sign-in an hour after it was reserved.
+
 ## Messaging
 
 ### D-021: The sync fingerprint is the change detector
