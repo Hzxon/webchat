@@ -327,8 +327,13 @@ export interface QuotedMessage {
 export interface MessageContent {
   text: string;
   replyTo?: QuotedMessage;
-  /** For kind "reaction": the message and the emoji. An empty emoji takes the reaction back. */
-  reaction?: { messageId: number; emoji: string };
+  /**
+   * For kind "reaction": the message and the emoji. An empty emoji takes the reaction back. The
+   * server picks message ids and no signature covers them, so a reaction also names its target's
+   * sender (0 for a card from GitHub) and client id, which the target's header signs (K-44, D-109).
+   * Reactions from before that have neither.
+   */
+  reaction?: { messageId: number; emoji: string; senderId?: number; clientId?: string };
   /** A shared pull request. The text holds the same in words, for pages and devices without the card. */
   pull?: PullCardDTO;
   /** A card handed to a coding agent, or the agent's report on it. The text says the same in words. */
@@ -342,6 +347,11 @@ export interface MessageContent {
   added?: { to: string; draft: string; card: string };
   /** The owner has their agent forget its folder of a repository: the mark goes, never the files (R-038, D-101). */
   forget?: { repo: string; sentAt: number };
+  /**
+   * The owner checked a person's security code, so their agents pin the same keys and open what the
+   * page opens: a card's brief hashes the same on both sides (K-57, D-109).
+   */
+  trust?: { user: number; fingerprint: string; sentAt: number };
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -535,12 +545,13 @@ function readContent(value: unknown): MessageContent {
   const raw = value as {
     text?: unknown;
     replyTo?: Partial<QuotedMessage>;
-    reaction?: { messageId?: unknown; emoji?: unknown };
+    reaction?: { messageId?: unknown; emoji?: unknown; senderId?: unknown; clientId?: unknown };
     pull?: Partial<PullCardDTO>;
     run?: Record<string, unknown>;
     prompt?: Record<string, unknown>;
     added?: Record<string, unknown>;
     forget?: { repo?: unknown; sentAt?: unknown };
+    trust?: { user?: unknown; fingerprint?: unknown; sentAt?: unknown };
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -551,6 +562,8 @@ function readContent(value: unknown): MessageContent {
   const reaction = raw.reaction;
   if (reaction && isId(reaction.messageId) && typeof reaction.emoji === 'string' && reaction.emoji.length <= EMOJI_LENGTH) {
     content.reaction = { messageId: reaction.messageId, emoji: reaction.emoji };
+    if (isId(reaction.senderId) || reaction.senderId === 0) content.reaction.senderId = reaction.senderId;
+    if (typeof reaction.clientId === 'string') content.reaction.clientId = reaction.clientId;
   }
   const pull = readPull(raw.pull);
   if (pull) content.pull = pull;
@@ -561,6 +574,8 @@ function readContent(value: unknown): MessageContent {
   const [to, draft, card] = [short(raw.added?.to, 64), short(raw.added?.draft, 64), short(raw.added?.card, 16)];
   if (to && draft && card) content.added = { to, draft, card };
   if (typeof raw.forget?.repo === 'string' && isRepoName(raw.forget.repo) && isId(raw.forget.sentAt)) content.forget = { repo: raw.forget.repo, sentAt: raw.forget.sentAt };
+  const fingerprint = short(raw.trust?.fingerprint, 64);
+  if (isId(raw.trust?.user) && fingerprint && isId(raw.trust.sentAt)) content.trust = { user: raw.trust.user, fingerprint, sentAt: raw.trust.sentAt };
   return content;
 }
 

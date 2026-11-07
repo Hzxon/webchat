@@ -49,7 +49,7 @@ interface Opened {
   /** The message this one replies to, as the sender quoted it. */
   replyTo: QuotedMessage | null;
   /** Set on every readable message of kind "reaction". */
-  reaction: { messageId: number; emoji: string } | null;
+  reaction: MessageContent['reaction'] | null;
   /** A shared pull request, shown as a card instead of the text. */
   pull: PullCardDTO | null;
   /** Set on every readable message of kind "github": the card the server wrote from GitHub. */

@@ -1067,7 +1067,7 @@ request in the same check-in as a cancel is refused, since the cancelled run has
 
 ### D-100: A card shows its latest run, and its status line follows the run
 
-Accepted 2026-11-05 in #116 (K-52), changed in #122.
+Accepted 2026-11-05 in #116 (K-52), changed in #122 and #143 (K-59).
 
 The board folds the user's run messages, in their chats with their agents, into each roadmap card.
 While a run may still go, the play button is disabled, so a second click asks nothing. A request no
@@ -1075,11 +1075,11 @@ agent answers in 30 minutes stops blocking, on the board and in the chat. Teamma
 messages, so the status line tells them: any open page of the requester's sets it to `In progress:
 Ann's agent` once the agent claims, to `In review: repo#PR` when it is done, and back to what it was
 when the run fails, once per request and state, under the card's lock. The owner moves it to Done or
-Fixed after merging. Why: the server cannot drop copies of an encrypted request, and done means a
-draft.
-
-Cost: the status changes only while a page of the requester's is open. Two tabs can still each send
-one request before they sync; the agent refuses the second (D-099).
+Fixed after merging. The brief refuses a card whose status shows another run: someone else's
+agent `In progress`, or `In review`; its hash covers the status line, so a run that starts later
+makes the agent refuse. Why: the server cannot drop copies of an encrypted request, and done means
+a draft. Cost: the status changes only while a page of the requester's is open. Two tabs can still
+each send one request before they sync; the agent refuses the second (D-099).
 
 ### D-101: A folder takes part once its owner connects it or has it cloned
 
@@ -1190,6 +1190,20 @@ Why: a student should start from WebChat, with no terminal.
 Cost: a clone takes the laptop's disk, and minutes. The server answers which repositories a project
 links, so a changed server could offer a clone of another repository the owner reaches.
 
+### D-109: An agent pins the keys its owner checked
+
+Accepted 2026-11-07 in #145 (K-57).
+
+When the owner checks a person's security code, their page sends each of their agents a sealed
+`trust` message in their direct chat. It names the person and the fingerprint, with a signed send
+time. The agent pins it only when the owner sent it there, only when it is the fingerprint the
+server shows now, and only when it is newer than the last check it pinned for that person. Why: the
+agent then opens what the page opens, so a card's brief hashes the same on both (D-018, D-105).
+
+Cost: a check of any age counts, unlike a run (D-089), since Claude Code may have been closed. A
+server that withheld a newer check could play an older one again, along with the keys it named.
+The owner verified those keys once.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope
@@ -1246,6 +1260,19 @@ The service worker shows it even while the app is open and focused, because bein
 the page has no alert of its own for it. Project names are not encrypted, so the server can write
 this text itself. Being added to a group sends the same kind of push, which opens the group
 (D-043).
+
+### D-109: Replies and reactions check the message at their id
+
+Accepted 2026-11-07 in #144, for K-44.
+
+The server picks message ids, and no signature covers them (D-016). So a quote shows the message
+that now has its id only when that message's sender and text match the signed quote. Otherwise it
+shows the signed quote and does not jump. A reaction also signs its target's sender, 0 for a card
+from GitHub, and client id, which the target's header signs. The page shows it only on a message
+with that sender and client id. Reactions from before this name neither and show as before.
+
+Cost: a reaction on a message whose id the server swapped disappears instead of moving to the
+right message. Old reactions stay open to the swap.
 
 ## GitHub connector
 

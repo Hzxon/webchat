@@ -191,8 +191,8 @@ the notes would show it nothing new. They should not count as unread.
 
 ### K-59: Two agents can run one card at once
 
-Status: Open. Found on 2026-11-06 while reading `client/src/components/BoardView.tsx` for the
-design of R-036 to R-038.
+Status: Fixed in #143. Found on 2026-11-06 while reading `client/src/components/BoardView.tsx` for
+the design of R-036 to R-038.
 
 The board disables a card's play button only from the viewer's own run messages (D-100,
 `BoardView.tsx` where `cardRun` sets `disabled`). Teammates see no run messages, so their button
@@ -207,8 +207,8 @@ it cannot (D-014).
 
 ### K-57: The agent never pins a teammate's new keys, so Start fails on a board with their text
 
-Status: Open. Found in the correctness review of R-035's step 6 (#122) on 2026-11-06, and left open
-because it is rare: it needs a teammate whose keys changed.
+Status: Fixed in #145 (D-109). Found in the correctness review of R-035's step 6 (#122) on
+2026-11-06. It was rare: it needed a teammate whose keys changed.
 
 Until the owner checks a teammate's new security code, nothing signed with their keys opens (D-018).
 The owner's page and the agent both leave out the teammate's board sections, so both hash the same
@@ -226,13 +226,14 @@ the new keys, and `sections` leaves the teammate's text out of the brief that `h
 K-40 warns of.
 
 Fix: when the owner checks a teammate's code, the page sends each of their agents a message that
-names the person and the fingerprint it checked. An agent pins it only when its owner sent it, with
-a signed send time and once per client id (D-089, K-47), and only when it is the person's current
-fingerprint.
+names the person and the fingerprint it checked. An agent pins it only when its owner sent it in
+their direct chat, only when it is the person's current fingerprint, and only when it is newer than
+the last check it pinned for that person. #145 drops the 10-minute window that runs have (D-089):
+a check made while Claude Code was closed must still reach the agent.
 
 ### K-44: A reply or reaction follows the message id, which no signature covers
 
-Status: Open. Found in a security review of main on 2026-11-05.
+Status: Fixed in #144 (D-109). Found in a security review of main on 2026-11-05.
 
 A reply signs its original's id, sender and quoted text. But `Quote` in
 `client/src/components/ChatView.tsx` shows whatever message now has that id, and never compares

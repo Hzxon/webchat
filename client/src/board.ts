@@ -90,6 +90,17 @@ export function withStatus(text: string, status: string): string {
   return lines.join('\n');
 }
 
+/** The status a user's page sets on a card once their agent takes it (D-100). */
+export const workingStatus = (name: string) => `In progress: ${name}’s agent`;
+
+/**
+ * Whether a card's status shows a run other than the user's own that still goes: a teammate's
+ * agent, or a draft in review. Teammates see no run messages, only this line (D-100), and a second
+ * agent would open a second draft (K-59).
+ */
+export const otherRun = (status: string, name: string) =>
+  status.startsWith('In review') || (status.startsWith('In progress:') && status !== workingStatus(name));
+
 /** The next free number of a kind among these cards. */
 export const nextNumber = (cards: Card[], kind: CardKind) => Math.max(0, ...cards.filter((c) => c.kind === kind).map((c) => c.number!)) + 1;
 

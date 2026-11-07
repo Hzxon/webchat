@@ -382,7 +382,7 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                   </div>
                 )}
               </div>
-              {marks && <ReactionChips marks={marks} onToggle={(emoji) => void react(message, emoji)} />}
+              {marks && <ReactionChips marks={marks} target={message} onToggle={(emoji) => void react(message, emoji)} />}
               {status === 'failed' && (
                 <div className="send-failed-row">
                   <button className="send-failed" onClick={() => retryMessage(message)}>
@@ -518,9 +518,13 @@ function PullPeople({ label, names, login }: { label: string; names: string[]; l
 function Quote({ quote, original, onJump }: { quote: QuotedMessage; original?: ChatMessage; onJump?: () => void }) {
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
-  const trusted = original && original.security !== 'failed' ? original : undefined;
+  // The server picks message ids and no signature covers them, so the message that now has the
+  // quoted id stands in for the quote only when its sender and text match what the reply signed (K-44).
+  const readable = original && original.security !== 'failed' ? original : undefined;
+  const trusted =
+    readable && (readable.senderId ?? 0) === quote.senderId && readable.text.slice(0, LIMITS.quoteLength) === quote.text ? readable : undefined;
   // A reply to a card from GitHub quotes sender 0.
-  const senderId = trusted ? trusted.senderId : quote.senderId || null;
+  const senderId = quote.senderId || null;
   const text = trusted?.text ?? quote.text;
   const name = senderId === meId ? 'You' : senderName(users, senderId);
   const color = nameColor(senderId ?? 0);
@@ -532,7 +536,7 @@ function Quote({ quote, original, onJump }: { quote: QuotedMessage; original?: C
       <span className="quote-text">{text}</span>
     </>
   );
-  return onJump ? (
+  return onJump && trusted === readable ? (
     <button type="button" className="quote" style={{ borderColor: color }} onClick={onJump} title="Show the original message">
       {body}
     </button>
@@ -544,20 +548,23 @@ function Quote({ quote, original, onJump }: { quote: QuotedMessage; original?: C
 }
 
 /** One chip per emoji, with how many people chose it. Tapping a chip adds or takes back yours. */
-function ReactionChips({ marks, onToggle }: { marks: MessageReactions; onToggle: (emoji: string) => void }) {
+function ReactionChips({ marks, target, onToggle }: { marks: MessageReactions; target: ChatMessage; onToggle: (emoji: string) => void }) {
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
   const groups = useMemo(() => {
     const byEmoji = new Map<string, { emoji: string; userIds: number[]; first: number }>();
     for (const [id, mark] of Object.entries(marks)) {
       if (!mark.emoji) continue;
+      // Reactions are filed under the message id, which the server picks and no signature covers.
+      // Skip one signed for another message than the one that now has the id (K-44).
+      if (mark.senderId !== undefined && (mark.senderId !== (target.senderId ?? 0) || mark.clientId !== (target.clientId ?? undefined))) continue;
       const group = byEmoji.get(mark.emoji) ?? { emoji: mark.emoji, userIds: [], first: mark.eventId };
       group.userIds.push(Number(id));
       group.first = Math.min(group.first, mark.eventId);
       byEmoji.set(mark.emoji, group);
     }
     return [...byEmoji.values()].sort((a, b) => b.userIds.length - a.userIds.length || a.first - b.first);
-  }, [marks]);
+  }, [marks, target.senderId, target.clientId]);
 
   if (groups.length === 0) return null;
   return (

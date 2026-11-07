@@ -6,7 +6,7 @@
 //
 // Everything the server sends is decrypted on the way in, and every message is encrypted on the
 // way out (see e2ee/keyring.ts). The store only ever holds readable text.
-import { pairingId, pairingProof, type MessageContent, type QuotedMessage } from '../../shared/e2ee';
+import { keyFingerprint, pairingId, pairingProof, type MessageContent, type QuotedMessage } from '../../shared/e2ee';
 import {
   LIMITS,
   previewOf,
@@ -41,7 +41,7 @@ import { refreshGithub, startGithub } from './github';
 import { disablePushHere, forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
 import type { Card } from './board';
 import { keyedQueue } from './queue';
-import { agentChats, agentOf, threadsOf } from './agents';
+import { agentChats, agentOf, ownAgents, threadsOf } from './agents';
 import { actions, chatTitle, localEditCount, reloadPath, senderName, store, type State } from './store';
 
 const newClientId = () =>
@@ -989,13 +989,13 @@ export async function react(message: ChatMessage, emoji: string) {
   if (!me || message.id <= 0) return;
   const { conversationId } = message;
   const previous = state.reactions[conversationId]?.[message.id]?.[me.id] ?? { eventId: 0, emoji: '' };
-  const next = previous.emoji === emoji ? '' : emoji;
-  actions.setMyReaction(conversationId, message.id, me.id, { eventId: Number.MAX_SAFE_INTEGER, emoji: next });
+  const mark = { emoji: previous.emoji === emoji ? '' : emoji, senderId: message.senderId ?? 0, ...(message.clientId && { clientId: message.clientId }) };
+  actions.setMyReaction(conversationId, message.id, me.id, { eventId: Number.MAX_SAFE_INTEGER, ...mark });
   try {
-    const content = { text: '', reaction: { messageId: message.id, emoji: next } };
+    const content = { text: '', reaction: { messageId: message.id, ...mark } };
     const event = await sealAndSend(conversationId, { urgent: false, clientId: newClientId(), kind: 'reaction' }, content);
     seen.add(event.id);
-    actions.setMyReaction(conversationId, message.id, me.id, { eventId: event.id, emoji: next });
+    actions.setMyReaction(conversationId, message.id, me.id, { eventId: event.id, ...mark });
   } catch (error) {
     actions.setMyReaction(conversationId, message.id, me.id, previous);
     actions.addToast({ conversationId, title: 'Reaction not sent', body: (error as Error).message });
@@ -1183,6 +1183,12 @@ export async function trustKeys(user: UserDTO) {
   actions.setKeyWarnings(await keyring.checkKeys(Object.values(store.get().users)));
   // What failed under the unchecked keys opens now, without a reload. It never alerts again.
   for (const message of await keyring.reopen(store.get().conversations, currentLookup())) actions.addMessage(message, false);
+  // The user's agents pin the same keys, or a card's brief would hash differently there (K-57, D-109).
+  if (!user.keys) return;
+  const trust = { user: user.id, fingerprint: await keyFingerprint(user.keys), sentAt: Date.now() };
+  for (const agent of ownAgents(store.get().users, meId)) {
+    await sendContent(await startDirectChat(agent.id), { text: `I checked ${user.displayName}’s security code.`, trust }, false);
+  }
 }
 
 function teardown() {
