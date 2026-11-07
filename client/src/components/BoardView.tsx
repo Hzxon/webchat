@@ -2,7 +2,7 @@
 // a doc whose sections are cards. Cards are written in the section editor docs have, and keep its
 // locks and history. The board docs are created the first time someone adds a card.
 import { useEffect, useMemo, useState } from 'react';
-import type { ProjectDTO, UserDTO } from '../../../shared/types';
+import type { ProjectDTO, RunRequest, UserDTO } from '../../../shared/types';
 import {
   boardDocs,
   cardRuns,
@@ -23,12 +23,12 @@ import {
   type CardRun,
 } from '../board';
 import { inOrder, useAgentChats } from '../agents';
-import { syncNow } from '../chat';
+import { cancelRun, syncNow } from '../chat';
 import { beginEditing, createDoc, loadSections, markSeen, newSectionId, replaceSection, type Editing } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
 import { actions, senderName, store, useAppState } from '../store';
 import { HistoryDialog, SectionEditor } from './DocView';
-import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlayIcon, PlusIcon, TrashIcon } from './icons';
+import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlayIcon, PlusIcon, StopIcon, TrashIcon } from './icons';
 import { Markdown } from './Markdown';
 import { RUN_TAGS, Tag, type Tone } from './PullTags';
 
@@ -239,6 +239,9 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                 const isOpen = open === card.id;
                 const cardRun = runs?.get(card.id);
                 const [runTone, runLabel] = RUN_STATES[cardRun?.state ?? 'waiting'];
+                const request = cardRun && agentMessages.find((m) => m.id === cardRun.request);
+                // A request still being sent has no id that a cancel could name.
+                const stoppable = !!request && cardRun!.state !== 'sending' && GOING.has(cardRun!.state);
                 return (
                   <article key={card.id} className={`board-card ${lock ? 'is-locked' : ''} ${isOpen ? 'is-open' : ''}`}>
                     <button className="board-card-head" onClick={() => setOpen(isOpen ? null : card.id)} aria-expanded={isOpen}>
@@ -268,7 +271,19 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                           <button className="icon-button icon-button-small" onClick={() => setHistoryOf(card)} title="History" aria-label="Card history">
                             <HistoryIcon width={18} height={18} />
                           </button>
-                          {canRun && card.kind && !card.failed && (
+                          {stoppable && (
+                            // The agent stops the run and reports it failed; a request it never took ends here (R-030).
+                            <button
+                              className="icon-button icon-button-small"
+                              disabled={cardRun!.stopping}
+                              onClick={() => run(cancelRun({ ...request!, run: request!.run as RunRequest }))}
+                              title={cardRun!.stopping ? 'Stopping…' : `Stop · ${nameOf(cardRun!.runtime)}`}
+                              aria-label="Stop the run"
+                            >
+                              <StopIcon width={18} height={18} />
+                            </button>
+                          )}
+                          {!stoppable && canRun && card.kind && !card.failed && (
                             // The brief says what the agent will follow and who wrote it, and starts it (D-105).
                             <button
                               className="icon-button icon-button-small"
@@ -300,7 +315,7 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                             </span>
                             <button
                               className="board-card-run-link"
-                              onClick={() => actions.setAgentsOpen(true, agentMessages.find((m) => m.id === cardRun.request)?.clientId ?? null)}
+                              onClick={() => actions.setAgentsOpen(true, request?.clientId ?? null)}
                             >
                               Open the conversation
                             </button>

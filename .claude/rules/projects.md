@@ -56,6 +56,7 @@ docs/decisions.md that explains it.
 - A conversation's messages carry a sealed `prompt` field naming its prompt's client id, never the server's message id; the plugin heeds only its owner's, in their direct chat with the agent, with a signed send time within 10 minutes and once per client id (D-102, D-089, K-47).
 - A conversation's turns run in a scratch repository of its own in the temp folder, never a worktree of the owner's checkout, whose `.git` it would share; nothing from it is pushed. A question with no repository runs in an empty folder there, from the board alone (D-102, R-038).
 - The plugin forgets a folder only on its owner's signed `forget` message in their direct chat, and removes its mark, never its files (D-101).
+- While the plugin's `asleep` file exists, no window takes `watch.lock` and the serving one starts nothing new; only the owner's signed `sleep` message or `/webchat:sleep` writes it, only `/webchat:wake` removes it, and a background job (`CLAUDE_JOB_DIR`) never serves (D-113).
 - The page asks only a session whose check-in names `AGENT_LEVEL.answers` or above: older plugins check in but ignore prompts, so the pane tells their owner how to update instead (D-103).
 - An agent never writes the board: its card drafts reach it only when the owner's page writes them, and a change only while the card's text still has the hash the draft names (D-104).
 - A conversation's brief holds only the board its owner's page named in the signed prompt, never every project the agent is in: anyone can add an agent to their project (D-104).

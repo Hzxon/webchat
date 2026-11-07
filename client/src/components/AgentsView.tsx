@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AGENT_LEVEL, LIMITS, type RunRequest } from '../../../shared/types';
 import { asleep, ownAgents, seatFor, short, THREAD_STATE, useAgentThreads, WAKE, type Seat, type Thread } from '../agents';
-import { addProjectMembers, askAgent, askClone, askFix, cancelRun, discardMessage, forgetFolder, loadChat, loadOlder, retryMessage, saveDraft, tellAgent } from '../chat';
+import { addProjectMembers, askAgent, askClone, askFix, cancelRun, discardMessage, forgetFolder, loadChat, loadOlder, putToSleep, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { useLinkedRepos } from '../linkedRepos';
 import { actions, useAppState } from '../store';
@@ -59,6 +59,20 @@ export function AgentsView() {
   }, [ids]);
 
   const awake = agents.some((a) => a.online);
+  // Asked to sleep: the agent finishes what runs first, so it may stay online a while (K-66).
+  const [sleeping, setSleeping] = useState(false);
+  useEffect(() => {
+    if (!awake) setSleeping(false);
+  }, [awake]);
+  const sleep = () => {
+    setSleeping(true);
+    for (const agent of agents.filter((a) => a.online)) {
+      putToSleep(agent.id).catch((err: Error) => {
+        setSleeping(false);
+        actions.addToast({ conversationId: null, title: 'Your agent did not get it', body: err.message });
+      });
+    }
+  };
   let subtitle = awake ? 'Your agent is online' : asleep(Math.max(0, ...agents.map((a) => a.lastSeen ?? 0)) || null);
   if (agents.length === 0) subtitle = 'No agent connected';
   else if (thread) subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board'} · ${THREAD_STATE[thread.state].label}`;
@@ -88,6 +102,11 @@ export function AgentsView() {
         </div>
         {!thread && !brief && agents.length > 0 && (
           <div className="header-end">
+            {awake && (
+              <button className="button-secondary" disabled={sleeping} onClick={sleep}>
+                {sleeping ? 'Going to sleep…' : 'Put to sleep'}
+              </button>
+            )}
             {/* Connecting another agent, and removing one, live here (R-030, R-033). */}
             <button className="icon-button" onClick={() => setConnecting(true)} title="Connect coding agent" aria-label="Connect coding agent">
               <PlusIcon />

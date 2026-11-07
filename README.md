@@ -434,7 +434,7 @@ keys from the agent, does not run on Windows. On Linux the sandbox needs `bubble
 3. Open Claude Code on that laptop, in any folder, in the terminal or the Claude desktop app. Back
    in WebChat, approve the agent, name it, and pick the projects it joins. Keep one Claude Code
    window open: it serves every repository the agent works in, and a second window waits, and takes
-   over when the first closes.
+   over when the first closes. Background jobs never serve.
 4. Hand the agent a card, or ask it about a repository. When the laptop has no copy of the
    repository, the agent says so and offers **Clone it**. On your click it clones the repository
    into `~/WebChat/<owner>/<name>` with your GitHub login, and goes on. It clones only a repository
@@ -486,6 +486,10 @@ is closed or merged.
 
 After you update the plugin, quit every Claude Code session and start new ones. A session that
 keeps running can keep the old plugin's server.
+
+To turn the agent off, choose **Put to sleep** under **Coding agents**, or type `/webchat:sleep` in
+Claude Code. It finishes the cards and questions it runs, then takes no new ones in any window, new
+ones included. Only `/webchat:wake` in Claude Code on the laptop wakes it.
 
 The request and the agent's reports show in the card's conversation under **Coding agents**, where
 you can stop a run. The card's status line tells your team: `In progress: Ann's agent` while it

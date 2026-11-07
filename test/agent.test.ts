@@ -21,7 +21,7 @@ import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, textHash, wrapChatKey } from '../shared/e2ee.ts';
-import { briefText, type ChatKeyInput, type CreateProjectResponse, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type UserDTO } from '../shared/types.ts';
+import { briefText, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type UserDTO } from '../shared/types.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
 const KDF_ROUNDS = 1000;
@@ -88,14 +88,15 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
 const PASSWORD = 'correct horse battery';
 
 /** A fresh chat key, wrapped by this client for each member, as a browser does when it makes a project. */
-async function newChatKey(client: AgentClient, memberIds: number[]): Promise<ChatKeyInput> {
+async function newChatKey(client: AgentClient, memberIds: number[]): Promise<FirstChatKeyInput> {
   const raw = newChatKeyBytes();
   const keyId = newKeyId();
+  const { id: conversationId } = await client.request<{ id: number }>('POST', '/conversations/ids');
   const me = { id: client.id, identity: client.identity };
   const wrappedKeys = await Promise.all(
-    memberIds.map(async (id) => ({ id, ...(await wrapChatKey(raw, me, { id, dh: client.keysOf(id)!.dh }, keyId)) })),
+    memberIds.map(async (id) => ({ id, ...(await wrapChatKey(raw, me, { id, dh: client.keysOf(id)!.dh }, keyId, conversationId)) })),
   ).then((keys) => keys.map(({ id, ...k }) => ({ userId: id, ...k })));
-  return { keyId, wrappedKeys };
+  return { conversationId, keyId, wrappedKeys };
 }
 
 /** Does `work` with these environment variables set, then puts back what was there. */
@@ -118,6 +119,12 @@ function setEnv(vars: Record<string, string>) {
       else process.env[name] = value;
     }
   };
+}
+
+/** Waits up to 10 seconds for something the plugin does on its own, then checks it. */
+async function waitFor(what: string, done: () => boolean | Promise<boolean>) {
+  for (let tries = 0; tries < 1000 && !(await done()); tries++) await sleep(10);
+  assert.ok(await done(), what);
 }
 
 /**
@@ -571,10 +578,6 @@ describe('agent client (R-027)', () => {
           .split('\n')
           .filter(Boolean)
           .map((line) => JSON.parse(line) as { args: string[]; input: string; cwd: string });
-      const waitFor = async (what: string, done: () => boolean | Promise<boolean>) => {
-        for (let tries = 0; tries < 1000 && !(await done()); tries++) await sleep(10);
-        assert.ok(await done(), what);
-      };
       try {
         const code = newPairingCode();
         // The page shows its address with the code, so the address setting stays empty (R-031).
@@ -645,6 +648,11 @@ describe('agent client (R-027)', () => {
           await (await checkIn()).handled;
           assert.deepEqual(await reportsOn(twice, carol), ['I could not run K-7: K-7 is already running.']);
           assert.equal((await turns()).length, 1, 'only the run started Claude');
+          // Put to sleep, the agent finishes the card it runs and starts nothing new until a wake (K-66).
+          assert.match(await plugin.call('sleep'), /goes to sleep once it finishes K-7\./);
+          assert.match(await plugin.call('status'), /Every card fails at once: I am going to sleep, so I start nothing new/);
+          assert.match(await plugin.call('wake'), /waking up/);
+          assert.match(await plugin.call('wake'), /not asleep/);
           await fs.writeFile(gate, '');
           await handled;
           return id;
@@ -851,6 +859,50 @@ describe('agent client (R-027)', () => {
       }
     },
   );
+
+  test('sleeps on its owner\'s word in every window until a wake, and a background job never serves (K-66, D-113)', { timeout: 30_000 }, async () => {
+    const dataDir = path.join(home, 'sleepy');
+    const projectDir = path.join(home, 'sleepy-folder');
+    await fs.mkdir(projectDir);
+    const options = { claude: '', guard: 'true', cloneRoot: path.join(home, 'WebChat'), dataDir, projectDir };
+    const code = newPairingCode();
+    const first = new Plugin({ ...options, code: `${baseUrl}#${code}` });
+    const second = new Plugin({ ...options, code: '' });
+    void first.serve();
+    try {
+      const agent = await approve(alice, code, 'Sleepy');
+      await waitFor('the first window serves', () => first.problem === '');
+      const job = new Plugin({ ...options, code: '', job: true });
+      assert.equal(await job.start(), false);
+      assert.match(await job.call('status'), /background job, so it does not serve/);
+      void second.serve();
+      await waitFor('the second window waits', () => /Another Claude Code window/.test(second.problem));
+
+      // Nothing runs, so the agent sleeps at once on Alice's word in the pane, and says so.
+      await alice.sync();
+      const direct = (await alice.request<{ id: number }>('POST', '/conversations/direct', { userId: agent.id, key: await newChatKey(alice, [alice.id, agent.id]) })).id;
+      await alice.sync();
+      await alice.send(direct, { text: 'Go to sleep', sleep: { sentAt: Date.now() } });
+      for (const message of await first.client!.sync()) await first.handle(message);
+      await waitFor('the first window sleeps', () => /asleep/.test(first.problem));
+      const said = (await alice.sync()).filter((m) => m.senderId === agent.id).map((m) => m.content?.text);
+      assert.deepEqual(said, ['I go to sleep now. To wake me, type /webchat:wake in Claude Code on your laptop.']);
+      // The watch is free, and no window takes it while the agent sleeps.
+      assert.equal(existsSync(path.join(dataDir, 'watch.lock')), false);
+      assert.match(await second.call('status'), /Your agent is asleep/);
+
+      // A wake in the waiting window serves there at once, and a sleep there stops it again.
+      assert.match(await second.call('wake'), /waking up/);
+      await waitFor('the second window serves', () => second.problem === '');
+      assert.match(await second.call('sleep'), /goes to sleep within 15 seconds/);
+      await waitFor('the second window sleeps', () => /asleep/.test(second.problem));
+      assert.equal(existsSync(path.join(dataDir, 'watch.lock')), false);
+    } finally {
+      // A window that still serves would keep checking in after the test.
+      await first.call('sleep');
+      await second.call('sleep');
+    }
+  });
 
   test('answers its owner\'s prompts in their direct chat, and resumes the conversation for each reply (R-035)', async () => {
     // A fresh owner, since Alice's sends in the tests before count against the rate limit.

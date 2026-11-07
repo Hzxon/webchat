@@ -216,6 +216,12 @@ export const PlayIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const StopIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="6" y="6" width="12" height="12" rx="1.5" />
+  </Icon>
+);
+
 export const TerminalIcon = (p: IconProps) => (
   <Icon {...p}>
     <rect x="3" y="4" width="18" height="16" rx="2" />

@@ -7,6 +7,7 @@ import {
   type DocDTO,
   type DocRevisionDTO,
   type EnvelopeDTO,
+  type FirstChatKeyInput,
   type GithubEventDTO,
   type GithubEventKind,
   type KeyLinkDTO,
@@ -312,6 +313,8 @@ const GRANT_TTL_MS = 30 * 60_000;
 const DELIVERY_TTL_MS = 3 * 24 * 3600_000;
 /** A repository nobody opened Claude Code in for this long leaves the agent's menu (D-094). */
 const AGENT_REPO_TTL_MS = 30 * 24 * 3600_000;
+/** A reserved chat id left unused this long goes; a page uses its own at once (D-111). */
+const CONVERSATION_ID_TTL_MS = 3600_000;
 /** An unread urgent message alerts as a page opens for as long as its push waits for an offline device (D-023). */
 const URGENT_WAIT_MS = 3 * 24 * 3600_000;
 
@@ -339,6 +342,9 @@ export interface ProjectRow {
   created_by: number;
   created_at: number;
 }
+
+/** A new chat's first key, for the id reserved for the chat, and who wrapped it (D-111). */
+type FirstKey = FirstChatKeyInput & { wrappedBy: number };
 
 /** A channel key for the people being added to a project, wrapped by the member adding them. */
 export interface SharedChannelKey {
@@ -595,14 +601,14 @@ export async function openDb(sql: Sql) {
     projectId: number,
     title: string,
     memberIds: number[],
-    key: { keyId: string; wrappedBy: number; wrappedKeys: WrappedKeyInput[] },
+    key: FirstKey,
   ) {
     const now = Date.now();
     const created = await one(
       q.query<{ id: number }>(
-        `INSERT INTO webchat.conversations (type, title, project_id, created_at, updated_at, key_id)
-         VALUES ('channel', $1, $2, $3, $3, $4) ON CONFLICT DO NOTHING RETURNING id`,
-        [title, projectId, now, key.keyId],
+        `INSERT INTO webchat.conversations (id, type, title, project_id, created_at, updated_at, key_id)
+         OVERRIDING SYSTEM VALUE VALUES ($1, 'channel', $2, $3, $4, $4, $5) ON CONFLICT DO NOTHING RETURNING id`,
+        [key.conversationId, title, projectId, now, key.keyId],
       ),
     );
     if (!created) return undefined;
@@ -829,6 +835,7 @@ export async function openDb(sql: Sql) {
       await sql.query('DELETE FROM webchat.github_deliveries WHERE received_at <= $1', [now - DELIVERY_TTL_MS]);
       await sql.query('DELETE FROM webchat.pairings WHERE expires_at <= $1', [now]);
       await sql.query('DELETE FROM webchat.agent_repos WHERE last_seen <= $1', [now - AGENT_REPO_TTL_MS]);
+      await sql.query('DELETE FROM webchat.conversation_ids WHERE created_at <= $1', [now - CONVERSATION_ID_TTL_MS]);
     },
 
     /** Creates an account with its keys. Returns undefined when the username is taken. */
@@ -1002,25 +1009,38 @@ export async function openDb(sql: Sql) {
         )
       )?.id,
 
+    /** Takes the next chat id for a chat this user is about to create, so the copies of its first key can name it (D-111). */
+    async reserveConversationId(userId: number): Promise<number> {
+      const row = await one(
+        sql.query<{ id: number }>(
+          `INSERT INTO webchat.conversation_ids (id, user_id, created_at)
+           VALUES (nextval(pg_get_serial_sequence('webchat.conversations', 'id')), $1, $2) RETURNING id`,
+          [userId, Date.now()],
+        ),
+      );
+      return row!.id;
+    },
+
+    /** Uses up an id reserveConversationId gave this user. False when it gave none, or it was used. */
+    takeConversationId: async (conversationId: number, userId: number) =>
+      (await one(
+        sql.query('DELETE FROM webchat.conversation_ids WHERE id = $1 AND user_id = $2 RETURNING id', [conversationId, userId]),
+      )) !== undefined,
+
     /**
      * Creates a chat with its members and its key, wrapped for each member. For a direct chat that
      * already exists, returns the existing id and ignores the new key.
      */
-    createConversation(
-      type: ConversationType,
-      title: string | null,
-      memberIds: number[],
-      key: { keyId: string; wrappedBy: number; wrappedKeys: WrappedKeyInput[] },
-    ): Promise<number> {
+    createConversation(type: ConversationType, title: string | null, memberIds: number[], key: FirstKey): Promise<number> {
       const now = Date.now();
       const directKey = type === 'direct' ? `${Math.min(...memberIds)}:${Math.max(...memberIds)}` : null;
       return sql.transaction(async (tx) => {
         const created = await one(
           tx.query<{ id: number }>(
-            `INSERT INTO webchat.conversations (type, title, direct_key, created_at, updated_at, key_id, created_by)
-             VALUES ($1, $2, $3, $4, $4, $5, $6) ON CONFLICT (direct_key) DO NOTHING RETURNING id`,
+            `INSERT INTO webchat.conversations (id, type, title, direct_key, created_at, updated_at, key_id, created_by)
+             OVERRIDING SYSTEM VALUE VALUES ($1, $2, $3, $4, $5, $5, $6, $7) ON CONFLICT (direct_key) DO NOTHING RETURNING id`,
             // Only a group has an owner: the person who made it, who also wraps its key.
-            [type, title, directKey, now, key.keyId, type === 'group' ? key.wrappedBy : null],
+            [key.conversationId, type, title, directKey, now, key.keyId, type === 'group' ? key.wrappedBy : null],
           ),
         );
         if (!created) {
@@ -1085,7 +1105,7 @@ export async function openDb(sql: Sql) {
       name: string,
       createdBy: number,
       memberIds: number[],
-      key: { keyId: string; wrappedKeys: WrappedKeyInput[] },
+      key: FirstChatKeyInput,
     ): Promise<{ projectId: number; channelId: number }> {
       const now = Date.now();
       return sql.transaction(async (tx) => {
@@ -1108,17 +1128,19 @@ export async function openDb(sql: Sql) {
 
     /**
      * Adds a channel to a project. Its key must be wrapped for exactly the project's members at
-     * this moment, so a member added meanwhile cannot be left out.
+     * this moment, so a member added meanwhile cannot be left out. An id below #general's would
+     * make it #general, which pages tell by the lowest id (D-081, D-111).
      */
     createChannel(
       projectId: number,
       title: string,
       createdBy: number,
-      key: { keyId: string; wrappedKeys: WrappedKeyInput[] },
+      key: FirstChatKeyInput,
     ): Promise<number | ProjectChangeRefusal> {
       return sql.transaction(async (tx) => {
         const { memberIds } = await lockProject(tx, projectId);
         if (!sameIds(memberIds, key.wrappedKeys.map((k) => k.userId))) return 'stale';
+        if (key.conversationId < Math.min(...(await projectChannels(tx, projectId)).map((c) => c.id))) return 'stale';
         return (await insertChannel(tx, projectId, title, memberIds, { ...key, wrappedBy: createdBy })) ?? 'name_taken';
       });
     },
@@ -1479,8 +1501,9 @@ export async function openDb(sql: Sql) {
     },
 
     /**
-     * Replaces the key of a chat that someone left with a new key from a member who stays. False
-     * when the chat needs no new key, or its members or key changed since the client looked.
+     * Replaces a chat's key with a new key from a member: after someone left, or when the member's
+     * copy is from before copies named their chat, which the server cannot tell (K-65). False when
+     * its members or key changed since the client looked.
      */
     replaceConversationKey(conversationId: number, replacedBy: number, key: RotatedKeyInput): Promise<boolean> {
       return sql.transaction(async (tx) => {
@@ -1500,7 +1523,7 @@ export async function openDb(sql: Sql) {
             [conversationId],
           ),
         );
-        if (!chat?.needs_new_key || !(await canReplace(tx, chat, key, await chatMembers(tx, conversationId)))) return false;
+        if (!chat || !(await canReplace(tx, chat, key, await chatMembers(tx, conversationId)))) return false;
         await replaceKey(tx, conversationId, replacedBy, key);
         return true;
       });

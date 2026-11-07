@@ -156,6 +156,8 @@ export interface CardRun {
   note?: string;
   /** The pull request a run that is done opened. */
   pull?: RunReport['pull'];
+  /** The user asked to stop a run the agent took, and the agent has not reported since. */
+  stopping?: boolean;
 }
 
 /** The states in which a run may still go, so the page asks for no second one. */
@@ -185,9 +187,10 @@ export function cardRuns(messages: ChatMessage[], meId: number, docId: string, p
     } else if (run.kind === 'cancel') {
       const target = m.senderId === meId ? latest(run.request) : undefined;
       if (target?.state === 'waiting') target.state = 'cancelled';
+      else if (target) target.stopping = true;
     } else if (run.kind !== 'fix' && run.kind !== 'clone') {
       const target = latest(run.request);
-      if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull });
+      if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull, stopping: false });
     }
   }
   return runs;

@@ -30,6 +30,7 @@ const FROZEN_MIGRATIONS = [
   'a80be24d085f7ed4abf275a2d1f85f5859d8baef7d6e8c5a032aca4747fc2de6',
   '39a9fd3cc11af2e86ff954abbaae35153f204f16f9f4a5ab6785e7e985011e9c',
   '0007912531947dcb728020a77515fd43d4624085e316b1de2b80bc21d714278d',
+  '0a59618a3d71798ac6ecd6abc5910f32525fb96300e02348705a58714640973b',
 ];
 
 // The rules in AGENTS.md "Rules that must hold" that a test can state (D-091). The chat tests

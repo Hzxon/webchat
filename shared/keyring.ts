@@ -1,7 +1,7 @@
 // The trust decisions about chat keys, shared by the page (client/src/e2ee/keyring.ts) and the
 // coding agent's client (agent/client.ts), so a fix lands in both (K-40). It holds no storage: the
 // page passes IndexedDB and the agent its account file.
-import { keyFingerprint, openKeyLink, unwrapChatKey, type Identity } from './e2ee.js';
+import { keyFingerprint, openChatKeyBytes, openKeyLink, unwrapChatKey, type Identity } from './e2ee.js';
 import type { ConversationDTO, PublicKeysDTO, UserDTO } from './types.js';
 
 /** Looks up a person's public keys: the server's list for others, the unlocked keys for oneself. */
@@ -16,6 +16,13 @@ export interface ChatKeyStore {
 export type KeyedConversation = Pick<ConversationDTO, 'id' | 'keyId' | 'myKey' | 'members' | 'keyLinks'>;
 
 export class EncryptionUnavailableError extends Error {}
+
+/** This account's copy of the chat's key names no chat, so the key opens old messages but never seals (K-65). */
+export class OldKeyCopyError extends EncryptionUnavailableError {
+  constructor() {
+    super("This chat's key is from before keys named their chat. Sending from the web page gives it a new one.");
+  }
+}
 
 export const WRAPPER_CHANGED = "The security code of whoever shared this chat's key changed. Check it first.";
 
@@ -84,10 +91,29 @@ export class Keyring {
       if (!wrapperKeys || !conversation.members.some((m) => m.userId === myKey.wrappedBy)) {
         throw new Error('The chat key was not created by a member of this chat.');
       }
-      // A key stored before the change stays usable; a new one waits for the check.
+      // A key stored before the change still opens messages; a new one waits for the check.
       if (this.unchecked(myKey.wrappedBy)) throw new EncryptionUnavailableError(WRAPPER_CHANGED);
-      return unwrapChatKey(myKey, this.self, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
+      return unwrapChatKey(myKey, this.self, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId, id);
     });
+  }
+
+  /**
+   * The chat's current key, to seal with. Refuses it when this account's copy is from before
+   * D-111: such a copy names no chat, so the server could have taken it from another chat between
+   * the same two people, where someone removed from this one still holds it (K-65). Checked on
+   * every seal, since a key from the store says nothing about its copy, so a stored key whose
+   * wrapper's keys changed seals only once the copy opens with their checked keys (D-018).
+   */
+  async sealingKey(conversation: KeyedConversation, keysOf: KeyLookup): Promise<CryptoKey | null> {
+    const key = await this.chatKey(conversation, keysOf);
+    if (!key) return null;
+    const { id, keyId, myKey } = conversation;
+    if (this.unchecked(myKey!.wrappedBy)) throw new EncryptionUnavailableError(WRAPPER_CHANGED);
+    const wrapperKeys = keysOf(myKey!.wrappedBy);
+    if (!wrapperKeys || !(await openChatKeyBytes(myKey!, this.self, { id: myKey!.wrappedBy, dh: wrapperKeys.dh }, keyId!, id)).namesChat) {
+      throw new OldKeyCopyError();
+    }
+    return key;
   }
 
   /**
