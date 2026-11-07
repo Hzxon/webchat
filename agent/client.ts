@@ -62,6 +62,8 @@ export interface AccountFile {
   cookie: string;
   /** Fingerprints of other people's keys, first seen or as the owner checked them (D-018, D-110). */
   pins: Record<number, string>;
+  /** By chat id, the key ids a key link showed replaced, which never seal again though the server drops the link (K-43). */
+  replaced?: Record<number, string[]>;
   /** When the owner's page signed the last check of each person's keys that was pinned, by user id (D-110). */
   trusted?: Record<number, number>;
   /** The newest message id seen, so a restart picks up what arrived while the daemon was down. */
@@ -417,7 +419,13 @@ export class AgentClient {
   private chatKey(conversation: ConversationDTO): Promise<CryptoKey> {
     const { id, keyId, myKey } = conversation;
     if (!keyId || !myKey) return Promise.reject(new Error('The chat has no key.'));
-    if (conversation.keyLinks.some((link) => link.previousKeyId === keyId)) return Promise.reject(new Error('The key was replaced.'));
+    const seen = this.file.replaced?.[id] ?? [];
+    const fresh = conversation.keyLinks.map((link) => link.previousKeyId).filter((k) => !seen.includes(k));
+    if (fresh.length) {
+      this.file.replaced = { ...this.file.replaced, [id]: [...seen, ...fresh] };
+      this.save().catch(() => undefined);
+    }
+    if (this.file.replaced?.[id]?.includes(keyId)) return Promise.reject(new Error('The key was replaced.'));
     return this.cached(id, keyId, async () => {
       const wrapperKeys = this.keysOf(myKey.wrappedBy);
       if (!wrapperKeys || !conversation.members.some((m) => m.userId === myKey.wrappedBy)) {

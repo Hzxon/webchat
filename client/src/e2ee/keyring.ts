@@ -131,6 +131,11 @@ function checkRecipients(members: Array<{ id: number; name: string; keys: Public
   }
 }
 let pins: Record<number, string> | null = null;
+/**
+ * By chat id, the key ids a key link showed replaced. The server could drop a link and name the old
+ * key current again, so the device keeps what it saw (K-43).
+ */
+let replaced: Record<number, string[]> = {};
 /** People whose keys differ from the ones pinned on this device, as of the last checkKeys. */
 let changedKeys = new Set<number>();
 
@@ -152,6 +157,7 @@ export const keyring = {
     const stored = await keystore.getIdentity().catch(() => undefined);
     if (!stored || stored.userId !== userId) return false;
     me = { id: userId, identity: stored.identity };
+    replaced = (await keystore.getReplaced().catch(() => undefined)) ?? {};
     return true;
   },
 
@@ -162,6 +168,7 @@ export const keyring = {
     await keystore.setIdentity({ userId, identity });
     me = { id: userId, identity };
     pins = null;
+    replaced = {};
     changedKeys = new Set();
   },
 
@@ -171,6 +178,7 @@ export const keyring = {
   async forget() {
     me = null;
     pins = null;
+    replaced = {};
     changedKeys = new Set();
     chatKeys.clear();
     opened.clear();
@@ -219,7 +227,13 @@ export const keyring = {
     const { id, keyId, myKey } = conversation;
     if (!keyId || !myKey || !me) return null;
     // A key that a newer one replaced never encrypts again, even if the server names it current.
-    if (conversation.keyLinks.some((link) => link.previousKeyId === keyId)) return null;
+    const seen = replaced[id] ?? [];
+    const fresh = conversation.keyLinks.map((link) => link.previousKeyId).filter((k) => !seen.includes(k));
+    if (fresh.length) {
+      replaced = { ...replaced, [id]: [...seen, ...fresh] };
+      void keystore.setReplaced(replaced).catch(() => undefined);
+    }
+    if (replaced[id]?.includes(keyId)) return null;
     const name = chatKeyName(id, keyId);
     let pending = chatKeys.get(name);
     if (!pending) {

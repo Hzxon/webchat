@@ -478,8 +478,9 @@ Accepted 2026-11-01 in #13. Replaces the part of D-039 that kept keys the same.
 When someone leaves or is removed, the chat gets a new key they never get. The browser that makes it
 wraps it for everyone who stays and encrypts the old key with the new one. The server keeps these
 links in `key_links`, and `ConversationDTO.keyLinks` hands them to members, so the whole history
-stays readable, also for someone added later (D-026, D-043). A page never encrypts with a replaced
-key. On removal, the owner's browser makes the new key of every channel, or of the group, in the
+stays readable, also for someone added later (D-026, D-043). A page or agent never encrypts with a
+replaced key: it keeps, per chat, every key id a link showed replaced, so a server that drops the
+link cannot make the old key current again (K-43, #146). On removal, the owner's browser makes the new key of every channel, or of the group, in the
 removing request. The server checks under the project's or group's lock that each new key names the
 current one in its link and is wrapped for exactly the people who stay. On leaving, the server sets
 `needs_new_key` on each chat left and refuses messages there with `409 needs_new_key`. The first
@@ -491,7 +492,8 @@ again.
 Cost: anyone with the current key reads the whole history. After someone leaves, nobody can send in
 that chat until a member's browser makes the key, which waits for a member to be online or for a
 security code check (D-018). Until a page opens the key, a push shows "New encrypted message"
-(D-017).
+(D-017). A device signed in after the link was dropped never saw it, and a database restored to
+before a new key leaves its chat unable to send on devices that saw the link.
 
 ## Messaging
 
