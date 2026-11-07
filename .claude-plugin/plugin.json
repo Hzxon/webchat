@@ -1,6 +1,6 @@
 {
   "name": "webchat",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Runs the WebChat board cards you hand to Claude Code in a sandboxed background Claude, and fixes their draft pull requests.",
   "author": {
     "name": "Hzxon"
