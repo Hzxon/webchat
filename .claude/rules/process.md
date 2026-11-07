@@ -15,7 +15,7 @@ paths:
 Each line is a constraint the code cannot state on its own. The number names the decision in
 docs/decisions.md that explains it. The process itself is in AGENTS.md.
 
-- `scripts/claim.sh` takes the decision number as a third argument and refuses one an open pull request reserves (D-076).
+- `scripts/claim.sh` takes the decision number as a third argument, refuses one an open pull request reserves, and takes it by pushing the tag `reserve/D-xxx`, which the remote creates only once; never delete or force such a tag (D-076).
 - Before a claim, check that the item is still open on main, that no decision since settles it, and that no other entry or pull request covers it; `scripts/claim.sh -c` records the check and refuses a finished item (D-107).
 - An item that no longer holds gets a small pull request that sets its status in place, never a claim (D-107).
 - A pull request that finishes a roadmap item edits only that item's status line, in place; a housekeeping pull request deletes the entry and adds its Done row (D-076).
@@ -26,7 +26,7 @@ docs/decisions.md that explains it. The process itself is in AGENTS.md.
 - A decision entry is the current state, why and the cost, in at most 12 lines; a change rewrites it (D-090).
 - A constraint that people editing an area must hold gets one line in that area's file under `.claude/rules/` (D-090).
 - The `doc-ids` check fails duplicate `### D-0xx:`, `K-n`, `R-nnn` and `Q-n` headings; the later pull request renumbers (D-063).
-- CI runs typecheck, tests and build on pull requests, on main and in the merge queue (D-076).
+- CI runs typecheck, tests and build, and `doc-ids` its id check, on pull requests and on main. Main has no branch protection and no merge queue, so nothing checks a pull request again after main moves (D-076).
 - The pull request title type sets the version: `fix` patch, `feat` minor, `!` or `BREAKING CHANGE:` also minor below 1.0.0 (D-055).
 - Never edit the version or `CHANGELOG.md` by hand; Release Please owns them, and needs "Allow GitHub Actions to create and approve pull requests" on (D-055).
 - Only Release Please may title a commit `chore(main): Release `; the ignore script skips it (D-058).

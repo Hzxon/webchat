@@ -1,9 +1,13 @@
 # Fails a pull request that gives two entries the same id in the decision log
-# or the roadmap. See D-063 in docs/decisions.md.
+# or the roadmap. See D-063 in docs/decisions.md. It runs on main too: a pull
+# request is checked against the main it started from, and nothing checks it
+# again before it merges (D-076).
 name: doc-ids
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
