@@ -17,7 +17,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
-import { AGENT_LEVEL, heldDecisions, isRepoName, LIMITS, type CardDraftDTO, type DocDTO, type ProjectReposDTO, type RunFix, type RunRequest } from '../shared/types.ts';
+import { AGENT_LEVEL, heldDecisions, isRepoName, LIMITS, setupWords, SKILL_NAME, type CardDraftDTO, type DocDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
 import { claudeArgs, claudeSettings } from './claude.ts';
 import { AgentClient, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
@@ -184,6 +184,8 @@ export class Plugin {
   private stop?: AbortController;
   /** Cuts short the minute a waiting window sleeps, so a wake here serves at once. */
   private nudge?: AbortController;
+  /** What runs and turns load from the owner's Claude setup, as they chose, and what the last one loaded (R-039). Kept on disk. */
+  private setup: { choice: SetupChoice; applied?: SetupChoice & { at: number } } = { choice: { claudeMd: false, skills: [], noAttribution: false } };
 
   constructor(private readonly options: PluginOptions) {
     this.home = path.join(options.dataDir, 'laptop');
@@ -244,12 +246,10 @@ export class Plugin {
     let client = await AgentClient.load(this.file('account.json')).catch(() => null);
     if (!client || client.pairing !== paired!.pairing) client = await paired!.copyTo(this.file('account.json'));
     this.client = client;
-    client.protocol = AGENT_LEVEL.answers;
-    // The background Claude runs under the plugin's settings alone, so the owner's do not count (D-097).
+    client.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup;
     this.secrets = secretDirs(dataDir);
-    const npmCache = path.join(os.tmpdir(), 'webchat-npm', 'laptop');
-    await fs.mkdir(npmCache, { recursive: true });
-    await fs.writeFile(this.file('claude.json'), JSON.stringify(claudeSettings({ secrets: this.secrets, npmCache, guard: this.options.guard, env: process.env })));
+    this.setup = JSON.parse(await fs.readFile(this.file('setup.json'), 'utf8').catch(() => 'null')) ?? this.setup;
+    await this.saveSetup();
     this.runs = new Runs(client, (job) => this.run(job), (run) => this.cardRefusal(run));
     this.conversations = new Conversations(client, this.file('conversations.json'), (job) => this.converse(job));
     await this.conversations.load();
@@ -352,7 +352,7 @@ export class Plugin {
     await this.runs!.recover().catch(log);
     await this.conversations!.recover().catch(log);
     missed.forEach((m) => this.handle(m));
-    const level = async () => (this.client!.protocol = (await signedIn()) ? AGENT_LEVEL.cards : AGENT_LEVEL.answers);
+    const level = async () => (this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | ((await signedIn()) ? AGENT_LEVEL.cards : 0));
     await level();
     // Another window may connect a folder meanwhile, a folder may move, and another window may put the agent to sleep.
     const timers = [
@@ -417,7 +417,64 @@ export class Plugin {
     if (run?.kind === 'clone' || prompt?.kind === 'clone') return this.clone(message).catch(log);
     if (message.content?.forget) return this.forget(message).catch(log);
     if (message.content?.sleep) return this.sleepOnWord(message).catch(log);
+    if (message.content?.setup) return this.setupOnWord(message).catch(log);
     return (prompt ? this.conversations! : this.runs!).handle(message).catch(log);
+  }
+
+  /**
+   * Takes its owner's choice of what runs load from their Claude setup, when the message holds one,
+   * and answers with what the laptop offers, the choice it keeps and what its last run or turn
+   * loaded (R-039, D-115). Only the owner's word counts, as for a sleep. Skill names reach only
+   * their direct chat, sealed.
+   */
+  private async setupOnWord(message: OpenedMessage) {
+    const { setup } = message.content!;
+    if (!this.fromOwner(message, setup!.sentAt)) return;
+    if (setup!.choice) {
+      this.setup.choice = setup!.choice;
+      await this.saveSetup();
+    }
+    const { choice, applied } = this.setup;
+    await this.client!.send(message.conversationId, {
+      text: `My runs load ${setupWords(choice)}.`,
+      setupState: { to: message.clientId!, ...(await ownerSetup(claudeHome())), choice, ...(applied && { applied }) },
+    });
+  }
+
+  /** Keeps the setup on disk, and the background Claude's settings with its attribution choice. */
+  private async saveSetup() {
+    // The background Claude runs under the plugin's settings alone, so the owner's do not count (D-097).
+    const npmCache = path.join(os.tmpdir(), 'webchat-npm', 'laptop');
+    await fs.mkdir(npmCache, { recursive: true });
+    const settings = claudeSettings({ secrets: this.secrets, npmCache, guard: this.options.guard, env: process.env, noAttribution: this.setup.choice.noAttribution });
+    await fs.writeFile(this.file('claude.json'), JSON.stringify(settings));
+    await fs.writeFile(this.file('setup.json'), JSON.stringify(this.setup));
+  }
+
+  /**
+   * What a run or turn loads of the owner's Claude setup, as they chose (R-039): their CLAUDE.md,
+   * and copies of their chosen skills in a plugin folder made for it, which holds only `skills/`.
+   * Copies, since a run edits the files of its folders. A skill gone since is left out, and what
+   * was loaded is kept for the owner's next look.
+   */
+  private async loadSetup(session: string) {
+    const home = claudeHome();
+    const { choice } = this.setup;
+    const claudeMd = choice.claudeMd && existsSync(path.join(home, 'CLAUDE.md')) ? path.join(home, 'CLAUDE.md') : undefined;
+    // The same folder for every turn of a session, which the system prompt names as a working
+    // directory, and named "owner", so a skill shows to the model as owner:<name>.
+    const plugin = path.join(os.tmpdir(), 'webchat-skills', session, 'owner');
+    const skills: string[] = [];
+    for (const name of choice.skills) {
+      const from = path.join(home, 'skills', name);
+      if (!existsSync(path.join(from, 'SKILL.md'))) continue;
+      // Through a link to the skill's folder, but not through links in it, which could lead to secrets.
+      await fs.cp(await fs.realpath(from), path.join(plugin, 'skills', name), { recursive: true, filter: async (file) => !(await fs.lstat(file)).isSymbolicLink() });
+      skills.push(name);
+    }
+    this.setup.applied = { claudeMd: !!claudeMd, skills, noAttribution: choice.noAttribution, at: Date.now() };
+    await fs.writeFile(this.file('setup.json'), JSON.stringify(this.setup));
+    return { claudeMd, skills: skills.length ? plugin : undefined };
   }
 
   /**
@@ -532,8 +589,9 @@ export class Plugin {
 
   /** One turn of the background Claude in `cwd`: the message on stdin, the JSON answer `schema` asks for (D-097). */
   private async ask(cwd: string, session: string, resume: boolean, message: string, schema: object, signal: AbortSignal) {
-    const args = claudeArgs({ settings: this.file('claude.json'), session, resume, answer: schema });
-    const turn = await start(this.options.claude, args, cwd, signal, claudeResult, message);
+    const setup = await this.loadSetup(session);
+    const args = claudeArgs({ settings: this.file('claude.json'), session, resume, answer: schema, ...setup });
+    const turn = await start(this.options.claude, args, cwd, signal, claudeResult, message).finally(() => setup.skills && fs.rm(path.dirname(setup.skills), { recursive: true, force: true }));
     if (turn.error || !turn.answer) throw new Error(turn.text.trim().slice(0, 500) || 'Claude stopped without an answer.');
     // The owner may cancel while the turn ends; nothing is pushed or posted then.
     if (signal.aborted) throw new Error('the owner cancelled the run.');
@@ -1031,6 +1089,30 @@ async function takeLock(file: string) {
 /** A repository's folder in the plugin's, such as `repos/acme__app` (D-094). */
 export const repoHome = (dataDir: string, repo: string) => path.join(dataDir, 'repos', repo.replace('/', '__'));
 
+/** The owner's Claude Code folder, `~/.claude` unless they moved it. */
+const claudeHome = () => process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
+
+/** What the owner's Claude setup on this laptop offers a run (R-039): whether CLAUDE.md is there, and each skill with its description. */
+async function ownerSetup(home: string) {
+  const names = (await fs.readdir(path.join(home, 'skills')).catch(() => [] as string[])).filter((name) => SKILL_NAME.test(name)).sort();
+  const skills: Array<{ name: string; description: string }> = [];
+  for (const name of names.slice(0, LIMITS.setupSkills)) {
+    const text = await fs.readFile(path.join(home, 'skills', name, 'SKILL.md'), 'utf8').catch(() => undefined);
+    if (text === undefined) continue;
+    const description = skillDescription(text);
+    const max = LIMITS.skillDescriptionLength;
+    skills.push({ name, description: description.length > max ? `${description.slice(0, max - 1)}…` : description });
+  }
+  return { claudeMd: existsSync(path.join(home, 'CLAUDE.md')), skills };
+}
+
+/** A SKILL.md's description, from its front matter: one line, or the indented lines a block scalar folds. */
+function skillDescription(text: string) {
+  const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? '';
+  const value = /^description:[ \t]*(?:[>|][+-]?[ \t]*$)?(.*(?:\r?\n[ \t]+.*)*)/m.exec(front)?.[1] ?? '';
+  return value.replace(/\s+/g, ' ').trim().replace(/^(["'])(.*)\1$/, '$2');
+}
+
 /**
  * The folders the model must never read: the plugin's, with the agent's keys, and gh's, with the
  * owner's token. On macOS gh keeps that token in the login keychain, whose files a shell reads (K-54).
@@ -1039,7 +1121,7 @@ export const repoHome = (dataDir: string, repo: string) => path.join(dataDir, 'r
  */
 export function secretDirs(dataDir: string) {
   const ghDir = process.env.GH_CONFIG_DIR ?? path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'gh');
-  const sessionEnv = path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude'), 'session-env');
+  const sessionEnv = path.join(claudeHome(), 'session-env');
   const keychains = process.platform === 'darwin' ? [path.join(os.homedir(), 'Library', 'Keychains')] : [];
   return [dataDir, ghDir, sessionEnv, ...keychains].filter(Boolean);
 }
