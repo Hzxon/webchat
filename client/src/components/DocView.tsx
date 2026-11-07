@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { LIMITS } from '../../../shared/types';
 import { ApiError } from '../api';
+import { holdReloadWhile } from '../build';
 import { saveDraft, syncNow } from '../chat';
 import {
   beginEditing,
@@ -200,6 +201,9 @@ export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing
       setStatus((err as Error).message);
     }
   }
+
+  // A reload address cannot name the section, so a reload would close the editor (K-63).
+  useEffect(() => holdReloadWhile(() => true), []);
 
   // Each change goes to the device at once, and to the server after a pause in typing.
   useEffect(() => {

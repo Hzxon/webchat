@@ -174,17 +174,17 @@ page remembers the first value it sees. When a later response carries another, i
 compares the bundle files under `/assets/`. A tab with the same files keeps the new name and asks
 the service worker to update instead (K-36). A tab whose page loads a new file reloads once it is
 hidden or idle for 30 seconds, and it waits while the composer holds a draft, a message is sending
-or failed, or an urgent alert waits (`holdReloadWhile` in `client/src/build.ts`). The reload opens
-the chat, pane, doc or board that was open, through a link such as the `/?chat=` one of a
-notification click (K-60, #135).
+or failed, an urgent alert waits, or a doc section or board card is open in its editor
+(`holdReloadWhile` in `client/src/build.ts`; K-63, #141). The reload opens the chat, pane, doc or
+board that was open, through a link such as the `/?chat=` one of a notification click (K-60, #135).
 
 Why: a tab from before a deploy keeps its old code, and a format change makes it show messages it
 cannot decrypt (K-1). A check-in is the only channel to a tab (D-004), so the header rides on it.
 
 Cost: a deploy that changes the page reloads every open tab once, which drops scroll positions and
-any open dialog. Every deploy costs each tab one fetch of the page. A tab with a failed message or
-an undismissed alert keeps the old build until they are dealt with. A self-hosted server that
-restarts with the same build does not reload tabs.
+any open dialog. Every deploy costs each tab one fetch of the page. A tab with a failed message, an
+undismissed alert or an open editor keeps the old build until they are dealt with. A self-hosted
+server that restarts with the same build does not reload tabs.
 
 ### D-041: Only main deploys from Git
 
