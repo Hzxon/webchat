@@ -372,7 +372,7 @@ describe('agent client (R-027)', () => {
     assert.deepEqual(reports, ['I am on K-1: Pushes with bad keys', 'I finished K-1 on agent/k1.']);
   });
 
-  test('pins the keys its owner checked, so a card a teammate with new keys wrote runs (K-57, D-109)', async () => {
+  test('pins the keys its owner checked, so a card a teammate with new keys wrote runs (K-57, D-110)', async () => {
     // The bot pinned other keys for Carol than the server shows, as when her keys changed.
     await fs.writeFile(botFile, JSON.stringify({ ...JSON.parse(await fs.readFile(botFile, 'utf8')), pins: { [alice.id]: await keyFingerprint(alice.identity.publicKeys), [carol.id]: 'old' } }));
     bot = await AgentClient.load(botFile);

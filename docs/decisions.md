@@ -1188,7 +1188,7 @@ Why: a student should start from WebChat, with no terminal.
 Cost: a clone takes the laptop's disk, and minutes. The server answers which repositories a project
 links, so a changed server could offer a clone of another repository the owner reaches.
 
-### D-109: An agent pins the keys its owner checked
+### D-110: An agent pins the keys its owner checked
 
 Accepted 2026-11-07 in #145 (K-57).
 
