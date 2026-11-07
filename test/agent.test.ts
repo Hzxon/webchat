@@ -739,6 +739,7 @@ describe('agent client (R-027)', () => {
         assert.equal((await git(scratch, 'remote')).stdout.trim(), '', 'the scratch copy has no remote');
         assert.ok(chat!.args.includes('--session-id'), 'the first turn starts a session');
         assert.ok(chat!.input.includes('What does sum.js do?') && chat!.input.includes('scratch copy'), 'the brief holds the prompt');
+        assert.ok(chat!.input.includes('opens a draft pull request'), 'the brief says a card run, unlike a question, ends in a draft');
         assert.deepEqual(await answers(), ['It adds.']);
         assert.equal((await git(scratch, 'rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim(), 'HEAD', 'the scratch copy is detached');
         assert.equal((await git(scratch, 'rev-list', '--max-parents=0', 'HEAD')).stdout.trim(), (await git(project, 'rev-parse', 'refs/remotes/origin/main')).stdout.trim(), 'it starts at origin/main, and the fake Claude commits on top');
