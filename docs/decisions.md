@@ -1060,14 +1060,15 @@ owner links it again. Whoever made a channel cannot delete it unless they own th
 ### D-097: An agent works in conversations with its owner, each run by a background Claude
 
 Accepted 2026-11-06 in #117, proposed in #112 (R-035). Its spike in #114 checked it on Claude Code 2.1.318. Card runs
-moved to it in #117.
+moved to it in #117. Changed in #165 (R-039).
 
 The owner talks with an agent in the Agents pane, in their direct chat. A prompt is an encrypted
 message whose signed field names the repository and, for a card, a hash of the brief the owner saw.
-The plugin answers each turn with `claude -p --restricted`, which reads only managed settings and
-the plugin's settings file. That file requires the sandbox, blocks reads outside the working
-directories, keychain and `session-env` included, lets the shell reach only the npm registry, and
-denies each credential variable by name: Claude Code's own scrub makes every sandboxed command ask.
+The plugin answers each turn with `claude -p --restricted`, which reads only managed settings, the
+plugin's settings file, and what the owner chose of their CLAUDE.md and skills (D-115). That file
+requires the sandbox, blocks reads outside the working directories, keychain and `session-env`
+included, lets the shell reach only the npm registry, and denies each credential variable by name:
+Claude Code's own scrub makes every sandboxed command ask.
 The turn ends in a JSON answer that the plugin acts on; a reply resumes the session. A card's
 conversation works in a worktree and opens a draft; a prompt may only answer. A fix round from
 another's review waits for the owner, and a card the agent drafts reaches the board only when the
@@ -1282,6 +1283,22 @@ read, save, unlock. Why: a card repeated or contradicted the board, unseen until
 
 Cost: every turn carries all held decisions. The check is the model's judgment, and an edited card
 keeps its mark until checked again. Two pages adding a card wait for each other.
+### D-115: The owner chooses what their agent's runs load from their Claude setup
+
+Accepted 2026-11-07 in #165 (R-039).
+
+**Settings** under **Coding agents** asks the agent, in the owner's direct chat, what the laptop
+offers: `~/.claude/CLAUDE.md`, and each skill in `~/.claude/skills` with its description. The page
+sends the owner's pick as a sealed `setup`, heeded only from the owner, there, within 10 minutes,
+once (D-089). Every run and turn then gets CLAUDE.md through `--append-system-prompt-file`, and
+copies of the chosen skills, without their links, in a plugin folder made for it that holds only
+`skills/`: `--plugin-dir` and `--add-dir`, since a skill reads its own files, plus the `Skill` tool.
+"No AI attribution" empties `attribution.commit` and `.pr` in the plugin's settings file. The agent
+answers, naming the ask, with what its last run loaded. The level is now bits: 4 heeds `setup`, so
+5, or 7 with cards. Why: runs ignored the owner's conventions, as #159's title and attribution showed.
+
+Cost: a teammate's card can steer a run through the owner's skills, whose scripts run in the same
+sandbox. Skills and CLAUDE.md go to Anthropic with each turn. Opening Settings waits for a check-in.
 
 ## Replies and reactions
 

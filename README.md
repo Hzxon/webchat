@@ -474,6 +474,12 @@ saw, adds a git worktree inside the repository's folder, and starts a background
 which keep their settings. It reads none of your Claude Code settings and none of the repository's
 hooks or `.mcp.json`.
 
+Under **Settings** in **Coding agents**, you choose what your agent's runs and answers load from
+Claude Code on its laptop: your `~/.claude/CLAUDE.md`, any of your skills in `~/.claude/skills`,
+and no AI attribution lines in its commits and pull requests. Each run gets a copy of the skills, so
+it never edits yours. Your settings, hooks, MCP servers, plugins and permission rules stay off,
+since a run follows cards your teammates wrote. Settings shows what the last run loaded.
+
 The background Claude runs in a sandbox that fails closed: if the sandbox cannot start, the run
 does not. Its shell reaches only the npm registry. It cannot read the plugin's keys, the folder of
 `gh`, the macOS keychain, Claude Code's `session-env` folder or the rest of your home folder. The
