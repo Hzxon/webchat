@@ -104,7 +104,7 @@ export function openDocs(list: DocDTO[], conversations: ChatConversation[], keys
       .filter((d) => byId.has(d.conversationId))
       .map(async (d) => {
         const title = d.title && (await keyring.openDoc(d.title, byId.get(d.conversationId)!, keysOf));
-        return { ...d, name: title ? title.text || 'Untitled doc' : 'Doc that could not be decrypted', board: title?.board };
+        return { ...d, name: title ? title.text || 'Untitled doc' : 'Doc that could not be decrypted', board: title?.board, repo: title?.repo };
       }),
   );
 }
@@ -219,6 +219,8 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>, si
  */
 function shouldAlert(message: ChatMessage, conversation: ChatConversation): boolean {
   if (message.senderId === meId || message.kind === 'reaction' || message.security === 'plain') return false;
+  // An agent's entries for a link and its claims are its traffic with the owner's page; a proposal is news (R-040).
+  if (message.board && message.board.kind !== 'proposal') return false;
   const readUpTo = conversation.members.find((m) => m.userId === meId)?.lastReadId ?? 0;
   return message.id > alertFloor && message.id > readUpTo;
 }
@@ -823,6 +825,14 @@ export async function putToSleep(agentId: number) {
   await sendContent(await startDirectChat(agentId), { text: 'Go to sleep', sleep: { sentAt: Date.now() } }, false);
 }
 
+/** Asks the user's agent for a repository's entries, to link the board to it (R-040). Returns the ask's client id, which its answers name. */
+export async function askLink(agentId: number, project: number, repo: string) {
+  const conversationId = await startDirectChat(agentId);
+  const clientId = newClientId();
+  void sendContent(conversationId, { text: `Link the board to ${repo}`, board: { kind: 'link', project, repo, sentAt: Date.now() } }, false, clientId);
+  return clientId;
+}
+
 /** Has the user's agent forget its folder of a repository: the mark goes, never the files (R-038, D-101). */
 export async function forgetFolder(agentId: number, repo: string) {
   await sendContent(await startDirectChat(agentId), { text: `Forget the folder of ${repo}`, forget: { repo, sentAt: Date.now() } }, false);
@@ -920,6 +930,7 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     run: entry.content.run ?? null,
     prompt: entry.content.prompt ?? null,
     added: entry.content.added ?? null,
+    board: entry.content.board ?? null,
     security: 'encrypted',
   };
 }

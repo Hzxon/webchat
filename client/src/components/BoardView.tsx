@@ -8,7 +8,6 @@ import {
   cardRuns,
   GOING,
   cardTemplate,
-  columnMarkdown,
   COLUMN_TITLES,
   COLUMNS,
   duplicates,
@@ -23,11 +22,13 @@ import {
   type CardRun,
 } from '../board';
 import { inOrder, ownAgents, ready, seatFor, useAgentChats } from '../agents';
-import { askAgent, cancelRun, syncNow } from '../chat';
-import { addCard, beginEditing, createDoc, loadSections, markSeen, newSectionId, replaceSection, type Editing } from '../docs';
+import { copyOf } from '../../../shared/board';
+import { askAgent, askLink, cancelRun, syncNow } from '../chat';
+import { addCard, beginEditing, createBoard, loadSections, markSeen, newSectionId, replaceSection, type Editing } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
+import { importEntries } from '../boardLink';
 import { useLinkedRepos } from '../linkedRepos';
-import { actions, senderName, store, useAppState } from '../store';
+import { actions, senderName, useAppState } from '../store';
 import { HistoryDialog, SectionEditor } from './DocView';
 import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlayIcon, PlusIcon, StopIcon, TrashIcon } from './icons';
 import { Markdown } from './Markdown';
@@ -45,7 +46,10 @@ export function BoardView({ project }: { project: ProjectDTO }) {
   const agent = ownAgents(users, meId).find((a) => project.memberIds.includes(a.id));
   const linked = useLinkedRepos(agent ? [project.id] : [])[project.id];
   // With no GitHub App on the server, the pane's repositories are the agent's folders (R-038).
-  const repo = (linked?.configured ? linked.repos : agent?.agentRepos.map((s) => s.repo))?.[0];
+  const repos = (linked?.configured ? linked.repos : agent?.agentRepos.map((s) => s.repo)) ?? [];
+  const repo = repos[0];
+  // One repository takes one board's copy, so a repository another board copies to is not offered (R-040).
+  const copied = new Set(Object.values(docs).flatMap((d) => (d.repo && d.id !== boards.roadmap?.id ? [d.repo.toLowerCase()] : [])));
   const seat = agent && seatFor(agent, repo ?? '');
   // Not before the repositories load, so a check never runs on the board alone by mistake.
   const check =
@@ -56,6 +60,10 @@ export function BoardView({ project }: { project: ProjectDTO }) {
             await askAgent(seat.agent.id, project.id, repo, `Check ${id} as it is on the board now, against the other cards, the decisions, the code and the open pull requests. Then draft a change to ${id} with replaces: its text as it is, or what your check calls for.`),
           )
       : undefined;
+  // Only the project's owner links its board to a repository (R-040).
+  const linkedTo = boards.roadmap?.repo && boards.roadmap.title?.authorId === project.ownerId ? boards.roadmap.repo : undefined;
+  const free = repos.filter((r) => !copied.has(r.toLowerCase()));
+  const canLink = !linkedTo && project.ownerId === meId && !!linked && !!seat && ready(seat) && free.length > 0;
 
   return (
     <section className="chat board-view">
@@ -68,7 +76,7 @@ export function BoardView({ project }: { project: ProjectDTO }) {
         </span>
         <div className="chat-header-text">
           <strong>Board</strong>
-          <span>{project.name} · decisions, ideas and issues</span>
+          <span>{project.name} · {linkedTo ? `copied to ${linkedTo}` : 'decisions, ideas and issues'}</span>
         </div>
         <div className="segmented board-tabs" role="tablist">
           {COLUMNS.map((column) => (
@@ -78,12 +86,79 @@ export function BoardView({ project }: { project: ProjectDTO }) {
           ))}
         </div>
       </header>
+      {canLink && <BoardLink project={project} agentId={agent!.id} repos={free} />}
       <div className={`board-columns shows-${shown}`}>
         {COLUMNS.map((column) => (
           <BoardColumnView key={column} column={column} projectId={project.id} doc={boards[column]} check={check} />
         ))}
       </div>
     </section>
+  );
+}
+
+/** How long the link waits for the agent's entries before it says none came. */
+const ANSWER_MS = 60_000;
+
+/**
+ * The owner's link of the board to one of the project's repositories (R-040, D-117): their agent
+ * sends the repository's entries, the page writes them as cards, then names the repository on the
+ * board. From then on the agent keeps the repository's docs as copies.
+ */
+function BoardLink({ project, agentId, repos }: { project: ProjectDTO; agentId: number; repos: string[] }) {
+  const chats = useAgentChats();
+  const messages = useAppState((s) => s.messages);
+  const [repo, setRepo] = useState(repos[0]!);
+  const [asked, setAsked] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+  const [late, setLate] = useState(false);
+  const answers = asked ? chats.flatMap((c) => messages[c.id] ?? []).filter((m) => m.senderId === agentId && m.board && 'to' in m.board && m.board.to === asked) : [];
+  const failed = answers.find((m) => m.board?.kind === 'failed');
+  const parts = new Map(answers.flatMap((m) => (m.board?.kind === 'entries' ? [[m.board.part, m.board] as const] : [])));
+  const complete = parts.size > 0 && parts.size === [...parts.values()][0]!.parts;
+
+  useEffect(() => {
+    if (!asked || complete || failed) return;
+    const timer = setTimeout(() => setLate(true), ANSWER_MS);
+    return () => clearTimeout(timer);
+  }, [asked, complete, failed]);
+  useEffect(() => {
+    if (!complete) return;
+    const entries = [...parts.entries()].sort(([a], [b]) => a - b).flatMap(([, part]) => part.entries);
+    importEntries(project.id, repo, entries, (done) => setNote(`Importing ${done} of ${entries.length} entries…`)).catch((err: Error) => {
+      setError(err.message);
+      setAsked(null);
+    });
+  }, [complete]);
+
+  return (
+    <div className="board-link">
+      <p>
+        Keep <code>docs/roadmap.md</code> and <code>docs/decisions.md</code> of{' '}
+        <select value={repo} onChange={(e) => setRepo(e.target.value)} disabled={!!asked} aria-label="Repository">
+          {repos.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>{' '}
+        as copies of this board. Their entries come onto the board first. Card text is then plain text in the repository, which everyone who can read it reads.
+      </p>
+      <button
+        className="button-secondary"
+        disabled={!!asked}
+        onClick={() => {
+          setError('');
+          setLate(false);
+          askLink(agentId, project.id, repo).then(setAsked, (err: Error) => setError(err.message));
+        }}
+      >
+        Link
+      </button>
+      {asked && !complete && !failed && <span className="doc-note">{late ? 'Your agent did not answer. Keep Claude Code open on your laptop, then link again.' : 'Asking your agent for the repository’s entries…'}</span>}
+      {note && <span className="doc-note">{note}</span>}
+      {(failed || error) && <p className="form-error">{failed?.text ?? error}</p>}
+    </div>
   );
 }
 
@@ -175,19 +250,20 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
     const target = doc ?? (await createBoard(projectId, column));
     // Saved at once, under the column's lock on numbers, so no other page gives its number; Cancel takes it back (D-116).
     const id = newSectionId();
-    const { text, pos } = await addCard(target, id, kind, (number) => cardTemplate(kind, number));
+    const { text, pos } = await addCard(target, id, kind, (cardId) => cardTemplate(kind, cardId));
     await edit(target, id, text, pos, true);
   }
 
   /** Removes a card in an editing session of its own. Its revisions stay in the history. */
   async function remove(card: Card) {
-    if (!confirm(`Delete ${card.kind ? `${card.kind}-${card.number}` : 'this card'} for everyone? Its history stays.`)) return;
+    if (!confirm(`Delete ${card.cardId || 'this card'} for everyone? Its history stays.`)) return;
     await replaceSection(doc!, card.id, { text: card.text, pos: card.pos, removed: true });
     void syncNow();
   }
 
   async function copy() {
-    await navigator.clipboard.writeText(columnMarkdown(column, cards));
+    // The same text as a linked repository's copy (D-117).
+    await navigator.clipboard.writeText(copyOf(column, cards.map((c) => c.text)));
     setNote('Copied');
     setTimeout(() => setNote(''), 2000);
   }
@@ -267,7 +343,7 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
                     <button className="board-card-head" onClick={() => setOpen(isOpen ? null : card.id)} aria-expanded={isOpen}>
                       {card.kind && (
                         <span className="board-card-id">
-                          {card.kind}-{card.number}
+                          {card.cardId}
                         </span>
                       )}
                       <strong>{card.failed ? 'This card could not be decrypted.' : card.title || 'Untitled'}</strong>
@@ -346,7 +422,7 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
                         {check && card.kind && !card.failed && (
                           <p className="board-card-run">
                             <span>Your agent checks it against the board, the code and the open pull requests.</span>
-                            <button className="board-card-run-link" onClick={() => run(check(`${card.kind}-${card.number}`))}>
+                            <button className="board-card-run-link" onClick={() => run(check(card.cardId))}>
                               Check again
                             </button>
                           </p>
@@ -365,8 +441,3 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
   );
 }
 
-/** Makes the doc behind a column, empty. Its first card is the section written right after. */
-export async function createBoard(projectId: number, column: BoardColumn): Promise<ChatDoc> {
-  const id = await createDoc(projectId, COLUMN_TITLES[column], [], column);
-  return store.get().docs[id]!;
-}

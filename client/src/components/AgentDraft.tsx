@@ -8,12 +8,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { textHash } from '../../../shared/e2ee';
 import type { CardDraftDTO } from '../../../shared/types';
 import type { Thread } from '../agents';
-import { boardDocs, cardText, COLUMNS, KIND_NAMES, NEW_STATUS, nextNumber, parseCard, withChecked, type Card } from '../board';
+import { boardDocs, cardText, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, parseCard, withChecked, type Card } from '../board';
 import { noteAdded, syncNow, tellAgent } from '../chat';
-import { addCard, loadSections, newSectionId, rewriteSection, sectionHistory } from '../docs';
+import { addCard, createBoard, loadSections, newSectionId, rewriteSection, sectionHistory } from '../docs';
 import type { ChatMessage } from '../e2ee/keyring';
 import { actions, senderName, useAppState } from '../store';
-import { createBoard } from './BoardView';
 import { formatSince } from './format';
 import { Markdown } from './Markdown';
 
@@ -52,7 +51,8 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
   );
   const [picked, setPicked] = useState<number | null>(null);
   const asked = thread.messages[0]!.prompt;
-  const board = asked?.kind === 'prompt' && shared.some((p) => p.id === asked.project) ? asked.project! : shared.length === 1 ? shared[0]!.id : null;
+  const named = asked?.kind === 'prompt' ? asked.project : thread.project;
+  const board = named !== undefined && shared.some((p) => p.id === named) ? named : shared.length === 1 ? shared[0]!.id : null;
   const projectId = change ? (conversations[docs[change.doc]?.conversationId ?? 0]?.projectId ?? null) : (picked ?? board);
   const [redone, setRedone] = useState(false);
   // A decision goes in the Decisions column, an idea or issue in the Roadmap.
@@ -93,7 +93,7 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
 
   const current = change ? cards?.find((c) => c.id === change.section) : undefined;
   // A card or decision the board no longer has is left out; a pull request the page cannot look up stays (R-041).
-  const related = (draft.related ?? []).filter((r) => r.id.startsWith('#') || cards?.some((c) => `${c.kind}-${c.number}` === r.id));
+  const related = (draft.related ?? []).filter((r) => r.id.startsWith('#') || cards?.some((c) => c.cardId === r.id));
 
   async function add() {
     if (projectId === null) return;
@@ -109,13 +109,14 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
         const written = await rewriteSection(doc, change.section, async (section) => {
           const card = section && parseCard(section);
           if (!card || (await textHash(card.text.trim())) !== change.seen) return null;
-          return { text: cardText(card.kind!, card.number!, draft.title, card.status, body), pos: card.pos };
+          // A proposal's file may set a new status, as one that finishes its card does (R-040).
+          return { text: cardText(card.cardId, draft.title, draft.status ?? card.status, body), pos: card.pos };
         });
         // Changed since the page last looked: the next load says how.
         if (!written) return void syncNow();
         id = change.card;
       } else {
-        ({ id } = await addCard(doc, newSectionId(), draft.kind, (number) => cardText(draft.kind, number, draft.title, NEW_STATUS[draft.kind], body)));
+        ({ id } = await addCard(doc, newSectionId(), draft.kind, (cardId) => cardText(cardId, draft.title, NEW_STATUS[draft.kind], body)));
       }
       await noteAdded(thread.conversationId, thread.root, message.clientId!, id);
       void syncNow();
@@ -187,7 +188,7 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
               ? `${change.card} was deleted from the board after this draft.`
               : `${stale.by} changed ${change.card} after this draft, at ${formatSince(stale.at)}.`}
           </p>
-          <button
+          {thread.kind !== 'proposal' && <button
             className="button-secondary"
             disabled={redone || thread.state === 'working' || thread.state === 'ended'}
             onClick={() => {
@@ -196,7 +197,7 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
             }}
           >
             Ask it to redo this
-          </button>
+          </button>}
         </>
       ) : (
         <div className="agents-draft-actions">
@@ -212,7 +213,7 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
           )}
           {!change && shared.length === 0 && <p className="composer-blocked">Add your agent to a project first, under the project’s people.</p>}
           <button className="button-primary" disabled={busy || cards === null || projectId === null || (!!change && !current)} onClick={() => void add()}>
-            {change ? `Update ${change.card}` : `Add as ${kind} ${draft.kind}-${nextNumber(cards ?? [], draft.kind)}`}
+            {change ? `Update ${change.card}` : `Add as ${kind} ${idOf((cards ?? []).map((c) => c.cardId), draft.kind)}`}
           </button>
         </div>
       )}

@@ -625,13 +625,29 @@ export type PromptDTO =
  * against, each one the brief held (D-116).
  */
 export interface CardDraftDTO {
-  kind: 'D' | 'R' | 'K';
+  kind: 'D' | 'R' | 'K' | 'Q';
   title: string;
   body: string;
   replaces?: { card: string; doc: string; section: string; seen: string };
   checked?: string;
   related?: Array<{ id: string; kind: 'duplicate' | 'conflict'; why: string }>;
+  /** A proposal's new status line for the card it changes, as its file in the repository says (R-040). */
+  status?: string;
 }
+
+/**
+ * How the owner's agent keeps a linked repository's `docs/roadmap.md` and `docs/decisions.md` as
+ * copies of the board (R-040, D-117), sealed in the owner's direct chat with it. The owner's page
+ * asks for the repository's entries when the owner links it, and imports them; the agent answers
+ * in parts. Once a proposal file reaches the default branch, the agent sends it as a card draft,
+ * and it names the cards that open pull requests claim, whose status the owner's page then sets.
+ */
+export type BoardSyncDTO =
+  | { kind: 'link'; project: number; repo: string; sentAt: number }
+  | { kind: 'entries'; to: string; part: number; parts: number; entries: string[] }
+  | { kind: 'failed'; to: string }
+  | { kind: 'proposal'; project: number; repo: string; card: CardDraftDTO }
+  | { kind: 'claims'; project: number; repo: string; claims: Array<{ card: string; pull: number }> };
 
 /**
  * A pull request shared into a chat: a snapshot of how it stood when it was shared. It travels

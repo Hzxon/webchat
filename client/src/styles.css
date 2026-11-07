@@ -2750,6 +2750,24 @@ a {
   margin-left: auto;
 }
 
+/* The owner's link of the board to a repository, until it is linked (R-040). */
+.board-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 14px;
+}
+
+.board-link p {
+  flex: 1 1 320px;
+  margin: 0;
+  color: var(--muted);
+}
+
 .board-columns {
   flex: 1;
   display: grid;

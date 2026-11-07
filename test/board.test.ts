@@ -5,17 +5,18 @@ import { describe, test } from 'node:test';
 // the client module. tsx still loads it.
 const clientBoard = '../client/src/board.ts';
 
-const { cardRuns, cardTemplate, GOING, columnMarkdown, duplicates, groupOf, nextNumber, otherRun, parseCard, unchecked, withChecked, withStatus, workingStatus } = await import(clientBoard);
+const { cardRuns, cardTemplate, GOING, duplicates, idOf, groupOf, otherRun, parseCard, unchecked, withChecked, withStatus, workingStatus } = await import(clientBoard);
 
 const section = (id: string, text: string) => ({ id, text, pos: 1, failed: false });
 
 describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
   test('each template reads back as its kind, number, title and status', () => {
-    const d = parseCard(section('a', cardTemplate('D', 3)));
-    assert.deepEqual([d.kind, d.number, d.title, d.status], ['D', 3, 'Title', 'Proposed']);
+    const d = parseCard(section('a', cardTemplate('D', 'D-3')));
+    assert.deepEqual([d.kind, d.number, d.cardId, d.title, d.status], ['D', 3, 'D-3', 'Title', 'Proposed']);
     assert.ok(d.body.startsWith('What was decided'));
-    assert.deepEqual(parseCard(section('b', cardTemplate('R', 12))).status, 'Idea');
-    assert.deepEqual(parseCard(section('c', cardTemplate('K', 1))).status, 'Open');
+    assert.deepEqual(parseCard(section('b', cardTemplate('R', 'R-012'))).status, 'Idea');
+    assert.deepEqual(parseCard(section('c', cardTemplate('K', 'K-1'))).status, 'Open');
+    assert.deepEqual(parseCard(section('d', cardTemplate('Q', 'Q-6'))).status, 'Open');
   });
 
   test('a status keeps its date and loses its final period', () => {
@@ -65,11 +66,11 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.equal(card.body, '## Just a note\n\nStatus: Open.\nBody');
   });
 
-  test('the next free number skips the numbers in use, by kind', () => {
-    const cards = ['### R-1: a', '### R-4: b', '### K-2: c', 'no heading'].map((t, i) => parseCard(section(String(i), t)));
-    assert.equal(nextNumber(cards, 'R'), 5);
-    assert.equal(nextNumber(cards, 'K'), 3);
-    assert.equal(nextNumber(cards, 'D'), 1);
+  test('the next free id skips the numbers in use, by kind', () => {
+    const ids = ['### R-1: a', '### R-4: b', '### K-2: c', 'no heading'].map((t, i) => parseCard(section(String(i), t)).cardId);
+    assert.equal(idOf(ids, 'R'), 'R-5');
+    assert.equal(idOf(ids, 'K'), 'K-3');
+    assert.equal(idOf(ids, 'D'), 'D-1');
   });
 
   test('two cards with one number are both flagged', () => {
@@ -77,9 +78,10 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.deepEqual([...duplicates(cards)], ['0', '1']);
   });
 
-  test('the column copies as the repository file, ideas before issues, in number order', () => {
-    const cards = ['### K-1: issue', '### R-2: later', '### R-1: first'].map((t, i) => parseCard(section(String(i), t)));
-    assert.equal(columnMarkdown('roadmap', cards), '# Roadmap\n\n### R-1: first\n\n### R-2: later\n\n### K-1: issue\n');
+  test('a new id is as wide as the widest of its kind, so R-043 follows R-005 (R-040)', () => {
+    assert.equal(idOf(['R-005', 'R-042', 'K-12', 'D-1'], 'R'), 'R-043');
+    assert.equal(idOf(['R-005', 'K-12'], 'K'), 'K-13');
+    assert.equal(idOf([], 'Q'), 'Q-1');
   });
 
   test('a card shows its latest run, and only an unfinished one blocks another (R-027)', () => {

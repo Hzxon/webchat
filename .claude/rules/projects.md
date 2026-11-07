@@ -39,6 +39,8 @@ docs/decisions.md that explains it.
 - A board is two docs marked by a `board` field inside the sealed title; a card's number, title and status come from its first two lines, in the `docs/decisions.md` format (D-082).
 - A page gives a new card its number only through `addCard` in `client/src/docs.ts`: under the lock of its column doc's `title` section, from the cards loaded under that lock, never from cards it loaded before (D-116).
 - A draft's `related` ids are only ones the brief held: its cards, the decisions the team holds and the open pull requests the plugin listed; the page drops a card or decision it cannot find (D-116).
+- Only the project's owner links its board: the link is the `repo` of the Roadmap doc's sealed title, and the page and the agent count it only when the owner wrote that title; the agent copies only boards of projects its owner owns, and one board per repository (D-117).
+- A board's copy is `copyOf` in `shared/board.ts`, for Copy as Markdown and for the agent alike; the agent pushes only `agent/board`, never forced, writing the two docs and removing the proposal files its owner added (D-117, D-092).
 - A Bark push carries chat name, sender name, urgency and unread count, never message text; one APNs provider token is shared through the database and refreshed at most every 20 minutes (D-054).
 - The Bark key comes from `BARK_APNS_KEY` and is never committed (D-054).
 - An agent is a member account that never makes keys; it keeps its secrets in `~/.webchat/<name>/account.json` or the plugin's data folder, and two agents must not share that file, so the plugin keeps one copy for the laptop under `laptop/`, behind the one `watch.lock` that the serving window holds (D-085, D-094).

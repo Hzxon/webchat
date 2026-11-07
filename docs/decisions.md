@@ -918,15 +918,15 @@ newest (D-020). Docs are Markdown only, exported only as PDF through print.
 
 ### D-082: The project board is two docs whose sections are cards
 
-Accepted 2026-11-04 in #75, changed in #166 (R-041).
+Accepted 2026-11-04 in #75, changed in #166 (R-041) and #167 (R-040).
 
 A project's board (R-021) is a view over two docs: Decisions, and Roadmap for ideas and issues. A
 card is a section of that doc, with its lock and history (D-081). A `board` field inside the sealed
 content of the doc's title marks them, so the server does not know a board from a doc, and the
 sidebar leaves them out of Docs. The browser makes them when someone first adds a card. A card's
 number, title and status come from its first two lines, `### D-3: Title` and `Status: Accepted
-2026-11-04.`, the format of `docs/decisions.md` and `docs/roadmap.md`. "Copy as Markdown" joins a
-column's cards into that file. Why: needs no migration, route, key code or fingerprint change, and
+2026-11-04.`, the format of `docs/decisions.md` and `docs/roadmap.md`. "Copy as Markdown" gives a
+column as a linked repository's copy of it (D-117). Why: needs no migration, route, key code or fingerprint change, and
 a team pastes a column into its repository for its agents to read.
 
 Cost: the browser numbers a new card under its column's title lock (D-116); a page from before
@@ -1630,11 +1630,13 @@ be up to date", or a red result will not stop the merge.
 
 ### D-076: Fix pull requests edit the roadmap in place, and CI runs the checks
 
-Accepted 2026-11-03. Reservation by tag added in #149.
+Accepted 2026-11-03. Reservation by tag added in #149. Changed in #167 (R-040).
 
-A pull request that finishes a roadmap item changes only that item's status line, in place. It
-does not move the entry to Done or add a row to the Done table; a housekeeping pull request does
-both for every finished item at once. New decision entries go at the end of their topic section,
+Once the project's board is linked to this repository, its docs are copies and D-117 holds instead:
+a pull request proposes its change as a file, the board gives every number, and the reservations
+and housekeeping pull requests stop. Until then, a pull request that finishes a roadmap item changes
+only that item's status line, in place. It does not move the entry to Done or add a row to the Done
+table; a housekeeping pull request does both for every finished item at once. New decision entries go at the end of their topic section,
 and `.gitattributes` merges `docs/decisions.md` with git's union driver. `scripts/claim.sh` takes a
 decision number as a third argument, refuses one that an open pull request already reserves, then
 pushes the tag `reserve/D-xxx`. The remote creates a tag only once, so of two claims seconds apart,
@@ -1697,10 +1699,11 @@ check sees only the routes the GitHub tests call.
 
 ### D-106: Parallel pull requests never append at the same spot
 
-Accepted 2026-11-06 in #124.
+Accepted 2026-11-06 in #124, changed in #167 (R-040).
 
 A new roadmap entry is its own file under `docs/roadmap/`, named by its id, and a housekeeping pull
-request folds it into `docs/roadmap.md`. Each migration is its own numbered file under
+request folds it into `docs/roadmap.md`. Once the board is linked, a new entry's file is named by a
+short name, a change's by its id, and the owner's agent folds them into the copy (D-117). Each migration is its own numbered file under
 `server/migrations/`, read in order by `server/db.ts`, which fails on a gap or a repeated number.
 A branch stacked on another one runs `scripts/restack.sh <parent>` when the parent lands, which
 rebases only its own commits onto main.
@@ -1733,6 +1736,22 @@ session that picked one of those would have rebuilt what main had or built on a 
 
 Cost: the overlap check is judgment, so the script can only demand that it is written down. A
 claim takes one more line and one more read of the decisions.
+
+### D-117: The board is the source, and a linked repository keeps a copy
+
+Accepted 2026-11-07 in #167 (R-040).
+
+The project's owner links its board to one of its repositories, sealed in the Roadmap's title. Their
+page first imports the repository's entries from their agent, with their own numbers; a board card
+whose number one takes moves to the next free one. From then on the agent keeps `docs/roadmap.md`
+and `docs/decisions.md` as copies, rendered by `copyOf` in `shared/board.ts`, as Copy as Markdown is:
+decisions in number order, Done and Fixed items as a table. After 10 quiet minutes it commits them to
+`agent/board`, in one draft, never forced. A proposal file on main reaches the owner as a draft, and
+`Claims K-12` in an open pull request sets K-12 In progress. CI fails a hand edit of a copy. Why: the
+board and the repository drifted apart, and their numbers clashed (#159).
+
+Cost: card text is plain text in the repository; main lags the board until the owner merges; nothing
+syncs while the laptop sleeps; a session that needs a decision number waits for the owner.
 
 ## Superseded
 

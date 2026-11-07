@@ -21,6 +21,7 @@ import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, textHash, wrapChatKey } from '../shared/e2ee.ts';
+import { copyOf, readCard } from '../shared/board.ts';
 import { briefText, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type UserDTO } from '../shared/types.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
@@ -47,7 +48,9 @@ if (args[0] === 'pr' && args[1] === 'create') {
   const head = execFileSync('git', ['--git-dir', state.origin, 'rev-parse', 'refs/heads/' + pull.head], { encoding: 'utf8' }).trim();
   console.log(JSON.stringify({ state: 'OPEN', isDraft: true, headRefOid: head, mergeable: 'MERGEABLE', statusCheckRollup: [], reviews: [], comments: [], ...pull.view }));
 } else if (args[0] === 'pr' && args[1] === 'list') {
-  console.log(JSON.stringify(state.open ?? []));
+  // The pull requests the test opened, and the drafts the plugin opened, each on its head.
+  const all = [...(state.open ?? []), ...state.pulls.map((p, i) => ({ number: i + 1, title: '', headRefName: p.head }))];
+  console.log(JSON.stringify(all.filter((p) => !args.includes('--head') || p.headRefName === flag('--head'))));
 } else if (args[0] === 'run') {
   console.log('FAIL test/sum.test.js: expected 3, got 4');
 } else if (args[0] === 'api') {
@@ -934,6 +937,72 @@ describe('agent client (R-027)', () => {
         await alice.sync();
         assert.deepEqual(alice.users.get(agent.id)?.agentRepos, []);
         assert.ok(existsSync(path.join(project, 'README.md')));
+
+        // Alice links the board to the repository, whose docs then copy the board (R-040, D-117).
+        await new Plugin({ ...options, code: '', dataDir, projectDir: project }).call('connect');
+        await plugin.scan();
+        await unthrottle();
+        await git(project, 'config', 'user.name', 'Alice');
+        await git(project, 'config', 'user.email', 'alice@example.com');
+        const docsAt = async (files: Record<string, string>) => {
+          await git(merger, 'pull', '-q', 'origin', 'main');
+          for (const [file, text] of Object.entries(files)) {
+            await fs.mkdir(path.dirname(path.join(merger, file)), { recursive: true });
+            await fs.writeFile(path.join(merger, file), text);
+          }
+          await git(merger, 'add', '-A');
+          await git(merger, 'commit', '-q', '-m', 'Docs');
+          await git(merger, 'push', '-q', 'origin', 'HEAD:main');
+        };
+        await docsAt({
+          'docs/decisions.md': '# Decisions\n\n## A topic\n\n### D-001: Keep sums exact\n\nAccepted 2026-11-01.\n\nWhy: money.\n',
+          'docs/roadmap.md': '# Roadmap\n\n## Known issues\n\n### K-3: Totals lag\n\nStatus: Open.\n',
+          'docs/roadmap/K-9.md': '### K-9: Not folded in yet\n\nStatus: Open.\n',
+          'docs/roadmap/new-thing.md': '### R: A new thing\n\nStatus: Idea.\n\nWhy: tests.\n',
+        });
+        const link = (await alice.send(direct, { text: 'Link the board to acme/app', board: { kind: 'link', project: app.project.id, repo: 'acme/app', sentAt: Date.now() } })).clientId!;
+        await (await checkIn()).handled;
+        const fromAgent = async () => (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.board).map((m) => ({ ...m.content!.board!, clientId: m.clientId! }));
+        const [entries] = await fromAgent();
+        assert.deepEqual(entries?.kind === 'entries' && [entries.to, entries.part, entries.parts, entries.entries.map((e) => readCard(e)!.id)], [link, 1, 1, ['D-001', 'K-3', 'K-9']], "the repository's entries, with one not folded in yet, and no proposal");
+        // Alice's page imports them, then names the repository in the Roadmap's title; a teammate's naming counts for nothing.
+        await alice.sync();
+        const roadmapDoc = (await alice.boardDocs(app.project.id)).roadmap!;
+        await carol.sync();
+        await carol.editSection(roadmapDoc, 'title', () => ({ text: 'Roadmap', board: 'roadmap', repo: 'acme/app' }));
+        await plugin.client!.sync();
+        await plugin.syncBoards(Date.now() + 11 * 60_000);
+        assert.equal((await fromAgent()).length, 0, 'nothing comes of a link the owner did not write');
+        await alice.editSection(roadmapDoc, 'title', () => ({ text: 'Roadmap', board: 'roadmap', repo: 'acme/app' }));
+        await fs.writeFile(ghState, JSON.stringify({ ...JSON.parse(await fs.readFile(ghState, 'utf8')), open: [{ number: 8, title: 'Fix totals', body: 'Claims K-7. Checked it.', headRefName: 'claude/k7-totals' }] }));
+        const pullsBefore = JSON.parse(await fs.readFile(ghState, 'utf8')).pulls.length;
+        await plugin.client!.sync();
+        // A change waits until the board stays unchanged for 10 minutes.
+        const start = Date.now();
+        await plugin.syncBoards(start);
+        const atBoard = (file: string) => sh('git', ['--git-dir', origin, 'show', `agent/board:${file}`]).then((r) => r.stdout, () => null);
+        assert.equal(await atBoard('docs/roadmap.md'), null, 'no copy before the board is quiet');
+        const sent = await fromAgent();
+        const proposal = sent.find((m) => m.kind === 'proposal');
+        assert.deepEqual(proposal?.kind === 'proposal' && proposal.card, { kind: 'R', title: 'A new thing', body: 'Why: tests.' }, 'a proposal on main comes as a draft');
+        assert.deepEqual(sent.find((m) => m.kind === 'claims'), { kind: 'claims', project: app.project.id, repo: 'acme/app', claims: [{ card: 'K-7', pull: 8 }], clientId: sent.find((m) => m.kind === 'claims')!.clientId }, 'an open pull request claims K-7');
+        await plugin.syncBoards(start + 11 * 60_000);
+        const cards = (await alice.sections(roadmapDoc)).map((s) => s.text);
+        assert.equal(await atBoard('docs/roadmap.md'), copyOf('roadmap', cards), 'the copy is what Copy as Markdown gives');
+        assert.equal(await atBoard('docs/decisions.md'), copyOf('decisions', []));
+        assert.equal(await atBoard('docs/roadmap/K-9.md'), null, 'the entry the import took in leaves its file');
+        assert.ok((await atBoard('docs/roadmap/new-thing.md'))?.includes('A new thing'), 'a proposal stays until it is on the board');
+        assert.deepEqual(JSON.parse(await fs.readFile(ghState, 'utf8')).pulls.slice(pullsBefore), [{ head: 'agent/board', base: 'main', draft: true }], 'one draft, on agent/board');
+        // Alice adds the proposal; the board changes, and the next copy drops its file, on the same draft.
+        await alice.send(direct, { text: 'Added R-1 to the board.', added: { to: proposal!.clientId, draft: proposal!.clientId, card: 'R-1' } });
+        await (await checkIn()).handled;
+        await alice.editSection(roadmapDoc, newKeyId().slice(0, 11), () => ({ text: '### R-1: A new thing\n\nStatus: Idea.\n\nWhy: tests.', pos: 9 }));
+        await plugin.client!.sync();
+        await plugin.syncBoards(start + 12 * 60_000);
+        await plugin.syncBoards(start + 23 * 60_000);
+        assert.equal(await atBoard('docs/roadmap/new-thing.md'), null, 'the added proposal leaves its file');
+        assert.ok((await atBoard('docs/roadmap.md'))?.includes('### R-1: A new thing'));
+        assert.equal(JSON.parse(await fs.readFile(ghState, 'utf8')).pulls.length, pullsBefore + 1, 'still one draft');
       } finally {
         restore();
       }

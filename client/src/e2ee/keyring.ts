@@ -58,6 +58,8 @@ interface Opened {
   prompt: PromptDTO | null;
   /** The owner's note that a card draft went on the board (D-104). */
   added: MessageContent['added'] | null;
+  /** The board's copy in a linked repository, between the owner's page and their agent (R-040). */
+  board: MessageContent['board'] | null;
   /**
    * "plain" for messages from before encryption; "github" for a card the server wrote, which
    * nobody signs; "failed" if decryption or the signature check failed.
@@ -77,6 +79,8 @@ export interface ChatDoc extends DocDTO {
   name: string;
   /** Set on the two docs behind the project board (R-021), which the Docs list leaves out. */
   board?: DocContent['board'];
+  /** On the board's Roadmap doc: the repository whose docs copy the board, as its title names it (R-040). */
+  repo?: string;
 }
 
 export { EncryptionUnavailableError, OldKeyCopyError, type KeyLookup };
@@ -116,6 +120,7 @@ const openedFrom = (content: MessageContent): Opened => ({
   run: content.run ?? null,
   prompt: content.prompt ?? null,
   added: content.added ?? null,
+  board: content.board ?? null,
   security: 'encrypted',
 });
 
@@ -302,7 +307,7 @@ export const keyring = {
 
   /** Decrypts a message and checks its signature. Never throws: failures come back as "failed". */
   async open(message: MessageDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup): Promise<ChatMessage> {
-    const none = { replyTo: null, reaction: null, pull: null, github: null, run: null, prompt: null, added: null };
+    const none = { replyTo: null, reaction: null, pull: null, github: null, run: null, prompt: null, added: null, board: null };
     if (message.kind === 'github') {
       // Shown as GitHub's, never as a person's, whatever sender the server names.
       const card = readGithubCard(message.body);

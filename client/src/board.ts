@@ -2,6 +2,7 @@
 // the format of this repository's docs/decisions.md and docs/roadmap.md. A card is Markdown that
 // starts with "### D-3: Title" and a "Status:" line. This module only reads and writes that text,
 // so the tests run it without a browser.
+import { readCard, type CardKind } from '../../shared/board';
 import type { DocContent } from '../../shared/e2ee';
 import { RUN_PICKUP_MS, type RunReport } from '../../shared/types';
 import type { DocSection } from './docs';
@@ -9,12 +10,14 @@ import type { ChatConversation, ChatDoc, ChatMessage } from './e2ee/keyring';
 import type { PendingStatus } from './store';
 
 export type BoardColumn = NonNullable<DocContent['board']>;
-/** Decisions are D-n. Ideas, R-n, and issues, K-n, share the Roadmap column. */
-export type CardKind = 'D' | 'R' | 'K';
+/** Decisions are D-n. Ideas, R-n, issues, K-n, and questions, Q-n, share the Roadmap column. */
+export type { CardKind };
 
 export interface Card extends DocSection {
   kind: CardKind | null;
   number: number | null;
+  /** The id as its heading writes it, such as "R-005", or '' without one. */
+  cardId: string;
   title: string;
   /** The status line without "Status:" and its final period, such as "Accepted 2026-11-04". */
   status: string;
@@ -33,28 +36,23 @@ export const KIND_NAMES: Record<CardKind, string> = {
   D: 'decision',
   R: 'idea',
   K: 'issue',
+  Q: 'question',
 };
 
-const HEADING = /^###\s+([DRK])-(\d+):\s*(.*?)\s*$/;
 const STATUS = /^Status:\s*(.*?)\.?\s*$/;
 
-/** Reads a card's kind, number, title and status from its heading and the status line under it. */
+/** Reads a card's kind, number, title and status from its heading and the status line under it, as `readCard` does. */
 export function parseCard(section: DocSection): Card {
-  const lines = section.text.split('\n');
-  const first = lines.findIndex((l) => l.trim() !== '');
-  const heading = first >= 0 ? HEADING.exec(lines[first]!) : null;
-  let rest = first >= 0 ? lines.slice(first + 1) : [];
-  const next = rest.findIndex((l) => l.trim() !== '');
-  const status = heading && next >= 0 ? STATUS.exec(rest[next]!) : null;
-  if (status) rest = rest.slice(next + 1);
-  const body = (heading ? rest : lines).join('\n').trim();
+  const card = readCard(section.text);
+  const body = card ? card.body : section.text.trim();
   return {
     ...section,
-    kind: heading ? (heading[1] as CardKind) : null,
-    number: heading ? Number(heading[2]) : null,
-    // A card without the heading is titled by its first line, bare of Markdown heading marks.
-    title: heading ? heading[3]! : (lines[first]?.replace(/^#+\s*/, '') ?? ''),
-    status: status?.[1] ?? '',
+    kind: card?.kind ?? null,
+    number: card?.number ?? null,
+    cardId: card?.id ?? '',
+    // A section without a card heading is titled by its first line, bare of Markdown heading marks.
+    title: card ? card.title : (section.text.split('\n').find((l) => l.trim())?.replace(/^#+\s*/, '') ?? ''),
+    status: card?.status ?? '',
     body,
     checked: CHECKED.exec(body)?.[1]?.trim() ?? '',
   };
@@ -120,8 +118,12 @@ export const workingStatus = (name: string) => `In progress: ${name}’s agent`;
 export const otherRun = (status: string, name: string) =>
   status.startsWith('In review') || (status.startsWith('In progress:') && status !== workingStatus(name));
 
-/** The next free number of a kind among these cards. */
-export const nextNumber = (cards: Card[], kind: CardKind) => Math.max(0, ...cards.filter((c) => c.kind === kind).map((c) => c.number!)) + 1;
+/** A new card's id: the next free number of its kind, as wide as the widest id of that kind, so R-043 follows R-005 (R-040). */
+export function idOf(ids: string[], kind: CardKind) {
+  const own = ids.filter((id) => id.startsWith(`${kind}-`));
+  const next = Math.max(0, ...own.map((id) => Number(id.slice(2)))) + 1;
+  return `${kind}-${String(next).padStart(Math.max(1, ...own.map((id) => id.length - 2)), '0')}`;
+}
 
 /** The ids of cards that share a number with another, as two tabs that added a card at once do. */
 export function duplicates(cards: Card[]): Set<string> {
@@ -131,27 +133,20 @@ export function duplicates(cards: Card[]): Set<string> {
 }
 
 /** The status a new card of each kind starts with. */
-export const NEW_STATUS: Record<CardKind, string> = { D: 'Proposed', R: 'Idea', K: 'Open' };
+export const NEW_STATUS: Record<CardKind, string> = { D: 'Proposed', R: 'Idea', K: 'Open', Q: 'Open' };
 
-/** A card's text: the heading with its number and title, the status line, then what is under them. */
-export const cardText = (kind: CardKind, number: number, title: string, status: string, body: string) => `### ${kind}-${number}: ${title}\n\nStatus: ${status}.\n\n${body}`;
+/** A card's text: the heading with its id and title, the status line, then what is under them. */
+export const cardText = (id: string, title: string, status: string, body: string) => `### ${id}: ${title}\n\nStatus: ${status}.\n\n${body}`;
 
-/** What a new card starts with: the heading with its number, the status, and the fields of its kind. */
-export function cardTemplate(kind: CardKind, number: number): string {
+/** What a new card starts with: the heading with its id, the status, and the fields of its kind. */
+export function cardTemplate(kind: CardKind, id: string): string {
   const body = {
     D: 'What was decided, in one or two sentences.\n\nWhy: the reason, and what else was considered.\n\nCost: what this makes harder or rules out.',
     R: 'Why: who needs this, and what they do today instead.\n\nScope:\n\n- \n\nDone when: ',
     K: 'Seen: where and when, and how to make it happen again.\n\nCause: \n\nFix: ',
+    Q: 'What is open, and what would settle it.',
   }[kind];
-  return cardText(kind, number, 'Title', NEW_STATUS[kind], body);
-}
-
-const kindOrder = (c: Card) => (c.kind ? 'DRK'.indexOf(c.kind) : 3);
-
-/** The column as the text of docs/decisions.md or docs/roadmap.md: a heading, then the cards in number order. */
-export function columnMarkdown(column: BoardColumn, cards: Card[]): string {
-  const sorted = [...cards].sort((a, b) => kindOrder(a) - kindOrder(b) || (a.number ?? Infinity) - (b.number ?? Infinity));
-  return [`# ${COLUMN_TITLES[column]}`, ...sorted.map((c) => c.text.trim())].join('\n\n') + '\n';
+  return cardText(id, 'Title', NEW_STATUS[kind], body);
 }
 
 /** The project's board docs, one per column. Where two tabs made one at the same moment, the oldest counts. */
