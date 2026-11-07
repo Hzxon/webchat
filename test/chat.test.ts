@@ -35,12 +35,12 @@ import {
 import type {
   BarkDTO,
   BootstrapDTO,
-  ChatKeyInput,
   ConfigDTO,
   ConversationDTO,
   CreateProjectResponse,
   DocDTO,
   DocRevisionDTO,
+  FirstChatKeyInput,
   LoginResponse,
   MessageDTO,
   MessageKind,
@@ -226,15 +226,22 @@ class Client {
     return data;
   }
 
-  /** A fresh chat key, wrapped for each member using the public keys the server lists. */
-  async newChatKey(members: Array<{ id: number; keys: PublicKeysDTO }>): Promise<ChatKeyInput & { raw: Uint8Array<ArrayBuffer> }> {
+  /**
+   * A fresh chat key, wrapped for each member using the public keys the server lists, for the
+   * given chat, or for a new one whose id it reserves.
+   */
+  async newChatKey(
+    members: Array<{ id: number; keys: PublicKeysDTO }>,
+    conversationId?: number,
+  ): Promise<FirstChatKeyInput & { raw: Uint8Array<ArrayBuffer> }> {
+    conversationId ??= (await this.request<{ id: number }>('POST', '/conversations/ids')).data.id;
     const raw = newChatKeyBytes();
     const keyId = newKeyId();
     const me = { id: this.id, identity: this.identity! };
     const wrappedKeys = await Promise.all(
-      members.map(async (m) => ({ userId: m.id, ...(await wrapChatKey(raw, me, { id: m.id, dh: m.keys.dh }, keyId)) })),
+      members.map(async (m) => ({ userId: m.id, ...(await wrapChatKey(raw, me, { id: m.id, dh: m.keys.dh }, keyId, conversationId)) })),
     );
-    return { keyId, wrappedKeys, raw };
+    return { conversationId, keyId, wrappedKeys, raw };
   }
 
   /** Opens this user's copy of a chat key, checking it was wrapped by the named member. */
@@ -244,6 +251,7 @@ class Client {
       { id: this.id, identity: this.identity! },
       { id: conversation.myKey!.wrappedBy, dh: wrapperKeys.dh },
       conversation.keyId!,
+      conversation.id,
     );
     this.chatKeys.set(conversation.id, { keyId: conversation.keyId!, key });
     return key;
@@ -299,8 +307,11 @@ class Client {
   async rotateChatKey(chat: ConversationDTO, wrapperKeys: PublicKeysDTO, members: Client[]) {
     const me = { id: this.id, identity: this.identity! };
     const previousKeyId = chat.keyId!;
-    const previous = await openChatKeyBytes(chat.myKey!, me, { id: chat.myKey!.wrappedBy, dh: wrapperKeys.dh }, previousKeyId);
-    const { raw, ...key } = await this.newChatKey(members.map((m) => ({ id: m.id, keys: m.identity!.publicKeys })));
+    const previous = await openChatKeyBytes(chat.myKey!, me, { id: chat.myKey!.wrappedBy, dh: wrapperKeys.dh }, previousKeyId, chat.id);
+    const { raw, ...key } = await this.newChatKey(
+      members.map((m) => ({ id: m.id, keys: m.identity!.publicKeys })),
+      chat.id,
+    );
     const link = await linkChatKey(await importChatKey(raw), key.keyId, chat.id, previous, previousKeyId);
     return { ...key, link: { previousKeyId, ...link } };
   }
@@ -309,9 +320,12 @@ class Client {
   async shareChatKey(conversation: ConversationDTO, wrapperKeys: PublicKeysDTO, recipients: Client[]) {
     const me = { id: this.id, identity: this.identity! };
     const keyId = conversation.keyId!;
-    const raw = await openChatKeyBytes(conversation.myKey!, me, { id: conversation.myKey!.wrappedBy, dh: wrapperKeys.dh }, keyId);
+    const raw = await openChatKeyBytes(conversation.myKey!, me, { id: conversation.myKey!.wrappedBy, dh: wrapperKeys.dh }, keyId, conversation.id);
     const wrappedKeys = await Promise.all(
-      recipients.map(async (r) => ({ userId: r.id, ...(await wrapChatKey(raw, me, { id: r.id, dh: r.identity!.publicKeys.dh }, keyId)) })),
+      recipients.map(async (r) => ({
+        userId: r.id,
+        ...(await wrapChatKey(raw, me, { id: r.id, dh: r.identity!.publicKeys.dh }, keyId, conversation.id)),
+      })),
     );
     return { conversationId: conversation.id, keyId, wrappedKeys };
   }
@@ -563,6 +577,19 @@ describe('chat server', () => {
     assert.equal(directChat.keyId, key.keyId);
     await alice.openChatKey(directChat, keysOf(alice));
     await alice.bootstrap();
+  });
+
+  test('a new chat takes the id its key copies name, reserved for its creator and used once (D-111)', async () => {
+    const members = [alice, bob].map((c) => ({ id: c.id, keys: keysOf(c) }));
+    const group = (key: object) => alice.request<ConversationDTO>('POST', '/conversations/group', { title: 'Reserved', memberIds: [bob.id], key });
+    const bobs = (await bob.request<{ id: number }>('POST', '/conversations/ids')).data.id;
+    assert.equal((await group(await alice.newChatKey(members, bobs))).status, 400, 'an id reserved for Bob is not for Alice');
+
+    const key = await alice.newChatKey(members);
+    const created = await group(key);
+    assert.equal(created.data.id, key.conversationId);
+    assert.equal((await group(key)).status, 400, 'an id is used once');
+    assert.equal((await alice.request('DELETE', `/conversations/${created.data.id}`)).status, 204);
   });
 
   test('messages are stored and relayed only as ciphertext, and the recipient decrypts them', async () => {
@@ -1130,6 +1157,14 @@ describe('chat server', () => {
       assert.equal(outsider.status, 404);
     });
 
+    test('a channel cannot take an id from before #general, which pages tell by the lowest id (D-111)', async () => {
+      const members = [{ id: alice.id, keys: keysOf(alice) }];
+      const early = await alice.newChatKey(members);
+      const own = await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'Order', key: await alice.newChatKey(members) });
+      const res = await alice.request<{ code?: string }>('POST', `/projects/${own.data.project.id}/channels`, { name: 'early', key: early });
+      assert.equal(res.data.code, 'stale_project');
+    });
+
     test('the server accepts every name the New channel dialog makes', async () => {
       const members = [{ id: alice.id, keys: keysOf(alice) }];
       const own = await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'Names', key: await alice.newChatKey(members) });
@@ -1246,12 +1281,7 @@ describe('chat server', () => {
 
     /** A new key for each channel, made from Alice's copies, wrapped for the given people. */
     const rotateChannelKeys = async (members: Client[]) =>
-      Promise.all(
-        [general, design].map(async (channel) => ({
-          conversationId: channel.id,
-          ...(await alice.rotateChatKey(await viewOf(alice, channel.id), keysOf(alice), members)),
-        })),
-      );
+      Promise.all([general, design].map(async (channel) => alice.rotateChatKey(await viewOf(alice, channel.id), keysOf(alice), members)));
 
     test('only the owner can remove someone from a project, who cannot read anything sent after', async () => {
       const path = `/projects/${project.id}/members/${bob.id}`;
@@ -1763,8 +1793,8 @@ describe('chat server', () => {
     assert.equal(early.status, 409);
     assert.equal(early.data.code, 'no_chat_key');
 
-    const first = await alice.request<ConversationDTO>('POST', `/conversations/${id}/key`, await alice.newChatKey(members));
-    const second = await bob.request<{ code?: string }>('POST', `/conversations/${id}/key`, await bob.newChatKey(members));
+    const first = await alice.request<ConversationDTO>('POST', `/conversations/${id}/key`, await alice.newChatKey(members, id));
+    const second = await bob.request<{ code?: string }>('POST', `/conversations/${id}/key`, await bob.newChatKey(members, id));
     assert.equal(first.status, 200);
     assert.equal(first.data.ownerId, alice.id, 'the group becomes the one who set up its encryption');
     assert.equal(second.status, 409);
@@ -1806,7 +1836,7 @@ describe('chat server', () => {
     const path = `/conversations/${id}/members`;
     const withKey = await bob.request<{ code?: string }>('POST', path, {
       userIds: [carol.id],
-      key: await bob.newChatKey([{ id: carol.id, keys: keysOf(carol) }]),
+      key: await bob.newChatKey([{ id: carol.id, keys: keysOf(carol) }], id),
     });
     assert.equal(withKey.data.code, 'stale_group', 'a new key would leave Alice and Bob without a copy');
     const added = await bob.request<ConversationDTO>('POST', path, { userIds: [carol.id], key: null });
@@ -1839,7 +1869,7 @@ describe('chat server', () => {
       };
       let keyed;
       try {
-        keyed = await setter.request<{ code?: string }>('POST', `/conversations/${id}/key`, await setter.newChatKey(members));
+        keyed = await setter.request<{ code?: string }>('POST', `/conversations/${id}/key`, await setter.newChatKey(members, id));
       } finally {
         instance.sql.query = query;
       }

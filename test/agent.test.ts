@@ -21,7 +21,7 @@ import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, textHash, wrapChatKey } from '../shared/e2ee.ts';
-import { briefText, type ChatKeyInput, type CreateProjectResponse, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type UserDTO } from '../shared/types.ts';
+import { briefText, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type UserDTO } from '../shared/types.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
 const KDF_ROUNDS = 1000;
@@ -88,14 +88,15 @@ console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false
 const PASSWORD = 'correct horse battery';
 
 /** A fresh chat key, wrapped by this client for each member, as a browser does when it makes a project. */
-async function newChatKey(client: AgentClient, memberIds: number[]): Promise<ChatKeyInput> {
+async function newChatKey(client: AgentClient, memberIds: number[]): Promise<FirstChatKeyInput> {
   const raw = newChatKeyBytes();
   const keyId = newKeyId();
+  const { id: conversationId } = await client.request<{ id: number }>('POST', '/conversations/ids');
   const me = { id: client.id, identity: client.identity };
   const wrappedKeys = await Promise.all(
-    memberIds.map(async (id) => ({ id, ...(await wrapChatKey(raw, me, { id, dh: client.keysOf(id)!.dh }, keyId)) })),
+    memberIds.map(async (id) => ({ id, ...(await wrapChatKey(raw, me, { id, dh: client.keysOf(id)!.dh }, keyId, conversationId)) })),
   ).then((keys) => keys.map(({ id, ...k }) => ({ userId: id, ...k })));
-  return { keyId, wrappedKeys };
+  return { conversationId, keyId, wrappedKeys };
 }
 
 /** Does `work` with these environment variables set, then puts back what was there. */

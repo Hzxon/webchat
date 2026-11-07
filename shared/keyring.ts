@@ -86,7 +86,7 @@ export class Keyring {
       }
       // A key stored before the change stays usable; a new one waits for the check.
       if (this.unchecked(myKey.wrappedBy)) throw new EncryptionUnavailableError(WRAPPER_CHANGED);
-      return unwrapChatKey(myKey, this.self, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
+      return unwrapChatKey(myKey, this.self, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId, id);
     });
   }
 

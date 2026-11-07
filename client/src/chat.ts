@@ -619,6 +619,13 @@ function keyRecipient(id: number) {
     : { id, name: user?.displayName ?? 'Someone', keys: user?.keys ?? null };
 }
 
+/** A new chat's first key, made for the id the server reserves for the chat, since its copies name it (D-111). */
+async function firstChatKey(members: Array<{ id: number; name: string; keys: PublicKeysDTO | null }>) {
+  const { id } = await api.reserveConversationId();
+  const { input, key } = await keyring.createChatKey(id, members, warnedIds());
+  return { input: { ...input, conversationId: id }, key };
+}
+
 /** Opens the direct chat with a person, creating it with a fresh encrypted key if needed. */
 export async function startDirectChat(userId: number): Promise<number> {
   const state = store.get();
@@ -628,13 +635,10 @@ export async function startDirectChat(userId: number): Promise<number> {
   if (existing) return existing.id;
   const other = state.users[userId];
   if (!other) throw new Error('Person not found.');
-  const { input, key } = await keyring.createChatKey(
-    [
-      { id: meId, name: 'You', keys: keyring.myKeys() },
-      { id: other.id, name: other.displayName, keys: other.keys },
-    ],
-    warnedIds(),
-  );
+  const { input, key } = await firstChatKey([
+    { id: meId, name: 'You', keys: keyring.myKeys() },
+    { id: other.id, name: other.displayName, keys: other.keys },
+  ]);
   return adoptConversation(await api.openDirect(userId, input), { keyId: input.keyId, key });
 }
 
@@ -644,7 +648,7 @@ export async function startGroupChat(title: string, memberIds: number[]): Promis
     { id: meId, name: 'You', keys: keyring.myKeys() },
     ...memberIds.map((id) => ({ id, name: state.users[id]?.displayName ?? 'Someone', keys: state.users[id]?.keys ?? null })),
   ];
-  const { input, key } = await keyring.createChatKey(members, warnedIds());
+  const { input, key } = await firstChatKey(members);
   return adoptConversation(await api.createGroup(title, memberIds, input), { keyId: input.keyId, key });
 }
 
@@ -700,7 +704,7 @@ async function ensureChatKey(conversationId: number, retried = false): Promise<{
     name: m.userId === meId ? 'You' : (state.users[m.userId]?.displayName ?? 'Someone'),
     keys: keysOf(m.userId),
   }));
-  const { input, key } = await keyring.createChatKey(members, warnedIds());
+  const { input, key } = await keyring.createChatKey(conversationId, members, warnedIds());
   try {
     await adoptConversation(await api.setChatKey(conversationId, input), { keyId: input.keyId, key });
     return { key, keyId: input.keyId };
@@ -1009,7 +1013,7 @@ export async function createProject(name: string, memberIds: number[]): Promise<
     { id: meId, name: 'You', keys: keyring.myKeys() },
     ...memberIds.map((id) => ({ id, name: state.users[id]?.displayName ?? 'Someone', keys: state.users[id]?.keys ?? null })),
   ];
-  const { input, key } = await keyring.createChatKey(members, warnedIds());
+  const { input, key } = await firstChatKey(members);
   const { project, channel } = await api.createProject({ name, memberIds, key: input });
   actions.upsertProject(project);
   return adoptConversation(channel, { keyId: input.keyId, key });
@@ -1035,7 +1039,7 @@ export function createChannel(projectId: number, name: string): Promise<number> 
   return retryIfStale(async () => {
     const project = store.get().projects[projectId];
     if (!project) throw new Error('Project not found.');
-    const { input, key } = await keyring.createChatKey(project.memberIds.map(keyRecipient), warnedIds());
+    const { input, key } = await firstChatKey(project.memberIds.map(keyRecipient));
     return adoptConversation(await api.createChannel(projectId, { name, key: input }), { keyId: input.keyId, key });
   });
 }
