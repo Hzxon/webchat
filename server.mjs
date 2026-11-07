@@ -201,39 +201,53 @@ async function importIdentity(secrets) {
 }
 var importDhPublic = (key) => subtle().importKey("raw", fromBase64Url(key), ECDH, false, []);
 var importChatKey = (raw) => subtle().importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
-/** The key that wraps a chat key between two people. Both sides derive the same one. */
-async function pairKey(myDhPrivate, theirDhPublic, keyId, from, to) {
+/** The secret two people share, from which the keys that wrap chat keys between them come. */
+async function pairSecret(myDhPrivate, theirDhPublic) {
 	const shared = await subtle().deriveBits({
 		name: "ECDH",
 		public: await importDhPublic(theirDhPublic)
 	}, myDhPrivate, 256);
-	const hkdf = await subtle().importKey("raw", shared, "HKDF", false, ["deriveKey"]);
-	return subtle().deriveKey({
-		name: "HKDF",
-		hash: "SHA-256",
-		salt: fromBase64Url(keyId),
-		info: utf8(`webchat/chat-key/v1|from:${from}|to:${to}`)
-	}, hkdf, {
-		name: "AES-GCM",
-		length: 256
-	}, false, ["encrypt", "decrypt"]);
+	return subtle().importKey("raw", shared, "HKDF", false, ["deriveKey"]);
 }
 /**
-* The raw bytes of a chat key, to wrap it again for a new member. Throws unless the named
-* wrapper's key really made it for this user.
+* What a key that wraps a chat key names: the chat, so the server cannot hand a copy made for one
+* chat out as another chat's key (D-111), and who wrapped it for whom.
 */
-async function openChatKeyBytes(wrapped, me, wrapper, keyId) {
-	const key = await pairKey(me.identity.dhPrivate, wrapper.dh, keyId, wrapper.id, me.id);
-	const raw = await subtle().decrypt({
+var pairInfo = (conversationId, from, to) => `webchat/chat-key/v2|conv:${conversationId}|from:${from}|to:${to}`;
+/** The key that wraps a chat key between two people. Both sides derive the same one. */
+var pairKey = (secret, keyId, info) => subtle().deriveKey({
+	name: "HKDF",
+	hash: "SHA-256",
+	salt: fromBase64Url(keyId),
+	info: utf8(info)
+}, secret, {
+	name: "AES-GCM",
+	length: 256
+}, false, ["encrypt", "decrypt"]);
+/**
+* The raw bytes of a chat key, to wrap it again for a new member. Throws unless the named
+* wrapper's key really made it for this user, in this chat or before copies named their chat.
+* `namesChat` is false for a copy from before D-111, which the server could have taken from another
+* chat between the same two people, so its key never seals (K-65).
+*/
+async function openChatKeyBytes(wrapped, me, wrapper, keyId, conversationId) {
+	const secret = await pairSecret(me.identity.dhPrivate, wrapper.dh);
+	const open = async (info) => new Uint8Array(await subtle().decrypt({
 		name: "AES-GCM",
 		iv: fromBase64Url(wrapped.iv),
 		additionalData: utf8(keyId)
-	}, key, fromBase64Url(wrapped.data));
-	return new Uint8Array(raw);
+	}, await pairKey(secret, keyId, info), fromBase64Url(wrapped.data)));
+	return open(pairInfo(conversationId, wrapper.id, me.id)).then((raw) => ({
+		raw,
+		namesChat: true
+	}), async () => ({
+		raw: await open(`webchat/chat-key/v1|from:${wrapper.id}|to:${me.id}`),
+		namesChat: false
+	}));
 }
-/** Unwraps a chat key. Throws unless the named wrapper's key really made it for this user. */
-async function unwrapChatKey(wrapped, me, wrapper, keyId) {
-	return importChatKey(await openChatKeyBytes(wrapped, me, wrapper, keyId));
+/** Unwraps a chat key. Throws unless the named wrapper's key really made it for this user, in this chat. */
+async function unwrapChatKey(wrapped, me, wrapper, keyId, conversationId) {
+	return importChatKey((await openChatKeyBytes(wrapped, me, wrapper, keyId, conversationId)).raw);
 }
 var linkData = (conversationId, keyId, previousKeyId) => utf8(`webchat/key-link/v1|conv:${conversationId}|kid:${keyId}|prev:${previousKeyId}`);
 /** Opens the key that keyId replaced. Throws if the link was changed, or belongs to another chat or key. */
@@ -484,10 +498,14 @@ function readContent(value) {
 		text: quote.text.slice(0, LIMITS.quoteLength)
 	};
 	const reaction = raw.reaction;
-	if (reaction && isId(reaction.messageId) && typeof reaction.emoji === "string" && reaction.emoji.length <= EMOJI_LENGTH) content.reaction = {
-		messageId: reaction.messageId,
-		emoji: reaction.emoji
-	};
+	if (reaction && isId(reaction.messageId) && typeof reaction.emoji === "string" && reaction.emoji.length <= EMOJI_LENGTH) {
+		content.reaction = {
+			messageId: reaction.messageId,
+			emoji: reaction.emoji
+		};
+		if (isId(reaction.senderId) || reaction.senderId === 0) content.reaction.senderId = reaction.senderId;
+		if (typeof reaction.clientId === "string") content.reaction.clientId = reaction.clientId;
+	}
 	const pull = readPull(raw.pull);
 	if (pull) content.pull = pull;
 	const run = readRun(raw.run);
@@ -508,6 +526,13 @@ function readContent(value) {
 		repo: raw.forget.repo,
 		sentAt: raw.forget.sentAt
 	};
+	const fingerprint = short(raw.trust?.fingerprint, 64);
+	if (isId(raw.trust?.user) && fingerprint && isId(raw.trust.sentAt)) content.trust = {
+		user: raw.trust.user,
+		fingerprint,
+		sentAt: raw.trust.sentAt
+	};
+	if (isId(raw.sleep?.sentAt)) content.sleep = { sentAt: raw.sleep.sentAt };
 	return content;
 }
 /** Like decryptMessage, with the reply and reaction parts too. */
@@ -663,6 +688,147 @@ function claudeArgs({ settings, session, resume, answer }) {
 		session
 	];
 }
+// shared/keyring.ts
+var EncryptionUnavailableError = class extends Error {};
+/** This account's copy of the chat's key names no chat, so the key opens old messages but never seals (K-65). */
+var OldKeyCopyError = class extends EncryptionUnavailableError {
+	constructor() {
+		super("This chat's key is from before keys named their chat. Sending from the web page gives it a new one.");
+	}
+};
+var WRAPPER_CHANGED = "The security code of whoever shared this chat's key changed. Check it first.";
+var Keyring = class {
+	self;
+	replaced;
+	saveReplaced;
+	store;
+	/** People whose keys differ from the pinned ones, as of the last checkPins. */
+	changed = /* @__PURE__ */ new Set();
+	cache = /* @__PURE__ */ new Map();
+	/**
+	* @param replaced By chat id, the key ids a key link showed replaced. The server could drop a
+	* link and name the old key current again, so the device keeps what it saw (K-43).
+	* @param saveReplaced Keeps `replaced` on the device when it grows.
+	*/
+	constructor(self, replaced, saveReplaced, store) {
+		this.self = self;
+		this.replaced = replaced;
+		this.saveReplaced = saveReplaced;
+		this.store = store;
+	}
+	/**
+	* Pins each person's keys the first time they are seen, into `pins`, and notes whose keys changed
+	* since (D-018). True when a new pin needs saving.
+	*/
+	async checkPins(users, pins) {
+		const changed = /* @__PURE__ */ new Set();
+		let pinned = false;
+		const fingerprints = await Promise.all(users.map((u) => u.keys ? keyFingerprint(u.keys) : null));
+		users.forEach((user, i) => {
+			const fingerprint = fingerprints[i];
+			if (!fingerprint) return;
+			if (!pins[user.id]) {
+				pins[user.id] = fingerprint;
+				pinned = true;
+			} else if (pins[user.id] !== fingerprint) changed.add(user.id);
+		});
+		this.changed = changed;
+		return pinned;
+	}
+	/**
+	* Keys not checked since they changed. A key the server swapped would let it open chat keys it
+	* wrapped and sign in that person's name, so nothing trusts them (D-018). One's own keys come
+	* from this device, never from the server.
+	*/
+	unchecked(userId) {
+		return userId !== this.self.id && this.changed.has(userId);
+	}
+	/** Opens this account's copy of a chat key, after checking that a member of the chat created it. */
+	chatKey(conversation, keysOf) {
+		const { id, keyId, myKey } = conversation;
+		if (!keyId || !myKey) return null;
+		const seen = this.replaced[id] ?? [];
+		const fresh = conversation.keyLinks.map((link) => link.previousKeyId).filter((k) => !seen.includes(k));
+		if (fresh.length) {
+			this.replaced = {
+				...this.replaced,
+				[id]: [...seen, ...fresh]
+			};
+			this.saveReplaced(this.replaced);
+		}
+		if (this.replaced[id]?.includes(keyId)) return null;
+		return this.cached(id, keyId, async () => {
+			const wrapperKeys = keysOf(myKey.wrappedBy);
+			if (!wrapperKeys || !conversation.members.some((m) => m.userId === myKey.wrappedBy)) throw new Error("The chat key was not created by a member of this chat.");
+			if (this.unchecked(myKey.wrappedBy)) throw new EncryptionUnavailableError(WRAPPER_CHANGED);
+			return unwrapChatKey(myKey, this.self, {
+				id: myKey.wrappedBy,
+				dh: wrapperKeys.dh
+			}, keyId, id);
+		});
+	}
+	/**
+	* The chat's current key, to seal with. Refuses it when this account's copy is from before
+	* D-111: such a copy names no chat, so the server could have taken it from another chat between
+	* the same two people, where someone removed from this one still holds it (K-65). Checked on
+	* every seal, since a key from the store says nothing about its copy, so a stored key whose
+	* wrapper's keys changed seals only once the copy opens with their checked keys (D-018).
+	*/
+	async sealingKey(conversation, keysOf) {
+		const key = await this.chatKey(conversation, keysOf);
+		if (!key) return null;
+		const { id, keyId, myKey } = conversation;
+		if (this.unchecked(myKey.wrappedBy)) throw new EncryptionUnavailableError(WRAPPER_CHANGED);
+		const wrapperKeys = keysOf(myKey.wrappedBy);
+		if (!wrapperKeys || !(await openChatKeyBytes(myKey, this.self, {
+			id: myKey.wrappedBy,
+			dh: wrapperKeys.dh
+		}, keyId, id)).namesChat) throw new OldKeyCopyError();
+		return key;
+	}
+	/**
+	* Opens the key a message names: the chat's current key, or an earlier one, which the key that
+	* replaced it holds inside (see ConversationDTO.keyLinks).
+	*/
+	keyFor(conversation, keyId, keysOf) {
+		if (keyId === conversation.keyId) return this.chatKey(conversation, keysOf);
+		const chain = [];
+		for (let id = keyId; id !== conversation.keyId;) {
+			const link = conversation.keyLinks.find((l) => l.previousKeyId === id);
+			if (!link || chain.length === conversation.keyLinks.length) return null;
+			chain.unshift(link);
+			id = link.keyId;
+		}
+		return this.cached(conversation.id, keyId, async () => {
+			let key = await this.chatKey(conversation, keysOf);
+			if (!key) throw new Error("The chat key that replaced this one is not available.");
+			for (const link of chain) key = await openKeyLink(key, link.keyId, conversation.id, link, link.previousKeyId);
+			return key;
+		});
+	}
+	/** Keeps a chat key this account created, once the server has assigned the chat its id. */
+	async remember(conversationId, keyId, key) {
+		this.cache.set(`${conversationId}:${keyId}`, Promise.resolve(key));
+		await this.store?.set(conversationId, keyId, key);
+	}
+	/** One open per key at a time: the stored key if there is one, else `open`'s, which gets stored. */
+	cached(conversationId, keyId, open) {
+		const name = `${conversationId}:${keyId}`;
+		let pending = this.cache.get(name);
+		if (!pending) {
+			pending = (async () => {
+				const stored = await this.store?.get(conversationId, keyId);
+				if (stored) return stored;
+				const key = await open();
+				await this.store?.set(conversationId, keyId, key);
+				return key;
+			})();
+			this.cache.set(name, pending);
+			pending.catch(() => this.cache.delete(name));
+		}
+		return pending;
+	}
+};
 // agent/api.ts
 var ApiError = class extends Error {
 	status;
@@ -891,7 +1057,8 @@ var AgentClient = class AgentClient {
 	docs = [];
 	stamp = "";
 	tabId = crypto.randomUUID();
-	chatKeys = /* @__PURE__ */ new Map();
+	/** Chat keys and whose keys changed: what nothing from them opens until someone checks. */
+	keys;
 	/**
 	* Messages already returned, by id, with when they were sent: a check-in answer repeats the last
 	* 15 seconds of the one before (D-021), so an id stays here until it is older than that.
@@ -899,8 +1066,6 @@ var AgentClient = class AgentClient {
 	seen = /* @__PURE__ */ new Map();
 	/** Where this run started. Anything up to here was returned by an earlier run, or is history. */
 	floor;
-	/** People whose keys differ from the pinned ones. Nothing from them opens until someone checks. */
-	changedKeys = /* @__PURE__ */ new Set();
 	/** Said in every check-in from the plugin: every repository its laptop has a folder for (R-036). */
 	repos = null;
 	/** Said in every check-in from the plugin: what its sessions can do (D-103). */
@@ -913,6 +1078,13 @@ var AgentClient = class AgentClient {
 		this.api = new Api(file.server, file.cookie);
 		this.id = file.userId;
 		this.identity = identity;
+		this.keys = new Keyring({
+			id: file.userId,
+			identity
+		}, file.replaced ?? {}, (replaced) => {
+			this.file.replaced = replaced;
+			this.save().catch(() => void 0);
+		});
 		this.floor = file.cursor;
 	}
 	/** The person whose cards this account runs (D-089). Files from before it have none. */
@@ -1110,7 +1282,7 @@ var AgentClient = class AgentClient {
 			this.projects = answer.projects;
 			this.conversations = new Map(answer.conversations.map((c) => [c.id, c]));
 			this.docs = answer.docs;
-			dirty = await this.checkKeys(answer.users) || dirty;
+			dirty = await this.keys.checkPins(answer.users, this.file.pins) || dirty;
 			fresh.push(...answer.messages);
 			if (!answer.more) break;
 		}
@@ -1119,7 +1291,28 @@ var AgentClient = class AgentClient {
 		const newest = Math.max(0, ...fresh.map((m) => m.createdAt));
 		for (const [id, sentAt] of this.seen) if (sentAt < newest - 6e4) this.seen.delete(id);
 		for (const m of mine) this.seen.set(m.id, m.createdAt);
-		return Promise.all(mine.map((m) => this.open(m)));
+		const opened = await Promise.all(mine.map((m) => this.open(m)));
+		let trusted = false;
+		for (const m of opened) trusted = await this.trust(m) || trusted;
+		if (trusted) await this.save();
+		return opened;
+	}
+	/**
+	* Pins the keys its owner checked on their page, so this account opens what that page opens and a
+	* card's brief hashes the same on both (K-57, D-110). Only the owner's word in their direct chat,
+	* only for the keys the server shows now, and only a check newer than the last one pinned. A check
+	* of any age counts: Claude Code may have been closed when the owner made it. True when it pinned.
+	*/
+	async trust({ content, security, senderId, conversationId }) {
+		const trust = content?.trust;
+		const keys = trust && this.users.get(trust.user)?.keys;
+		if (!keys || security !== "encrypted" || senderId !== this.owner || this.conversations.get(conversationId)?.type !== "direct") return false;
+		const trusted = this.file.trusted ??= {};
+		if (trust.sentAt <= (trusted[trust.user] ?? 0) || trust.fingerprint !== await keyFingerprint(keys)) return false;
+		trusted[trust.user] = trust.sentAt;
+		this.file.pins[trust.user] = trust.fingerprint;
+		this.keys.changed.delete(trust.user);
+		return true;
 	}
 	/** Checks in every SYNC_INTERVAL_MS, for as long as the signal allows, and yields each new message. */
 	async *watch(signal, intervalMs = SYNC_INTERVAL_MS) {
@@ -1136,71 +1329,28 @@ var AgentClient = class AgentClient {
 			await setTimeout$1(delay, void 0, { signal }).catch(() => void 0);
 		}
 	}
-	/**
-	* Pins each person's keys the first time they are seen, and notes whose keys changed since
-	* (D-018). True when a new pin needs saving.
-	*/
-	async checkKeys(users) {
-		let pinned = false;
-		this.changedKeys.clear();
-		const fingerprints = await Promise.all(users.map((u) => u.keys ? keyFingerprint(u.keys) : null));
-		users.forEach((user, i) => {
-			const fingerprint = fingerprints[i];
-			if (!fingerprint) return;
-			if (!this.file.pins[user.id]) {
-				this.file.pins[user.id] = fingerprint;
-				pinned = true;
-			} else if (this.file.pins[user.id] !== fingerprint) this.changedKeys.add(user.id);
-		});
-		return pinned;
-	}
 	/** A person's public keys: one's own from the file, others from the server, unless they changed. */
-	keysOf(userId) {
+	keysOf = (userId) => {
 		if (userId === this.id) return this.identity.publicKeys;
-		return this.changedKeys.has(userId) ? null : this.users.get(userId)?.keys ?? null;
-	}
-	/** The chat's current key, for sealing. */
+		return this.keys.unchecked(userId) ? null : this.users.get(userId)?.keys ?? null;
+	};
+	/**
+	* The chat's current key, for sealing. A key whose copy names no chat waits for a page to replace
+	* it, since the agent never makes keys (D-085, K-65).
+	*/
 	async currentKey(conversationId) {
 		const conversation = this.conversations.get(conversationId);
 		if (!conversation?.keyId) throw new Error("Not a member of this chat, or it has no key.");
+		const key = await this.keys.sealingKey(conversation, this.keysOf);
+		if (!key) throw new Error("The chat has no key, or it was replaced.");
 		return {
 			keyId: conversation.keyId,
-			key: await this.chatKey(conversation)
+			key
 		};
 	}
-	/** Opens this account's copy of the chat's current key, after checking that a member wrapped it. */
-	chatKey(conversation) {
-		const { id, keyId, myKey } = conversation;
-		if (!keyId || !myKey) return Promise.reject(/* @__PURE__ */ new Error("The chat has no key."));
-		if (conversation.keyLinks.some((link) => link.previousKeyId === keyId)) return Promise.reject(/* @__PURE__ */ new Error("The key was replaced."));
-		return this.cached(id, keyId, async () => {
-			const wrapperKeys = this.keysOf(myKey.wrappedBy);
-			if (!wrapperKeys || !conversation.members.some((m) => m.userId === myKey.wrappedBy)) throw new Error("The chat key was not created by a member of this chat, or their keys changed.");
-			return unwrapChatKey(myKey, {
-				id: this.id,
-				identity: this.identity
-			}, {
-				id: myKey.wrappedBy,
-				dh: wrapperKeys.dh
-			}, keyId);
-		});
-	}
 	/** The key a message names: the current one, or an earlier one found through the key links. */
-	keyFor(conversation, keyId, steps = 0) {
-		if (keyId === conversation.keyId) return this.chatKey(conversation);
-		const link = conversation.keyLinks.find((l) => l.previousKeyId === keyId);
-		if (!link || steps > conversation.keyLinks.length) return Promise.reject(/* @__PURE__ */ new Error("No key for this message."));
-		return this.cached(conversation.id, keyId, async () => openKeyLink(await this.keyFor(conversation, link.keyId, steps + 1), link.keyId, conversation.id, link, keyId));
-	}
-	cached(conversationId, keyId, open) {
-		const name = `${conversationId}:${keyId}`;
-		let pending = this.chatKeys.get(name);
-		if (!pending) {
-			pending = open();
-			this.chatKeys.set(name, pending);
-			pending.catch(() => this.chatKeys.delete(name));
-		}
-		return pending;
+	keyFor(conversation, keyId) {
+		return this.keys.keyFor(conversation, keyId, this.keysOf) ?? Promise.reject(/* @__PURE__ */ new Error("No key for this message."));
 	}
 	/** Decrypts a message and checks its sender's signature. Never throws: failures come back as "failed". */
 	async open(message) {
@@ -1353,6 +1503,10 @@ var Conversations = class {
 		this.client = client;
 		this.file = file;
 		this.answer = answer;
+	}
+	/** Whether a turn runs or waits for one, which keeps an agent that goes to sleep awake (K-66). */
+	get busy() {
+		return [...this.turns.values()].some((t) => t.stops.size > 0);
 	}
 	/** Reads the file. One that does not parse is a lost list, not a reason to stop the plugin. */
 	async load() {
@@ -1653,6 +1807,8 @@ var FAILED = /* @__PURE__ */ new Set([
 var PULL_FIELDS = "state,isDraft,headRefOid,mergeable,statusCheckRollup,reviews,comments,updatedAt";
 /** For this server's git in a worktree: its files, hooks and all, are what the model wrote. */
 var NO_HOOKS = ["-c", "core.hooksPath=/dev/null"];
+/** Why a window serves nothing while the owner has the agent asleep (K-66, D-113). */
+var ASLEEP = "Your agent is asleep: it takes no cards and answers no questions. Type /webchat:wake to wake it.";
 var ANSWER = {
 	type: "object",
 	properties: {
@@ -1737,6 +1893,10 @@ var Plugin = class {
 	login;
 	/** Whether a GitHub login may push to a repository, by "repo login". */
 	writers = /* @__PURE__ */ new Map();
+	/** Ends the check-ins when the agent goes to sleep. */
+	stop;
+	/** Cuts short the minute a waiting window sleeps, so a wake here serves at once. */
+	nudge;
 	constructor(options) {
 		this.options = options;
 		this.home = path.join(options.dataDir, "laptop");
@@ -1744,12 +1904,24 @@ var Plugin = class {
 	file(name) {
 		return path.join(this.home, name);
 	}
+	/** The one switch for every window and the pane: while it exists, nothing serves (K-66, D-113). */
+	get asleep() {
+		return path.join(this.options.dataDir, "asleep");
+	}
+	/** Serves while it holds the watch, waits while it cannot, and waits again after the agent goes to sleep. */
+	async serve() {
+		while (await this.start()) await this.loop();
+	}
 	/**
 	* Takes the laptop's watch, pairs when a new code was pasted, and loads the laptop's copy of the
 	* account and the folders it has. False when this window serves nothing; `problem` says why.
 	*/
 	async start() {
 		const { dataDir, projectDir } = this.options;
+		if (this.options.job) {
+			this.problem = "This is a background job, so it does not serve your agent. The window you work in does.";
+			return false;
+		}
 		const here = await originOf(projectDir);
 		const mark = here && markOf(dataDir, here);
 		if (mark && await fs.readFile(mark, "utf8").catch(() => void 0) === "") await fs.writeFile(mark, projectDir);
@@ -1768,9 +1940,15 @@ var Plugin = class {
 			recursive: true,
 			mode: 448
 		});
-		while (!await takeLock(path.join(dataDir, "watch.lock"))) {
-			this.problem = "Another Claude Code window on this laptop serves your agent. This one takes over when that one closes.";
-			await setTimeout$1(6e4, void 0, { ref: false });
+		for (;;) {
+			const asleep = existsSync(this.asleep);
+			if (!asleep && await takeLock(path.join(dataDir, "watch.lock"))) break;
+			this.problem = asleep ? ASLEEP : "Another Claude Code window on this laptop serves your agent. This one takes over when that one closes.";
+			this.nudge = new AbortController();
+			await setTimeout$1(6e4, void 0, {
+				ref: false,
+				signal: this.nudge.signal
+			}).catch(() => void 0);
 		}
 		if (code && paired?.pairing !== await pairingId(code)) {
 			this.problem = "Waiting for you to approve this agent in WebChat, in the window that shows the code.";
@@ -1827,6 +2005,7 @@ var Plugin = class {
 	}
 	/** Why every question, run and fix fails before it starts, or undefined. */
 	async refusal() {
+		if (existsSync(this.asleep)) return "I am going to sleep, so I start nothing new. To wake me, type /webchat:wake in Claude Code on your laptop.";
 		if (process.platform === "win32") return "Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.";
 		if (!this.options.claude) return "I cannot find Claude Code on this laptop.";
 	}
@@ -1871,8 +2050,9 @@ var Plugin = class {
 		for (const waiter of [...this.waiting.get(key) ?? []]) error ? waiter.reject(error) : waiter.resolve();
 		this.waiting.delete(key);
 	}
-	/** Checks in every 15 seconds and looks at the pull requests every minute, until the session ends the process. */
+	/** Checks in every 15 seconds and looks at the pull requests every minute, until the session ends the process or the agent goes to sleep. */
 	async loop() {
+		this.stop = new AbortController();
 		const missed = await this.client.sync().catch((error) => (log(error), []));
 		await this.endStrandedDrafts().catch(log);
 		await this.runs.recover().catch(log);
@@ -1880,12 +2060,53 @@ var Plugin = class {
 		missed.forEach((m) => this.handle(m));
 		const level = async () => this.client.protocol = await signedIn() ? AGENT_LEVEL.cards : AGENT_LEVEL.answers;
 		await level();
-		setInterval(() => void this.scan().catch(log), SYNC_INTERVAL_MS);
-		setInterval(() => {
+		const timers = [setInterval(() => {
+			this.drowse();
+			this.scan().catch(log);
+		}, SYNC_INTERVAL_MS), setInterval(() => {
 			level().then(() => this.pollPulls()).catch(log);
 			this.conversations.sweep().catch(log);
-		}, 6e4);
-		for await (const message of this.client.watch(new AbortController().signal)) this.handle(message);
+		}, 6e4)];
+		for await (const message of this.client.watch(this.stop.signal)) this.handle(message);
+		timers.forEach(clearInterval);
+	}
+	/** The work that keeps an agent awake while it goes to sleep: its running cards and questions. */
+	busy() {
+		return [...this.runs.running.map((r) => r.card), ...this.conversations.busy ? ["your question"] : []];
+	}
+	/**
+	* Goes to sleep once the switch is on and nothing runs: the check-ins stop, so the page shows the
+	* agent asleep, and the watch is free for no window while the switch stays on (K-66, D-113).
+	*/
+	drowse() {
+		if (!this.stop || this.stop.signal.aborted || !existsSync(this.asleep) || this.busy().length) return;
+		this.stop.abort();
+		freeLock(path.join(this.options.dataDir, "watch.lock"));
+		this.problem = ASLEEP;
+	}
+	/** Turns the switch on, and says what still runs before the agent sleeps. */
+	async sleep() {
+		await fs.mkdir(this.options.dataDir, {
+			recursive: true,
+			mode: 448
+		});
+		await fs.writeFile(this.asleep, "");
+		this.drowse();
+		return this.runs ? this.busy() : [];
+	}
+	/** Turns the switch off; the window waiting here serves at once, any other within a minute. */
+	async wake() {
+		if (!existsSync(this.asleep)) return "Your agent is not asleep.";
+		await fs.rm(this.asleep, { force: true });
+		this.nudge?.abort();
+		return "Your agent is waking up. It takes cards and answers questions again within a minute.";
+	}
+	/** Goes to sleep on its owner's word in the pane, after the work that runs, and says so there (K-66, D-113). */
+	async sleepOnWord(message) {
+		if (!this.fromOwner(message, message.content.sleep.sentAt)) return;
+		const busy = await this.sleep();
+		const when = busy.length ? `once I finish ${busy.join(" and ")}` : "now";
+		await this.client.send(message.conversationId, { text: `I go to sleep ${when}. To wake me, type /webchat:wake in Claude Code on your laptop.` });
 	}
 	/** Acts on one message. A turn takes long, so the loop does not wait for it: check-ins go on meanwhile. */
 	handle(message) {
@@ -1893,6 +2114,7 @@ var Plugin = class {
 		if (run?.kind === "fix") return this.go(message, run).catch(log);
 		if (run?.kind === "clone" || prompt?.kind === "clone") return this.clone(message).catch(log);
 		if (message.content?.forget) return this.forget(message).catch(log);
+		if (message.content?.sleep) return this.sleepOnWord(message).catch(log);
 		return (prompt ? this.conversations : this.runs).handle(message).catch(log);
 	}
 	/**
@@ -2203,6 +2425,11 @@ var Plugin = class {
 			case "status": return this.status();
 			case "connect": return this.connect();
 			case "disconnect": return this.disconnect();
+			case "sleep": {
+				const busy = await this.sleep();
+				return `Your agent goes to sleep ${busy.length ? `once it finishes ${busy.join(" and ")}` : "within 15 seconds, once nothing runs"}. Type /webchat:wake to wake it.`;
+			}
+			case "wake": return this.wake();
 			default: throw new Error(`There is no tool ${name}.`);
 		}
 	}
@@ -2235,7 +2462,7 @@ var Plugin = class {
 		return `Disconnected ${repo}. Your agent no longer works in this folder, and its files stay.`;
 	}
 	async status() {
-		if (this.problem) return this.problem;
+		if (this.problem) return !this.options.job && existsSync(this.asleep) ? ASLEEP : this.problem;
 		const owner = this.client.users.get(this.client.owner)?.displayName;
 		const sandbox = await this.cardRefusal();
 		const folders = [...this.folders.values()].map((f) => `${f.repo} in ${shown(f.dir)}`);
@@ -2595,15 +2822,21 @@ var alive = (pid) => {
 		return false;
 	}
 };
+/** The lock files this process holds, freed at exit. A set, since an agent that sleeps and wakes takes its lock again. */
+var held = /* @__PURE__ */ new Set();
+process.on("exit", () => held.forEach(freeLock));
+/** Frees a lock file if this process holds it. */
+function freeLock(file) {
+	held.delete(file);
+	try {
+		if (readFileSync(file, "utf8") === String(process.pid)) unlinkSync(file);
+	} catch {}
+}
 /** Takes a lock file for this process unless a live process holds it, and frees it at exit. */
 async function takeLock(file) {
 	for (let tries = 0; tries < 2; tries++) try {
 		await fs.writeFile(file, String(process.pid), { flag: "wx" });
-		process.on("exit", () => {
-			try {
-				if (readFileSync(file, "utf8") === String(process.pid)) unlinkSync(file);
-			} catch {}
-		});
+		held.add(file);
 		return true;
 	} catch (error) {
 		if (error.code !== "EEXIST") throw error;
@@ -2743,6 +2976,16 @@ var TOOLS = [
 		name: "disconnect",
 		description: "Stops the WebChat agent working in the repository this session is open in. Its files stay.",
 		inputSchema: none
+	},
+	{
+		name: "sleep",
+		description: "Puts the WebChat agent to sleep on this laptop, in every window, after the cards and questions it runs. Only when the user asks for it.",
+		inputSchema: none
+	},
+	{
+		name: "wake",
+		description: "Wakes the WebChat agent that the user put to sleep, so it takes cards and answers questions again. Only when the user asks for it.",
+		inputSchema: none
 	}
 ];
 async function serve() {
@@ -2753,12 +2996,13 @@ async function serve() {
 		projectDir: process.env.CLAUDE_PROJECT_DIR ?? process.cwd(),
 		cloneRoot: path.join(os.homedir(), "WebChat"),
 		claude: await claudeProgram(),
-		guard: `"${process.execPath}" "${fileURLToPath(import.meta.url)}" guard "${dataDir}"`
+		guard: `"${process.execPath}" "${fileURLToPath(import.meta.url)}" guard "${dataDir}"`,
+		job: !!process.env.CLAUDE_JOB_DIR
 	});
 	const quit = () => process.exit(0);
 	process.on("SIGTERM", quit);
 	process.on("SIGINT", quit);
-	plugin.start().then((watching) => watching ? plugin.loop() : void 0).catch((error) => {
+	plugin.serve().catch((error) => {
 		plugin.problem = `WebChat stopped: ${messageOf(error)}`;
 		console.error(plugin.problem);
 	});
