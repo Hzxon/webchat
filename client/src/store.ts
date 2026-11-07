@@ -276,11 +276,11 @@ export const actions = {
       return { ...s, docs, docOpen: s.docOpen === docId ? null : s.docOpen };
     }),
 
-  /** Shows a doc in place of the open chat, or closes it. */
-  setDocOpen: (docOpen: string | null) => store.set((s) => (docOpen === null ? { ...s, docOpen } : show(s, { docOpen }))),
+  /** Shows a doc in place of the open chat, or closes it. The sidebar turns to its row, also at start (K-62). */
+  setDocOpen: (docOpen: string | null) => store.set((s) => (docOpen === null ? { ...s, docOpen } : show(s, { docOpen, tab: 'projects' }))),
 
-  /** Shows a project's board in place of the open chat, or closes it. */
-  setBoardOpen: (boardOpen: number | null) => store.set((s) => (boardOpen === null ? { ...s, boardOpen } : show(s, { boardOpen }))),
+  /** Shows a project's board in place of the open chat, or closes it. The sidebar turns to its row (K-62). */
+  setBoardOpen: (boardOpen: number | null) => store.set((s) => (boardOpen === null ? { ...s, boardOpen } : show(s, { boardOpen, tab: 'projects' }))),
 
   setDocsSeen: (docsSeen: Record<string, number>) => store.set((s) => ({ ...s, docsSeen })),
 
