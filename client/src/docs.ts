@@ -4,7 +4,7 @@
 import { newKeyId, randomBytes, toBase64Url, type DocContent } from '../../shared/e2ee';
 import type { DocRevisionDTO } from '../../shared/types';
 import { api, ApiError } from './api';
-import { nextNumber, parseCard, type CardKind } from './board';
+import { COLUMN_TITLES, idOf, parseCard, type BoardColumn, type CardKind } from './board';
 import { currentLookup, loadDraft, openDocs, setEditing, withChatKey } from './chat';
 import { keystore } from './e2ee/keystore';
 import { keyring, type ChatDoc } from './e2ee/keyring';
@@ -49,6 +49,12 @@ export async function createDoc(projectId: number, title: string, sections: stri
   const [doc] = await openDocs([dto], [general], currentLookup());
   actions.upsertDoc(doc!);
   return id;
+}
+
+/** Makes the doc behind a board column, empty. Its first card is the section written right after. */
+export async function createBoard(projectId: number, column: BoardColumn): Promise<ChatDoc> {
+  const id = await createDoc(projectId, COLUMN_TITLES[column], [], column);
+  return store.get().docs[id]!;
 }
 
 /** The doc's sections in order, without the ones deleted. */
@@ -136,7 +142,7 @@ export async function rewriteSection(doc: ChatDoc, section: string, make: (curre
  * never give one number. Nobody edits a board's title, so the lock blocks nothing else, and a tab
  * that dies holding it loses it after 2 minutes. A page that finds it held tries again for 5 seconds.
  */
-export async function addCard(doc: ChatDoc, section: string, kind: CardKind, text: (number: number) => string) {
+export async function addCard(doc: ChatDoc, section: string, kind: CardKind, text: (id: string) => string) {
   for (let tries = 1; ; tries++) {
     try {
       await api.lockSection(doc.id, 'title');
@@ -149,10 +155,10 @@ export async function addCard(doc: ChatDoc, section: string, kind: CardKind, tex
   }
   try {
     const cards = (await loadSections(doc)).map(parseCard);
-    const number = nextNumber(cards, kind);
-    const content = { text: text(number), pos: Math.max(0, ...cards.map((c) => c.pos)) + 1 };
+    const id = idOf(cards.map((c) => c.cardId), kind);
+    const content = { text: text(id), pos: Math.max(0, ...cards.map((c) => c.pos)) + 1 };
     await replaceSection(doc, section, content);
-    return { id: `${kind}-${number}`, ...content };
+    return { id, ...content };
   } finally {
     await api.unlockSection(doc.id, 'title').catch(() => undefined);
   }

@@ -67,6 +67,7 @@ export function AgentsView() {
   };
   let subtitle = awake ? 'Your agent is online' : asleep(Math.max(0, ...agents.map((a) => a.lastSeen ?? 0)) || null);
   if (agents.length === 0) subtitle = 'No agent connected';
+  else if (thread?.kind === 'proposal') subtitle = `Proposed in ${short(thread.repo)} · ${THREAD_STATE[thread.state].label}`;
   else if (thread) subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board'} · ${THREAD_STATE[thread.state].label}`;
   else if (brief) subtitle = 'Before it starts';
   // An agent runs several cards at once, so the list says how many go (R-037).
@@ -202,7 +203,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
     return repos.length && linked[projectId]?.configured !== false ? repos : [...repos, ''];
   };
   // Where a conversation belongs: the project its prompt names, or its card's board.
-  const projectOf = (t: Thread) => (t.kind === 'question' ? t.project : conversations[docs[t.messages[0]!.run?.kind === 'request' ? t.messages[0]!.run.docId : '']?.conversationId ?? 0]?.projectId);
+  const projectOf = (t: Thread) => (t.kind !== 'card' ? t.project : conversations[docs[t.messages[0]!.run?.kind === 'request' ? t.messages[0]!.run.docId : '']?.conversationId ?? 0]?.projectId);
 
   // The project picked, else the newest conversation's, else the first; then its repository picked, or its first.
   const askable = mine.filter((p) => agentIn(p.id));
@@ -375,7 +376,7 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
   else if (!seat?.online) {
     waiting = `Your laptop isn’t answering, so no answer can come yet. ${WAKE} If this waits more than 10 minutes, your agent will ask you to send it again.`;
   } else {
-    const minutes = Math.floor((now - thread.messages.findLast((m) => m.senderId === meId && !isCancel(m))!.createdAt) / 60_000);
+    const minutes = Math.floor((now - (thread.messages.findLast((m) => m.senderId === meId && !isCancel(m))?.createdAt ?? thread.last)) / 60_000);
     waiting = minutes > 0 ? `Working… ${minutes} min` : 'Working…';
   }
 
@@ -413,6 +414,8 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
                     <span className="bubble-text">{message.text}</span>
                   ) : message.prompt?.kind === 'answer' && message.prompt.card ? (
                     <AgentDraft message={message} draft={message.prompt.card} thread={thread} agentId={agentId} />
+                  ) : message.board?.kind === 'proposal' ? (
+                    <AgentDraft message={message} draft={message.board.card} thread={thread} agentId={agentId} />
                   ) : (
                     <Markdown text={message.text} />
                   )}
@@ -448,7 +451,8 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
         {working && <p className="agents-note">{waiting}</p>}
       </div>
       <footer className="composer">
-        {thread.state === 'ended' ? (
+        {/* A proposal is the repository's: it waits for Add or Update, and takes no reply (R-040). */}
+        {thread.kind === 'proposal' ? null : thread.state === 'ended' ? (
           <div className="agents-ended">
             <p className="composer-blocked">This conversation ended after a day with no reply.</p>
             <button

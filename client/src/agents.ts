@@ -12,8 +12,8 @@ import { otherMemberId, useAppState, type State } from './store';
 export const THREAD_TTL_MS = 24 * 60 * 60_000;
 
 export interface Thread {
-  /** A question, or a card the owner handed the agent from its brief (D-105). */
-  kind: 'question' | 'card';
+  /** A question, a card the owner handed the agent from its brief (D-105), or a proposal merged in a linked repository (R-040). */
+  kind: 'question' | 'card' | 'proposal';
   /** The prompt's or the run request's client id. */
   root: string;
   /** For a card: its request's message id, which the agent's reports name. */
@@ -21,7 +21,7 @@ export interface Thread {
   conversationId: number;
   /** The repository it is about, or '' for a question about its project's board alone (R-038). */
   repo: string;
-  /** For a question: the project its prompt names, whose board the agent reads (D-104, R-038). */
+  /** For a question: the project its prompt names, whose board the agent reads (D-104, R-038); for a proposal, its board's. */
   project?: number;
   /** The prompt first, then the messages that name it, in the chat's order, one per answer. */
   messages: ChatMessage[];
@@ -126,6 +126,15 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     if (message.added && message.senderId === meId) {
       const thread = threads.get(message.added.to);
       if (thread) thread.added[message.added.draft] = message.added.card;
+      if (thread?.kind === 'proposal') thread.state = 'done';
+      continue;
+    }
+    // A proposal file the default branch of a linked repository gained, which the agent hands its owner as a draft (R-040).
+    if (message.board?.kind === 'proposal') {
+      const { project, repo } = message.board;
+      if (message.senderId === agentId && message.clientId) {
+        threads.set(message.clientId, { kind: 'proposal', root: message.clientId, conversationId: message.conversationId, repo, project, messages: [message], state: 'draft', last: message.createdAt, added: {} });
+      }
       continue;
     }
     const run = message.run;
@@ -201,10 +210,10 @@ export function useAgentThreads() {
   }, [chats, users, me, messages, pending]);
 }
 
-/** Every run message in the user's chats with their agents, as one string that changes when a run moves. */
+/** Every run message, and every claim of open pull requests (R-040), in the user's chats with their agents, as one string that changes when one moves. */
 export const runSignature = (state: State) =>
   agentChats(state)
-    .flatMap((c) => (state.messages[c.id] ?? []).filter((m) => m.run).map((m) => `${m.id}:${m.run!.kind}`))
+    .flatMap((c) => (state.messages[c.id] ?? []).filter((m) => m.run || m.board?.kind === 'claims').map((m) => `${m.id}:${m.run?.kind ?? 'claims'}`))
     .join();
 
 export const seatKey = (seat: Seat) => `${seat.agent.id}:${seat.repo}`;

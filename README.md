@@ -144,6 +144,10 @@ What it does not protect against:
   server writes those cards from what GitHub sends, so they are not end-to-end encrypted, and a
   server that was changed could write fake ones. Their links still lead only to github.com. A card
   someone shares by hand is encrypted like any message.
+- **A board copied into a repository.** When a project's owner links its board to a repository,
+  the board's cards and decisions are written to that repository's `docs/roadmap.md` and
+  `docs/decisions.md` in plain text. GitHub, and everyone who can read the repository, can read
+  them.
 - **Who gets a new channel's key comes from the server.** A new channel's key is wrapped for
   everyone the server lists as a project member. The New channel dialog names them, so check that
   list. The same goes for the new key a chat gets after someone leaves.
@@ -454,6 +458,16 @@ from adding it. A card you add carries a `Checked:` line with the date and what 
 open idea or issue without one shows as **Unchecked** on the board, and **Check again** on a card
 asks your agent to check it as it is now. The board gives each new card its number under a lock,
 so two people adding a card at once get two numbers.
+
+The project's owner can link the board to one of the project's repositories, from the board. The
+repository's entries in `docs/roadmap.md` and `docs/decisions.md` come onto the board first, with
+the numbers they have. From then on the owner's agent keeps both files as copies of the board. When
+the board has not changed for 10 minutes, the agent pushes its changes to the `agent/board` branch,
+in one draft pull request that the owner merges. It pushes only that branch, and never forces a
+push. Nobody edits a copy by hand: a pull request in the repository proposes a change as a file
+under `docs/roadmap/` or `docs/decisions/`, and once that file is on the default branch, it reaches
+the owner as a draft. An open pull request whose body starts with `Claims K-12` marks that card In
+progress on the board. One repository holds the copy of one board.
 
 Cards and clones also need GitHub on that laptop: the GitHub CLI signed in with `gh auth login`, and
 git using it after `gh auth setup-git`. `/webchat:connect`, typed in any folder, says when they are

@@ -17,6 +17,7 @@
 import {
   isRepoName,
   LIMITS,
+  type BoardSyncDTO,
   type CardDraftDTO,
   type EnvelopeDTO,
   type MessageKind,
@@ -383,6 +384,8 @@ export interface MessageContent {
    */
   setup?: { sentAt: number; choice?: SetupChoice };
   setupState?: SetupState;
+  /** The board's copy in a linked repository, between the owner's page and their agent (R-040, D-117). */
+  board?: BoardSyncDTO;
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -493,7 +496,7 @@ export function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | u
   return card;
 }
 
-const CARD_ID = /^[DRK]-\d{1,6}$/;
+const CARD_ID = /^[DRKQ]-\d{1,6}$/;
 const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed', 'fixing', 'review', 'ended', 'nocopy'];
 const short = (value: unknown, max: number) => (typeof value === 'string' && value.length <= max ? value : undefined);
 
@@ -563,9 +566,10 @@ function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | und
   const title = short(raw?.title, LIMITS.docTitleLength);
   const body = short(raw?.body, LIMITS.messageLength);
   // A line break in the title would write a status line of its own into the card.
-  if (!raw || (raw.kind !== 'D' && raw.kind !== 'R' && raw.kind !== 'K') || !title || /[\r\n]/.test(title) || body === undefined) return;
-  // A line break in the check would end the card's Checked line.
+  if (!raw || (raw.kind !== 'D' && raw.kind !== 'R' && raw.kind !== 'K' && raw.kind !== 'Q') || !title || /[\r\n]/.test(title) || body === undefined) return;
+  // A line break in the check would end the card's Checked line, and one in a status would write a line of its own.
   const checked = short(raw.checked, LIMITS.checkedLength);
+  const status = short(raw.status, LIMITS.checkedLength);
   const related = (Array.isArray(raw.related) ? (raw.related as Array<Record<string, unknown> | null>) : []).flatMap((r) => {
     const why = short(r?.why, LIMITS.relatedWhyLength);
     const kind = r?.kind === 'duplicate' || r?.kind === 'conflict' ? (r.kind as 'duplicate' | 'conflict') : undefined;
@@ -577,6 +581,7 @@ function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | und
     body,
     ...(checked && !/[\r\n]/.test(checked) && { checked }),
     ...(related.length && { related: related.slice(0, LIMITS.relatedPerDraft) }),
+    ...(status && !/[\r\n]/.test(status) && { status }),
   };
   const replaces = raw.replaces as Record<string, unknown> | undefined;
   if (!replaces) return draft;
@@ -606,6 +611,28 @@ function readSetupState(raw: Record<string, unknown> | undefined): SetupState | 
   return { to, claudeMd: raw.claudeMd, skills: skills.slice(0, LIMITS.setupSkills), choice, ...(applied && isId(at) && { applied: { ...applied, at } }) };
 }
 
+/** A message of the board's copy in a repository, if it has the right shape (R-040). */
+function readBoardSync(raw: Record<string, unknown> | undefined): BoardSyncDTO | undefined {
+  const repo = typeof raw?.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
+  const to = short(raw?.to, 64);
+  if (raw?.kind === 'link') return isId(raw.project) && repo && isId(raw.sentAt) ? { kind: 'link', project: raw.project, repo, sentAt: raw.sentAt } : undefined;
+  if (raw?.kind === 'failed') return to ? { kind: 'failed', to } : undefined;
+  if (raw?.kind === 'entries') {
+    const entries = Array.isArray(raw.entries) ? raw.entries.filter((e): e is string => typeof e === 'string' && e.length <= LIMITS.docSectionLength) : [];
+    return to && isId(raw.part) && isId(raw.parts) && raw.part <= raw.parts ? { kind: 'entries', to, part: raw.part, parts: raw.parts, entries } : undefined;
+  }
+  if (raw?.kind === 'proposal') {
+    const card = readDraft(raw.card as Record<string, unknown> | undefined);
+    return isId(raw.project) && repo && card ? { kind: 'proposal', project: raw.project, repo, card } : undefined;
+  }
+  if (raw?.kind === 'claims' && isId(raw.project) && repo && Array.isArray(raw.claims)) {
+    const claims = (raw.claims as Array<{ card?: unknown; pull?: unknown } | null>).flatMap((c) =>
+      typeof c?.card === 'string' && CARD_ID.test(c.card) && isId(c.pull) ? [{ card: c.card, pull: c.pull }] : [],
+    );
+    return { kind: 'claims', project: raw.project, repo, claims: claims.slice(0, 100) };
+  }
+}
+
 /** Keeps the parts of decrypted content that have the right shape. The sender signed it, so it is not tampered. */
 function readContent(value: unknown): MessageContent {
   const raw = value as {
@@ -621,6 +648,7 @@ function readContent(value: unknown): MessageContent {
     sleep?: { sentAt?: unknown };
     setup?: { sentAt?: unknown; choice?: unknown };
     setupState?: Record<string, unknown>;
+    board?: Record<string, unknown>;
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -653,6 +681,8 @@ function readContent(value: unknown): MessageContent {
   }
   const state = readSetupState(raw.setupState);
   if (state) content.setupState = state;
+  const board = readBoardSync(raw.board);
+  if (board) content.board = board;
   return content;
 }
 
@@ -717,6 +747,8 @@ export interface DocContent {
   removed?: boolean;
   /** On a title: this doc is a column of the project board, and its sections are cards (R-021). */
   board?: 'decisions' | 'roadmap';
+  /** On the Roadmap's title: the repository whose docs copy the board, which only the project's owner sets (R-040). */
+  repo?: string;
 }
 
 const docHeader = (meta: DocMeta, keyId: string) =>
@@ -733,6 +765,7 @@ export async function decryptDoc(chatKey: CryptoKey, authorSignPublic: string, m
   if (typeof raw.pos === 'number' && Number.isFinite(raw.pos)) content.pos = raw.pos;
   if (raw.removed === true) content.removed = true;
   if (raw.board === 'decisions' || raw.board === 'roadmap') content.board = raw.board;
+  if (typeof raw.repo === 'string' && isRepoName(raw.repo)) content.repo = raw.repo;
   return content;
 }
 
