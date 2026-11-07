@@ -4,7 +4,7 @@ import { sound } from '../alerts';
 import { api } from '../api';
 import { refreshPushState } from '../chat';
 import { disablePushHere, enableNotifications } from '../push';
-import { useAppState } from '../store';
+import { actions, useAppState } from '../store';
 import { Dialog } from './Dialog';
 import { VolumeIcon } from './icons';
 
@@ -42,7 +42,10 @@ export function NotificationDialog({ onClose }: { onClose: () => void }) {
     let current = true;
     api
       .bark()
-      .then((state) => current && setBark(state))
+      .then((state) => {
+        actions.setBark(state);
+        if (current) setBark(state);
+      })
       .catch(() => current && setBark(null));
     return () => {
       current = false;
@@ -62,7 +65,13 @@ export function NotificationDialog({ onClose }: { onClose: () => void }) {
     }
   }
 
-  const barkAct = (work: () => Promise<BarkDTO>) => act(async () => setBark(await work()));
+  const barkAct = (work: () => Promise<BarkDTO>) =>
+    act(async () => {
+      const state = await work();
+      // The sidebar's warning reads the store, so a phone found here ends it at once (K-1).
+      actions.setBark(state);
+      setBark(state);
+    });
 
   const permissionText = {
     granted: 'Allowed',
