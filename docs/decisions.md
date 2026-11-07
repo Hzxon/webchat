@@ -1134,7 +1134,7 @@ seconds. A repository whose folder is gone stays in the play menu, asleep, for 3
 
 ### D-102: A conversation is a prompt and the messages that name it
 
-Accepted 2026-11-06 in #119 (R-035), changed in #131 and #132.
+Accepted 2026-11-06 in #119 (R-035), changed in #131, #132 and #160.
 
 The owner talks with their agent in their direct chat. A prompt is a message whose sealed `prompt`
 field names the project and, unless it links none, one of its repositories. Replies, cancels,
@@ -1143,15 +1143,17 @@ message id. The agent heeds only its owner's prompts, replies and cancels, in th
 a signed send time within 10 minutes, once each (D-089, K-47). The laptop's window answers from the
 named repository's folder (D-094), and a reply it cannot place hears so. Each conversation is one
 background Claude session in a scratch copy: a repository of its own in the temp folder, holding
-only the latest commit of origin's default branch, so a turn moves none of the owner's branches and
-nothing from it is pushed. A question about a board alone runs in an empty folder, with the board
+one commit of origin's default branch, so a turn moves none of the owner's branches and nothing
+from it is pushed. Every turn fetches. When the branch moved, the copy moves to it and drops what
+Claude changed there, and the reply names both commits, so Claude rereads the code instead of
+trusting what it remembers. A question about a board alone runs in an empty folder, with the board
 and the decisions the team holds (R-038). A reply resumes the session; turns run one at a time, and
 a cancel stops them. A long answer comes as messages of at most 4,000 characters. A conversation
 left for 24 hours ends, and its copy goes. Why: the owner asks from a phone, and the chat keeps it
 encrypted.
 
-Cost: an answer waits up to 15 seconds for a check-in, plus the turn. Each conversation fetches a
-copy of the default branch. An answer cut inside a code block shows as two messages.
+Cost: an answer waits up to 15 seconds for a check-in, plus the turn. Every turn fetches origin,
+and a reply after a merge loses what Claude changed in the copy. An answer cut inside a code block shows as two messages.
 
 ### D-103: The owner asks their agents in a Coding agents pane, by project
 

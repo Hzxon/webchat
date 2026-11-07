@@ -275,7 +275,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
         {blocked && <p className="composer-blocked">{blocked}</p>}
         <Box name="agents:ask" placeholder={code ? 'Ask about your code' : 'Ask about your project'} canSend={!blocked && !loading} onSend={ask} />
         <p className="agents-hint">
-          {code ? 'It reads your team’s code as it is on GitHub. After a push, ask a new question to see it.' : 'Your agent answers from the project’s board alone: its decisions and cards.'}
+          {code ? 'It reads your team’s code as it is on GitHub, and catches up on each reply.' : 'Your agent answers from the project’s board alone: its decisions and cards.'}
         </p>
       </div>
       {mine.map((p) => {

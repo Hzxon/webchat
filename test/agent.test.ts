@@ -723,7 +723,8 @@ describe('agent client (R-027)', () => {
         await plugin.client!.sync();
         const branches = async () => (await sh('git', ['--git-dir', origin, 'branch', '--format=%(refname:short)'])).stdout.trim().split('\n').sort();
         const before = await branches();
-        const refs = async () => (await git(project, 'for-each-ref')).stdout;
+        // Its own branches only: each turn fetches, which moves origin's.
+        const refs = async () => (await git(project, 'for-each-ref', 'refs/heads')).stdout;
         const refsBefore = await refs();
         const tell = async (prompt: PromptDTO, text: string) => {
           const sent = await alice.send(direct, { text, prompt });
@@ -742,12 +743,24 @@ describe('agent client (R-027)', () => {
         assert.ok(chat!.input.includes('opens a draft pull request'), 'the brief says a card run, unlike a question, ends in a draft');
         assert.deepEqual(await answers(), ['It adds.']);
         assert.equal((await git(scratch, 'rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim(), 'HEAD', 'the scratch copy is detached');
-        assert.equal((await git(scratch, 'rev-list', '--max-parents=0', 'HEAD')).stdout.trim(), (await git(project, 'rev-parse', 'refs/remotes/origin/main')).stdout.trim(), 'it starts at origin/main, and the fake Claude commits on top');
+        const was = (await git(project, 'rev-parse', 'refs/remotes/origin/main')).stdout.trim();
+        assert.equal((await git(scratch, 'rev-list', '--max-parents=0', 'HEAD')).stdout.trim(), was, 'it starts at origin/main, and the fake Claude commits on top');
+        // A merge on GitHub between turns: the reply's copy moves to it, and the agent hears what moved.
+        const merger = path.join(home, 'merger');
+        await sh('git', ['clone', '-q', origin, merger]);
+        await fs.writeFile(path.join(merger, 'merged.txt'), 'new\n');
+        await git(merger, 'add', 'merged.txt');
+        await git(merger, 'commit', '-q', '-m', 'Merge');
+        await git(merger, 'push', '-q', 'origin', 'HEAD:main');
+        const now = (await git(merger, 'rev-parse', 'HEAD')).stdout.trim();
         await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Still adds."}' }, () => tell({ kind: 'reply', to: prompted, sentAt: Date.now() }, 'And sum.test.js?'));
         const [again] = (await turns()).slice(-1);
         assert.equal(again!.args[again!.args.indexOf('--resume') + 1], chat!.args[chat!.args.indexOf('--session-id') + 1], 'the reply resumes the session');
         assert.equal(again!.cwd, scratch);
         assert.ok(again!.input.includes('Your owner replies:') && again!.input.includes('And sum.test.js?'));
+        assert.ok(again!.input.includes(`main moved from ${was.slice(0, 7)} to ${now.slice(0, 7)}`), 'the reply says what moved');
+        assert.equal((await git(scratch, 'rev-list', '--max-parents=0', 'HEAD')).stdout.trim(), now, 'the copy moved to the merge');
+        assert.match((await git(scratch, 'diff', '--stat', was, now)).stdout, /merged\.txt/, 'both commits are in the copy, so the agent can diff them');
         assert.deepEqual(await answers(), ['Still adds.']);
         // A draft that changes a card names it, with the hash of the text the brief held (D-104).
         assert.ok(chat!.input.includes('### K-7: Sums are off by one') && chat!.input.includes("TEAMMATES' CARDS START"), 'the brief holds the board, fenced');
