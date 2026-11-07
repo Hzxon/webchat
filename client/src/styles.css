@@ -2902,7 +2902,10 @@ a {
 }
 
 .board-card-status {
-  flex: none;
+  /* A status can hold a reason, as a stale run's does (R-042), so a long one wraps on a line of its own. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin-left: auto;
   color: var(--muted);
   font-size: 13px;
