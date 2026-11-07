@@ -1,6 +1,6 @@
 // Browser notification permission and the Web Push subscription for this device.
 import { api } from './api';
-import { isOldIos } from './ios';
+import { iosVersion } from './ios';
 
 export type PermissionState = NotificationPermission | 'unsupported';
 
@@ -23,7 +23,7 @@ const isIos =
 const isStandalone =
   window.matchMedia('(display-mode: standalone)').matches ||
   (navigator as Navigator & { standalone?: boolean }).standalone === true;
-const oldIos = isOldIos(navigator.userAgent);
+const oldIos = (iosVersion(navigator.userAgent) ?? Infinity) < 16.4;
 
 let registration: Promise<ServiceWorkerRegistration | null> | undefined;
 
