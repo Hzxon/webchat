@@ -21,7 +21,7 @@ import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, textHash, wrapChatKey } from '../shared/e2ee.ts';
-import { briefText, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type UserDTO } from '../shared/types.ts';
+import { briefText, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type UserDTO } from '../shared/types.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
 const KDF_ROUNDS = 1000;
@@ -245,6 +245,13 @@ describe('agent client (R-027)', () => {
     assert.deepEqual((await alice.sync()).map((m) => [m.senderId, m.content?.text]), [[bot.id, 'Hi Alice']]);
     // Its own message, and the overlap of the check-in before, come back as nothing new.
     assert.deepEqual(await bot.sync(), []);
+  });
+
+  test('never owns a project or group, since it cannot remove, hand back or delete (K-67)', async () => {
+    await assert.rejects(alice.request('PUT', `/projects/${projectId}/owner`, { userId: bot.id }), { status: 400 });
+    const key = await newChatKey(alice, [alice.id, bot.id]);
+    const group = await alice.request<ConversationDTO>('POST', '/conversations/group', { title: 'Pair', memberIds: [bot.id], key });
+    await assert.rejects(alice.request('PUT', `/conversations/${group.id}/owner`, { userId: bot.id }), { status: 400 });
   });
 
   test('edits a board card under the section lock', async () => {

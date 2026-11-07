@@ -32,6 +32,7 @@ docs/decisions.md that explains it.
 - Only the owner deletes a channel, under the project's lock, and never #general: pages take the project's oldest channel for it, and its key opens the docs (D-081, D-096).
 - Removal gives every chat in the project or group a new key for exactly those who stay, in the removing request (D-039, D-044).
 - A project or group always has an owner among its members: the owner hands over before leaving, and the last member of a group deletes it (D-045).
+- Only a person owns a project or group, never an agent: the dialog offers no "Make owner" for one and the server refuses it (D-114).
 - Of being added, removed, leaving and handing over, only being added sends a notification (D-031, D-039, D-045).
 - Docs exist only in a channel, keyed by #general; a revision is sealed under the `webchat/doc/v1` header binding chat, key id, author, doc and section (D-081).
 - A section save needs its `doc_locks` lock, which lapses 2 minutes after the last check-in; doc versions and held locks are in the sync fingerprint (D-081, D-021).
