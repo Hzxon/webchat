@@ -1551,7 +1551,7 @@ be up to date", or a red result will not stop the merge.
 
 ### D-076: Fix pull requests edit the roadmap in place, and CI runs the checks
 
-Accepted 2026-11-03.
+Accepted 2026-11-03. Reservation by tag added in #149.
 
 A pull request that finishes a roadmap item changes only that item's status line, in place. It
 does not move the entry to Done or add a row to the Done table; a housekeeping pull request does
