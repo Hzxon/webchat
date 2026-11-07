@@ -29,6 +29,7 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - `request` aborts when the answer has not started after 60 seconds, using `AbortController`, not `AbortSignal.timeout` (D-077).
 - A reply's envelope holds the quoted message id, sender and at most 160 characters of text; when the original is loaded, show it, not the copy (D-029).
 - A reaction is a message of kind `reaction`; the newest per person and message wins, an empty emoji removes it; reactions never count as unread, reorder chats or replace the preview (D-030).
+- A quote stands for the message at its id only when sender and text match; a reaction signs its target's sender and client id and shows only on a match (D-109).
 - History paging goes from the oldest row fetched, not the oldest message shown, and continues while pages hold only reactions (D-030).
 - Alerts on iPhones without Web Push go through the Bark app; `client/src/ios.ts` spots iOS before 16.4 (D-054).
 - The user's direct chats with their own agents show only in the Coding agents pane, as conversations; a new list of chats leaves them out, and a notification for one opens the pane (D-103).

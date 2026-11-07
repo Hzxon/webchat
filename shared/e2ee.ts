@@ -327,8 +327,13 @@ export interface QuotedMessage {
 export interface MessageContent {
   text: string;
   replyTo?: QuotedMessage;
-  /** For kind "reaction": the message and the emoji. An empty emoji takes the reaction back. */
-  reaction?: { messageId: number; emoji: string };
+  /**
+   * For kind "reaction": the message and the emoji. An empty emoji takes the reaction back. The
+   * server picks message ids and no signature covers them, so a reaction also names its target's
+   * sender (0 for a card from GitHub) and client id, which the target's header signs (K-44, D-109).
+   * Reactions from before that have neither.
+   */
+  reaction?: { messageId: number; emoji: string; senderId?: number; clientId?: string };
   /** A shared pull request. The text holds the same in words, for pages and devices without the card. */
   pull?: PullCardDTO;
   /** A card handed to a coding agent, or the agent's report on it. The text says the same in words. */
@@ -535,7 +540,7 @@ function readContent(value: unknown): MessageContent {
   const raw = value as {
     text?: unknown;
     replyTo?: Partial<QuotedMessage>;
-    reaction?: { messageId?: unknown; emoji?: unknown };
+    reaction?: { messageId?: unknown; emoji?: unknown; senderId?: unknown; clientId?: unknown };
     pull?: Partial<PullCardDTO>;
     run?: Record<string, unknown>;
     prompt?: Record<string, unknown>;
@@ -551,6 +556,8 @@ function readContent(value: unknown): MessageContent {
   const reaction = raw.reaction;
   if (reaction && isId(reaction.messageId) && typeof reaction.emoji === 'string' && reaction.emoji.length <= EMOJI_LENGTH) {
     content.reaction = { messageId: reaction.messageId, emoji: reaction.emoji };
+    if (isId(reaction.senderId) || reaction.senderId === 0) content.reaction.senderId = reaction.senderId;
+    if (typeof reaction.clientId === 'string') content.reaction.clientId = reaction.clientId;
   }
   const pull = readPull(raw.pull);
   if (pull) content.pull = pull;

@@ -21,6 +21,9 @@ export interface ReactionMark {
   eventId: number;
   /** Empty once they took the reaction back. */
   emoji: string;
+  /** The target's sender and client id as the reaction signed them; unset on older reactions (K-44). */
+  senderId?: number;
+  clientId?: string;
 }
 
 /** By person id. */
@@ -153,8 +156,8 @@ function withEvents(current: State, events: ChatMessage[]): Pick<State, 'message
   for (const event of events) {
     if (event.kind === 'reaction') {
       if (event.reaction && event.security !== 'failed' && event.senderId !== null) {
-        const { messageId, emoji } = event.reaction;
-        reactions = withReaction(reactions, event.conversationId, messageId, event.senderId, { eventId: event.id, emoji });
+        const { messageId, ...mark } = event.reaction;
+        reactions = withReaction(reactions, event.conversationId, messageId, event.senderId, { eventId: event.id, ...mark });
       }
       continue;
     }
