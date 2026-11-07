@@ -1,32 +1,24 @@
 # Roadmap
 
-This file lists the work that is planned or set aside, the known issues, and the questions that
-are still open. Read it before you start new work. When someone asks what to do next, start with
-the items under "Next". The decisions these items build on are in [decisions.md](decisions.md).
+This file is a copy of the Roadmap column of the project's board in WebChat, which its owner's agent writes. Do not edit it by hand: a pull request proposes a new entry as a file under `docs/roadmap/`, named by a short name such as `new-bark-banner.md`, or a change to one as `docs/roadmap/K-12.md`.
 
-## How to use this file
+## In progress
 
-- Features and other work are R-items, known issues are K-items, and open questions are Q-items.
-  Numbers never change and are never reused.
-- Each item says why it matters, what it covers, and when it is done. Write open questions under
-  the item they belong to.
-- Status values: Next, Planned, Idea, Blocked, In progress, Done, and Dropped.
-- When you start an item, set it to "In progress" and name your branch. When it reaches main, the
-  pull request sets its status to "Done" or "Fixed" with the pull request number, in place, and
-  records its decisions in `decisions.md`. The entry stays where it is. A housekeeping pull request
-  deletes the finished entry and adds its row to the Done table, so that two fixes never edit the
-  same lines (D-076). Until then the Done table lags, and
-  `grep -n '^Status: \(Done\|Fixed\)' docs/roadmap.md` lists what is finished.
-- A new entry starts as its own file, `docs/roadmap/K-59.md`, in the same form as an entry here,
-  so that two pull requests never insert at the same spot (D-106). Edit its status line there.
-  The housekeeping pull request moves it into this file. `ls docs/roadmap` lists what is pending.
-- When you drop an item, keep it, set it to "Dropped", and say why.
+### K-1: The iOS 16.4 banner stays after Bark is linked
+
+Status: In review: Hzxon/webchat#159.
+
+Status: Open. Found by the owner on an iPhone before iOS 16.4.
+
+On iOS before 16.4 the sidebar always shows "Notifications on iPhone need iOS 16.4. Tap to get alerts through the Bark app instead." It stays after the user links Bark and their alerts already arrive through it. A warning that never goes away teaches people to ignore the banner, and it suggests that their alerts are broken when they are not.
+
+Cause: `AlertSetupBanner` in `client/src/components/Sidebar.tsx` shows the warning while `push.permission !== 'granted'`. That can never change on these phones, which have no Web Push (`oldIos` in `client/src/push.ts`). The page never asks whether Bark is linked. Only `NotificationDialog` fetches `GET /api/bark` (`BarkDTO`), and only while the dialog is open (D-054).
+
+Fix: on iOS before 16.4, the page fetches the Bark state, or keeps the dialog's answer in the store, and hides the warning once `link.devices` has at least one phone. While Bark is linked but no phone has registered, the warning stays, since nothing reaches the user yet. Other browsers keep their banner, and the alert sound banner is unchanged.
+
+Done when: an iOS 15 user agent with a linked Bark device shows no notification warning, one without a link or device still shows it, and a test proves both.
 
 ## Next
-
-Nothing is queued. The owner picks the next item from Planned.
-
-## Planned
 
 ### R-005: Photos and files
 
@@ -71,6 +63,23 @@ user's own (`comparePulls` only looks at the last commenter).
 
 Done when: a comment-only review on the fake GitHub becomes an event, and a test proves it.
 
+### R-016: Link a project to repositories
+
+Status: Planned. Started in #14. Since #17 (D-050), a project links repositories through a GitHub App, and its webhooks post a card into the channel for every pull request that opens, is ready for review, is reopened, merged or closed. Still to do: the Projects tab list, reviewers shown by their WebChat names instead of GitHub logins, and cards that show a pull request's current checks and review decision instead of a snapshot.
+
+Why: the pane lists one person's pull requests across every repository, with no grouping. A team
+wants to see every open pull request of its repositories, by any member, next to its channels. Only
+pull requests are watched today: pushes and commits are not, and teams that push to main see
+nothing.
+
+Scope: a project names one or more repositories. The Projects tab shows their open pull requests,
+grouped by repository. Reading them needs the GitHub App's installation token, which needs the
+app's private key on the server (D-050 keeps no token).
+
+Settled in D-050: every pull request in a linked repository goes to the channel, whoever opens it.
+Everyone in the project sees its title, even without access to the repository, so the list here
+would show the same to the whole project.
+
 ### R-029: Hand a card to a teammate's agent
 
 Status: Planned. Set aside from K-45 (D-089) on 2026-11-05.
@@ -92,27 +101,6 @@ Scope:
 
 Done when: a teammate's request runs on the owner's machine only after the owner let them in, and a
 test covers a request from someone who was not let in.
-
-### R-016: Link a project to repositories
-
-Status: Planned. Started in #14. Since #17 (D-050), a project links repositories through a
-GitHub App, and its webhooks post a card into the channel for every pull request that opens, is
-ready for review, is reopened, merged or closed. Still to do: the Projects tab list, reviewers
-shown by their WebChat names instead of GitHub logins, and cards that show a pull request's
-current checks and review decision instead of a snapshot.
-
-Why: the pane lists one person's pull requests across every repository, with no grouping. A team
-wants to see every open pull request of its repositories, by any member, next to its channels. Only
-pull requests are watched today: pushes and commits are not, and teams that push to main see
-nothing.
-
-Scope: a project names one or more repositories. The Projects tab shows their open pull requests,
-grouped by repository. Reading them needs the GitHub App's installation token, which needs the
-app's private key on the server (D-050 keeps no token).
-
-Settled in D-050: every pull request in a linked repository goes to the channel, whoever opens it.
-Everyone in the project sees its title, even without access to the repository, so the list here
-would show the same to the whole project.
 
 ## Ideas
 
@@ -189,99 +177,28 @@ the notes would show it nothing new. They should not count as unread.
 
 ## Known issues
 
-### K-59: Two agents can run one card at once
+### K-69: An agent's board messages buzz the owner's phone and count as unread
 
-Status: Fixed in #143. Found on 2026-11-06 while reading `client/src/components/BoardView.tsx` for
-the design of R-036 to R-038.
+Status: Open. Found on 2026-11-07 in the review of #167 (R-040).
 
-The board disables a card's play button only from the viewer's own run messages (D-100,
-`BoardView.tsx` where `cardRun` sets `disabled`). Teammates see no run messages, so their button
-stays enabled while the status line says `In progress: Ann's agent`, and the brief (D-105) does not
-refuse either. A teammate with an agent of their own can start the same card: two branches, two
-drafts, one card.
+Seen: when the owner links a board, their agent sends the repository's entries in several messages.
+It also sends one each time the cards that open pull requests claim change. Each is an ordinary
+message in the owner's direct chat with the agent. The server pushes it and counts it as unread, so
+the Coding agents row shows a badge, and a phone whose tabs are closed buzzes. The page only keeps
+them from raising a toast (`shouldAlert` in `client/src/chat.ts`).
 
-Fix: the brief refuses, or at least warns, when the card's status line names another agent's run,
-such as `In progress:` or `In review:`, since the status line is the one thing teammates can see
-(D-100). A refusal is enough; a lock would need the server to know what the request names, which
-it cannot (D-014).
+Cause: the server knows the message kinds message, reaction and github, and only a reaction stays
+quiet (`server/notify.ts`, and the unread counts in `server/db.ts`).
 
-### K-57: The agent never pins a teammate's new keys, so Start fails on a board with their text
-
-Status: Fixed in #145 (D-110). Found in the correctness review of R-035's step 6 (#122) on
-2026-11-06. It was rare: it needed a teammate whose keys changed.
-
-Until the owner checks a teammate's new security code, nothing signed with their keys opens (D-018).
-The owner's page and the agent both leave out the teammate's board sections, so both hash the same
-brief (D-105). Once the owner checks the code, the page opens those sections and puts them in the
-brief. The agent still leaves them out, so the two hashes differ from then on. A decision that the
-teammate wrote and the team still holds is part of every card's brief on that board, so every Start
-there fails with "The card or a decision changed since you opened it." A card the teammate wrote
-fails with "I can’t find that card on the board anymore."
-
-The agent pins a person's keys the first time it sees them and never again (`checkKeys` in
-`agent/client.ts`). The page pins again when the owner checks a code (`trust` in
-`client/src/e2ee/keyring.ts`), and the agent has no such step. So `keysOf` keeps answering null for
-the new keys, and `sections` leaves the teammate's text out of the brief that `handle` in
-`agent/runs.ts` hashes. The page hashes what opens for it (`AgentBrief.tsx`). This is the split that
-K-40 warns of.
-
-Fix: when the owner checks a teammate's code, the page sends each of their agents a message that
-names the person and the fingerprint it checked. An agent pins it only when its owner sent it in
-their direct chat, only when it is the person's current fingerprint, and only when it is newer than
-the last check it pinned for that person. #145 drops the 10-minute window that runs have (D-089):
-a check made while Claude Code was closed must still reach the agent.
-
-### K-44: A reply or reaction follows the message id, which no signature covers
-
-Status: Fixed in #144 (D-109). Found in a security review of main on 2026-11-05.
-
-A reply signs its original's id, sender and quoted text. But `Quote` in
-`client/src/components/ChatView.tsx` shows whatever message now has that id, and never compares
-it with the signed quote. Reactions are filed under the id the same way (`client/src/store.ts`).
-The id is the server's primary key and is in no signature (D-016). So someone who writes to the
-database can swap the ids of two messages from one sender in one chat. A signed "Yes, do it" then
-answers the other question. The swap also reorders the two messages, which shows.
-
-Fix: show the original only when its sender and text match the signed quote, and the signed quote
-otherwise. Bind a reaction to something its target's sender signed, such as the client id.
-
-### K-43: A chat key's wrap does not name its chat
-
-Status: Fixed in #150 (D-111): each copy of a chat key names its chat, and a new chat's first key
-is made for an id the page reserves first. Since #146, pages and agents keep the key ids a link
-showed replaced, so a dropped link no longer brings an old key back. Found in a security review of
-main on 2026-11-05.
-
-`pairKey` in `shared/e2ee.ts` binds the key id and the two users into the wrap, but not the
-conversation. The key link binds it. The only check that a replaced key never encrypts again
-reads `keyLinks`, which come from the server (`client/src/e2ee/keyring.ts`). So someone who writes
-to the database can restore a chat's old key and delete its link. Members then send with a key
-that a removed member still holds, which breaks the promise that they never get what is sent
-after they left. The README already accepts that the server picks who gets a rotated key, which is
-a stronger attack, so this adds little on its own.
-
-Fix: add the conversation id to the wrap's HKDF info and AAD under a v2 label, so old wraps still
-open. Remember on each device the newest key id per chat, and refuse to seal with an older one.
-
-### K-40: The keyring logic exists twice, in the page and in the agent
-
-Status: Done in #147. Both now use `shared/keyring.ts`. It walks a key chain before it caches, so
-a chain the server looped no longer leaves the page's open waiting forever. Found while building
-R-027 step 1 (#85).
-
-`agent/client.ts` ports `chatKey`, `keyFor`, the key cache, the pins and the signature checks
-from `client/src/e2ee/keyring.ts`, because that module reaches into IndexedDB and cannot load in
-Node. The two copies decide the same security questions: whether a member wrapped the chat key,
-that a replaced key never encrypts again, and whose changed keys to refuse (D-015, D-018). A fix
-in one copy is easy to forget in the other.
-
-Fix: move the pure logic into a module under `shared/` that takes the key lookup, a key cache
-and a pin store as arguments, with the page passing IndexedDB and the agent its account file.
-Until then, a change to either copy must be made in both.
+Fix: a quiet message kind, such as `sync`, that the server pushes and counts as it does a reaction,
+and that the agent sends its entries and claims with. A message's kind is signed into its envelope,
+so rule 2 of AGENTS.md holds.
 
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
+
+Status: Open.
 
 Vercel Functions can now hold WebSockets. That could bring instant delivery, typing indicators and
 live presence (R-011). D-004 rules out open connections because of the free plan's limits. Measure
@@ -289,11 +206,15 @@ what WebSockets cost on the Hobby plan before changing D-004.
 
 ### Q-2: One community per deployment?
 
+Status: Open.
+
 Everyone on a deployment can see everyone else (D-002). A student in several classes may want
 separate spaces. Projects already group people. Is that enough, or should one deployment host
 several communities?
 
 ### Q-3: Should the Pull requests pane move to the GitHub App too?
+
+Status: Open.
 
 Projects link repositories through a GitHub App since #17 (D-050). Each person's pane still uses
 the OAuth App (D-032), with its polling, its scheduler and the `repo` scope (D-033, D-034). The
@@ -304,14 +225,15 @@ owner decided on 2026-11-01 to keep the OAuth App for the pane.
 
 ### Q-4: When does WebChat reach 1.0.0?
 
+Status: Open.
+
 WebChat stays at 0.y.z while it is in early development (D-055). Version 1.0.0 would promise that
 no upgrade within 1.x needs a step from the person who runs it. Decide what must hold first, for
 example an upgrade path that people who self-host can trust.
 
 ### Q-5: Does a resumed Claude Code session hear the plugin's doorbell?
 
-Status: Answered in #117. The doorbell and the monitor are gone. A resumed session starts the
-plugin's server again, which takes runs as any session does.
+Status: Answered in #117. The doorbell and the monitor are gone. A resumed session starts the plugin's server again, which takes runs as any session does.
 
 The plugin's monitor tails the doorbell for as long as the session runs (R-030). Claude Code's docs
 say a resumed session does not restore background tasks, and do not say whether a plugin's monitor
@@ -320,39 +242,23 @@ is gone, a run fails after 30 minutes (D-094), so the README should say to start
 
 ## Dropped
 
-Work the owner decided against. The entries keep their numbers and say why.
-
 ### R-001: Task board for projects, like Jira
 
-Status: Dropped on 2026-11-04, replaced by R-021. The owner chose a board of decisions and
-roadmap cards, like this repository's own documents, over a Jira-style task board.
+Status: Dropped on 2026-11-04, replaced by R-021. The owner chose a board of decisions and roadmap cards, like this repository's own documents, over a Jira-style task board.
 
 ### R-023: Rebrand, step 2: a linear message feed instead of bubbles
 
-Status: Dropped on 2026-11-05. #78 built it and reached main, and the owner reverted it: they
-prefer bubbles to a linear feed. D-084 is reverted.
+Status: Dropped on 2026-11-05. #78 built it and reached main, and the owner reverted it: they prefer bubbles to a linear feed. D-084 is reverted.
 
 R-024 to R-026, the rest of the rebrand, were dropped on 2026-11-05. The owner does not want
 project-first navigation, new wording or a new name. The numbers stay taken.
 
 ## Done
 
-Finished work. The table is the index; git history keeps each entry's reasons and pull requests.
-Nothing here is a candidate for what to do next.
-
 | Work | Where |
 | --- | --- |
-| Chat with push notifications and urgent alerts | 74d53ff |
-| End-to-end encryption | 10ba6d8 |
-| Tabs keep to the account they show | b75d690 |
-| GitHub pull requests | #1 |
-| Projects with channels, replies and reactions | #2 |
-| Owners remove members and delete projects and groups | #4 |
-| Known issues K-1 to K-4: reload after deploy, dialog focus, Node version, member order | #6 |
-| Share a pull request into a chat as a card | #8 |
 | R-003: Add people to groups, who read the history (D-043) | #10 |
 | R-002: New keys when someone leaves or is removed, leaving, handing over (D-044, D-045) | #13 |
-| New pull requests shared into linked projects; cards name the reviewers (D-046) | #14 |
 | K-20: Drafts and unsent messages survive a closed tab (D-051) | #19 |
 | K-22: The chat header stays in view over the iPhone keyboard (D-053) | #21 |
 | K-25: The page no longer slides as the iPhone keyboard opens (D-053) | #22 |
@@ -390,7 +296,6 @@ Nothing here is a candidate for what to do next.
 | K-38: The map of the code lists every module | #68 |
 | R-019: Urgent messages ring like an alarm with every tab closed (D-079) | #69 |
 | K-39: A long message no longer lets the chat slide sideways on a phone | #70 |
-| One account per device (D-080) | #71 |
 | R-020: Shared Markdown docs in projects (D-081) | #73 |
 | R-021: Project board of decisions and roadmap cards (D-082) | #75 |
 | R-022: A work-tool palette and type, step 1 of the rebrand (D-083) | #77 |
@@ -400,8 +305,8 @@ Nothing here is a candidate for what to do next.
 | K-42: The agent's allow list trusts the username the server sends (D-089) | #95 |
 | K-45: Your own agent refuses a card a teammate wrote (D-089) | #95 |
 | K-46: A card run hangs with no end when its daemon stops | #96 |
-| K-47: The agent refuses a replayed request and a plain-HTTP server (D-093) | #100 |
 | R-030: Run cards from a Claude Code plugin (D-092, D-093) | #100 |
+| K-47: The agent refuses a replayed request and a plain-HTTP server (D-093) | #100 |
 | R-031: The pairing code carries the WebChat address (D-093) | #101 |
 | R-032: Every open repository takes its own runs (D-094) | #104 |
 | R-033: The owner removes an agent | #105 |
@@ -412,8 +317,26 @@ Nothing here is a candidate for what to do next.
 | R-035: A Coding agents pane where the owner talks with their agents (D-097, D-101 to D-105) | #114, #117, #119, #120, #121, #122 |
 | K-51: A second request for a running card is refused (D-099) | #115 |
 | K-52: A card shows its latest run, and Run waits while it goes (D-100) | #116 |
-| K-53 to K-56: The plugin refuses runs until the sandbox denies the keychain and session-env and fails if unavailable; the guard resolves links as the kernel does | #118 |
+| K-53: The plugin refuses runs until the sandbox denies the keychain and session-env and fails if unavailable; the guard resolves links as the kernel does | #118 |
 | K-58: The plugin unwatches a draft from before D-105 that the pane cannot show | #127 |
 | R-037: An agent runs several cards at once (D-085, D-086, D-099) | #130 |
 | R-036: One Claude Code window serves every repository, and the agent clones on its owner's click (D-094, D-101, D-108) | #131 |
 | R-038: The Coding agents pane lists projects, and a conversation belongs to one (D-102, D-103) | #132 |
+| K-60: A deploy reload closes an open board | #135 |
+| K-61: The pairing poll stops for good on the first failed request | #136 |
+| K-62: A reload leaves the sidebar on Chats while a board or doc is open | #140 |
+| K-63: A reload closes the editor of a board card or doc section | #141 |
+| K-59: Two agents can run one card at once | #143 |
+| K-44: A reply or reaction follows the message id, which no signature covers | #144 |
+| K-57: The agent never pins a teammate's new keys, so Start fails on a board with their text | #145, #122 |
+| K-40: The keyring logic exists twice, in the page and in the agent | #147, #85 |
+| K-43: A chat key's wrap does not name its chat | #150, #146 |
+| K-64: A running card on the board has no Stop | #151 |
+| K-65: A chat key copy from before D-111 can still be moved to another chat | #152, #150 |
+| K-66: The agent has no off switch, and a hidden window takes over | #153 |
+| K-67: An owner can hand a project or group to an agent | #154 |
+| K-68: A new card on the board cannot be cancelled | #163 |
+| R-039: The owner chooses what their agent's runs load from their Claude setup | #165, #159 |
+| R-041: The agent checks a new card, and the board numbers it | #166 |
+| R-040: The board is the source of truth, and the repository follows it | #167, #159 |
+| R-042: A card run follows the repository's workflow | #168 |
