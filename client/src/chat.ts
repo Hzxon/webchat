@@ -1183,7 +1183,7 @@ export async function trustKeys(user: UserDTO) {
   actions.setKeyWarnings(await keyring.checkKeys(Object.values(store.get().users)));
   // What failed under the unchecked keys opens now, without a reload. It never alerts again.
   for (const message of await keyring.reopen(store.get().conversations, currentLookup())) actions.addMessage(message, false);
-  // The user's agents pin the same keys, or a card's brief would hash differently there (K-57, D-109).
+  // The user's agents pin the same keys, or a card's brief would hash differently there (K-57, D-110).
   if (!user.keys) return;
   const trust = { user: user.id, fingerprint: await keyFingerprint(user.keys), sentAt: Date.now() };
   for (const agent of ownAgents(store.get().users, meId)) {

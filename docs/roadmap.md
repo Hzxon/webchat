@@ -207,7 +207,7 @@ it cannot (D-014).
 
 ### K-57: The agent never pins a teammate's new keys, so Start fails on a board with their text
 
-Status: Fixed in #145 (D-109). Found in the correctness review of R-035's step 6 (#122) on
+Status: Fixed in #145 (D-110). Found in the correctness review of R-035's step 6 (#122) on
 2026-11-06. It was rare: it needed a teammate whose keys changed.
 
 Until the owner checks a teammate's new security code, nothing signed with their keys opens (D-018).
