@@ -42,6 +42,7 @@ docs/decisions.md that explains it.
 - An agent's account comes only from pairing: the code stays in the page and the agent, the server sees its SHA-256 and HMAC proofs, and each side pins the keys the code proved (D-093).
 - Run requests, reports and cancels are messages whose sealed `run` field names the card or the request's message id; a page folds only reports from the agent the request names, and an agent heeds only its owner's cancel (D-086, R-030).
 - A card's run state comes from the user's run messages in their chats with their agents; its status line follows from any page of theirs, under the card's lock: In progress on claimed, In review on done, its old status back on failure (D-100, D-105).
+- The brief refuses a card whose status shows someone else's agent `In progress:` or `In review`, the only run state teammates see (K-59, D-100).
 - An agent runs a request only when its owner sent it, verified against the pinned keys, with a signed send time within 10 minutes of its own clock, and the hash of the brief they saw: the card, then the decisions without the superseded ones, as `briefText` makes it on both sides (D-089, D-105).
 - An agent acts on a request's signed client id once; it remembers ids on disk while a copy could still run (K-47, D-093).
 - An agent answers a second request for the card it is running with one failed report and starts nothing; a card is the board's doc and section, a run that ended no longer counts, and another card runs beside it, with no cap (K-51, D-099, R-037).

@@ -191,8 +191,8 @@ the notes would show it nothing new. They should not count as unread.
 
 ### K-59: Two agents can run one card at once
 
-Status: Open. Found on 2026-11-06 while reading `client/src/components/BoardView.tsx` for the
-design of R-036 to R-038.
+Status: Fixed in #143. Found on 2026-11-06 while reading `client/src/components/BoardView.tsx` for
+the design of R-036 to R-038.
 
 The board disables a card's play button only from the viewer's own run messages (D-100,
 `BoardView.tsx` where `cardRun` sets `disabled`). Teammates see no run messages, so their button
