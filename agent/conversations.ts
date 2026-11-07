@@ -28,6 +28,8 @@ export interface Conversation {
   prompt?: string;
   /** The conversation's scratch copy of the repository, while it has one. The plugin makes it. */
   scratch?: string;
+  /** The commit of origin's default branch that the scratch copy holds, under any commits Claude made there. */
+  fetched?: string;
   /** Set while a turn runs, so a restart knows it was cut short. */
   working?: boolean;
   /** When it last moved. */

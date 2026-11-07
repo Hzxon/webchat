@@ -566,22 +566,36 @@ export class Plugin {
     if (!conversation.scratch || !(await fs.lstat(conversation.scratch).then((s) => s.isDirectory(), () => false))) {
       const dir = path.join(os.tmpdir(), 'webchat-scratch', randomUUID());
       await fs.mkdir(dir, { recursive: true });
-      if (folder) {
-        const base = await fetchOrigin(folder.dir).catch(() => {
-          throw new Error('The laptop could not get your team’s code from GitHub. Check that it is online, then ask again.');
-        });
-        await exec('git', ['init', '-q', dir]);
-        await exec('git', ['-C', dir, 'fetch', '-q', '--depth', '1', folder.dir, `refs/remotes/${base}`]);
-        await exec('git', ['-C', dir, ...NO_HOOKS, 'checkout', '-q', '--detach', 'FETCH_HEAD']);
-      }
+      if (folder) await exec('git', ['init', '-q', dir]);
       conversation.scratch = dir;
+      delete conversation.fetched;
+    }
+    // Every turn fetches, so a reply after a merge reads the merged code, not the first turn's.
+    let moved = '';
+    if (folder) {
+      const base = await fetchOrigin(folder.dir).catch(() => {
+        throw new Error('The laptop could not get your team’s code from GitHub. Check that it is online, then ask again.');
+      });
+      const now = (await exec('git', ['-C', folder.dir, 'rev-parse', `refs/remotes/${base}`])).stdout.trim();
+      const was = conversation.fetched;
+      if (now !== was) {
+        const dir = conversation.scratch;
+        await exec('git', ['-C', dir, 'fetch', '-q', '--depth', '1', folder.dir, `refs/remotes/${base}`]);
+        // Forced: the copy's changes are never kept, and the brief said so.
+        await exec('git', ['-C', dir, ...NO_HOOKS, 'checkout', '-q', '-f', '--detach', 'FETCH_HEAD']);
+        conversation.fetched = now;
+        if (was) {
+          const [a, b, branch] = [was.slice(0, 7), now.slice(0, 7), base.replace(/^origin\//, '')];
+          moved = `Since your last turn, ${branch} moved from ${a} to ${b}. Your scratch copy now holds ${b}, and anything you changed in it is gone. \`git diff ${a} ${b}\` shows what changed: reread what your answer relies on.`;
+        }
+      }
     }
     const cards = (board?.cards ?? []).map((c) => ({ ...c, id: CARD_ID.exec(c.text)?.[1] ?? '' })).filter((c) => c.id);
     const seen = Object.fromEntries(await Promise.all(cards.map(async (c) => [c.id, { doc: c.doc, section: c.section, hash: await textHash(c.text) }])));
     // A reply shows the cards that changed since the agent last saw them, so a draft starts from what they say now.
     const changed = cards.filter((c) => conversation.seen?.[c.id]?.hash !== seen[c.id]!.hash).map((c) => c.text);
     const message = resume
-      ? [`Your owner replies:\n\n${input}`, ...(changed.length ? ['', fence('Cards that changed on the board since', changed)] : [])].join('\n')
+      ? [...(moved ? [moved, ''] : []), `Your owner replies:\n\n${input}`, ...(changed.length ? ['', fence('Cards that changed on the board since', changed)] : [])].join('\n')
       : promptBrief(input, board, folder?.repo);
     const answer = (await this.ask(conversation.scratch, conversation.session, resume, message, REPLY, signal)) as { reply?: unknown; card?: Record<string, unknown> };
     // Only once the turn read them, so a turn cut short tells the next one again.
