@@ -85,6 +85,7 @@ const chatKeyStore: ChatKeyStore = {
   get: (conversationId, keyId) => keystore.getChatKey(conversationId, keyId).catch(() => undefined),
   set: (conversationId, keyId, key) => keystore.setChatKey(conversationId, keyId, key).catch(() => undefined),
 };
+const saveReplaced = (replaced: Record<number, string[]>) => void keystore.setReplaced(replaced).catch(() => undefined);
 /** The unlocked account's keyring, with its chat keys and whose keys changed. Null when locked. */
 let keys: Keyring | null = null;
 /** Content already decrypted, by message id, with the signed fields it was checked against. */
@@ -139,7 +140,10 @@ export const keyring = {
     const stored = await keystore.getIdentity().catch(() => undefined);
     if (!stored || stored.userId !== userId) return false;
     // A reload of the same account keeps whose keys changed until checkKeys runs again.
-    if (keys?.self.id !== userId) keys = new Keyring({ id: userId, identity: stored.identity }, chatKeyStore);
+    if (keys?.self.id !== userId) {
+      const replaced = (await keystore.getReplaced().catch(() => undefined)) ?? {};
+      keys = new Keyring({ id: userId, identity: stored.identity }, replaced, saveReplaced, chatKeyStore);
+    }
     return true;
   },
 
@@ -148,7 +152,7 @@ export const keyring = {
     const identity = await importIdentity(secrets);
     await keystore.clearKeys();
     await keystore.setIdentity({ userId, identity });
-    keys = new Keyring({ id: userId, identity }, chatKeyStore);
+    keys = new Keyring({ id: userId, identity }, {}, saveReplaced, chatKeyStore);
     pins = null;
   },
 

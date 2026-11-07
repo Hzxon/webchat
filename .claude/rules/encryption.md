@@ -36,7 +36,7 @@ docs/decisions.md that explains it.
 - On leave or removal, make a new chat key for everyone who stays, never for the leaver, and link the old key under it in `key_links` (D-044).
 - The server checks each new key under the project's or group's lock: it names the current key and is wrapped for exactly the people who stay (D-044).
 - A chat with `needs_new_key` refuses messages with `409 needs_new_key`; a losing `PUT /conversations/:id/key` gets `409 stale_key` (D-044).
-- A page never encrypts with a key a link says was replaced (D-044).
+- A page or agent never encrypts with a key a link says was replaced, and keeps those key ids per chat on the device, since the server can drop a link (D-044, K-43).
 - The page and the agent take the chat-key checks, the key cache and the pins from `shared/keyring.ts`; never copy them into one side (K-40, D-085).
 - Message content is padded to powers of two from 256 bytes inside the AES-GCM ciphertext; `decryptContent` tells it from older unpadded content by the last byte, and both open (D-059).
 - The service worker never shows a reaction notification; it hands it to open pages, under the tag `reaction-` plus the chat id (D-070).

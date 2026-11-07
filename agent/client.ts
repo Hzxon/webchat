@@ -60,9 +60,11 @@ export interface AccountFile {
   /** The private keys in the clear: Node has no key store that keeps them unexportable. */
   secrets: IdentitySecrets;
   cookie: string;
-  /** Fingerprints of other people's keys, first seen or as the owner checked them (D-018, D-109). */
+  /** Fingerprints of other people's keys, first seen or as the owner checked them (D-018, D-110). */
   pins: Record<number, string>;
-  /** When the owner's page signed the last check of each person's keys that was pinned, by user id (D-109). */
+  /** By chat id, the key ids a key link showed replaced, which never seal again though the server drops the link (K-43). */
+  replaced?: Record<number, string[]>;
+  /** When the owner's page signed the last check of each person's keys that was pinned, by user id (D-110). */
   trusted?: Record<number, number>;
   /** The newest message id seen, so a restart picks up what arrived while the daemon was down. */
   cursor: number;
@@ -160,7 +162,10 @@ export class AgentClient {
     this.api = new Api(file.server, file.cookie);
     this.id = file.userId;
     this.identity = identity;
-    this.keys = new Keyring({ id: file.userId, identity });
+    this.keys = new Keyring({ id: file.userId, identity }, file.replaced ?? {}, (replaced) => {
+      this.file.replaced = replaced;
+      this.save().catch(() => undefined);
+    });
     this.floor = file.cursor;
   }
 
@@ -346,7 +351,7 @@ export class AgentClient {
 
   /**
    * Pins the keys its owner checked on their page, so this account opens what that page opens and a
-   * card's brief hashes the same on both (K-57, D-109). Only the owner's word in their direct chat,
+   * card's brief hashes the same on both (K-57, D-110). Only the owner's word in their direct chat,
    * only for the keys the server shows now, and only a check newer than the last one pinned. A check
    * of any age counts: Claude Code may have been closed when the owner made it. True when it pinned.
    */

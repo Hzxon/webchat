@@ -220,7 +220,7 @@ describe('The key checks in shared/keyring.ts, which the page and the agent shar
   before(async () => {
     const mine = await importIdentity(await createIdentity());
     other = await importIdentity(await createIdentity());
-    ring = new SharedKeyring({ id: ME, identity: mine });
+    ring = new SharedKeyring({ id: ME, identity: mine }, {}, () => {});
     keysOf = (id) => (id === ME ? mine.publicKeys : other.publicKeys);
     const newerRaw = newChatKeyBytes();
     const wrapped = await wrapChatKey(newerRaw, { id: OTHER, identity: other }, { id: ME, dh: mine.publicKeys.dh }, newer);
@@ -242,5 +242,35 @@ describe('The key checks in shared/keyring.ts, which the page and the agent shar
   test('refuses a chain of links the server looped, instead of waiting on it forever', () => {
     const looped = { ...chat, id: CHAT + 1, keyId: newKeyId(), keyLinks: [link, { ...link, keyId: older, previousKeyId: newer }] };
     assert.equal(ring.keyFor(looped, older, keysOf), null);
+  });
+});
+
+describe('The keyring in client/src/e2ee/keyring.ts, when the server drops a key link (K-43)', () => {
+  let keyring: Keyring & { load: (userId: number) => Promise<boolean> };
+  const OLD = newKeyId();
+  const NEW = newKeyId();
+
+  before(async () => {
+    keyring = (await import(clientKeyring)).keyring;
+    rows.clear();
+    await keyring.adopt(ME, await createIdentity());
+    const key = await crypto.subtle.importKey('raw', newChatKeyBytes(), 'AES-GCM', false, ['encrypt', 'decrypt']);
+    await keyring.remember(CHAT, OLD, key);
+    await keyring.remember(CHAT, NEW, key);
+  });
+
+  // The device holds both keys, so neither wrapped copy is opened.
+  const chat = (keyId: string, keyLinks: unknown[]) =>
+    ({ id: CHAT, keyId, myKey: { wrappedBy: ME, iv: '', data: '' }, members: [member(ME)], keyLinks }) as unknown as Conversation;
+  const keysOf: KeyLookup = () => null;
+
+  test('never seals again with a key it saw replaced, though the server names it current with no link', async () => {
+    assert.ok(await keyring.chatKey(chat(NEW, [{ keyId: NEW, previousKeyId: OLD, iv: '', data: '' }]), keysOf));
+    assert.equal(keyring.chatKey(chat(OLD, []), keysOf), null);
+  });
+
+  test('remembers the replaced key after the page loads again', async () => {
+    assert.equal(await keyring.load(ME), true);
+    assert.equal(keyring.chatKey(chat(OLD, []), keysOf), null);
   });
 });

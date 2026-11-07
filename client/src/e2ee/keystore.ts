@@ -76,6 +76,10 @@ export const keystore = {
   getChatKey: (conversationId: number, keyId: string) => get<CryptoKey>(`chat:${conversationId}:${keyId}`),
   setChatKey: (conversationId: number, keyId: string, key: CryptoKey) => set(`chat:${conversationId}:${keyId}`, key),
 
+  /** By chat id, the key ids a key link showed replaced (K-43). */
+  getReplaced: () => get<Record<number, string[]>>('replaced'),
+  setReplaced: (replaced: Record<number, string[]>) => set('replaced', replaced),
+
   /** Everyone's public keys, so the service worker can check who signed a pushed message. */
   getDirectory: () => get<Record<number, PublicKeysDTO>>('directory'),
   setDirectory: (directory: Record<number, PublicKeysDTO>) => set('directory', directory),

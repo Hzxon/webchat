@@ -207,7 +207,7 @@ it cannot (D-014).
 
 ### K-57: The agent never pins a teammate's new keys, so Start fails on a board with their text
 
-Status: Fixed in #145 (D-109). Found in the correctness review of R-035's step 6 (#122) on
+Status: Fixed in #145 (D-110). Found in the correctness review of R-035's step 6 (#122) on
 2026-11-06. It was rare: it needed a teammate whose keys changed.
 
 Until the owner checks a teammate's new security code, nothing signed with their keys opens (D-018).
@@ -247,7 +247,11 @@ otherwise. Bind a reaction to something its target's sender signed, such as the 
 
 ### K-43: A chat key's wrap does not name its chat
 
-Status: Open. Found in a security review of main on 2026-11-05.
+Status: Open, half fixed in #146: pages and agents now keep the key ids a link showed replaced, so
+a dropped link no longer brings an old key back. The wrap still does not name its chat: a new
+chat's first key is wrapped before the server gives the chat its id, in `startDirectChat`,
+`startGroupChat`, `createProject` and `createChannel`, so binding it needs those to change first.
+Found in a security review of main on 2026-11-05.
 
 `pairKey` in `shared/e2ee.ts` binds the key id and the two users into the wrap, but not the
 conversation. The key link binds it. The only check that a replaced key never encrypts again

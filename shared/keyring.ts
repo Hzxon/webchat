@@ -24,8 +24,15 @@ export class Keyring {
   changed = new Set<number>();
   private readonly cache = new Map<string, Promise<CryptoKey>>();
 
+  /**
+   * @param replaced By chat id, the key ids a key link showed replaced. The server could drop a
+   * link and name the old key current again, so the device keeps what it saw (K-43).
+   * @param saveReplaced Keeps `replaced` on the device when it grows.
+   */
   constructor(
     readonly self: { id: number; identity: Identity },
+    private replaced: Record<number, string[]>,
+    private readonly saveReplaced: (replaced: Record<number, string[]>) => void,
     private readonly store?: ChatKeyStore,
   ) {}
 
@@ -65,7 +72,13 @@ export class Keyring {
     const { id, keyId, myKey } = conversation;
     if (!keyId || !myKey) return null;
     // A key that a newer one replaced never encrypts again, even if the server names it current.
-    if (conversation.keyLinks.some((link) => link.previousKeyId === keyId)) return null;
+    const seen = this.replaced[id] ?? [];
+    const fresh = conversation.keyLinks.map((link) => link.previousKeyId).filter((k) => !seen.includes(k));
+    if (fresh.length) {
+      this.replaced = { ...this.replaced, [id]: [...seen, ...fresh] };
+      this.saveReplaced(this.replaced);
+    }
+    if (this.replaced[id]?.includes(keyId)) return null;
     return this.cached(id, keyId, async () => {
       const wrapperKeys = keysOf(myKey.wrappedBy);
       if (!wrapperKeys || !conversation.members.some((m) => m.userId === myKey.wrappedBy)) {
