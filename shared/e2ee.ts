@@ -248,6 +248,8 @@ export async function wrapChatKey(
 /**
  * The raw bytes of a chat key, to wrap it again for a new member. Throws unless the named
  * wrapper's key really made it for this user, in this chat or before copies named their chat.
+ * `namesChat` is false for a copy from before D-111, which the server could have taken from another
+ * chat between the same two people, so its key never seals (K-65).
  */
 export async function openChatKeyBytes(
   wrapped: WrappedKey,
@@ -255,7 +257,7 @@ export async function openChatKeyBytes(
   wrapper: { id: number; dh: string },
   keyId: string,
   conversationId: number,
-): Promise<Uint8Array<ArrayBuffer>> {
+): Promise<{ raw: Uint8Array<ArrayBuffer>; namesChat: boolean }> {
   const secret = await pairSecret(me.identity.dhPrivate, wrapper.dh);
   const open = async (info: string) =>
     new Uint8Array(
@@ -265,8 +267,10 @@ export async function openChatKeyBytes(
         fromBase64Url(wrapped.data),
       ),
     );
-  // A copy made before D-111 names no chat.
-  return open(pairInfo(conversationId, wrapper.id, me.id)).catch(() => open(`webchat/chat-key/v1|from:${wrapper.id}|to:${me.id}`));
+  return open(pairInfo(conversationId, wrapper.id, me.id)).then(
+    (raw) => ({ raw, namesChat: true }),
+    async () => ({ raw: await open(`webchat/chat-key/v1|from:${wrapper.id}|to:${me.id}`), namesChat: false }),
+  );
 }
 
 /** Unwraps a chat key. Throws unless the named wrapper's key really made it for this user, in this chat. */
@@ -277,7 +281,7 @@ export async function unwrapChatKey(
   keyId: string,
   conversationId: number,
 ): Promise<CryptoKey> {
-  return importChatKey(await openChatKeyBytes(wrapped, me, wrapper, keyId, conversationId));
+  return importChatKey((await openChatKeyBytes(wrapped, me, wrapper, keyId, conversationId)).raw);
 }
 
 // A link is bound to its chat and to both key ids, so the server cannot move it to another chat

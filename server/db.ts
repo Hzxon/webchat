@@ -1501,8 +1501,9 @@ export async function openDb(sql: Sql) {
     },
 
     /**
-     * Replaces the key of a chat that someone left with a new key from a member who stays. False
-     * when the chat needs no new key, or its members or key changed since the client looked.
+     * Replaces a chat's key with a new key from a member: after someone left, or when the member's
+     * copy is from before copies named their chat, which the server cannot tell (K-65). False when
+     * its members or key changed since the client looked.
      */
     replaceConversationKey(conversationId: number, replacedBy: number, key: RotatedKeyInput): Promise<boolean> {
       return sql.transaction(async (tx) => {
@@ -1522,7 +1523,7 @@ export async function openDb(sql: Sql) {
             [conversationId],
           ),
         );
-        if (!chat?.needs_new_key || !(await canReplace(tx, chat, key, await chatMembers(tx, conversationId)))) return false;
+        if (!chat || !(await canReplace(tx, chat, key, await chatMembers(tx, conversationId)))) return false;
         await replaceKey(tx, conversationId, replacedBy, key);
         return true;
       });

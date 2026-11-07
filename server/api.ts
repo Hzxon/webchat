@@ -739,7 +739,10 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     res.json(await db.conversationFor(me.id, conversationId));
   });
 
-  /** Replaces the key of a chat that someone left. Any member who stays can, and the first one wins. */
+  /**
+   * Replaces a chat's key: after someone left, or when a page finds its copy is from before copies
+   * named their chat (K-65). Any member can, and the first one wins.
+   */
   router.put('/conversations/:id/key', requireAuth, async (req, res) => {
     const me = currentUser(res);
     const conversationId = positiveInt(req.params.id, 'Chat id');

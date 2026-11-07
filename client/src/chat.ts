@@ -31,6 +31,7 @@ import { holdReloadWhile, setReloadTarget } from './build';
 import {
   EncryptionUnavailableError,
   keyring,
+  OldKeyCopyError,
   type ChatConversation,
   type ChatDoc,
   type ChatMessage,
@@ -658,13 +659,14 @@ const replacing = new Map<number, Promise<void>>();
 /**
  * Gives a chat that someone left a new key for everyone still in it, with the old key inside, so
  * the history stays readable. When another member's browser was first, takes their key instead.
+ * `oldCopy` replaces a key nobody left, whose copy names no chat (K-65).
  */
-function replaceChatKey(conversationId: number): Promise<void> {
+function replaceChatKey(conversationId: number, oldCopy = false): Promise<void> {
   let pending = replacing.get(conversationId);
   if (!pending) {
     pending = (async () => {
       const conversation = store.get().conversations[conversationId];
-      if (!conversation?.keyId || !conversation.needsNewKey) return;
+      if (!conversation?.keyId || !(conversation.needsNewKey || oldCopy)) return;
       const members = conversation.members.map((m) => keyRecipient(m.userId));
       const { input, key } = await keyring.rotateChatKey(conversation, currentLookup(), members, warnedIds());
       try {
@@ -695,9 +697,16 @@ async function ensureChatKey(conversationId: number, retried = false): Promise<{
     return ensureChatKey(conversationId, true);
   }
   if (conversation.keyId) {
-    const key = await keyring.chatKey(conversation, keysOf);
-    if (!key) throw new EncryptionUnavailableError('This chat has no key for you. Reload the page.');
-    return { key, keyId: conversation.keyId };
+    try {
+      const key = await keyring.sealingKey(conversation, keysOf);
+      if (!key) throw new EncryptionUnavailableError('This chat has no key for you. Reload the page.');
+      return { key, keyId: conversation.keyId };
+    } catch (error) {
+      // A key from another chat could be posing as this one's: give the chat a key that names it (K-65).
+      if (retried || !(error instanceof OldKeyCopyError)) throw error;
+      await replaceChatKey(conversationId, true);
+      return ensureChatKey(conversationId, true);
+    }
   }
   const members = conversation.members.map((m) => ({
     id: m.userId,
@@ -1052,9 +1061,10 @@ export function createChannel(projectId: number, name: string): Promise<number> 
 /** Adds people to a project, sharing every channel key with them so they can read the history. */
 export function addProjectMembers(projectId: number, userIds: number[]): Promise<void> {
   return retryIfStale(async () => {
-    // A channel that someone left gets its new key first, so newcomers never get one they hold.
-    const leftBehind = Object.values(store.get().conversations).filter((c) => c.projectId === projectId && c.needsNewKey);
-    await Promise.all(leftBehind.map((c) => replaceChatKey(c.id)));
+    // A channel that someone left gets its new key first, so newcomers never get one they hold, and
+    // so does one whose key is from before keys named their chat (K-65).
+    const keyed = Object.values(store.get().conversations).filter((c) => c.projectId === projectId && c.keyId);
+    await Promise.all(keyed.map((c) => ensureChatKey(c.id)));
     const state = store.get();
     const keysOf = currentLookup();
     const recipients = userIds.map((id) => ({
@@ -1102,8 +1112,9 @@ export function removeProjectMember(projectId: number, userId: number): Promise<
 /** Adds people to a group, sharing its key with them so they can read the history. */
 export function addGroupMembers(conversationId: number, userIds: number[]): Promise<void> {
   return retryIfStale(async () => {
-    // A group that someone left gets its new key first, so newcomers never get one they hold.
-    if (store.get().conversations[conversationId]?.needsNewKey) await replaceChatKey(conversationId);
+    // A group that someone left gets its new key first, so newcomers never get one they hold, and so
+    // does one whose key is from before keys named their chat (K-65).
+    if (store.get().conversations[conversationId]?.keyId) await ensureChatKey(conversationId);
     const conversation = store.get().conversations[conversationId];
     if (!conversation) throw new Error('Group not found.');
     const key = conversation.keyId
