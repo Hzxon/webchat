@@ -478,14 +478,13 @@ function GithubListItem() {
   );
 }
 
-/** The Coding agents row, once the user has an agent (D-103). Its unread count is their agents' chats'. */
+/** The Coding agents row, where agents connect too (D-103). Its unread count is their agents' chats'. */
 function AgentsListItem() {
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
   const open = useAppState((s) => s.agentsOpen);
   const agents = useMemo(() => ownAgents(users, meId), [users, meId]);
   const { chats, threads } = useAgentThreads();
-  if (agents.length === 0) return null;
   const newest = threads[0];
   const unread = chats.reduce((sum, c) => sum + c.unread, 0);
   // A laptop that serves every folder is online with or without one (R-036).
@@ -505,7 +504,7 @@ function AgentsListItem() {
           </span>
           <span className="chat-item-row">
             <span className="chat-item-preview">
-              {newest ? `${THREAD_STATE[newest.state].label} · ${newest.messages[0]!.text}` : 'Ask about your code'}
+              {newest ? `${THREAD_STATE[newest.state].label} · ${newest.messages[0]!.text}` : agents.length ? 'Ask about your code' : 'Connect your coding agent'}
             </span>
             {unread > 0 && <span className="unread-badge">{unread}</span>}
           </span>

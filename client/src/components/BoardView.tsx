@@ -27,7 +27,6 @@ import { cancelRun, syncNow } from '../chat';
 import { beginEditing, createDoc, loadSections, markSeen, newSectionId, replaceSection, type Editing } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
 import { actions, senderName, store, useAppState } from '../store';
-import { AgentDialog } from './AgentDialog';
 import { HistoryDialog, SectionEditor } from './DocView';
 import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlayIcon, PlusIcon, StopIcon, TrashIcon } from './icons';
 import { Markdown } from './Markdown';
@@ -108,7 +107,6 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
     section: Editing;
   } | null>(null);
   const [historyOf, setHistoryOf] = useState<Card | null>(null);
-  const [connecting, setConnecting] = useState(false);
   const pending = useAppState((s) => s.pending);
   const messages = useAppState((s) => s.messages);
   // A card's runs are messages in the user's chats with their agents, which load at start (D-105).
@@ -207,8 +205,9 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
               <PlusIcon width={16} height={16} /> {KIND_NAMES[kind]}
             </button>
           ))}
-          {column === 'roadmap' && (
-            <button className="button-secondary board-new" onClick={() => setConnecting(true)}>
+          {/* Agents connect in the Coding agents pane; the board points there until one is in the project. */}
+          {column === 'roadmap' && choices.length === 0 && (
+            <button className="button-secondary board-new" onClick={() => actions.setAgentsOpen(true)}>
               <PlayIcon width={16} height={16} /> Connect coding agent
             </button>
           )}
@@ -332,7 +331,6 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
           ))}
       </div>
       {historyOf && doc && <HistoryDialog doc={doc} section={historyOf} nameOf={nameOf} onClose={() => setHistoryOf(null)} />}
-      {connecting && <AgentDialog projectId={projectId} onClose={() => setConnecting(false)} />}
     </div>
   );
 }

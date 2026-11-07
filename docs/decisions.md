@@ -1155,10 +1155,11 @@ copy of the default branch. An answer cut inside a code block shows as two messa
 
 ### D-103: The owner asks their agents in a Coding agents pane, by project
 
-Accepted 2026-11-06 in #120 (R-035), rewritten in #132 (R-038).
+Accepted 2026-11-06 in #120 (R-035), rewritten in #132 (R-038) and #155.
 
-A Coding agents row sits at the top of Chats once the user has an agent. Their direct chats with
-their agents leave the list, and their unread counts move to the row. The pane lists the user's
+A Coding agents row sits at the top of Chats for every user, and agents connect in its pane; a
+board with none of theirs points there. Their direct chats with their agents leave the list, and
+their unread counts move to the row. The pane lists the user's
 projects, each with its linked repositories (D-050) and where the agent stands on each: ready, no
 copy yet, or asleep, with Forget for a folder. Then come its conversations, newest first. A project
 the agent is not in offers to add it. The Ask box asks in one project and one of its repositories,
@@ -1169,7 +1170,8 @@ projects, and the agent's worth is that it knows the project's board, decisions 
 
 Cost: each pane load fetches every project's linked repositories. A server with no GitHub App lists
 the agent's folders under every project. Messages in an agent chat without a `prompt` field no
-longer show. The level, a number later steps raise, costs a migration.
+longer show. The level, a number later steps raise, costs a migration. Users with no agent see the
+row too.
 
 ### D-104: An agent drafts cards, and its owner's page adds them
 
