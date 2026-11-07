@@ -1188,6 +1188,20 @@ Why: a student should start from WebChat, with no terminal.
 Cost: a clone takes the laptop's disk, and minutes. The server answers which repositories a project
 links, so a changed server could offer a clone of another repository the owner reaches.
 
+### D-109: An agent pins the keys its owner checked
+
+Accepted 2026-11-07 in #145 (K-57).
+
+When the owner checks a person's security code, their page sends each of their agents a sealed
+`trust` message in their direct chat. It names the person and the fingerprint, with a signed send
+time. The agent pins it only when the owner sent it there, only when it is the fingerprint the
+server shows now, and only when it is newer than the last check it pinned for that person. Why: the
+agent then opens what the page opens, so a card's brief hashes the same on both (D-018, D-105).
+
+Cost: a check of any age counts, unlike a run (D-089), since Claude Code may have been closed. A
+server that withheld a newer check could play an older one again, along with the keys it named.
+The owner verified those keys once.
+
 ## Replies and reactions
 
 ### D-029: Replies carry a quote inside the envelope

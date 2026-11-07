@@ -372,6 +372,56 @@ describe('agent client (R-027)', () => {
     assert.deepEqual(reports, ['I am on K-1: Pushes with bad keys', 'I finished K-1 on agent/k1.']);
   });
 
+  test('pins the keys its owner checked, so a card a teammate with new keys wrote runs (K-57, D-109)', async () => {
+    // The bot pinned other keys for Carol than the server shows, as when her keys changed.
+    await fs.writeFile(botFile, JSON.stringify({ ...JSON.parse(await fs.readFile(botFile, 'utf8')), pins: { [alice.id]: await keyFingerprint(alice.identity.publicKeys), [carol.id]: 'old' } }));
+    bot = await AgentClient.load(botFile);
+    await bot.sync();
+    assert.equal(bot.keysOf(carol.id), null);
+    const written = `${cardText}\n\nCarol saw it too.`;
+    await carol.editSection(roadmap, cardId, () => ({ text: written, pos: 1 }));
+    // Alice's page opens Carol's text, since Alice checked her code, and hashes it into the brief.
+    const runs = new Runs(bot, async () => ({ branch: 'agent/k1' }));
+    const start = async () => {
+      const id = (await alice.send(generalId, { text: 'Run K-1 with Bot', run: await runOf() })).id;
+      for (const m of await bot.sync()) await runs.handle(m);
+      return (await alice.sync()).filter((m) => m.content?.run?.kind !== 'request' && m.content?.run?.request === id).map((m) => m.content?.text);
+    };
+    assert.deepEqual(await start(), ['I could not run K-1: I can’t find that card on the board anymore. Open it again and press Start.']);
+
+    const direct = (await alice.request<{ id: number }>('POST', '/conversations/direct', { userId: bot.id, key: await newChatKey(alice, [alice.id, bot.id]) })).id;
+    const fingerprint = await keyFingerprint(carol.identity.publicKeys);
+    const trust = (from: AgentClient, chat: number, trusted: { fingerprint?: string; sentAt?: number } = {}) =>
+      from.send(chat, { text: 'I checked Carol’s security code.', trust: { user: carol.id, fingerprint, sentAt: Date.now(), ...trusted } });
+    // Nobody but the owner, in their direct chat, and only for the keys the server shows now.
+    await alice.sync();
+    await carol.sync();
+    await trust(carol, generalId);
+    await trust(alice, generalId);
+    await trust(alice, direct, { fingerprint: 'other' });
+    await bot.sync();
+    assert.equal(bot.keysOf(carol.id), null);
+
+    // However late it comes: Claude Code may have been closed when Alice checked the code.
+    const sentAt = Date.now() - REQUEST_TTL_MS - 1000;
+    const checked = await trust(alice, direct, { sentAt });
+    await bot.sync();
+    assert.deepEqual(bot.keysOf(carol.id), carol.identity.publicKeys);
+    assert.equal(JSON.parse(await fs.readFile(botFile, 'utf8')).pins[carol.id], fingerprint);
+    assert.deepEqual(await start(), ['I am on K-1: Pushes with bad keys', 'I finished K-1 on agent/k1.']);
+
+    // A check older than the one it pinned, played again, pins nothing.
+    await fs.writeFile(botFile, JSON.stringify({ ...JSON.parse(await fs.readFile(botFile, 'utf8')), pins: { [alice.id]: await keyFingerprint(alice.identity.publicKeys), [carol.id]: 'old' } }));
+    const older = await trust(alice, direct, { sentAt: sentAt - 1 });
+    bot = await AgentClient.load(botFile);
+    await bot.sync();
+    assert.ok(older.id > checked.id);
+    assert.equal(bot.keysOf(carol.id), null);
+    await alice.editSection(roadmap, cardId, () => ({ text: cardText, pos: 1 }));
+    await trust(alice, direct);
+    await bot.sync();
+  });
+
   test('stops a run when its owner cancels it, and for nobody else (R-030)', async () => {
     let started!: () => void;
     const running = new Promise<void>((resolve) => (started = resolve));

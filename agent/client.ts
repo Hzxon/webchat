@@ -60,8 +60,10 @@ export interface AccountFile {
   /** The private keys in the clear: Node has no key store that keeps them unexportable. */
   secrets: IdentitySecrets;
   cookie: string;
-  /** Fingerprints of other people's keys, first seen (D-018). */
+  /** Fingerprints of other people's keys, first seen or as the owner checked them (D-018, D-109). */
   pins: Record<number, string>;
+  /** When the owner's page signed the last check of each person's keys that was pinned, by user id (D-109). */
+  trusted?: Record<number, number>;
   /** The newest message id seen, so a restart picks up what arrived while the daemon was down. */
   cursor: number;
   /**
@@ -335,7 +337,29 @@ export class AgentClient {
     const newest = Math.max(0, ...fresh.map((m) => m.createdAt));
     for (const [id, sentAt] of this.seen) if (sentAt < newest - 60_000) this.seen.delete(id);
     for (const m of mine) this.seen.set(m.id, m.createdAt);
-    return Promise.all(mine.map((m) => this.open(m)));
+    const opened = await Promise.all(mine.map((m) => this.open(m)));
+    let trusted = false;
+    for (const m of opened) trusted = (await this.trust(m)) || trusted;
+    if (trusted) await this.save();
+    return opened;
+  }
+
+  /**
+   * Pins the keys its owner checked on their page, so this account opens what that page opens and a
+   * card's brief hashes the same on both (K-57, D-109). Only the owner's word in their direct chat,
+   * only for the keys the server shows now, and only a check newer than the last one pinned. A check
+   * of any age counts: Claude Code may have been closed when the owner made it. True when it pinned.
+   */
+  private async trust({ content, security, senderId, conversationId }: OpenedMessage) {
+    const trust = content?.trust;
+    const keys = trust && this.users.get(trust.user)?.keys;
+    if (!keys || security !== 'encrypted' || senderId !== this.owner || this.conversations.get(conversationId)?.type !== 'direct') return false;
+    const trusted = (this.file.trusted ??= {});
+    if (trust.sentAt <= (trusted[trust.user] ?? 0) || trust.fingerprint !== (await keyFingerprint(keys))) return false;
+    trusted[trust.user] = trust.sentAt;
+    this.file.pins[trust.user] = trust.fingerprint;
+    this.changedKeys.delete(trust.user);
+    return true;
   }
 
   /** Checks in every SYNC_INTERVAL_MS, for as long as the signal allows, and yields each new message. */
