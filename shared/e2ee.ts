@@ -349,7 +349,7 @@ export interface MessageContent {
   forget?: { repo: string; sentAt: number };
   /**
    * The owner checked a person's security code, so their agents pin the same keys and open what the
-   * page opens: a card's brief hashes the same on both sides (K-57, D-109).
+   * page opens: a card's brief hashes the same on both sides (K-57, D-110).
    */
   trust?: { user: number; fingerprint: string; sentAt: number };
 }
