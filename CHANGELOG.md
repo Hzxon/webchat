@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.7.0](https://github.com/Hzxon/webchat/compare/v0.6.2...v0.7.0) (2026-11-07)
+
+
+### Features
+
+* **agent:** Put the agent to sleep and wake it ([#153](https://github.com/Hzxon/webchat/issues/153)) ([d0b0446](https://github.com/Hzxon/webchat/commit/d0b04464f732a97adef56ad360dcc04c3b5d4b50))
+* **client:** Stop a running card from the board ([#151](https://github.com/Hzxon/webchat/issues/151)) ([242020c](https://github.com/Hzxon/webchat/commit/242020cd204e747bdef8bcc71e9eaf581e35aa8b))
+
+
+### Bug Fixes
+
+* **agent:** Pin keys the owner checked ([#145](https://github.com/Hzxon/webchat/issues/145)) ([d9b66cc](https://github.com/Hzxon/webchat/commit/d9b66cc9925c59e35b20311761337c95b4e4d95b))
+* **agents:** Refuse a card another agent runs ([#143](https://github.com/Hzxon/webchat/issues/143)) ([ecc1f0c](https://github.com/Hzxon/webchat/commit/ecc1f0c8a69d7c76f6d4cafbb1d869f621293d92))
+* **chat:** Tie quotes and reactions to the target ([#144](https://github.com/Hzxon/webchat/issues/144)) ([7df13e5](https://github.com/Hzxon/webchat/commit/7df13e51d7af5f0e862ec39c0b01c6ec5253be76))
+* **client:** Hold reloads while an editor is open ([#141](https://github.com/Hzxon/webchat/issues/141)) ([8bb102b](https://github.com/Hzxon/webchat/commit/8bb102b3e58ff4165446f6f7ce3c41b414a9bff5))
+* **client:** Turn to Projects for an open board ([#140](https://github.com/Hzxon/webchat/issues/140)) ([e6a5b5a](https://github.com/Hzxon/webchat/commit/e6a5b5a614a895d152981dc076c93b400834dbb9))
+* **e2ee:** Bind the chat id into a key's wrap ([#150](https://github.com/Hzxon/webchat/issues/150)) ([9cf76db](https://github.com/Hzxon/webchat/commit/9cf76db99eb01f68e76302fcd3568a11f813711b))
+* **e2ee:** Never seal with a key a link replaced ([#146](https://github.com/Hzxon/webchat/issues/146)) ([e2fca2d](https://github.com/Hzxon/webchat/commit/e2fca2dc1545bb134efbd312920411e3862ede02))
+* **e2ee:** Never seal with an old key copy ([#152](https://github.com/Hzxon/webchat/issues/152)) ([d74ec2a](https://github.com/Hzxon/webchat/commit/d74ec2a9d0af073e42329e2f29699473d8a249b4))
+* **e2ee:** Share key checks; refuse looped chains ([#147](https://github.com/Hzxon/webchat/issues/147)) ([def9222](https://github.com/Hzxon/webchat/commit/def922250d736ba54fe7bf3b89e6d6325c737a33))
+* **projects:** Never hand a project to an agent ([#154](https://github.com/Hzxon/webchat/issues/154)) ([c10cb88](https://github.com/Hzxon/webchat/commit/c10cb88390446577fb1762a2919d0b13d58173d2))
+
 ## [0.6.2](https://github.com/Hzxon/webchat/compare/v0.6.1...v0.6.2) (2026-11-06)
 
 
