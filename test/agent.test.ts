@@ -46,6 +46,8 @@ if (args[0] === 'pr' && args[1] === 'create') {
   const pull = state.pulls[Number(args[2]) - 1];
   const head = execFileSync('git', ['--git-dir', state.origin, 'rev-parse', 'refs/heads/' + pull.head], { encoding: 'utf8' }).trim();
   console.log(JSON.stringify({ state: 'OPEN', isDraft: true, headRefOid: head, mergeable: 'MERGEABLE', statusCheckRollup: [], reviews: [], comments: [], ...pull.view }));
+} else if (args[0] === 'pr' && args[1] === 'list') {
+  console.log(JSON.stringify(state.open ?? []));
 } else if (args[0] === 'run') {
   console.log('FAIL test/sum.test.js: expected 3, got 4');
 } else if (args[0] === 'api') {
@@ -732,9 +734,25 @@ describe('agent client (R-027)', () => {
           return sent.clientId!;
         };
         const answers = async () => (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'answer').map((m) => m.content?.text);
+        // Every turn reads the decisions the team holds and the repository's open pull requests (R-041).
+        const decisions = { id: newKeyId(), conversationId: general };
+        const [held, gone] = [newKeyId().slice(0, 11), newKeyId().slice(0, 11)];
+        await alice.request('POST', '/docs', {
+          ...decisions,
+          revisions: [
+            { section: 'title', envelope: await alice.sealDoc(decisions, 'title', { text: 'Decisions', board: 'decisions' }) },
+            { section: held, envelope: await alice.sealDoc(decisions, held, { text: '### D-1: Sums stay exact\n\nStatus: Accepted.', pos: 1 }) },
+            { section: gone, envelope: await alice.sealDoc(decisions, gone, { text: '### D-2: Sums round\n\nStatus: Superseded by D-1.', pos: 2 }) },
+          ],
+        });
+        const ghNow = JSON.parse(await fs.readFile(ghState, 'utf8'));
+        await fs.writeFile(ghState, JSON.stringify({ ...ghNow, open: [{ number: 5, title: 'Fix sums' }] }));
         // The board Alice's page picked goes in the brief, and no other (D-104).
         const prompted = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id }, 'What does sum.js do?'));
         const [chat] = (await turns()).slice(-1);
+        assert.ok(chat!.input.includes('### D-1: Sums stay exact') && !chat!.input.includes('### D-2'), 'the brief holds the decisions the team holds');
+        assert.ok(chat!.input.includes('#5: Fix sums'), 'the brief holds the open pull requests');
+        assert.ok(chat!.input.includes('Before you draft, check the draft'), 'the brief asks for the check');
         const scratch = chat!.cwd;
         assert.ok(scratch.startsWith(path.join(await fs.realpath(os.tmpdir()), 'webchat-scratch')), 'the prompt runs in a scratch repository, not in the project');
         assert.equal((await git(scratch, 'remote')).stdout.trim(), '', 'the scratch copy has no remote');
@@ -753,8 +771,15 @@ describe('agent client (R-027)', () => {
         await git(merger, 'commit', '-q', '-m', 'Merge');
         await git(merger, 'push', '-q', 'origin', 'HEAD:main');
         const now = (await git(merger, 'rev-parse', 'HEAD')).stdout.trim();
+        // A decision changes between turns, and a pull request opens: the reply holds both.
+        await alice.sync();
+        const decisionsDoc = (await alice.boardDocs(app.project.id)).decisions!;
+        await alice.editSection(decisionsDoc, held, () => ({ text: '### D-1: Sums stay exact\n\nStatus: Accepted.\n\nWhy: money.', pos: 1 }));
+        await fs.writeFile(ghState, JSON.stringify({ ...ghNow, open: [{ number: 5, title: 'Fix sums' }, { number: 6, title: 'Add a test' }] }));
         await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Still adds."}' }, () => tell({ kind: 'reply', to: prompted, sentAt: Date.now() }, 'And sum.test.js?'));
         const [again] = (await turns()).slice(-1);
+        assert.ok(again!.input.includes('Why: money.') && !again!.input.includes('### K-7'), 'the reply holds the decision that changed, and no card that did not');
+        assert.ok(again!.input.includes('#6: Add a test'), 'the reply holds the open pull requests');
         assert.equal(again!.args[again!.args.indexOf('--resume') + 1], chat!.args[chat!.args.indexOf('--session-id') + 1], 'the reply resumes the session');
         assert.equal(again!.cwd, scratch);
         assert.ok(again!.input.includes('Your owner replies:') && again!.input.includes('And sum.test.js?'));
@@ -763,14 +788,35 @@ describe('agent client (R-027)', () => {
         assert.match((await git(scratch, 'diff', '--stat', was, now)).stdout, /merged\.txt/, 'both commits are in the copy, so the agent can diff them');
         assert.deepEqual(await answers(), ['Still adds.']);
         // A draft that changes a card names it, with the hash of the text the brief held (D-104).
-        assert.ok(chat!.input.includes('### K-7: Sums are off by one') && chat!.input.includes("TEAMMATES' CARDS START"), 'the brief holds the board, fenced');
-        const card = { kind: 'issue', title: 'Sums are off by two', body: 'Seen: in the tests.', replaces: 'K-7' };
-        await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ reply: 'Here is the change.', card }), FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'reply', to: prompted, sentAt: Date.now() }, 'Draft a change to K-7.'));
+        assert.ok(chat!.input.includes('### K-7: Sums are off by one') && chat!.input.includes("TEAMMATES' TEXT START"), 'the brief holds the board, fenced');
+        // Its related ids are only those the brief held: a superseded decision, a card or a pull request it never had are left out (R-041).
+        const related = [
+          { id: '#5', kind: 'duplicate', why: 'It fixes the same sums.' },
+          { id: 'D-1', kind: 'conflict', why: 'Exact sums.' },
+          { id: 'D-2', kind: 'conflict', why: 'Superseded.' },
+          { id: 'K-99', kind: 'duplicate', why: 'Not on the board.' },
+          { id: '#9', kind: 'duplicate', why: 'Not open.' },
+        ];
+        const card = { kind: 'issue', title: 'Sums are off by two', body: 'Seen: in the tests.', replaces: 'K-7', checked: 'Read 1 card, 1 decision, the code and 2 open pull requests.', related };
+        const decision = { kind: 'decision', title: 'Sums round to cents', body: 'Why: money.', checked: 'Read D-1.' };
+        await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ reply: 'Here is the change.', drafts: [card, decision] }), FAKE_CLAUDE_COMMIT: '0' }, () =>
+          tell({ kind: 'reply', to: prompted, sentAt: Date.now() }, 'Draft a change to K-7.'),
+        );
         const seen = await textHash('### K-7: Sums are off by one\n\nStatus: Open.');
         assert.deepEqual((await alice.sync()).filter((m) => m.senderId === agent.id).map((m) => [m.content?.text, m.content?.prompt]), [
           ['Here is the change.', { kind: 'answer', to: prompted }],
-          ['Card draft: Sums are off by two', { kind: 'answer', to: prompted, card: { kind: 'K', title: 'Sums are off by two', body: 'Seen: in the tests.', replaces: { card: 'K-7', doc: board.id, section, seen } } }],
+          [
+            'Card draft: Sums are off by two',
+            {
+              kind: 'answer',
+              to: prompted,
+              card: { kind: 'K', title: 'Sums are off by two', body: 'Seen: in the tests.', replaces: { card: 'K-7', doc: board.id, section, seen }, checked: card.checked, related: related.slice(0, 2) },
+            },
+          ],
+          ['Decision draft: Sums round to cents', { kind: 'answer', to: prompted, card: { kind: 'D', title: 'Sums round to cents', body: 'Why: money.', checked: 'Read D-1.' } }],
         ]);
+        // Runs below hash a brief with no decisions.
+        await alice.request('DELETE', `/docs/${decisions.id}`);
         assert.deepEqual(await branches(), before, 'nothing of the conversation was pushed');
         assert.equal(await refs(), refsBefore, 'the owner\'s checkout gained no branch or commit');
         // The agent has sent many messages in a few seconds by now (D-091).

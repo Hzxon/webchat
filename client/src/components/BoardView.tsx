@@ -15,17 +15,18 @@ import {
   GROUPS,
   groupOf,
   KIND_NAMES,
-  nextNumber,
   parseCard,
+  unchecked,
   type BoardColumn,
   type Card,
   type CardKind,
   type CardRun,
 } from '../board';
-import { inOrder, useAgentChats } from '../agents';
-import { cancelRun, syncNow } from '../chat';
-import { beginEditing, createDoc, loadSections, markSeen, newSectionId, replaceSection, type Editing } from '../docs';
+import { inOrder, ownAgents, ready, seatFor, useAgentChats } from '../agents';
+import { askAgent, cancelRun, syncNow } from '../chat';
+import { addCard, beginEditing, createDoc, loadSections, markSeen, newSectionId, replaceSection, type Editing } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
+import { useLinkedRepos } from '../linkedRepos';
 import { actions, senderName, store, useAppState } from '../store';
 import { HistoryDialog, SectionEditor } from './DocView';
 import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlayIcon, PlusIcon, StopIcon, TrashIcon } from './icons';
@@ -38,6 +39,23 @@ export function BoardView({ project }: { project: ProjectDTO }) {
   const boards = useMemo(() => boardDocs(docs, conversations, project.id), [docs, conversations, project.id]);
   // At phone width the columns are tabs.
   const [shown, setShown] = useState<BoardColumn>('decisions');
+  // Check again asks the user's own agent in the project, about its first linked repository, as the pane's Ask does (R-038, R-041).
+  const users = useAppState((s) => s.users);
+  const meId = useAppState((s) => s.me?.id);
+  const agent = ownAgents(users, meId).find((a) => project.memberIds.includes(a.id));
+  const linked = useLinkedRepos(agent ? [project.id] : [])[project.id];
+  // With no GitHub App on the server, the pane's repositories are the agent's folders (R-038).
+  const repo = (linked?.configured ? linked.repos : agent?.agentRepos.map((s) => s.repo))?.[0];
+  const seat = agent && seatFor(agent, repo ?? '');
+  // Not before the repositories load, so a check never runs on the board alone by mistake.
+  const check =
+    linked && seat && ready(seat)
+      ? async (id: string) =>
+          actions.setAgentsOpen(
+            true,
+            await askAgent(seat.agent.id, project.id, repo, `Check ${id} as it is on the board now, against the other cards, the decisions, the code and the open pull requests. Then draft a change to ${id} with replaces: its text as it is, or what your check calls for.`),
+          )
+      : undefined;
 
   return (
     <section className="chat board-view">
@@ -62,7 +80,7 @@ export function BoardView({ project }: { project: ProjectDTO }) {
       </header>
       <div className={`board-columns shows-${shown}`}>
         {COLUMNS.map((column) => (
-          <BoardColumnView key={column} column={column} projectId={project.id} doc={boards[column]} />
+          <BoardColumnView key={column} column={column} projectId={project.id} doc={boards[column]} check={check} />
         ))}
       </div>
     </section>
@@ -80,7 +98,7 @@ const RUN_STATES: Record<CardRun['state'], [Tone, string]> = {
 const FILTERS = { all: 'All', R: 'Ideas', K: 'Issues' };
 type Filter = keyof typeof FILTERS;
 
-function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; projectId: number; doc: ChatDoc | undefined }) {
+function BoardColumnView({ column, projectId, doc, check }: { column: BoardColumn; projectId: number; doc: ChatDoc | undefined; check?: (id: string) => Promise<void> }) {
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
   const memberIds = useAppState((s) => s.projects[projectId]?.memberIds ?? NO_MEMBERS);
@@ -146,17 +164,19 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
     work.catch((err: Error) => setError(err.message));
   }
 
-  async function edit(target: ChatDoc, id: string, saved: string, pos: number, isNew = false, start = saved) {
+  async function edit(target: ChatDoc, id: string, saved: string, pos: number, isNew = false) {
     setEditing({
       doc: target,
-      section: await beginEditing(target.id, id, saved, pos, isNew, start),
+      section: await beginEditing(target.id, id, saved, pos, isNew),
     });
   }
 
   async function add(kind: CardKind) {
     const target = doc ?? (await createBoard(projectId, column));
-    const pos = Math.max(0, ...cards.map((c) => c.pos)) + 1;
-    await edit(target, newSectionId(), '', pos, true, cardTemplate(kind, nextNumber(cards, kind)));
+    // Saved at once, under the column's lock on numbers, so no other page gives its number; Cancel takes it back (D-116).
+    const id = newSectionId();
+    const { text, pos } = await addCard(target, id, kind, (number) => cardTemplate(kind, number));
+    await edit(target, id, text, pos, true);
   }
 
   /** Removes a card in an editing session of its own. Its revisions stay in the history. */
@@ -252,6 +272,8 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                       )}
                       <strong>{card.failed ? 'This card could not be decrypted.' : card.title || 'Untitled'}</strong>
                       {card.status && <span className="board-card-status">{card.status}</span>}
+                      {/* No agent checked it against the board, the code and the open pull requests yet (R-041). */}
+                      {unchecked(card) && <Tag tone="muted">Unchecked</Tag>}
                       {cardRun && !isOpen && <Tag tone={runTone}>{runLabel}</Tag>}
                     </button>
                     {same.has(card.id) && <p className="board-card-warn">Another card has this number. Renumber one of them.</p>}
@@ -318,6 +340,14 @@ function BoardColumnView({ column, projectId, doc }: { column: BoardColumn; proj
                               onClick={() => actions.setAgentsOpen(true, request?.clientId ?? null)}
                             >
                               Open the conversation
+                            </button>
+                          </p>
+                        )}
+                        {check && card.kind && !card.failed && (
+                          <p className="board-card-run">
+                            <span>Your agent checks it against the board, the code and the open pull requests.</span>
+                            <button className="board-card-run-link" onClick={() => run(check(`${card.kind}-${card.number}`))}>
+                              Check again
                             </button>
                           </p>
                         )}

@@ -549,17 +549,31 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
   return card ? { kind: 'answer', to, card } : { kind: 'answer', to };
 }
 
-/** A card draft in an agent's answer, if it has the right shape (D-104). */
+/** A card draft in an agent's answer, if it has the right shape (D-104, D-116). */
 function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | undefined {
   const title = short(raw?.title, LIMITS.docTitleLength);
   const body = short(raw?.body, LIMITS.messageLength);
   // A line break in the title would write a status line of its own into the card.
-  if (!raw || (raw.kind !== 'R' && raw.kind !== 'K') || !title || /[\r\n]/.test(title) || body === undefined) return;
+  if (!raw || (raw.kind !== 'D' && raw.kind !== 'R' && raw.kind !== 'K') || !title || /[\r\n]/.test(title) || body === undefined) return;
+  // A line break in the check would end the card's Checked line.
+  const checked = short(raw.checked, LIMITS.checkedLength);
+  const related = (Array.isArray(raw.related) ? (raw.related as Array<Record<string, unknown> | null>) : []).flatMap((r) => {
+    const why = short(r?.why, LIMITS.relatedWhyLength);
+    const kind = r?.kind === 'duplicate' || r?.kind === 'conflict' ? (r.kind as 'duplicate' | 'conflict') : undefined;
+    return typeof r?.id === 'string' && (CARD_ID.test(r.id) || /^#\d{1,7}$/.test(r.id)) && kind && why !== undefined ? [{ id: r.id, kind, why }] : [];
+  });
+  const draft: CardDraftDTO = {
+    kind: raw.kind,
+    title,
+    body,
+    ...(checked && !/[\r\n]/.test(checked) && { checked }),
+    ...(related.length && { related: related.slice(0, LIMITS.relatedPerDraft) }),
+  };
   const replaces = raw.replaces as Record<string, unknown> | undefined;
-  if (!replaces) return { kind: raw.kind, title, body };
-  const card = typeof replaces.card === 'string' && /^[RK]-\d{1,6}$/.test(replaces.card) ? replaces.card : undefined;
+  if (!replaces) return draft;
+  const card = typeof replaces.card === 'string' && CARD_ID.test(replaces.card) ? replaces.card : undefined;
   const [doc, section, seen] = [short(replaces.doc, 64), short(replaces.section, 64), short(replaces.seen, 64)];
-  return card && doc && section && seen ? { kind: raw.kind, title, body, replaces: { card, doc, section, seen } } : undefined;
+  return card && doc && section && seen ? { ...draft, replaces: { card, doc, section, seen } } : undefined;
 }
 
 /** Keeps the parts of decrypted content that have the right shape. The sender signed it, so it is not tampered. */

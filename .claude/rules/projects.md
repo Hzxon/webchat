@@ -37,6 +37,8 @@ docs/decisions.md that explains it.
 - Docs exist only in a channel, keyed by #general; a revision is sealed under the `webchat/doc/v1` header binding chat, key id, author, doc and section (D-081).
 - A section save needs its `doc_locks` lock, which lapses 2 minutes after the last check-in; doc versions and held locks are in the sync fingerprint (D-081, D-021).
 - A board is two docs marked by a `board` field inside the sealed title; a card's number, title and status come from its first two lines, in the `docs/decisions.md` format (D-082).
+- A page gives a new card its number only through `addCard` in `client/src/docs.ts`: under the lock of its column doc's `title` section, from the cards loaded under that lock, never from cards it loaded before (D-116).
+- A draft's `related` ids are only ones the brief held: its cards, the decisions the team holds and the open pull requests the plugin listed; the page drops a card or decision it cannot find (D-116).
 - A Bark push carries chat name, sender name, urgency and unread count, never message text; one APNs provider token is shared through the database and refreshed at most every 20 minutes (D-054).
 - The Bark key comes from `BARK_APNS_KEY` and is never committed (D-054).
 - An agent is a member account that never makes keys; it keeps its secrets in `~/.webchat/<name>/account.json` or the plugin's data folder, and two agents must not share that file, so the plugin keeps one copy for the laptop under `laptop/`, behind the one `watch.lock` that the serving window holds (D-085, D-094).

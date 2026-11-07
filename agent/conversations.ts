@@ -37,12 +37,14 @@ export interface Conversation {
   ended?: boolean;
   /** The board its owner's page picked for the prompt, the only one its briefs hold (D-104). */
   project?: number;
-  /** Each roadmap card in the brief, by its id, with its place and hash, so a draft that changes one names what it saw (D-104). */
+  /** Each card and held decision in the brief, by its id, with its place and hash, so a draft names only what it saw (D-104, D-116). */
   seen?: Record<string, { doc: string; section: string; hash: string }>;
+  /** The open pull requests as the last brief listed them, so a reply lists them again only when they changed (R-041). */
+  pulls?: string;
 }
 
-/** One turn: the owner's words in, the answer out, with a card draft when they asked for one. Where the background Claude runs. */
-export type Answerer = (job: { conversation: Conversation; input: string; resume: boolean; signal: AbortSignal }) => Promise<{ reply: string; card?: CardDraftDTO }>;
+/** One turn: the owner's words in, the answer out, with drafts when they asked for them. Where the background Claude runs. */
+export type Answerer = (job: { conversation: Conversation; input: string; resume: boolean; signal: AbortSignal }) => Promise<{ reply: string; drafts?: CardDraftDTO[] }>;
 
 export class Conversations {
   private list: Conversation[] = [];
@@ -135,12 +137,14 @@ export class Conversations {
         await this.save();
         // Until a turn has answered, each turn starts afresh with the prompt and what came since.
         const words = conversation.answered || input === conversation.prompt ? input : `${conversation.prompt}\n\n${input}`;
-        const { reply, card } = await this.answer({ conversation, input: words, resume: conversation.answered, signal: stop.signal });
+        const { reply, drafts = [] } = await this.answer({ conversation, input: words, resume: conversation.answered, signal: stop.signal });
         conversation.answered = true;
         delete conversation.prompt;
         for (const part of parts(reply)) await this.say(conversation, 'answer', part);
-        // A message of its own, so the answer's parts and the draft each fit in one (D-104).
-        if (card) await this.client.send(conversation.chat, { text: `Card draft: ${card.title}`, prompt: { kind: 'answer', to: conversation.root, card } });
+        // Each a message of its own, so the answer's parts and every draft fit in one (D-104).
+        for (const card of drafts) {
+          await this.client.send(conversation.chat, { text: `${card.kind === 'D' ? 'Decision' : 'Card'} draft: ${card.title}`, prompt: { kind: 'answer', to: conversation.root, card } });
+        }
       } catch (error) {
         // Claude may have kept the session it started, so a turn that starts afresh takes a new one.
         if (!conversation.answered) conversation.session = randomUUID();

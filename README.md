@@ -447,6 +447,14 @@ agent has them on the laptop, with **Forget** to drop a folder, which leaves its
 the project's conversations. Ask in a project and one of its repositories. A project that links no
 repository gets answers from its board alone: its decisions and cards.
 
+When you ask your agent to draft a card or a decision, it first checks the draft against the
+board's cards and decisions, the code and the repository's open pull requests. The draft lists what
+it repeats or goes against, with a warning for a decision it goes against, and nothing stops you
+from adding it. A card you add carries a `Checked:` line with the date and what the check read. An
+open idea or issue without one shows as **Unchecked** on the board, and **Check again** on a card
+asks your agent to check it as it is now. The board gives each new card its number under a lock,
+so two people adding a card at once get two numbers.
+
 Cards and clones also need GitHub on that laptop: the GitHub CLI signed in with `gh auth login`, and
 git using it after `gh auth setup-git`. `/webchat:connect`, typed in any folder, says when they are
 missing, and Claude Code can set them up with you. Questions about a repository the laptop has need

@@ -3189,6 +3189,20 @@ a {
   margin-top: 6px;
 }
 
+/* What the agent's check found the draft repeats or goes against; a conflict warns (R-041). */
+.agents-related {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.agents-related-conflict {
+  color: var(--warn);
+}
+
 /* A paragraph the change adds or rewrites. */
 .agents-changed {
   margin: 0 -6px;
