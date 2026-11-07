@@ -52,7 +52,12 @@ export interface PluginOptions {
   claude: string;
   /** The guard hook's command, which the background Claude runs before each file tool. */
   guard: string;
+  /** A background job of Claude Code: it never serves, so closing the window you work in puts the agent to sleep (K-66). */
+  job?: boolean;
 }
+
+/** Why a window serves nothing while the owner has the agent asleep (K-66, D-113). */
+const ASLEEP = 'Your agent is asleep: it takes no cards and answers no questions. Type /webchat:wake to wake it.';
 
 /** A folder the laptop has for a repository, as its mark names it (R-036, D-101). */
 interface Folder {
@@ -175,6 +180,10 @@ export class Plugin {
   private login?: string;
   /** Whether a GitHub login may push to a repository, by "repo login". */
   private readonly writers = new Map<string, boolean>();
+  /** Ends the check-ins when the agent goes to sleep. */
+  private stop?: AbortController;
+  /** Cuts short the minute a waiting window sleeps, so a wake here serves at once. */
+  private nudge?: AbortController;
 
   constructor(private readonly options: PluginOptions) {
     this.home = path.join(options.dataDir, 'laptop');
@@ -184,12 +193,26 @@ export class Plugin {
     return path.join(this.home, name);
   }
 
+  /** The one switch for every window and the pane: while it exists, nothing serves (K-66, D-113). */
+  private get asleep() {
+    return path.join(this.options.dataDir, 'asleep');
+  }
+
+  /** Serves while it holds the watch, waits while it cannot, and waits again after the agent goes to sleep. */
+  async serve() {
+    while (await this.start()) await this.loop();
+  }
+
   /**
    * Takes the laptop's watch, pairs when a new code was pasted, and loads the laptop's copy of the
    * account and the folders it has. False when this window serves nothing; `problem` says why.
    */
   async start(): Promise<boolean> {
     const { dataDir, projectDir } = this.options;
+    if (this.options.job) {
+      this.problem = 'This is a background job, so it does not serve your agent. The window you work in does.';
+      return false;
+    }
     // A mark from before R-036 names no folder; the checkout a window opens in names it (D-101).
     const here = await originOf(projectDir);
     const mark = here && markOf(dataDir, here);
@@ -204,9 +227,13 @@ export class Plugin {
     }
     // Two windows would both claim the laptop's runs (D-085). The second takes over when the first closes.
     await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
-    while (!(await takeLock(path.join(dataDir, 'watch.lock')))) {
-      this.problem = 'Another Claude Code window on this laptop serves your agent. This one takes over when that one closes.';
-      await sleep(60_000, undefined, { ref: false });
+    // An agent put to sleep stays asleep in every window, new ones included, until a wake.
+    for (;;) {
+      const asleep = existsSync(this.asleep);
+      if (!asleep && (await takeLock(path.join(dataDir, 'watch.lock')))) break;
+      this.problem = asleep ? ASLEEP : 'Another Claude Code window on this laptop serves your agent. This one takes over when that one closes.';
+      this.nudge = new AbortController();
+      await sleep(60_000, undefined, { ref: false, signal: this.nudge.signal }).catch(() => undefined);
     }
     if (code && paired?.pairing !== (await pairingId(code))) {
       this.problem = 'Waiting for you to approve this agent in WebChat, in the window that shows the code.';
@@ -264,6 +291,8 @@ export class Plugin {
 
   /** Why every question, run and fix fails before it starts, or undefined. */
   private async refusal() {
+    // Going to sleep: what runs finishes, and nothing new starts (K-66, D-113).
+    if (existsSync(this.asleep)) return 'I am going to sleep, so I start nothing new. To wake me, type /webchat:wake in Claude Code on your laptop.';
     if (process.platform === 'win32') return 'Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.';
     if (!this.options.claude) return 'I cannot find Claude Code on this laptop.';
   }
@@ -312,8 +341,10 @@ export class Plugin {
     this.waiting.delete(key);
   }
 
-  /** Checks in every 15 seconds and looks at the pull requests every minute, until the session ends the process. */
+  /** Checks in every 15 seconds and looks at the pull requests every minute, until the session ends the process or the agent goes to sleep. */
   async loop() {
+    // First, so a sleep among the messages missed while away ends the loop too.
+    this.stop = new AbortController();
     const missed = await this.client!.sync().catch((error: unknown) => (log(error), []));
     await this.endStrandedDrafts().catch(log);
     await this.runs!.recover().catch(log);
@@ -321,13 +352,60 @@ export class Plugin {
     missed.forEach((m) => this.handle(m));
     const level = async () => (this.client!.protocol = (await signedIn()) ? AGENT_LEVEL.cards : AGENT_LEVEL.answers);
     await level();
-    // Another window may connect a folder meanwhile, and a folder may move.
-    setInterval(() => void this.scan().catch(log), SYNC_INTERVAL_MS);
-    setInterval(() => {
-      void level().then(() => this.pollPulls()).catch(log);
-      void this.conversations!.sweep().catch(log);
-    }, 60_000);
-    for await (const message of this.client!.watch(new AbortController().signal)) this.handle(message);
+    // Another window may connect a folder meanwhile, a folder may move, and another window may put the agent to sleep.
+    const timers = [
+      setInterval(() => {
+        this.drowse();
+        void this.scan().catch(log);
+      }, SYNC_INTERVAL_MS),
+      setInterval(() => {
+        void level().then(() => this.pollPulls()).catch(log);
+        void this.conversations!.sweep().catch(log);
+      }, 60_000),
+    ];
+    for await (const message of this.client!.watch(this.stop.signal)) this.handle(message);
+    timers.forEach(clearInterval);
+  }
+
+  /** The work that keeps an agent awake while it goes to sleep: its running cards and questions. */
+  private busy() {
+    return [...this.runs!.running.map((r) => r.card), ...(this.conversations!.busy ? ['your question'] : [])];
+  }
+
+  /**
+   * Goes to sleep once the switch is on and nothing runs: the check-ins stop, so the page shows the
+   * agent asleep, and the watch is free for no window while the switch stays on (K-66, D-113).
+   */
+  private drowse() {
+    if (!this.stop || this.stop.signal.aborted || !existsSync(this.asleep) || this.busy().length) return;
+    this.stop.abort();
+    freeLock(path.join(this.options.dataDir, 'watch.lock'));
+    this.problem = ASLEEP;
+  }
+
+  /** Turns the switch on, and says what still runs before the agent sleeps. */
+  private async sleep() {
+    await fs.mkdir(this.options.dataDir, { recursive: true, mode: 0o700 });
+    await fs.writeFile(this.asleep, '');
+    this.drowse();
+    // Only the window that serves knows what runs; another one goes to sleep at its next check.
+    return this.runs ? this.busy() : [];
+  }
+
+  /** Turns the switch off; the window waiting here serves at once, any other within a minute. */
+  private async wake() {
+    if (!existsSync(this.asleep)) return 'Your agent is not asleep.';
+    await fs.rm(this.asleep, { force: true });
+    this.nudge?.abort();
+    return 'Your agent is waking up. It takes cards and answers questions again within a minute.';
+  }
+
+  /** Goes to sleep on its owner's word in the pane, after the work that runs, and says so there (K-66, D-113). */
+  private async sleepOnWord(message: OpenedMessage) {
+    if (!this.fromOwner(message, message.content!.sleep!.sentAt)) return;
+    const busy = await this.sleep();
+    const when = busy.length ? `once I finish ${busy.join(' and ')}` : 'now';
+    await this.client!.send(message.conversationId, { text: `I go to sleep ${when}. To wake me, type /webchat:wake in Claude Code on your laptop.` });
   }
 
   /** Acts on one message. A turn takes long, so the loop does not wait for it: check-ins go on meanwhile. */
@@ -336,6 +414,7 @@ export class Plugin {
     if (run?.kind === 'fix') return this.go(message, run).catch(log);
     if (run?.kind === 'clone' || prompt?.kind === 'clone') return this.clone(message).catch(log);
     if (message.content?.forget) return this.forget(message).catch(log);
+    if (message.content?.sleep) return this.sleepOnWord(message).catch(log);
     return (prompt ? this.conversations! : this.runs!).handle(message).catch(log);
   }
 
@@ -553,6 +632,12 @@ export class Plugin {
         return this.connect();
       case 'disconnect':
         return this.disconnect();
+      case 'sleep': {
+        const busy = await this.sleep();
+        return `Your agent goes to sleep ${busy.length ? `once it finishes ${busy.join(' and ')}` : 'within 15 seconds, once nothing runs'}. Type /webchat:wake to wake it.`;
+      }
+      case 'wake':
+        return this.wake();
       default:
         throw new Error(`There is no tool ${name}.`);
     }
@@ -587,7 +672,8 @@ export class Plugin {
   }
 
   private async status() {
-    if (this.problem) return this.problem;
+    // A waiting window looks at the switch only once a minute, so the status reads it now.
+    if (this.problem) return !this.options.job && existsSync(this.asleep) ? ASLEEP : this.problem;
     const owner = this.client!.users.get(this.client!.owner!)?.displayName;
     const sandbox = await this.cardRefusal();
     const folders = [...this.folders.values()].map((f) => `${f.repo} in ${shown(f.dir)}`);
@@ -892,18 +978,26 @@ const alive = (pid: number) => {
   }
 };
 
+/** The lock files this process holds, freed at exit. A set, since an agent that sleeps and wakes takes its lock again. */
+const held = new Set<string>();
+process.on('exit', () => held.forEach(freeLock));
+
+/** Frees a lock file if this process holds it. */
+function freeLock(file: string) {
+  held.delete(file);
+  try {
+    if (readFileSync(file, 'utf8') === String(process.pid)) unlinkSync(file);
+  } catch {
+    // Someone removed it already.
+  }
+}
+
 /** Takes a lock file for this process unless a live process holds it, and frees it at exit. */
 async function takeLock(file: string) {
   for (let tries = 0; tries < 2; tries++) {
     try {
       await fs.writeFile(file, String(process.pid), { flag: 'wx' });
-      process.on('exit', () => {
-        try {
-          if (readFileSync(file, 'utf8') === String(process.pid)) unlinkSync(file);
-        } catch {
-          // Someone removed it already.
-        }
-      });
+      held.add(file);
       return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;

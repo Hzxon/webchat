@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AGENT_LEVEL, LIMITS, type RunRequest } from '../../../shared/types';
 import { asleep, ownAgents, seatFor, short, THREAD_STATE, useAgentThreads, WAKE, type Seat, type Thread } from '../agents';
-import { addProjectMembers, askAgent, askClone, askFix, cancelRun, discardMessage, forgetFolder, loadChat, loadOlder, retryMessage, saveDraft, tellAgent } from '../chat';
+import { addProjectMembers, askAgent, askClone, askFix, cancelRun, discardMessage, forgetFolder, loadChat, loadOlder, putToSleep, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { useLinkedRepos } from '../linkedRepos';
 import { actions, useAppState } from '../store';
@@ -57,6 +57,20 @@ export function AgentsView() {
   }, [ids]);
 
   const awake = agents.some((a) => a.online);
+  // Asked to sleep: the agent finishes what runs first, so it may stay online a while (K-66).
+  const [sleeping, setSleeping] = useState(false);
+  useEffect(() => {
+    if (!awake) setSleeping(false);
+  }, [awake]);
+  const sleep = () => {
+    setSleeping(true);
+    for (const agent of agents.filter((a) => a.online)) {
+      putToSleep(agent.id).catch((err: Error) => {
+        setSleeping(false);
+        actions.addToast({ conversationId: null, title: 'Your agent did not get it', body: err.message });
+      });
+    }
+  };
   let subtitle = awake ? 'Your agent is online' : asleep(Math.max(0, ...agents.map((a) => a.lastSeen ?? 0)) || null);
   if (thread) subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board'} · ${THREAD_STATE[thread.state].label}`;
   else if (brief) subtitle = 'Before it starts';
@@ -83,6 +97,13 @@ export function AgentsView() {
           <strong>Coding agents</strong>
           <span>{subtitle}</span>
         </div>
+        {!thread && !brief && awake && (
+          <div className="header-end">
+            <button className="button-secondary" disabled={sleeping} onClick={sleep}>
+              {sleeping ? 'Going to sleep…' : 'Put to sleep'}
+            </button>
+          </div>
+        )}
       </header>
       {thread ? (
         <ThreadView key={thread.root} thread={thread} seat={seatOf(thread)} agentId={conversations[thread.conversationId]?.members.find((m) => m.userId !== meId)?.userId ?? 0} />

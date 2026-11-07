@@ -809,6 +809,11 @@ export async function askAgent(agentId: number, project: number, repo: string | 
   return clientId;
 }
 
+/** Puts the user's agent to sleep after what it runs; only `/webchat:wake` on the laptop wakes it (K-66, D-113). */
+export async function putToSleep(agentId: number) {
+  await sendContent(await startDirectChat(agentId), { text: 'Go to sleep', sleep: { sentAt: Date.now() } }, false);
+}
+
 /** Has the user's agent forget its folder of a repository: the mark goes, never the files (R-038, D-101). */
 export async function forgetFolder(agentId: number, repo: string) {
   await sendContent(await startDirectChat(agentId), { text: `Forget the folder of ${repo}`, forget: { repo, sentAt: Date.now() } }, false);
