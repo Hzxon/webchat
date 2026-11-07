@@ -15,6 +15,7 @@ import type {
   DocDTO,
   DocRevisionDTO,
   EnvelopeDTO,
+  FirstChatKeyInput,
   GithubDTO,
   LoginResponse,
   MessageDTO,
@@ -114,9 +115,10 @@ export const api = {
   keysBackup: (authKey: string) => request<LoginResponse>('POST', '/keys/backup', { authKey }),
   putKeys: (authKey: string, keys: AccountKeysInput) => request<UserDTO>('PUT', '/keys', { authKey, keys }),
   bootstrap: () => request<BootstrapDTO>('GET', '/bootstrap'),
-  openDirect: (userId: number, key: ChatKeyInput) =>
+  reserveConversationId: () => request<{ id: number }>('POST', '/conversations/ids'),
+  openDirect: (userId: number, key: FirstChatKeyInput) =>
     request<ConversationDTO>('POST', '/conversations/direct', { userId, key }),
-  createGroup: (title: string, memberIds: number[], key: ChatKeyInput) =>
+  createGroup: (title: string, memberIds: number[], key: FirstChatKeyInput) =>
     request<ConversationDTO>('POST', '/conversations/group', { title, memberIds, key }),
   addGroupMembers: (conversationId: number, input: AddGroupMembersInput) =>
     request<ConversationDTO>('POST', `/conversations/${conversationId}/members`, input),

@@ -51,6 +51,16 @@ const TOOLS = [
     description: 'Stops the WebChat agent working in the repository this session is open in. Its files stay.',
     inputSchema: none,
   },
+  {
+    name: 'sleep',
+    description: 'Puts the WebChat agent to sleep on this laptop, in every window, after the cards and questions it runs. Only when the user asks for it.',
+    inputSchema: none,
+  },
+  {
+    name: 'wake',
+    description: 'Wakes the WebChat agent that the user put to sleep, so it takes cards and answers questions again. Only when the user asks for it.',
+    inputSchema: none,
+  },
 ];
 
 async function serve() {
@@ -63,14 +73,14 @@ async function serve() {
     claude: await claudeProgram(),
     // The folder goes as an argument, since the background Claude's hooks get no plugin variables.
     guard: `"${process.execPath}" "${fileURLToPath(import.meta.url)}" guard "${dataDir}"`,
+    job: !!process.env.CLAUDE_JOB_DIR,
   });
   // Exiting runs the exit handlers, which free the machine's watch.
   const quit = () => process.exit(0);
   process.on('SIGTERM', quit);
   process.on('SIGINT', quit);
   plugin
-    .start()
-    .then((watching) => (watching ? plugin.loop() : undefined))
+    .serve()
     .catch((error: unknown) => {
       plugin.problem = `WebChat stopped: ${messageOf(error)}`;
       console.error(plugin.problem);

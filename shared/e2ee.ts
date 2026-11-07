@@ -205,18 +205,27 @@ export const newChatKeyBytes = () => randomBytes(32);
 export const importChatKey = (raw: Uint8Array<ArrayBuffer>) =>
   subtle().importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
 
-/** The key that wraps a chat key between two people. Both sides derive the same one. */
-async function pairKey(myDhPrivate: CryptoKey, theirDhPublic: string, keyId: string, from: number, to: number) {
+/** The secret two people share, from which the keys that wrap chat keys between them come. */
+async function pairSecret(myDhPrivate: CryptoKey, theirDhPublic: string) {
   const shared = await subtle().deriveBits({ name: 'ECDH', public: await importDhPublic(theirDhPublic) }, myDhPrivate, 256);
-  const hkdf = await subtle().importKey('raw', shared, 'HKDF', false, ['deriveKey']);
-  return subtle().deriveKey(
-    { name: 'HKDF', hash: 'SHA-256', salt: fromBase64Url(keyId), info: utf8(`webchat/chat-key/v1|from:${from}|to:${to}`) },
-    hkdf,
+  return subtle().importKey('raw', shared, 'HKDF', false, ['deriveKey']);
+}
+
+/**
+ * What a key that wraps a chat key names: the chat, so the server cannot hand a copy made for one
+ * chat out as another chat's key (D-111), and who wrapped it for whom.
+ */
+const pairInfo = (conversationId: number, from: number, to: number) => `webchat/chat-key/v2|conv:${conversationId}|from:${from}|to:${to}`;
+
+/** The key that wraps a chat key between two people. Both sides derive the same one. */
+const pairKey = (secret: CryptoKey, keyId: string, info: string) =>
+  subtle().deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: fromBase64Url(keyId), info: utf8(info) },
+    secret,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt'],
   );
-}
 
 export interface WrappedKey {
   iv: string;
@@ -228,8 +237,9 @@ export async function wrapChatKey(
   me: { id: number; identity: Identity },
   member: { id: number; dh: string },
   keyId: string,
+  conversationId: number,
 ): Promise<WrappedKey> {
-  const key = await pairKey(me.identity.dhPrivate, member.dh, keyId, me.id, member.id);
+  const key = await pairKey(await pairSecret(me.identity.dhPrivate, member.dh), keyId, pairInfo(conversationId, me.id, member.id));
   const iv = randomBytes(12);
   const data = await subtle().encrypt({ name: 'AES-GCM', iv, additionalData: utf8(keyId) }, key, raw);
   return { iv: toBase64Url(iv), data: toBase64Url(data) };
@@ -237,31 +247,41 @@ export async function wrapChatKey(
 
 /**
  * The raw bytes of a chat key, to wrap it again for a new member. Throws unless the named
- * wrapper's key really made it for this user.
+ * wrapper's key really made it for this user, in this chat or before copies named their chat.
+ * `namesChat` is false for a copy from before D-111, which the server could have taken from another
+ * chat between the same two people, so its key never seals (K-65).
  */
 export async function openChatKeyBytes(
   wrapped: WrappedKey,
   me: { id: number; identity: Identity },
   wrapper: { id: number; dh: string },
   keyId: string,
-): Promise<Uint8Array<ArrayBuffer>> {
-  const key = await pairKey(me.identity.dhPrivate, wrapper.dh, keyId, wrapper.id, me.id);
-  const raw = await subtle().decrypt(
-    { name: 'AES-GCM', iv: fromBase64Url(wrapped.iv), additionalData: utf8(keyId) },
-    key,
-    fromBase64Url(wrapped.data),
+  conversationId: number,
+): Promise<{ raw: Uint8Array<ArrayBuffer>; namesChat: boolean }> {
+  const secret = await pairSecret(me.identity.dhPrivate, wrapper.dh);
+  const open = async (info: string) =>
+    new Uint8Array(
+      await subtle().decrypt(
+        { name: 'AES-GCM', iv: fromBase64Url(wrapped.iv), additionalData: utf8(keyId) },
+        await pairKey(secret, keyId, info),
+        fromBase64Url(wrapped.data),
+      ),
+    );
+  return open(pairInfo(conversationId, wrapper.id, me.id)).then(
+    (raw) => ({ raw, namesChat: true }),
+    async () => ({ raw: await open(`webchat/chat-key/v1|from:${wrapper.id}|to:${me.id}`), namesChat: false }),
   );
-  return new Uint8Array(raw);
 }
 
-/** Unwraps a chat key. Throws unless the named wrapper's key really made it for this user. */
+/** Unwraps a chat key. Throws unless the named wrapper's key really made it for this user, in this chat. */
 export async function unwrapChatKey(
   wrapped: WrappedKey,
   me: { id: number; identity: Identity },
   wrapper: { id: number; dh: string },
   keyId: string,
+  conversationId: number,
 ): Promise<CryptoKey> {
-  return importChatKey(await openChatKeyBytes(wrapped, me, wrapper, keyId));
+  return importChatKey((await openChatKeyBytes(wrapped, me, wrapper, keyId, conversationId)).raw);
 }
 
 // A link is bound to its chat and to both key ids, so the server cannot move it to another chat
@@ -352,6 +372,8 @@ export interface MessageContent {
    * page opens: a card's brief hashes the same on both sides (K-57, D-110).
    */
   trust?: { user: number; fingerprint: string; sentAt: number };
+  /** The owner puts their agent to sleep from the pane; only `/webchat:wake` on the laptop wakes it (K-66, D-113). */
+  sleep?: { sentAt: number };
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -552,6 +574,7 @@ function readContent(value: unknown): MessageContent {
     added?: Record<string, unknown>;
     forget?: { repo?: unknown; sentAt?: unknown };
     trust?: { user?: unknown; fingerprint?: unknown; sentAt?: unknown };
+    sleep?: { sentAt?: unknown };
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -576,6 +599,7 @@ function readContent(value: unknown): MessageContent {
   if (typeof raw.forget?.repo === 'string' && isRepoName(raw.forget.repo) && isId(raw.forget.sentAt)) content.forget = { repo: raw.forget.repo, sentAt: raw.forget.sentAt };
   const fingerprint = short(raw.trust?.fingerprint, 64);
   if (isId(raw.trust?.user) && fingerprint && isId(raw.trust.sentAt)) content.trust = { user: raw.trust.user, fingerprint, sentAt: raw.trust.sentAt };
+  if (isId(raw.sleep?.sentAt)) content.sleep = { sentAt: raw.sleep.sentAt };
   return content;
 }
 

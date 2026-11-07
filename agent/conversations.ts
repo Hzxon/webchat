@@ -55,6 +55,11 @@ export class Conversations {
     private readonly answer: Answerer,
   ) {}
 
+  /** Whether a turn runs or waits for one, which keeps an agent that goes to sleep awake (K-66). */
+  get busy() {
+    return [...this.turns.values()].some((t) => t.stops.size > 0);
+  }
+
   /** Reads the file. One that does not parse is a lost list, not a reason to stop the plugin. */
   async load() {
     try {

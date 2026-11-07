@@ -77,7 +77,7 @@ export function seatFor(agent: UserDTO, repo: string): Seat | undefined {
 }
 
 /** What wakes the agent: one window serves every folder on the laptop (R-036). */
-export const WAKE = 'Keep one Claude Code window open on your laptop, and the laptop awake.';
+export const WAKE = 'Keep one Claude Code window open on your laptop, and the laptop awake. If you put your agent to sleep, type /webchat:wake there.';
 
 export const asleep = (lastSeen: number | null) => `Your agent is asleep${lastSeen ? ` since ${formatSince(lastSeen)}` : ''}`;
 

@@ -390,16 +390,16 @@ export class AgentClient {
     return this.keys.unchecked(userId) ? null : (this.users.get(userId)?.keys ?? null);
   };
 
-  /** The chat's current key, for sealing. */
+  /**
+   * The chat's current key, for sealing. A key whose copy names no chat waits for a page to replace
+   * it, since the agent never makes keys (D-085, K-65).
+   */
   private async currentKey(conversationId: number) {
     const conversation = this.conversations.get(conversationId);
     if (!conversation?.keyId) throw new Error('Not a member of this chat, or it has no key.');
-    return { keyId: conversation.keyId, key: await this.chatKey(conversation) };
-  }
-
-  /** Opens this account's copy of the chat's current key, after checking that a member wrapped it. */
-  private chatKey(conversation: ConversationDTO): Promise<CryptoKey> {
-    return this.keys.chatKey(conversation, this.keysOf) ?? Promise.reject(new Error('The chat has no key, or it was replaced.'));
+    const key = await this.keys.sealingKey(conversation, this.keysOf);
+    if (!key) throw new Error('The chat has no key, or it was replaced.');
+    return { keyId: conversation.keyId, key };
   }
 
   /** The key a message names: the current one, or an earlier one found through the key links. */

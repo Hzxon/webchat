@@ -21,7 +21,7 @@ import {
   type QuotedMessage,
 } from '../../../shared/e2ee';
 import { describeGithubCard, readGithubCard } from '../../../shared/github';
-import { EncryptionUnavailableError, Keyring, WRAPPER_CHANGED, type ChatKeyStore, type KeyedConversation, type KeyLookup } from '../../../shared/keyring';
+import { EncryptionUnavailableError, Keyring, OldKeyCopyError, WRAPPER_CHANGED, type ChatKeyStore, type KeyedConversation, type KeyLookup } from '../../../shared/keyring';
 import type {
   ChatKeyInput,
   ConversationDTO,
@@ -79,7 +79,7 @@ export interface ChatDoc extends DocDTO {
   board?: DocContent['board'];
 }
 
-export { EncryptionUnavailableError, type KeyLookup };
+export { EncryptionUnavailableError, OldKeyCopyError, type KeyLookup };
 
 const chatKeyStore: ChatKeyStore = {
   get: (conversationId, keyId) => keystore.getChatKey(conversationId, keyId).catch(() => undefined),
@@ -194,16 +194,22 @@ export const keyring = {
   /** Opens this user's copy of a chat key, after checking that a member of the chat created it. */
   chatKey: (conversation: KeyedConversation, keysOf: KeyLookup) => keys?.chatKey(conversation, keysOf) ?? null,
 
+  /** The chat's current key, to seal with. Throws OldKeyCopyError for a copy that names no chat. */
+  sealingKey: (conversation: KeyedConversation, keysOf: KeyLookup) => keys?.sealingKey(conversation, keysOf) ?? null,
+
   /** Opens the key a message names: the chat's current key, or an earlier one through its links. */
   keyFor: (conversation: KeyedConversation, keyId: string, keysOf: KeyLookup) => keys?.keyFor(conversation, keyId, keysOf) ?? null,
 
-  /** Makes a new chat key and wraps it for every member. Refuses members without keys or with changed keys. */
-  async createChatKey(members: Array<{ id: number; name: string; keys: PublicKeysDTO | null }>, changed: Set<number>) {
+  /**
+   * Makes a new key for the chat with this id and wraps it for every member. Refuses members
+   * without keys or with changed keys.
+   */
+  async createChatKey(conversationId: number, members: Array<{ id: number; name: string; keys: PublicKeysDTO | null }>, changed: Set<number>) {
     checkRecipients(members, changed);
     const raw = newChatKeyBytes();
     const keyId = newKeyId();
     const wrappedKeys = await Promise.all(
-      members.map(async (m) => ({ userId: m.id, ...(await wrapChatKey(raw, keys!.self, { id: m.id, dh: m.keys!.dh }, keyId)) })),
+      members.map(async (m) => ({ userId: m.id, ...(await wrapChatKey(raw, keys!.self, { id: m.id, dh: m.keys!.dh }, keyId, conversationId)) })),
     );
     const input: ChatKeyInput = { keyId, wrappedKeys };
     return { input, key: await importChatKey(raw) };
@@ -214,13 +220,13 @@ export const keyring = {
    * its history too. Checks first that a member of the chat made that copy.
    */
   async shareChatKey(
-    conversation: Pick<ConversationDTO, 'keyId' | 'myKey' | 'members'>,
+    conversation: Pick<ConversationDTO, 'id' | 'keyId' | 'myKey' | 'members'>,
     keysOf: KeyLookup,
     recipients: Array<{ id: number; name: string; keys: PublicKeysDTO | null }>,
     changed: Set<number>,
   ): Promise<WrappedKeyInput[]> {
     checkRecipients(recipients, changed);
-    const { keyId, myKey } = conversation;
+    const { id, keyId, myKey } = conversation;
     const wrapperKeys = myKey ? keysOf(myKey.wrappedBy) : null;
     if (!keyId || !myKey || !wrapperKeys || !conversation.members.some((m) => m.userId === myKey.wrappedBy)) {
       throw new EncryptionUnavailableError('This device cannot open one of the channel keys. Reload the page.');
@@ -228,8 +234,10 @@ export const keyring = {
     if (keys!.unchecked(myKey.wrappedBy)) {
       throw new EncryptionUnavailableError(WRAPPER_CHANGED);
     }
-    const raw = await openChatKeyBytes(myKey, keys!.self, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
-    return Promise.all(recipients.map(async (r) => ({ userId: r.id, ...(await wrapChatKey(raw, keys!.self, { id: r.id, dh: r.keys!.dh }, keyId)) })));
+    const { raw, namesChat } = await openChatKeyBytes(myKey, keys!.self, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId, id);
+    // The newcomer's copy would name this chat, and so let them seal with a key from another chat (K-65).
+    if (!namesChat) throw new OldKeyCopyError();
+    return Promise.all(recipients.map(async (r) => ({ userId: r.id, ...(await wrapChatKey(raw, keys!.self, { id: r.id, dh: r.keys!.dh }, keyId, id)) })));
   },
 
   /**
@@ -248,8 +256,8 @@ export const keyring = {
     // Unlike chatKey, the wrapper need not be a member still: after someone leaves, they may have
     // wrapped this copy. The old key only goes inside the new one, to read old messages, and never
     // encrypts anything again.
-    const previous = await openChatKeyBytes(myKey, keys!.self, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId);
-    const { input, key } = await keyring.createChatKey(members, changed);
+    const { raw: previous } = await openChatKeyBytes(myKey, keys!.self, { id: myKey.wrappedBy, dh: wrapperKeys.dh }, keyId, id);
+    const { input, key } = await keyring.createChatKey(id, members, changed);
     const link = await linkChatKey(key, input.keyId, id, previous, keyId);
     return { input: { ...input, link: { previousKeyId: keyId, ...link } }, key };
   },

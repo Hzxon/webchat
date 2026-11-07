@@ -82,7 +82,12 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.deepEqual(state([ask(1, 'a'), report(1, 'claimed')]), ['claimed', true]);
     assert.deepEqual(state([ask(1, 'a'), report(1, 'claimed'), report(1, 'done')]), ['done', false]);
     assert.deepEqual(state([ask(1, 'a'), report(1, 'done', 2)]), ['waiting', true], 'only the named agent reports');
-    assert.deepEqual(state([ask(1, 'a'), { id: 2, senderId: 1, run: { kind: 'cancel', request: 1 } }]), ['cancelled', false]);
+    const cancel = { id: 2, senderId: 1, run: { kind: 'cancel', request: 1 } };
+    assert.deepEqual(state([ask(1, 'a'), cancel]), ['cancelled', false]);
+    const taken = [ask(1, 'a'), report(1, 'claimed'), cancel];
+    assert.equal(runs(taken).get('a')?.stopping, true, 'a run the agent took is stopping until it reports (K-64)');
+    assert.deepEqual(state(taken), ['claimed', true]);
+    assert.equal(runs([...taken, report(1, 'failed')]).get('a')?.stopping, false);
     assert.deepEqual(state([ask(1, 'a'), report(1, 'failed'), ask(2, 'a')]), ['waiting', true], 'a new request replaces the old');
     assert.deepEqual(state([ask(1, 'a'), ask(2, 'a'), report(1, 'done')]), ['waiting', true], 'an old run reports into nothing');
     assert.equal(runs([{ ...ask(1, 'a'), senderId: 3 }, ask(2, 'b', { docId: 'other' })]).size, 0, 'only my requests on this doc');

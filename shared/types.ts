@@ -274,6 +274,14 @@ export interface ChatKeyInput {
   wrappedKeys: WrappedKeyInput[];
 }
 
+/**
+ * A new chat's first key. Its copies name the chat, so they are made for the id that
+ * `POST /conversations/ids` reserved for this user, and the chat gets that id (D-111).
+ */
+export interface FirstChatKeyInput extends ChatKeyInput {
+  conversationId: number;
+}
+
 export interface SyncRequest {
   cursor: number;
   stamp: string;
@@ -363,7 +371,8 @@ export interface CreateProjectInput {
   name: string;
   /** The other people in the project; the creator is always in it. */
   memberIds: number[];
-  key: ChatKeyInput;
+  /** The key of its #general channel. */
+  key: FirstChatKeyInput;
 }
 
 export interface CreateProjectResponse {
@@ -375,7 +384,7 @@ export interface CreateProjectResponse {
 /** A new channel, with its key wrapped for exactly the project's current members. */
 export interface CreateChannelInput {
   name: string;
-  key: ChatKeyInput;
+  key: FirstChatKeyInput;
 }
 
 /** One channel's existing key, wrapped for the people being added, or again for everyone who stays. */

@@ -429,9 +429,9 @@ user checks them, the page refuses to wrap a new chat key for that person. Two p
 page also trusts nothing signed or wrapped with the changed keys. It refuses to open a new chat key
 that person wrapped, so it never sends under a key the server could know. It shows their new
 messages as unreadable, and the service worker shows their pushes without text. A chat key stored
-before the change still works. The pins stay on the device when someone signs out or in, so a swap
-made while nobody was signed in still shows a warning. They hold only fingerprints of other people's
-public keys.
+before the change still opens messages, but seals only once its copy opens with checked keys
+(D-112). The pins stay on the device when someone signs out or in, so a swap made while nobody was
+signed in still shows a warning. They hold only fingerprints of other people's public keys.
 
 Cost: a device trusts the first keys it sees for a person without proof. After someone's keys change
 for a real reason, their new messages stay unreadable until the user checks the code. The page keeps
@@ -494,6 +494,39 @@ that chat until a member's browser makes the key, which waits for a member to be
 security code check (D-018). Until a page opens the key, a push shows "New encrypted message"
 (D-017). A device signed in after the link was dropped never saw it, and a database restored to
 before a new key leaves its chat unable to send on devices that saw the link.
+
+### D-111: A chat key's copies name their chat
+
+Accepted 2026-11-07 in #150. Fixes K-43.
+
+The pair key that wraps each copy of a chat key names the chat id in its HKDF info
+(`webchat/chat-key/v2`). So the server cannot hand out a copy made for one chat as another chat's
+key. A new chat's first key needs the id before the chat exists. The page reserves one with
+`POST /conversations/ids`, and the chat is created with that id. Only the person an id was
+reserved for can use it, and only once. A channel's id must be above #general's, which pages tell
+by the lowest id (D-081). A copy that fails as v2 is tried as v1, so copies made before still open.
+
+Cost: making a chat takes one more request. A copy made before this change names no chat, so the
+server can still move it to another chat between the same two people, where it opens messages but
+never seals (D-112). An unused id stays until the first sign-in an hour after it was reserved.
+
+### D-112: A key whose copy names no chat never seals
+
+Accepted 2026-11-07 in #152. Fixes K-65.
+
+`openChatKeyBytes` says whether a copy named its chat (D-111). `Keyring.sealingKey` in
+`shared/keyring.ts` refuses a key whose copy did not, for the page and the agent, and `shareChatKey`
+will not wrap it for newcomers. Such a key still opens messages and goes inside a new key's link.
+Before a page sends or adds people in such a chat, it makes a new key for exactly the members, with
+the old one linked inside, through `PUT /conversations/:id/key` as after a leave (D-044). The server
+cannot tell such a key, so any member may now replace a key without `needs_new_key`, under the same
+lock and checks.
+
+Cost: the first send in each old chat makes a new key first. The agent never makes keys (D-085), so
+it cannot send in an old chat until a member sends there from a page. Any member can replace a
+chat's key at will. A stored key whose copy no longer opens, because its wrapper's keys changed, no
+longer seals (D-018). A key the server moved in from another chat lands in this chat's
+links, so this chat's members hold it.
 
 ## Messaging
 
@@ -1216,6 +1249,18 @@ account deletion (D-093).
 
 Cost: a project whose only other member is an agent can never be handed over, so its owner
 deletes it instead of leaving.
+### D-113: The owner puts the agent to sleep, and only the laptop wakes it
+
+Accepted 2026-11-07 in #153 (K-66).
+
+A file `asleep` in the plugin's data folder is the one switch. The pane's **Put to sleep** sends a
+sealed `sleep` message, which counts only from the owner, in their direct chat, signed within 10
+minutes, once (D-089). `/webchat:sleep` writes the file too. The serving window then starts nothing
+new, finishes what runs, stops checking in and frees `watch.lock`. No window takes the lock while
+the file exists, new ones included. Only `/webchat:wake` removes it. A background job of Claude Code
+never serves. Why: closing every session was the only off switch, and a hidden job took over.
+
+Cost: a sleeping agent hears nothing, so the page cannot wake it. Waking needs the laptop.
 
 ## Replies and reactions
 
