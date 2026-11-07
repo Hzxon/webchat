@@ -176,6 +176,10 @@ export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing
   const latest = useRef(text);
   latest.current = text;
   const saved = useRef(editing.saved);
+  // A new section reaches the server on its first save, which a cancel takes back. Once cancelled,
+  // nothing saves, not even the save on leaving.
+  const stored = useRef(!editing.isNew);
+  const dropped = useRef(false);
   const mounted = useRef(true);
   const draft = draftName(doc.id, editing.id);
 
@@ -183,9 +187,10 @@ export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing
   const flush = () =>
     saveInOrder(editing.id, async () => {
       const content = latest.current;
-      if (content === saved.current) return;
+      if (dropped.current || content === saved.current) return;
       setStatus('Saving…');
       await saveSection(doc, editing.id, { text: content, pos: editing.pos });
+      stored.current = true;
       saved.current = content;
       if (latest.current === content) {
         setStatus('Saved');
@@ -249,6 +254,23 @@ export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing
     }
   }
 
+  /** Drops a new section. A card starts from its template, which saves a second after it opens. */
+  async function cancel() {
+    dropped.current = true;
+    try {
+      await saveInOrder(editing.id, async () => {
+        if (stored.current) await saveSection(doc, editing.id, { text: saved.current, pos: editing.pos, removed: true });
+      });
+      saveDraft(draft, '');
+      await stopEditing(doc.id, editing.id);
+      onClose();
+      void syncNow();
+    } catch (err) {
+      dropped.current = false;
+      fail(err);
+    }
+  }
+
   return (
     <div className="doc-section doc-editor">
       <textarea
@@ -262,7 +284,11 @@ export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing
       />
       <div className="doc-editor-actions">
         <span className="doc-note">{status}</span>
-        {!editing.isNew && (
+        {editing.isNew ? (
+          <button className="button-secondary" onClick={() => void cancel()}>
+            Cancel
+          </button>
+        ) : (
           <button className="button-danger" onClick={() => void remove()}>
             Delete
           </button>
