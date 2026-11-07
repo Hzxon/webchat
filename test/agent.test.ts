@@ -21,8 +21,8 @@ import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, textHash, wrapChatKey } from '../shared/e2ee.ts';
+import { briefText, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
 import { copyOf, readCard } from '../shared/board.ts';
-import { briefText, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type UserDTO } from '../shared/types.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
 const KDF_ROUNDS = 1000;
@@ -75,7 +75,9 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 const args = process.argv.slice(2);
 const input = fs.readFileSync(0, 'utf8');
-fs.appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ args, input, cwd: process.cwd() }) + '\\n');
+// The owner's skills it got, as a plugin folder made for the turn (R-039).
+const plugin = args.includes('--plugin-dir') ? fs.readdirSync(args[args.indexOf('--plugin-dir') + 1], { recursive: true }).sort() : undefined;
+fs.appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ args, input, cwd: process.cwd(), plugin }) + '\\n');
 const resume = args.includes('--resume');
 const id = args[args.indexOf(resume ? '--resume' : '--session-id') + 1];
 while (process.env.FAKE_CLAUDE_GATE && !fs.existsSync(process.env.FAKE_CLAUDE_GATE)) await new Promise((resolve) => setTimeout(resolve, 20));
@@ -589,7 +591,7 @@ describe('agent client (R-027)', () => {
         (await fs.readFile(claudeLog, 'utf8').catch(() => ''))
           .split('\n')
           .filter(Boolean)
-          .map((line) => JSON.parse(line) as { args: string[]; input: string; cwd: string });
+          .map((line) => JSON.parse(line) as { args: string[]; input: string; cwd: string; plugin?: string[] });
       try {
         const code = newPairingCode();
         // The page shows its address with the code, so the address setting stays empty (R-031).
@@ -600,14 +602,14 @@ describe('agent client (R-027)', () => {
         // The agent is online with no folder yet, and says what its laptop can do (R-036, D-103).
         await plugin.client!.sync();
         await alice.sync();
-        assert.deepEqual([alice.users.get(agent.id)?.online, alice.users.get(agent.id)?.protocol, alice.users.get(agent.id)?.agentRepos], [true, 1, []]);
+        assert.deepEqual([alice.users.get(agent.id)?.online, alice.users.get(agent.id)?.protocol, alice.users.get(agent.id)?.agentRepos], [true, 5, []]);
         assert.match(await plugin.call('connect'), /This folder is no GitHub repository/);
         // A window in a checkout the owner has connects it, and the serving window works there.
         assert.match(await new Plugin({ ...options, code: '', dataDir, projectDir: project }).call('connect'), /Connected acme\/app: your agent works in this folder/);
         await plugin.scan();
         await plugin.client!.sync();
         await alice.sync();
-        assert.deepEqual(alice.users.get(agent.id)?.agentRepos.map((seat) => [seat.repo, seat.online, seat.protocol]), [['acme/app', true, 1]]);
+        assert.deepEqual(alice.users.get(agent.id)?.agentRepos.map((seat) => [seat.repo, seat.online, seat.protocol]), [['acme/app', true, 5]]);
         // The status names the address that came with the code, whatever the owner's settings say.
         assert.deepEqual((await plugin.call('status')).split('\n').slice(0, 2), [`Taking the cards that Alice hands to this agent, on ${baseUrl}.`, `Working in acme/app in ${project}.`]);
 
@@ -750,6 +752,34 @@ describe('agent client (R-027)', () => {
         });
         const ghNow = JSON.parse(await fs.readFile(ghState, 'utf8'));
         await fs.writeFile(ghState, JSON.stringify({ ...ghNow, open: [{ number: 5, title: 'Fix sums' }] }));
+        // Alice has her agent load parts of her Claude setup into every turn and run (R-039, D-115).
+        await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+        const claudeDir = path.join(home, 'claude');
+        const skill = path.join(claudeDir, 'skills', 'commit-style');
+        await fs.mkdir(path.join(skill, 'references'), { recursive: true });
+        await fs.writeFile(path.join(claudeDir, 'CLAUDE.md'), 'Write short commit messages.\n');
+        await fs.writeFile(path.join(skill, 'SKILL.md'), '---\nname: commit-style\ndescription: >\n  Writes commit\n  messages.\n---\nUse the imperative.\n');
+        await fs.writeFile(path.join(skill, 'references', 'style.md'), 'At most 50 characters.\n');
+        // A link in a skill could lead to a secret, so the copy leaves it out.
+        await fs.symlink(path.join(dataDir, 'account.json'), path.join(skill, 'key.json'));
+        await fs.mkdir(path.join(claudeDir, 'skills', 'other'));
+        await fs.writeFile(path.join(claudeDir, 'skills', 'other', 'SKILL.md'), '---\nname: other\ndescription: "Does other things."\n---\n');
+        // The agent's answers, each naming the ask it answers.
+        const setup = async (from: AgentClient, chat: number, choice?: SetupChoice) => {
+          const sent = await from.send(chat, { text: 'Settings', setup: { sentAt: Date.now(), ...(choice && { choice }) } });
+          await Promise.all((await plugin.client!.sync()).map((m) => plugin.handle(m)));
+          const states = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.setupState).map((m) => m.content!.setupState!);
+          return states.map(({ to, ...state }) => (assert.equal(to, sent.clientId), state));
+        };
+        const offer = { claudeMd: true, skills: [{ name: 'commit-style', description: 'Writes commit messages.' }, { name: 'other', description: 'Does other things.' }] };
+        // The runs before loaded nothing of it, as nothing was chosen.
+        const [shown] = await setup(alice, direct);
+        assert.deepEqual({ ...shown, applied: { ...shown!.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
+        // Carol's word changes nothing and hears nothing; Alice's is kept, a skill she chose that is gone too.
+        const chosen = { claudeMd: true, skills: ['commit-style', 'gone'], noAttribution: true };
+        assert.deepEqual(await setup(carol, general, chosen), []);
+        assert.deepEqual((await setup(alice, direct, chosen)).map((s) => s.choice), [chosen]);
+        assert.deepEqual(JSON.parse(await fs.readFile(settings, 'utf8')).attribution, { commit: '', pr: '' }, 'the settings hide the attribution lines');
         // The board Alice's page picked goes in the brief, and no other (D-104).
         const prompted = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id }, 'What does sum.js do?'));
         const [chat] = (await turns()).slice(-1);
@@ -763,6 +793,16 @@ describe('agent client (R-027)', () => {
         assert.ok(chat!.input.includes('What does sum.js do?') && chat!.input.includes('scratch copy'), 'the brief holds the prompt');
         assert.ok(chat!.input.includes('opens a draft pull request'), 'the brief says a card run, unlike a question, ends in a draft');
         assert.deepEqual(await answers(), ['It adds.']);
+        // The turn got her CLAUDE.md, the Skill tool, and copies of the chosen skills still there, with no link.
+        const flag = (name: string) => chat!.args[chat!.args.indexOf(name) + 1]!;
+        assert.equal(flag('--append-system-prompt-file'), path.join(claudeDir, 'CLAUDE.md'));
+        assert.equal(flag('--tools'), 'Bash,Read,Edit,Write,Glob,Grep,WebSearch,WebFetch,Skill');
+        assert.equal(flag('--add-dir'), flag('--plugin-dir'), "the skills' own files can be read");
+        const copied = ['skills', 'skills/commit-style', 'skills/commit-style/SKILL.md', 'skills/commit-style/references', 'skills/commit-style/references/style.md'];
+        assert.deepEqual(chat!.plugin, copied.map((f) => f.split('/').join(path.sep)), 'only skills/, with the chosen skills');
+        assert.equal(existsSync(flag('--plugin-dir')), false, 'the copy goes once the turn ends');
+        const [loaded] = await setup(alice, direct);
+        assert.deepEqual({ ...loaded!.applied!, at: 0 }, { claudeMd: true, skills: ['commit-style'], noAttribution: true, at: 0 }, 'the pane learns what the turn loaded');
         assert.equal((await git(scratch, 'rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim(), 'HEAD', 'the scratch copy is detached');
         const was = (await git(project, 'rev-parse', 'refs/remotes/origin/main')).stdout.trim();
         assert.equal((await git(scratch, 'rev-list', '--max-parents=0', 'HEAD')).stdout.trim(), was, 'it starts at origin/main, and the fake Claude commits on top');
@@ -1420,5 +1460,45 @@ test(
     const second = await turn('Which word did the first message ask you to keep in mind? Put only that word in reply.', true);
     assert.equal(second.session, session);
     assert.match(String((second.answer as { reply?: string } | undefined)?.reply), /PELICAN/i, 'the turn resumes the session');
+  },
+);
+
+test(
+  "runs a real background Claude with its owner's CLAUDE.md, a chosen skill and no attribution (R-039)",
+  { skip: !process.env.WEBCHAT_REAL_CLAUDE && 'set WEBCHAT_REAL_CLAUDE=1 to run it with your claude', timeout: 10 * 60_000 },
+  async () => {
+    const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-setup-')));
+    const project = path.join(dir, 'app');
+    // The plugin folder a turn gets: only skills/, with the chosen skill's copy.
+    const skills = path.join(dir, 'turn', 'owner');
+    await fs.mkdir(path.join(skills, 'skills', 'pr-title'), { recursive: true });
+    await fs.writeFile(
+      path.join(skills, 'skills', 'pr-title', 'SKILL.md'),
+      '---\nname: pr-title\ndescription: How to title a pull request. Use it whenever you write a pull request title.\n---\nA pull request title starts with "Ostrich: ", then says what changed.\n',
+    );
+    const claudeMd = path.join(dir, 'CLAUDE.md');
+    await fs.writeFile(claudeMd, 'Before you write a pull request title, use the pr-title skill.\n');
+    await fs.mkdir(project);
+    await git(project, 'init', '-q');
+    await git(project, 'config', 'user.name', 'Claude');
+    await git(project, 'config', 'user.email', 'claude@example.com');
+    await git(project, 'commit', '-q', '--allow-empty', '-m', 'Start');
+    const settings = path.join(dir, 'claude.json');
+    await fs.writeFile(settings, JSON.stringify(claudeSettings({ secrets: [], npmCache: path.join(dir, 'npm'), guard: 'true', env: process.env, noAttribution: true })));
+    const answer = { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' } }, required: ['title', 'body'] };
+    const turn = await start(
+      'claude',
+      [...claudeArgs({ settings, session: randomUUID(), resume: false, answer, claudeMd, skills }), '--model', 'haiku', '--max-budget-usd', '1'],
+      project,
+      AbortSignal.timeout(5 * 60_000),
+      claudeResult,
+      'Add a line "hi" to notes.txt and commit it with git. Then answer with the title and the body of a pull request for it.',
+    );
+    const pull = turn.answer as { title?: string; body?: string } | undefined;
+    assert.match(pull?.title ?? '', /^Ostrich: /, 'the title follows the chosen skill, which CLAUDE.md named');
+    assert.doesNotMatch(pull?.body ?? '', /Generated with/i, 'the body has no attribution line');
+    const commit = (await git(project, 'log', '-1', '--format=%B')).stdout;
+    assert.ok(commit.trim() && commit.trim() !== 'Start', 'the turn committed');
+    assert.doesNotMatch(commit, /Co-Authored-By/i, 'the commit has no attribution trailer');
   },
 );

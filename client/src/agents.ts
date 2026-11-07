@@ -2,7 +2,7 @@
 // D-102, D-103). A conversation is a prompt and the messages whose `prompt` field names the
 // prompt's client id, all in the user's direct chat with the agent.
 import { useMemo } from 'react';
-import { AGENT_LEVEL, type AgentRepoDTO, type RunDTO, type UserDTO } from '../../shared/types';
+import { AGENT_LEVEL, takesSetup, type AgentRepoDTO, type RunDTO, type UserDTO } from '../../shared/types';
 import { formatSince } from './components/format';
 import type { Tone } from './components/PullTags';
 import type { ChatConversation, ChatMessage } from './e2ee/keyring';
@@ -76,10 +76,20 @@ export function seatFor(agent: UserDTO, repo: string): Seat | undefined {
   return { repo, online: agent.online, lastSeen: agent.lastSeen ?? 0, protocol: agent.protocol, agent, noFolder: !seat || agent.online };
 }
 
+const UPDATE = 'Your agent’s WebChat plugin is too old for this. In Claude Code, type /plugin, open Installed, choose webchat, then Update now.';
+
 /** What wakes the agent: one window serves every folder on the laptop (R-036). */
 export const WAKE = 'Keep one Claude Code window open on your laptop, and the laptop awake. If you put your agent to sleep, type /webchat:wake there.';
 
 export const asleep = (lastSeen: number | null) => `Your agent is asleep${lastSeen ? ` since ${formatSince(lastSeen)}` : ''}`;
+
+/** Why a question or reply, or with `setup` a change of settings, cannot go to the agent now, in plain words, or '' when it can. */
+export function blockedBy(seat: { protocol: number; online: boolean; lastSeen: number | null } | undefined, setup = false) {
+  // An older plugin checks in per repository and answers nothing else, nor heeds `setup` (D-103, R-036, D-115).
+  if (!seat || seat.protocol < AGENT_LEVEL.answers || (setup && !takesSetup(seat.protocol))) return UPDATE;
+  if (!seat.online) return `${asleep(seat.lastSeen)}. ${WAKE}`;
+  return '';
+}
 
 /** A repository by its name alone, as students know it: "capstone-app" for "team/capstone-app". */
 export const short = (repo: string) => repo.slice(repo.indexOf('/') + 1);

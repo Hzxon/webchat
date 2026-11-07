@@ -20,6 +20,7 @@ import {
   type RunDTO,
   type RunRequest,
   type SendMessageInput,
+  type SetupChoice,
   type SyncResponse,
   type UserDTO,
   type WorkerToPageMessage,
@@ -825,6 +826,18 @@ export async function putToSleep(agentId: number) {
   await sendContent(await startDirectChat(agentId), { text: 'Go to sleep', sleep: { sentAt: Date.now() } }, false);
 }
 
+/**
+ * Asks the user's agent what its runs load from their Claude setup, and with a choice, changes it
+ * (R-039, D-115). Returns the ask's client id, which the agent's answer names.
+ */
+export async function askSetup(agentId: number, choice?: SetupChoice) {
+  const conversationId = await startDirectChat(agentId);
+  const clientId = newClientId();
+  const text = choice ? 'Change what your runs load from my Claude setup' : 'What do your runs load from my Claude setup?';
+  void sendContent(conversationId, { text, setup: { sentAt: Date.now(), ...(choice && { choice }) } }, false, clientId);
+  return clientId;
+}
+
 /** Asks the user's agent for a repository's entries, to link the board to it (R-040). Returns the ask's client id, which its answers name. */
 export async function askLink(agentId: number, project: number, repo: string) {
   const conversationId = await startDirectChat(agentId);
@@ -930,6 +943,7 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     run: entry.content.run ?? null,
     prompt: entry.content.prompt ?? null,
     added: entry.content.added ?? null,
+    setupState: null,
     board: entry.content.board ?? null,
     security: 'encrypted',
   };

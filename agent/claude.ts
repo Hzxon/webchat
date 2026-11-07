@@ -24,10 +24,14 @@ const isCredential = ([name, value = '']: [string, string | undefined]) =>
  * search and reading run outside the sandbox, as Claude Code's own tools. The shell gets no variable
  * of `env`, the environment it starts with, that holds a credential, while Claude Code keeps them for
  * its own login. The guard hook keeps the file tools from the secrets, and Claude Code refuses a
- * write through a link out of the folder.
+ * write through a link out of the folder. When the owner chose no AI attribution, empty lines hide
+ * the ones Claude Code adds to commits and pull requests (R-039).
  */
-export function claudeSettings({ secrets, npmCache, guard, env }: { secrets: string[]; npmCache: string; guard: string; env: NodeJS.ProcessEnv }) {
+export function claudeSettings({ secrets, npmCache, guard, env, noAttribution }: { secrets: string[]; npmCache: string; guard: string; env: NodeJS.ProcessEnv; noAttribution?: boolean }) {
   return {
+    // Only the object form: older Claude Code rejects `false` here, and a -p run drops a whole
+    // settings file that fails validation, the sandbox with it (D-097).
+    ...(noAttribution && { attribution: { commit: '', pr: '' } }),
     sandbox: {
       enabled: true,
       failIfUnavailable: true,
@@ -44,16 +48,23 @@ export function claudeSettings({ secrets, npmCache, guard, env }: { secrets: str
   };
 }
 
-/** One turn's arguments: the first starts the session under its id, a later one resumes it. */
-export function claudeArgs({ settings, session, resume, answer }: { settings: string; session: string; resume: boolean; answer: object }) {
+/**
+ * One turn's arguments: the first starts the session under its id, a later one resumes it. With
+ * the owner's choice (R-039), their CLAUDE.md goes in as a system prompt, and `skills` is a plugin
+ * folder made for the turn, which holds only copies of their skills. It is also a working
+ * directory, so a skill's scripts and references can be read there.
+ */
+export function claudeArgs({ settings, session, resume, answer, claudeMd, skills }: { settings: string; session: string; resume: boolean; answer: object; claudeMd?: string; skills?: string }) {
   return [
     '-p',
     'Do what the message on stdin asks.',
     '--restricted',
     '--tools',
-    TOOLS.join(','),
+    [...TOOLS, ...(skills ? ['Skill'] : [])].join(','),
     '--settings',
     settings,
+    ...(claudeMd ? ['--append-system-prompt-file', claudeMd] : []),
+    ...(skills ? ['--plugin-dir', skills, '--add-dir', skills] : []),
     // No MCP server at all, not even those of the owner's plugins.
     '--strict-mcp-config',
     // Edits in its folder pass, but not to Claude Code's own files there, such as .claude/settings.json:
