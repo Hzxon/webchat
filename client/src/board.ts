@@ -68,10 +68,13 @@ export const withChecked = (body: string, checked: string, today = new Date()) =
   [`Checked: ${dateOf(today)}. ${checked}`, body.replace(new RegExp(CHECKED.source, 'gm'), '').trim()].filter(Boolean).join('\n\n');
 
 /** A day as the cards write it, 2026-11-07, in the user's time zone. */
-const dateOf = (day: Date) => `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+export const dateOf = (day: Date) => `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
 
 /** Whether a card shows as Unchecked: an idea or issue still open that no agent has checked (R-041). */
 export const unchecked = (card: Card) => (card.kind === 'R' || card.kind === 'K') && !card.checked && GROUPS.roadmap[groupOf('roadmap', card.status)]!.name !== 'Done';
+
+/** The status of a card whose run waits for a decision nobody foresaw, so teammates see why it is held (R-042). */
+export const WAITING = 'Waiting for a decision';
 
 /** The groups a column shows, in order. A folded group opens on a click. */
 export const GROUPS: Record<BoardColumn, Array<{ name: string; statuses: string[]; folded?: true }>> = {
@@ -81,7 +84,7 @@ export const GROUPS: Record<BoardColumn, Array<{ name: string; statuses: string[
     { name: 'Superseded', statuses: ['Superseded'], folded: true },
   ],
   roadmap: [
-    { name: 'In progress', statuses: ['In progress'] },
+    { name: 'In progress', statuses: ['In progress', WAITING] },
     // A run that ended in a draft pull request waits here for its owner to review and merge it.
     { name: 'In review', statuses: ['In review'] },
     { name: 'Next', statuses: ['Next', 'Planned'] },
@@ -116,7 +119,7 @@ export const workingStatus = (name: string) => `In progress: ${name}’s agent`;
  * agent would open a second draft (K-59).
  */
 export const otherRun = (status: string, name: string) =>
-  status.startsWith('In review') || (status.startsWith('In progress:') && status !== workingStatus(name));
+  status.startsWith('In review') || status.startsWith(WAITING) || (status.startsWith('In progress:') && status !== workingStatus(name));
 
 /** A new card's id: the next free number of its kind, as wide as the widest id of that kind, so R-043 follows R-005 (R-040). */
 export function idOf(ids: string[], kind: CardKind) {
@@ -170,12 +173,16 @@ export interface CardRun {
   note?: string;
   /** The pull request a run that is done opened. */
   pull?: RunReport['pull'];
+  /** The message id of the report that set the state, so the page acts on each report once. */
+  at?: number;
+  /** For a merged run: the Proposed decisions its work made true (R-042). */
+  decisions?: string[];
   /** The user asked to stop a run the agent took, and the agent has not reported since. */
   stopping?: boolean;
 }
 
 /** The states in which a run may still go, so the page asks for no second one. */
-export const GOING = new Set<CardRun['state']>(['sending', 'waiting', 'claimed', 'fixing', 'nocopy']);
+export const GOING = new Set<CardRun['state']>(['sending', 'waiting', 'claimed', 'fixing', 'nocopy', 'decision']);
 
 /**
  * The user's latest run of each card of a board doc, by section id. A request that failed to send
@@ -202,9 +209,9 @@ export function cardRuns(messages: ChatMessage[], meId: number, docId: string, p
       const target = m.senderId === meId ? latest(run.request) : undefined;
       if (target?.state === 'waiting') target.state = 'cancelled';
       else if (target) target.stopping = true;
-    } else if (run.kind !== 'fix' && run.kind !== 'clone') {
+    } else if (run.kind !== 'fix' && run.kind !== 'clone' && run.kind !== 'draft') {
       const target = latest(run.request);
-      if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull, stopping: false });
+      if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull, decisions: run.decisions, at: m.id, stopping: false });
     }
   }
   return runs;

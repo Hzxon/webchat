@@ -53,6 +53,7 @@ test('the roadmap copy files each card by its status, or by its kind, in the ord
     card('K-4', 'Issue', 'Open'),
     card('R-2', 'Early idea', 'Blocked on Q-2'),
     card('K-3', 'Reviewed', 'In review: o/r#3'),
+    card('K-2', 'Held', 'Waiting for a decision'),
     card('R-5', 'Working', 'IN PROGRESS on branch x'),
     card('Q-7', 'Held up', 'Planned'),
     card('K-8', 'Next up', 'next'),
@@ -66,6 +67,7 @@ test('the roadmap copy files each card by its status, or by its kind, in the ord
     '# Roadmap',
     '## In progress',
     '### R-5: Working',
+    '### K-2: Held',
     '### K-3: Reviewed',
     '## Next',
     '### K-8: Next up',
@@ -82,7 +84,7 @@ test('the roadmap copy files each card by its status, or by its kind, in the ord
     '### K-1: Gone',
     '## Done',
   ]);
-  assert.ok(copy.startsWith(`${roadmapHeader}\n\n## In progress\n\n### R-5: Working\n\nStatus: IN PROGRESS on branch x.\n\n### K-3`));
+  assert.ok(copy.startsWith(`${roadmapHeader}\n\n## In progress\n\n### R-5: Working\n\nStatus: IN PROGRESS on branch x.\n\n### K-2`));
   assert.ok(copy.endsWith('\n') && !copy.endsWith('\n\n'));
   assert.ok(!copy.includes('Left out'), 'a Done card is only its row');
 });

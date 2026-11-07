@@ -5,7 +5,7 @@
 // that names the request, and pages fold them into one card. The owner can cancel a request the
 // same way (R-030).
 import { textHash } from '../shared/e2ee.ts';
-import { briefText, heldDecisions, type RunReport, type RunRequest } from '../shared/types.ts';
+import { briefText, heldDecisions, type CardDraftDTO, type RunReport, type RunRequest } from '../shared/types.ts';
 import type { AgentClient, OpenedMessage, TakenRequest } from './client.ts';
 
 export interface RunResult {
@@ -13,6 +13,12 @@ export interface RunResult {
   pull?: { repo: string; number: number };
   /** A line for the done report, such as what the agent said last. */
   note?: string;
+  /** For a run that ended at its check, with nothing pushed, since the card no longer holds: the change of its status that the owner's page offers. The note says why (R-042). */
+  stale?: CardDraftDTO;
+  /** The decision a run stopped for, which waits for its owner's go (R-042). */
+  decision?: CardDraftDTO;
+  /** What the run asks of the board: changes to decisions, and new cards (R-042). */
+  drafts?: CardDraftDTO[];
 }
 
 /** Does the work of one run, given the card and the decisions it follows as Markdown. Where the coding agent runs. It stops when the signal aborts. */
@@ -137,9 +143,17 @@ export class Runs {
     await this.client.saveRunning(this.client.running.filter((t) => t.message !== taken.message));
   }
 
-  private done(taken: TakenRequest, result: RunResult) {
-    const where = `${result.branch}${result.pull ? ` (${result.pull.repo}#${result.pull.number})` : ''}`;
-    return this.report(taken, { kind: 'done', ...result }, `I finished ${taken.card} on ${where}.${result.note ? ` ${result.note}` : ''}`);
+  /** Reports how a run ended: stale, waiting for a decision, or done, with each draft it asks of the board after it (R-042). */
+  private async done(taken: TakenRequest, result: RunResult) {
+    const { branch, pull, note, stale, decision, drafts = [] } = result;
+    if (stale) return this.report(taken, { kind: 'stale', note, card: stale }, `${taken.card} no longer holds: ${note}.`);
+    if (decision) {
+      const text = `${taken.card} needs a decision first: ${decision.title}. Add it on the board, then reply with its number.`;
+      return this.report(taken, { kind: 'decision', branch, pull, card: decision, ...(note && { note }) }, text);
+    }
+    const where = `${branch}${pull ? ` (${pull.repo}#${pull.number})` : ''}`;
+    await this.report(taken, { kind: 'done', branch, pull, ...(note && { note }) }, `I finished ${taken.card} on ${where}.${note ? ` ${note}` : ''}`);
+    for (const card of drafts) await this.report(taken, { kind: 'draft', card }, `${card.kind === 'D' ? 'Decision' : 'Card'} draft: ${card.title}`);
   }
 
   report(taken: TakenRequest, reply: Omit<RunReport, 'request'>, text: string) {

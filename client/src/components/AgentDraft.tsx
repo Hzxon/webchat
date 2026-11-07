@@ -50,8 +50,9 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
     [projects, meId, agentId],
   );
   const [picked, setPicked] = useState<number | null>(null);
-  const asked = thread.messages[0]!.prompt;
-  const named = asked?.kind === 'prompt' ? asked.project : thread.project;
+  const first = thread.messages[0]!;
+  const named =
+    first.prompt?.kind === 'prompt' ? first.prompt.project : first.run?.kind === 'request' ? conversations[docs[first.run.docId]?.conversationId ?? 0]?.projectId : thread.project;
   const board = named !== undefined && shared.some((p) => p.id === named) ? named : shared.length === 1 ? shared[0]!.id : null;
   const projectId = change ? (conversations[docs[change.doc]?.conversationId ?? 0]?.projectId ?? null) : (picked ?? board);
   const [redone, setRedone] = useState(false);
@@ -146,6 +147,7 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
         </>
       )}
       <strong className={marked(current?.title !== draft.title)}>{change ? `${change.card}: ${draft.title}` : draft.title}</strong>
+      {draft.status && <p className={marked(current?.status !== draft.status)}>Status: {draft.status}.</p>}
       {paragraphsOf(draft.body).map((p, i) => (
         <div key={i} className={marked(!now.has(p))}>
           <Markdown text={p} />
@@ -188,7 +190,7 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
               ? `${change.card} was deleted from the board after this draft.`
               : `${stale.by} changed ${change.card} after this draft, at ${formatSince(stale.at)}.`}
           </p>
-          {thread.kind !== 'proposal' && <button
+          {thread.kind === 'question' && <button
             className="button-secondary"
             disabled={redone || thread.state === 'working' || thread.state === 'ended'}
             onClick={() => {

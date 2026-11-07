@@ -355,6 +355,9 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
   const review = thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'review') : undefined;
   // The laptop has no copy of the repository, and the run or turn waits for the owner's word (R-036).
   const nocopy = thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'nocopy' || m.prompt?.kind === 'nocopy') : undefined;
+  // A run that waits for a decision goes on once its owner added the decision and gave the go (R-042).
+  const decision = thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'decision' && m.run.card) : undefined;
+  const decided = decision && thread.added[decision.clientId ?? ''];
   const stop = () => void (request ? cancelRun(request) : tellAgent(thread.conversationId, thread.root, 'cancel', 'Stop'));
   const again = () => {
     const projectId = conversations[docs[request!.run.docId]?.conversationId ?? 0]?.projectId;
@@ -408,6 +411,8 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
           }
           const mine = message.senderId === meId;
           const first = thread.messages[i - 1]?.senderId !== message.senderId;
+          // What a run asks of the board: its card's new status, a decision it waits for, or a change after its work (R-042).
+          const draft = message.run?.kind === 'stale' || message.run?.kind === 'decision' || message.run?.kind === 'draft' ? message.run.card : undefined;
           return (
             <div key={message.clientId ?? message.id} className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}>
               <div className="bubble-line">
@@ -419,6 +424,11 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
                     <AgentDraft message={message} draft={message.prompt.card} thread={thread} agentId={agentId} />
                   ) : message.board?.kind === 'proposal' ? (
                     <AgentDraft message={message} draft={message.board.card} thread={thread} agentId={agentId} />
+                  ) : draft ? (
+                    <>
+                      {message.run?.kind !== 'draft' && <Markdown text={message.text} />}
+                      <AgentDraft message={message} draft={draft} thread={thread} agentId={agentId} />
+                    </>
                   ) : (
                     <Markdown text={message.text} />
                   )}
@@ -437,6 +447,13 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
                   </button>
                   <button className="button-secondary" onClick={() => setNotNow(true)}>
                     Not now
+                  </button>
+                </div>
+              )}
+              {message === decision && decided && (
+                <div className="agents-draft-actions">
+                  <button className="button-primary" disabled={!!blocked} onClick={() => void askFix(thread.conversationId, request!.id, `I added the decision as ${decided}. Go on with the work.`)}>
+                    Go on with {decided}
                   </button>
                 </div>
               )}
