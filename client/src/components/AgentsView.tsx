@@ -348,8 +348,9 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
   const [notNow, setNotNow] = useState(false);
   const working = thread.state === 'working';
   const paused = thread.state === 'paused';
+  const planned = thread.state === 'planned';
   const last = thread.messages.at(-1)!;
-  const stopping = (working || paused) && isCancel(last) && pending[last.clientId ?? ''] !== 'failed';
+  const stopping = (working || paused || planned) && isCancel(last) && pending[last.clientId ?? ''] !== 'failed';
   // A card's conversation: its request, which a stop and the owner's go name (D-105).
   const request = thread.kind === 'card' ? (thread.messages[0] as ChatMessage & { run: RunRequest }) : undefined;
   const review = thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'review') : undefined;
@@ -485,13 +486,19 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
               Ask again
             </button>
           </div>
-        ) : paused ? (
+        ) : paused || planned ? (
           // The owner's words resume the run's session; a second stop ends it, and Start again follows (docs/decisions/stop-pauses-run.md).
+          // A plan goes on with their go too, and a stop ends it (docs/decisions/redirect-plan-gate.md).
           <>
             <div className="agents-ended">
-              <p className="composer-blocked">Stopped. Tell it what to change, or start over.</p>
+              <p className="composer-blocked">{planned ? 'Go on with this plan, or tell it what to change.' : 'Stopped. Tell it what to change, or start over.'}</p>
+              {planned && (
+                <button className="button-primary" disabled={!!blocked || stopping} onClick={() => void askFix(thread.conversationId, request!.id, '')}>
+                  Go
+                </button>
+              )}
               <button className="button-secondary" disabled={stopping} onClick={stop}>
-                {stopping ? 'Stopping…' : 'Start over'}
+                {stopping ? 'Stopping…' : planned ? 'Stop' : 'Start over'}
               </button>
             </div>
             <Box name={`agents:${thread.root}`} placeholder="Tell it what to change" canSend={!blocked && !stopping} onSend={(text) => askFix(thread.conversationId, request!.id, text)} />

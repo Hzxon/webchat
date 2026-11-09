@@ -130,6 +130,23 @@ interface Watched extends Place {
   decisions?: string[];
 }
 
+/**
+ * A run whose card holds, waiting for its owner's go on its plan before the claim commit, so it has
+ * no draft yet (docs/decisions/redirect-plan-gate.md). Kept on disk.
+ */
+interface Planned extends Place {
+  taken: TakenRequest;
+  request: RunRequest;
+  session: string;
+  /** The harness that ran the check, by name, which the work resumes with. */
+  harness: string;
+  repo: string;
+  /** The draft's body, with what the check read. */
+  body: string;
+  /** When the plan was reported. */
+  at: number;
+}
+
 /** How a background Claude's turn on a card ends (D-097): done, failed, or paused for a decision (R-042). */
 interface Answer {
   outcome: 'done' | 'failed' | 'decision';
@@ -190,6 +207,7 @@ const CHECK = {
     note: { type: 'string', description: 'For stale, why the card no longer holds, in one or two sentences.' },
     status: { type: 'string', enum: ['Done', 'Dropped'], description: 'For stale: Done when the code already does what the card asks, Dropped when a decision or another card rules it out or covers it.' },
     checked: { type: 'string', description: "One line on what your check read: the card's Checked line, the code at which commit, the decisions and the cards." },
+    plan: { type: 'string', description: 'For holds: how you will do the work, in a few short lines: what you will change, and how you will test it.' },
   },
   required: ['outcome', 'note', 'checked'],
 };
@@ -263,6 +281,7 @@ export class Plugin {
   private readonly waiting = new Map<string, Set<{ resolve: () => void; reject: (error: Error) => void }>>();
   private readonly cloning = new Set<string>();
   private watched: Watched[] = [];
+  private plans: Planned[] = [];
   private polling = false;
   /** The owner's GitHub login, whose own reviews start a round on their own (D-105). */
   private login?: string;
@@ -348,6 +367,7 @@ export class Plugin {
     this.conversations = new Conversations(client, this.file('conversations.json'), (job) => this.converse(job));
     await this.conversations.load();
     this.watched = JSON.parse(await fs.readFile(this.file('pulls.json'), 'utf8').catch(() => '[]')) as Watched[];
+    this.plans = JSON.parse(await fs.readFile(this.file('plans.json'), 'utf8').catch(() => '[]')) as Planned[];
     this.copies = JSON.parse(await fs.readFile(this.file('boards.json'), 'utf8').catch(() => '{}')) as Record<number, BoardCopy>;
     // Sessions from before R-036 watched their drafts in each repository's folder.
     const old = (await fs.readdir(path.join(dataDir, 'repos')).catch(() => [] as string[])).map((name) => path.join(dataDir, 'repos', name, 'pulls.json'));
@@ -904,13 +924,23 @@ export class Plugin {
     // Only the owner's, once, as for a request (D-089, K-47). Every repository's session hears it,
     // so only the one watching the draft acts or answers.
     if (message.security !== 'encrypted' || message.senderId !== this.client!.owner || !this.client!.remember(message.clientId ?? '', fix.sentAt)) return;
+    const plan = this.plans.find((p) => p.taken.message === fix.request);
     const pull = this.watched.find((w) => w.taken.message === fix.request);
-    if (!pull) return;
+    const taken = (plan ?? pull)?.taken;
+    if (!taken) return;
     // A signed time, so an old go is not played again (K-42).
     if (Math.abs(Date.now() - fix.sentAt) > REQUEST_TTL_MS) {
       const text = 'I got this more than 10 minutes after you sent it. Ask again.';
-      return void (await this.runs!.report(pull.taken, { kind: 'failed', note: text }, text));
+      return void (await this.runs!.report(taken, { kind: 'failed', note: text }, text));
     }
+    if (plan) {
+      // The plan waits no longer: the claim, the draft and the work follow, with the owner's words (docs/decisions/redirect-plan-gate.md).
+      this.plans = this.plans.filter((p) => p !== plan);
+      await this.savePlans();
+      const note = fix.note?.trim() ?? '';
+      return void (await this.runs!.follow(plan.taken, plan.request, note ? 'you changed the plan' : 'you said go', { branch: plan.branch }, (signal) => this.claim(plan, (pull) => planBrief(pull, note), signal)));
+    }
+    if (!pull) return;
     pull.go = { review: fix.review, note: fix.note ?? '' };
     // A run that waits for a decision waits no longer (R-042).
     if (pull.unfinished) delete pull.unfinished.paused;
@@ -922,8 +952,8 @@ export class Plugin {
    * A run, as Runs hands it over, in the steps of the repository's own workflow (R-042, D-118). In a
    * worktree of the repository's folder, the background Claude first checks that the card still
    * holds (D-107); a card that no longer does ends the run as stale, with nothing pushed. Otherwise
-   * an empty commit and the draft claim it before any code (D-062), and the work goes on in the same
-   * session.
+   * the check's plan waits for its owner's go, unless they turned the gate off, and then an empty
+   * commit and the draft claim it before any code (D-062), and the work goes on in the same session.
    */
   private async run({ request, taken, card, cards, decisions, signal }: Parameters<Runner>[0]): Promise<RunResult> {
     const text = noCopy(request.repo!);
@@ -942,15 +972,27 @@ export class Plugin {
       const replaces = { card: now.id, doc: request.docId, section: request.section, seen: await textHash(card.trim()) };
       return { kind: 'stale', branch, note: why, card: { kind: now.kind, title: now.title, body: now.body, status, checked: line(check.checked, 500), replaces } };
     }
-    await exec('git', ['-C', dir, ...NO_HOOKS, 'commit', '-q', '--allow-empty', '-m', `chore: Claim ${request.card}`]);
+    const held: Planned = { ...place, taken, request, session, harness: harness.name, repo: folder.repo, body: `Claims ${request.card}. Checked ${date}: ${line(check.checked, 500)}`, at: Date.now() };
+    // The plan gate, on unless the owner turned off the knob its harness declares (docs/decisions/redirect-plan-gate.md).
+    if (!(this.setup.choice.noPlan && harness.offers().knobs.includes('noPlan'))) {
+      this.plans.push(held);
+      await this.savePlans();
+      const plan = typeof check.plan === 'string' ? check.plan.trim().slice(0, LIMITS.runNoteLength) : '';
+      return { kind: 'planned', branch, note: plan || undefined };
+    }
+    return this.claim(held, workBrief, signal);
+  }
+
+  /** An empty commit and the draft claim the card before any code (D-062), then the work goes on in the check's session. */
+  private async claim({ taken, request, session, harness, repo, body, at, ...place }: Planned, brief: (pull: { repo: string; number: number }) => string, signal: AbortSignal) {
+    await exec('git', ['-C', place.worktree, ...NO_HOOKS, 'commit', '-q', '--allow-empty', '-m', `chore: Claim ${request.card}`]);
     const head = await this.push(place);
-    const body = `Claims ${request.card}. Checked ${date}: ${line(check.checked, 500)}`;
-    const pull = await this.openDraft(place, `${request.card}: ${request.title}`, body, folder.repo);
+    const pull = await this.openDraft(place, `${request.card}: ${request.title}`, body, repo);
     // By name, so every round resumes with the harness that started the session.
-    const watched: Watched = { ...place, taken, request, pull, head, session, harness: harness.name, fixes: 0, seenHead: '', seenNote: new Date().toISOString(), unfinished: {} };
+    const watched: Watched = { ...place, taken, request, pull, head, session, harness, fixes: 0, seenHead: '', seenNote: new Date().toISOString(), unfinished: {} };
     this.watched.push(watched);
     await this.saveWatched();
-    return this.finish(watched, workBrief(pull), true, signal);
+    return this.finish(watched, brief(pull), true, signal);
   }
 
   /**
@@ -1252,11 +1294,19 @@ export class Plugin {
    * its owner reviewed it, the model gets another round, at most three. A review by someone else who
    * may push waits for the owner's go, and the owner's own rounds count toward no limit (D-105).
    * Watching stops when someone else pushes, it is closed or merged, or the owner cancels its run.
+   * A plan that waits for its owner's go ends on a stop, or after 7 days.
    */
   async pollPulls(now = Date.now()) {
     if (this.polling || !this.runs || (await this.refusal())) return;
     this.polling = true;
     try {
+      for (const plan of [...this.plans]) {
+        const why = this.runs.cancelled.has(plan.taken.message) ? 'You stopped it.' : now - plan.at > 7 * DAY_MS ? 'No go came within 7 days.' : '';
+        if (!why) continue;
+        this.plans = this.plans.filter((p) => p !== plan);
+        await this.savePlans();
+        await this.runs.fail(plan.taken, why);
+      }
       for (const pull of [...this.watched]) {
         // A round waits while its card runs, and the cards beside it go on (R-037).
         if (this.runs.running.some((r) => r.docId === pull.request.docId && r.section === pull.request.section)) continue;
@@ -1439,6 +1489,10 @@ export class Plugin {
   private saveWatched() {
     return fs.writeFile(this.file('pulls.json'), JSON.stringify(this.watched, null, 2));
   }
+
+  private savePlans() {
+    return fs.writeFile(this.file('plans.json'), JSON.stringify(this.plans, null, 2));
+  }
 }
 
 const RULES = [
@@ -1456,6 +1510,7 @@ function checkBrief(cardId: string, place: Place, card: string, decisions: strin
     "line if it has one, then the code here, the decisions and the team's other cards below, as they are now. It no",
     'longer holds when the code already does what it asks, a decision settles or rules it out, or another card covers',
     'it. End with the outcome "stale" and why as the note, or with "holds"; either way, say in checked what you read.',
+    'With "holds", say in plan how you will do the work, in a few short lines, since your owner may read it first.',
     "Change and commit nothing in this turn: once the card holds, your owner's laptop opens a draft pull request that",
     'claims it, and you do the work in the next turn.',
     '',
@@ -1484,6 +1539,19 @@ function workBrief(pull: { repo: string; number: number }) {
     'work makes to a decision, and a new card for each gap you found and left, in drafts, and list them in the body.',
     'Name in decisions each Proposed decision your work makes true: the board accepts it once your owner merges.',
     'If you cannot finish, end with the outcome "failed" and what blocks you as the note.',
+  ].join('\n');
+}
+
+/**
+ * The work turn after the owner read the plan: their go, or their words, fenced as a redirect's are
+ * (docs/decisions/redirect-plan-gate.md).
+ */
+function planBrief(pull: { repo: string; number: number }, note: string) {
+  return [
+    note ? 'Your owner read your plan and says what to change in it.' : 'Your owner read your plan and says go.',
+    '',
+    workBrief(pull),
+    ...(note ? ['', fence('What your owner says', [note], [OWNER, "OWNER'S WORDS"])] : []),
   ].join('\n');
 }
 

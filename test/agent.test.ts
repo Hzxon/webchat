@@ -637,6 +637,9 @@ describe('agent client (R-027)', () => {
         CLAUDE_CONFIG_DIR: path.join(home, 'claude'),
       });
       const dataDir = path.join(home, 'plugin');
+      // The owner turned the plan gate off for these runs; the gate has a run of its own below.
+      await fs.mkdir(path.join(dataDir, 'laptop'), { recursive: true });
+      await fs.writeFile(path.join(dataDir, 'laptop', 'setup.json'), JSON.stringify({ choice: { claudeMd: false, skills: [], noAttribution: false, noPlan: true } }));
       // The owner's settings turn the sandbox off, which no longer counts: the background Claude runs under the plugin's.
       await fs.mkdir(path.join(project, '.claude'));
       await fs.writeFile(path.join(project, '.claude', 'settings.local.json'), JSON.stringify({ sandbox: { enabled: false } }));
@@ -850,8 +853,8 @@ describe('agent client (R-027)', () => {
         const offer = { claudeMd: true, skills: [{ name: 'commit-style', description: 'Writes commit messages.' }, { name: 'other', description: 'Does other things.' }] };
         // The runs before loaded nothing of it, as nothing was chosen.
         const { harnesses, ...shown } = (await setup(alice, direct))[0]!;
-        assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
-        const claudeCode = { name: 'Claude Code', version: '2.1.0', signedIn: true, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution'] };
+        assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false, noPlan: true }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
+        const claudeCode = { name: 'Claude Code', version: '2.1.0', signedIn: true, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution', 'noPlan'] };
         const codexState = { name: 'Codex', version: '0.58.0', signedIn: true, refusal: CODEX_GAP, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: [] };
         assert.deepEqual(harnesses, [claudeCode, codexState], 'the pane learns each harness the laptop has, the knobs it honors, and why Codex takes no cards');
         // Turned off, the only harness starts nothing; a page from before the list keeps it off.
@@ -859,7 +862,7 @@ describe('agent client (R-027)', () => {
         await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false });
         assert.match(await plugin.call('status'), /You turned Claude Code off, so I start nothing/);
         // Carol's word changes nothing and hears nothing; Alice's is kept, a skill she chose that is gone too.
-        const chosen = { claudeMd: true, skills: ['commit-style', 'gone'], noAttribution: true };
+        const chosen = { claudeMd: true, skills: ['commit-style', 'gone'], noAttribution: true, noPlan: true };
         assert.deepEqual(await setup(carol, general, chosen), []);
         assert.deepEqual((await setup(alice, direct, { ...chosen, off: [] })).map((s) => s.choice), [{ ...chosen, off: [] }]);
         assert.deepEqual(JSON.parse(await fs.readFile(settings, 'utf8')).attribution, { commit: '', pr: '' }, 'the settings hide the attribution lines');
@@ -1191,7 +1194,7 @@ describe('agent client (R-027)', () => {
         assert.deepEqual([(await pullsNow()).length, await branches()], [pullsBeforeRuns, branchesBeforeRuns], 'nothing was pushed or opened');
 
         // A run that finds a decision nobody foresaw stops for it, with its claim and its work so far
-        // pushed, and holds the card.
+        // pushed, and holds the card. The plan gate's knob is off, so no plan waits for a go first.
         const needed = { kind: 'decision', title: 'Sums round half to even', body: 'Why: money.', checked: 'Read sum.js.' };
         const paused = await runK7({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'decision', note: 'Rounding needs a rule.', drafts: [needed] }) });
         assert.deepEqual(paused.said.map((r) => r.text), ['I am on K-7: Sums are off by one', 'K-7 needs a decision first: Sums round half to even. Add it on the board, then tell me to go on.']);
@@ -1330,6 +1333,35 @@ describe('agent client (R-027)', () => {
           'I am back on K-7: you told me what to change',
           `I finished K-7 on ${redirectedPull.head} (acme/app#${(await pullsNow()).length}). Sums add up now.`,
         ]);
+
+        // With the gate on, a card that holds shows its plan and waits, with nothing committed or
+        // pushed; the owner's go claims it, and the work goes on in the check's session
+        // (docs/decisions/redirect-plan-gate.md). Every run above had the knob off, and none waited.
+        await setup(alice, direct, { ...chosen, noPlan: false });
+        await unthrottle();
+        const [pullsBeforePlan, branchesBeforePlan, turnsBeforePlan] = [(await pullsNow()).length, await branches(), (await turns()).length];
+        const plan = 'Fix the off-by-one in sum.js.\nAdd a test for it.';
+        const planned = await runK7({ FAKE_CLAUDE_CHECK: JSON.stringify({ outcome: 'holds', note: '', checked: 'Read K-7 and sum.js on main.', plan }) });
+        assert.deepEqual(
+          planned.said.map((r) => [r.run.kind, r.text, r.run.note]),
+          [
+            ['claimed', 'I am on K-7: Sums are off by one', undefined],
+            ['planned', `K-7 holds. My plan:\n\n${plan}\n\nSay go, or tell me what to change.`, plan],
+          ],
+        );
+        const [planCheck] = (await turns()).slice(turnsBeforePlan);
+        assert.equal((await turns()).length, turnsBeforePlan + 1, 'only the check ran');
+        assert.deepEqual([(await pullsNow()).length, await branches()], [pullsBeforePlan, branchesBeforePlan], 'nothing was pushed or opened');
+        assert.notEqual((await git(planCheck!.cwd, 'log', '-1', '--format=%s')).stdout.trim(), 'chore: Claim K-7', 'nothing was committed');
+        await alice.send(general, { text: 'Go', run: { kind: 'fix', request: planned.id, sentAt: Date.now() } });
+        await (await checkIn()).handled;
+        const planPull = (await pullsNow()).at(-1)!;
+        assert.equal((await pullsNow()).length, pullsBeforePlan + 1, 'the go opened the draft');
+        assert.deepEqual(await reportsOn(planned.id), ['I am back on K-7: you said go', `I finished K-7 on ${planPull.head} (acme/app#${pullsBeforePlan + 1}). Sums add up now.`]);
+        assert.deepEqual(await log(planPull.head), ['Change sum.test.js', 'chore: Claim K-7']);
+        const [, planWork] = (await turns()).slice(turnsBeforePlan);
+        assert.equal(planWork!.args[planWork!.args.indexOf('--resume') + 1], planCheck!.args[planCheck!.args.indexOf('--session-id') + 1], 'the work resumes the check');
+        assert.ok(planWork!.input.includes('says go') && planWork!.input.includes(`acme/app#${pullsBeforePlan + 1} claims it`), 'the brief carries the go');
       } finally {
         restore();
       }

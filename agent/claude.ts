@@ -172,7 +172,7 @@ export function claudeHarness(program: string, hook: string, dataDir: string): H
       if (process.platform === 'win32') return 'Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.';
       if (!program) return 'I cannot find Claude Code on this laptop.';
     },
-    offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution'] }),
+    offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution', 'noPlan'] }),
     async found() {
       if (!program) return {};
       // `auth status` prints its JSON and exits 1 when signed out.

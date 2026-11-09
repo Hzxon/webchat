@@ -85,6 +85,8 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.deepEqual([state(claimed, progress).state, state(claimed, progress).progress, state(claimed, progress).messages.length], ['working', 'Run the tests', 2]);
     assert.equal(state(claimed, progress, sayRun(AGENT, { kind: 'paused', request: request.id })).progress, undefined);
     assert.equal(state(claimed, sayRun(AGENT, { kind: 'paused', request: request.id })).state, 'paused');
+    // A plan waits for the owner's go (docs/decisions/redirect-plan-gate.md).
+    assert.equal(state(claimed, sayRun(AGENT, { kind: 'planned', request: request.id, note: 'Fix sum.js.' })).state, 'planned');
     // A round that failed on a draft leaves the draft, and a go that did not send starts nothing.
     assert.equal(state(claimed, done, sayRun(AGENT, { kind: 'failed', request: request.id })).state, 'draft');
     const unsentGo = sayRun(ME, { kind: 'fix', request: request.id, sentAt: 3 });

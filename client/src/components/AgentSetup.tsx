@@ -16,7 +16,7 @@ const ANSWER_MS = 60_000;
 
 const sorted = (list: string[] = []) => [...list].sort().join();
 const flip = (list: string[], item: string) => (list.includes(item) ? list.filter((i) => i !== item) : [...list, item]);
-const same = (a: SetupChoice, b: SetupChoice) => a.claudeMd === b.claudeMd && a.noAttribution === b.noAttribution && sorted(a.skills) === sorted(b.skills) && sorted(a.off) === sorted(b.off);
+const same = (a: SetupChoice, b: SetupChoice) => a.claudeMd === b.claudeMd && a.noAttribution === b.noAttribution && !a.noPlan === !b.noPlan && sorted(a.skills) === sorted(b.skills) && sorted(a.off) === sorted(b.off);
 
 /** What a plugin from before the harness list runs: Claude Code alone, with no toggle, since it ignores `off`. */
 const OLD_PLUGIN: HarnessState = { name: 'Claude Code', instructions: '~/.claude/CLAUDE.md', skills: '~/.claude/skills', knobs: ['noAttribution'] };
@@ -122,6 +122,17 @@ function SetupForm({ agent }: { agent: UserDTO }) {
                   <span>
                     <strong>No AI attribution in commits and pull requests</strong>
                     <small>No “Co-Authored-By” or “Generated with {h.name}” lines.</small>
+                  </span>
+                </label>
+              </li>
+            )}
+            {h.knobs.includes('noPlan') && (
+              <li>
+                <label className="person">
+                  <input type="checkbox" checked={!choice.noPlan} onChange={() => setEdit({ ...choice, noPlan: !choice.noPlan })} />
+                  <span>
+                    <strong>Show me the plan before any code</strong>
+                    <small>A card run waits for your go after its check.</small>
                   </span>
                 </label>
               </li>
