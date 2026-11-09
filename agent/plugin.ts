@@ -56,7 +56,10 @@ export async function worktreeGit(worktree: string, ...args: string[]) {
   let gitDir: string | undefined;
   for (const name of await fs.readdir(admins)) {
     const pointer = await fs.readFile(path.join(admins, name, 'gitdir'), 'utf8').catch(() => '');
-    if (pointer && path.resolve(admins, name, pointer.trim()) === dotGit) gitDir = path.join(admins, name);
+    if (pointer && path.resolve(admins, name, pointer.trim()) === dotGit) {
+      gitDir = path.join(admins, name);
+      break;
+    }
   }
   if (!gitDir) throw new Error(`${worktree} is no worktree of ${checkout}.`);
   return (await exec('git', [`--git-dir=${gitDir}`, `--work-tree=${worktree}`, ...NO_HOOKS, ...args])).stdout.trim();
