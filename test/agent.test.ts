@@ -17,6 +17,7 @@ import { AgentClient, type OpenedMessage } from '../agent/client.ts';
 import { CODEX_GAP, codexHarness } from '../agent/codex.ts';
 import type { Harness } from '../agent/harness.ts';
 import { Conversations, parts, type Answerer } from '../agent/conversations.ts';
+import { worktreeGit } from '../agent/plugin.ts';
 import { addWorktree, start, type Final } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
@@ -1662,6 +1663,36 @@ describe('agent client (R-027)', () => {
     const denied = claudeSettings({ secrets: [], npmCache: '', guard: '', env }).sandbox.credentials.envVars.map((v) => v.name);
     assert.deepEqual(denied, ['GH_TOKEN', 'DATABASE_URL', 'SSH_AUTH_SOCK', 'MY_VAR']);
   });
+});
+
+test("runs git in a worktree on the git folder its checkout lists, whatever the worktree's .git file says", async () => {
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'worktree-git-')));
+  // The checkout is reached through a link, and its worktree's pointer is relative, as git 2.48 can write it.
+  await fs.mkdir(path.join(dir, 'real'));
+  await fs.symlink(path.join(dir, 'real'), path.join(dir, 'link'));
+  const project = path.join(dir, 'link', 'app');
+  await sh('git', ['init', '-q', project]);
+  await git(project, 'commit', '-q', '--allow-empty', '-m', 'Start');
+  const worktree = path.join(project, '.claude', 'worktrees', 'k-7');
+  await git(project, 'worktree', 'add', '-q', '--detach', worktree);
+  const admin = path.join(dir, 'real', 'app', '.git', 'worktrees', 'k-7');
+  await fs.writeFile(path.join(admin, 'gitdir'), '../../../.claude/worktrees/k-7/.git\n');
+  // The model points the worktree, and a submodule it stages, at a git folder whose config runs a command.
+  const planted = path.join(dir, 'planted');
+  await sh('git', ['init', '-q', planted]);
+  await git(planted, 'commit', '-q', '--allow-empty', '-m', 'Planted');
+  const ran = path.join(dir, 'ran');
+  await git(planted, 'config', 'core.fsmonitor', `touch ${ran}`);
+  const plantedHead = (await git(planted, 'rev-parse', 'HEAD')).stdout.trim();
+  await sh('git', [`--git-dir=${admin}`, `--work-tree=${worktree}`, 'update-index', '--add', '--cacheinfo', `160000,${plantedHead},sub`]);
+  await fs.mkdir(path.join(worktree, 'sub'));
+  await fs.writeFile(path.join(worktree, 'sub', '.git'), `gitdir: ${path.join(planted, '.git')}\n`);
+  await fs.writeFile(path.join(worktree, '.git'), `gitdir: ${path.join(planted, '.git')}\n`);
+  assert.equal(await fs.realpath(await worktreeGit(worktree, 'rev-parse', '--absolute-git-dir')), admin);
+  await worktreeGit(worktree, 'status', '--porcelain');
+  await worktreeGit(worktree, 'diff', '--cached', '--quiet').catch(() => undefined);
+  assert.equal(existsSync(ran), false, 'the planted config ran nothing');
+  await fs.rm(dir, { recursive: true, force: true });
 });
 
 test('cuts an answer into messages after line breaks, never inside a surrogate pair', () => {

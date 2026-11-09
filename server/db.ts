@@ -1139,6 +1139,8 @@ export async function openDb(sql: Sql) {
     ): Promise<number | ProjectChangeRefusal> {
       return sql.transaction(async (tx) => {
         const { memberIds } = await lockProject(tx, projectId);
+        // Removed since the route checked: the copies would come from someone outside the project.
+        if (!memberIds.includes(createdBy)) return 'stale';
         if (!sameIds(memberIds, key.wrappedKeys.map((k) => k.userId))) return 'stale';
         if (key.conversationId < Math.min(...(await projectChannels(tx, projectId)).map((c) => c.id))) return 'stale';
         return (await insertChannel(tx, projectId, title, memberIds, { ...key, wrappedBy: createdBy })) ?? 'name_taken';
@@ -1910,12 +1912,19 @@ export async function openDb(sql: Sql) {
       await sql.query('DELETE FROM webchat.docs WHERE id = $1', [docId]);
     },
 
+    /** Saves the subscription; false when another account holds the endpoint under other keys. */
     savePushSubscription: async (userId: number, endpoint: string, p256dh: string, auth: string) => {
-      await sql.query(
+      const saved = await sql.query(
         `INSERT INTO webchat.push_subscriptions (endpoint, user_id, p256dh, auth, created_at) VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
+         ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth
+         -- Another account takes an endpoint only with its keys, as the same browser signed in to it
+         -- sends them; the endpoint alone would let anyone who learned it take someone's pushes.
+         WHERE push_subscriptions.user_id = EXCLUDED.user_id
+            OR (push_subscriptions.p256dh = EXCLUDED.p256dh AND push_subscriptions.auth = EXCLUDED.auth)
+         RETURNING endpoint`,
         [endpoint, userId, p256dh, auth, Date.now()],
       );
+      return saved.length > 0;
     },
     deletePushSubscription: async (endpoint: string) => {
       await sql.query('DELETE FROM webchat.push_subscriptions WHERE endpoint = $1', [endpoint]);

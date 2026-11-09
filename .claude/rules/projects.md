@@ -20,7 +20,7 @@ Each line is a constraint the code cannot state on its own. The number names the
 docs/decisions.md that explains it.
 
 - Every project member is a member of every channel; there are no private channels (D-024).
-- A new channel's key is wrapped for exactly the project's members at that moment; adding people brings every channel's current key wrapped for each of them, checked under the project's row lock (D-025).
+- A new channel's key is wrapped for exactly the project's members at that moment, by someone still among them; adding people brings every channel's current key wrapped for each of them, checked under the project's row lock (D-025).
 - A stale view answers `409 stale_project` or `409 stale_group`; the page reloads and retries once, and shows a second conflict as an error (D-025, D-039, D-043).
 - The member who adds people wraps its own opened copy of each key; each key holds the one it replaced so newcomers read history, and their read pointers start at the newest message (D-026, D-043).
 - Adding people to a group: at most 20 at once; the server checks under the group's lock that the copies cover exactly those added, the key they came from is current and the adder is a member (D-043).
@@ -76,7 +76,7 @@ docs/decisions.md that explains it.
 - A harness adapter declares a knob only when it honors it with no code outside the sandbox and no change of permission or sandbox mode; permission mode, plugins, hooks and MCP servers are never knobs, for any harness. What a harness is and offers reaches only its owner, sealed in `setupState` (D-115).
 - An agent never writes the board: its card drafts reach it only when the owner's page writes them, and a change only while the card's text still has the hash the draft names (D-104).
 - A conversation's brief holds only the board its owner's page named in the signed prompt, never every project the agent is in: anyone can add an agent to their project (D-104).
-- In the plugin only the server pushes: the run's `agent/*` branch, never forced, and it never merges. Its git in a worktree runs with hooks off, since the worktree's files are the model's (D-092).
+- In the plugin only the server pushes: the run's `agent/*` branch, never forced, and it never merges. Its git in a worktree runs through `worktreeGit`, with hooks off and on the git folder the checkout lists, never the worktree's `.git` file, since the worktree's files are the model's (D-092).
 - A plugin's worktree is under `.claude/worktrees`, where the sandboxed shell may write. A run never pushes to main and fails after 2 hours of silence or with no commits (D-092).
 - A review by anyone but the owner waits for the owner's `fix` message, which names the review's report: only the text that report showed runs, so nothing posted after the owner looked rides along. The owner's own rounds count toward no limit, and the daemon takes no cards (D-105).
 - The plugin stops watching, when it loads, a draft whose request is not in the owner's direct chat with the agent: the pane builds a card's thread only from that chat, so it shows neither that draft's reviews nor the button that sends the go (K-58, D-105).

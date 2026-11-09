@@ -1080,7 +1080,9 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     if (Buffer.from(p256dh, 'base64url').length !== 65 || Buffer.from(auth, 'base64url').length !== 16) {
       throw new HttpError(400, 'Subscription keys are invalid.');
     }
-    await db.savePushSubscription(me.id, endpoint, p256dh, auth);
+    if (!(await db.savePushSubscription(me.id, endpoint, p256dh, auth))) {
+      throw new HttpError(409, 'Another account holds this push subscription.', 'endpoint_taken');
+    }
     res.status(204).end();
   });
 

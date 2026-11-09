@@ -555,6 +555,22 @@ describe('chat server', () => {
     await bob.request('POST', '/push/unsubscribe', { endpoint: good.json.endpoint });
   });
 
+  test('a push endpoint moves to another account only with its keys', async () => {
+    const browser = makeSubscription(`http://${pushService.host}/bob-shared`);
+    const ownerOf = async () =>
+      (await instance.sql.query<{ user_id: number }>('SELECT user_id FROM webchat.push_subscriptions WHERE endpoint = $1', [browser.json.endpoint]))[0]?.user_id;
+    assert.equal((await bob.request('POST', '/push/subscribe', browser.json)).status, 204);
+    const forged = makeSubscription(browser.json.endpoint);
+    // Refused, so the page makes a new subscription instead of believing it has one.
+    const refused = await carol.request<{ code?: string }>('POST', '/push/subscribe', forged.json);
+    assert.deepEqual([refused.status, refused.data.code], [409, 'endpoint_taken']);
+    assert.equal(await ownerOf(), bob.id, 'knowing the endpoint is not enough');
+    // The same browser signed in to another account sends the same subscription.
+    assert.equal((await carol.request('POST', '/push/subscribe', browser.json)).status, 204);
+    assert.equal(await ownerOf(), carol.id);
+    await carol.request('POST', '/push/unsubscribe', { endpoint: browser.json.endpoint });
+  });
+
   test('a sync with nothing new answers "unchanged"', async () => {
     await bob.bootstrap();
     // The first check-in brings Bob online, which is itself a change.
@@ -1165,6 +1181,12 @@ describe('chat server', () => {
       assert.equal(taken.data.code, 'name_taken');
       const outsider = await carol.request('POST', `/projects/${project.id}/channels`, { name: 'secret', key });
       assert.equal(outsider.status, 404);
+    });
+
+    test('someone removed after the membership check cannot add a channel', async () => {
+      // The route checked Carol while she was a member; the lock is where the removal shows.
+      const key = await carol.newChatKey([alice, bob].map((c) => ({ id: c.id, keys: keysOf(c) })));
+      assert.equal(await (await openDb(instance.sql)).createChannel(project.id, 'late', carol.id, key), 'stale');
     });
 
     test('a channel cannot take an id from before #general, which pages tell by the lowest id (D-111)', async () => {

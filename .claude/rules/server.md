@@ -29,6 +29,7 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - Every API request names its account in `x-webchat-user`; a mismatch answers `409 account_changed` (D-008).
 - Attention lasts 45 seconds after the last check-in; a closing tab ends it with `POST /api/away` (D-007).
 - A tab with no push subscription gets no push and checks in every 3 seconds (D-007).
+- A push endpoint moves to another account only when the subscribe request holds its stored keys; the endpoint alone is not proof. A refusal answers `409 endpoint_taken`, and the page replaces its subscription with a new one.
 - Every `/api` response carries `X-WebChat-Build`; send none without a built page (D-040).
 - Count a sign-in attempt before it runs and return the hit with `returnRateLimit` before answering; never use the `finish` event, the function may stop after the answer (D-068).
 - Sign-up refuses a browser that sends the `webchat_device` cookie; sign-up, sign-in and sign-out set it (D-080).
