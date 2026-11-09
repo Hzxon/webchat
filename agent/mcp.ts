@@ -11,7 +11,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { guard, Plugin, secretDirs, type ToolUse } from './plugin.ts';
+import { ClaudePlugin, claudeSecrets, guard, type ToolUse } from './claude.ts';
 import { messageOf } from './runs.ts';
 
 const none = { type: 'object', properties: {} };
@@ -65,7 +65,7 @@ const TOOLS = [
 
 async function serve() {
   const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? '';
-  const plugin = new Plugin({
+  const plugin = new ClaudePlugin({
     code: process.env.WEBCHAT_PAIRING_CODE ?? '',
     dataDir,
     projectDir: process.env.CLAUDE_PROJECT_DIR ?? process.cwd(),
@@ -125,7 +125,7 @@ async function serve() {
 }
 
 if (process.argv[2] === 'guard') {
-  const reason = guard(JSON.parse(readFileSync(0, 'utf8')) as ToolUse, secretDirs(process.argv[3] ?? process.env.CLAUDE_PLUGIN_DATA ?? ''));
+  const reason = guard(JSON.parse(readFileSync(0, 'utf8')) as ToolUse, claudeSecrets(process.argv[3] ?? process.env.CLAUDE_PLUGIN_DATA ?? ''));
   if (reason) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
 } else {
   await serve();

@@ -2,7 +2,15 @@
 // conversation, apart from the owner's own sessions. It runs restricted, so it reads only managed
 // settings and the plugin's settings file: none of the owner's settings, and none of the
 // repository's settings, hooks or .mcp.json, which a -p run otherwise loads without asking. The
-// message goes on stdin, since arguments show in `ps`, and the turn ends with a JSON answer.
+// message goes on stdin, since arguments show in `ps`, and the turn ends with a JSON answer. This
+// is the plugin's harness adapter for Claude Code (harness.ts).
+import { readlinkSync, realpathSync } from 'node:fs';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { secretDirs, type Harness } from './harness.ts';
+import { Plugin, type PluginOptions } from './plugin.ts';
+import { start, type Final } from './runner.ts';
 
 /** The only host the shell reaches, for installs (D-097). */
 const REGISTRY = 'registry.npmjs.org';
@@ -81,4 +89,160 @@ export function claudeArgs({ settings, session, resume, answer, claudeMd, skills
     resume ? '--resume' : '--session-id',
     session,
   ];
+}
+
+/** Claude Code's final word, from the line of its stream-json output that holds it (D-097). */
+export function claudeResult(line: string): Final | undefined {
+  let event: { type?: string; result?: string; is_error?: boolean; session_id?: string; structured_output?: unknown } | null;
+  try {
+    event = JSON.parse(line) as typeof event;
+  } catch {
+    return undefined;
+  }
+  if (event?.type !== 'result') return undefined;
+  return { text: String(event.result ?? ''), error: event.is_error === true, session: event.session_id, answer: event.structured_output };
+}
+
+/** The owner's Claude Code folder, `~/.claude` unless they moved it. */
+const claudeHome = () => process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
+
+/**
+ * The secret folders, and Claude Code's `session-env`: it keeps there the environment SessionStart
+ * hooks leave, tokens and all, and lets a sandboxed shell read it.
+ */
+export const claudeSecrets = (dataDir: string) => [...secretDirs(dataDir), path.join(claudeHome(), 'session-env')];
+
+/** The adapter: turns in `program`, restricted, under the plugin's settings file, which the guard hook `hook` completes. */
+export function claudeHarness(program: string, hook: string, dataDir: string): Harness {
+  const secrets = claudeSecrets(dataDir);
+  // Beside the laptop's copy of the account, where it always was.
+  const settings = path.join(dataDir, 'laptop', 'claude.json');
+  const npmCache = path.join(os.tmpdir(), 'webchat-npm', 'laptop');
+  return {
+    async refusal(dir) {
+      if (dir) return sandboxProblem(dir, secrets, restrictedSettings(settings));
+      if (process.platform === 'win32') return 'Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.';
+      if (!program) return 'I cannot find Claude Code on this laptop.';
+    },
+    offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution'] }),
+    // The turn runs under the plugin's settings alone, so the owner's do not count (D-097).
+    async apply({ noAttribution }) {
+      await fs.mkdir(npmCache, { recursive: true });
+      await fs.writeFile(settings, JSON.stringify(claudeSettings({ secrets, npmCache, guard: hook, env: process.env, noAttribution })));
+    },
+    async turn({ cwd, session, resume, message, schema, setup, signal }) {
+      // The skills' copies load as a plugin, which holds only `skills/`.
+      const args = claudeArgs({ settings, session, resume, answer: schema, claudeMd: setup.instructions, skills: setup.skills && path.dirname(setup.skills) });
+      const turn = await start(program, args, cwd, signal, claudeResult, message);
+      if (turn.error || !turn.answer) throw new Error(turn.text.trim().slice(0, 500) || 'Claude stopped without an answer.');
+      return turn.answer;
+    },
+  };
+}
+
+/** The plugin as Claude Code hosts it: its turns run in the session's own `claude`, with the guard hook `guard`. */
+export class ClaudePlugin extends Plugin {
+  constructor({ claude, guard: hook, ...options }: Omit<PluginOptions, 'harness'> & { claude: string; guard: string }) {
+    super({ ...options, harness: claudeHarness(claude, hook, options.dataDir) });
+  }
+}
+
+const within = (file: string, dir: string) => {
+  const rel = path.relative(dir, file);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+};
+
+/**
+ * The real path of a file that may not exist yet: its nearest existing folder's, then the rest. A
+ * link to a file not made yet counts as its target, where a write through it lands (K-55).
+ */
+function real(file: string, hops = 0): string {
+  try {
+    // Unlike Node's own, the native call resolves as the kernel does: `..` after a link goes up from
+    // the link's target, and on macOS a name in other letter case is the same folder.
+    return realpathSync.native(file);
+  } catch {
+    const parent = path.dirname(file);
+    if (parent === file) return file;
+    const dir = real(parent, hops);
+    const here = path.join(dir, path.basename(file));
+    let target: string;
+    try {
+      target = readlinkSync(here);
+    } catch {
+      return here;
+    }
+    // Not path.resolve, which applies `..` before the links. A kernel follows at most 40 links, so
+    // this stops there too, which also ends a loop.
+    return hops < 40 ? real(path.isAbsolute(target) ? target : `${dir}${path.sep}${target}`, hops + 1) : here;
+  }
+}
+
+interface Settings {
+  sandbox?: { enabled?: boolean; failIfUnavailable?: boolean; filesystem?: { denyRead?: string[]; allowRead?: string[] } };
+  permissions?: { blockReadsOutsideWorkingDirectories?: boolean };
+}
+
+/** A settings file Claude Code reads, and the folder a relative path in it counts from. */
+type SettingsFile = [file: string, base: string];
+
+const MANAGED =
+  process.platform === 'darwin'
+    ? '/Library/Application Support/ClaudeCode/managed-settings.json'
+    : process.platform === 'win32'
+      ? 'C:\\Program Files\\ClaudeCode\\managed-settings.json'
+      : '/etc/claude-code/managed-settings.json';
+
+/** The files a `claude -p --restricted` run reads: managed settings, then the one it got with --settings (D-097). */
+export const restrictedSettings = (file: string): SettingsFile[] => [
+  [MANAGED, path.dirname(MANAGED)],
+  [file, path.dirname(file)],
+];
+
+/**
+ * Why the background Claude's shell could read a secret, from the settings files it runs with, or
+ * undefined when it cannot. Only managed settings can undo the plugin's own (D-097).
+ */
+export async function sandboxProblem(projectDir: string, secrets: string[], sources: SettingsFile[]) {
+  const home = os.homedir();
+  const settings = await Promise.all(
+    sources.map(async ([file, base]) => ({ base, json: (JSON.parse(await fs.readFile(file, 'utf8').catch(() => '{}')) ?? {}) as Settings })),
+  );
+  const first = <T>(pick: (s: Settings) => T | undefined) => settings.map((s) => pick(s.json)).find((value) => value !== undefined);
+  if (first((s) => s.sandbox?.enabled) !== true) return 'Claude Code’s managed settings turn its sandbox off on my machine.';
+  const resolve = (base: string, rule: string) => (rule === '~' || rule.startsWith('~/') ? path.join(home, rule.slice(1)) : path.resolve(base, rule));
+  const rules = settings.flatMap(({ base, json }) => [
+    ...(json.sandbox?.filesystem?.denyRead ?? []).map((rule) => ({ dir: resolve(base, rule), deny: true })),
+    ...(json.sandbox?.filesystem?.allowRead ?? []).map((rule) => ({ dir: resolve(base, rule), deny: false })),
+  ]);
+  const outsideBlocked = first((s) => s.permissions?.blockReadsOutsideWorkingDirectories) === true;
+  for (const secret of secrets) {
+    // The narrowest rule that covers the folder decides, as in Claude Code; a deny wins a tie.
+    const rule = rules.filter((r) => within(secret, r.dir)).sort((a, b) => b.dir.length - a.dir.length || Number(b.deny) - Number(a.deny))[0];
+    if (rule ? !rule.deny : !(outsideBlocked && !within(secret, projectDir))) {
+      return `My sandboxed shell could read ${secret}, as Claude Code’s managed settings allow.`;
+    }
+  }
+  // Where the sandbox cannot start, Claude Code would run the shell without it (K-53).
+  if (first((s) => s.sandbox?.failIfUnavailable) !== true) return 'Claude Code’s managed settings would let my shell run unsandboxed if its sandbox failed to start.';
+}
+
+/** A tool call, as Claude Code hands it to a PreToolUse hook. */
+export interface ToolUse {
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  cwd: string;
+}
+
+const FILE_TOOLS = new Set(['Read', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Glob', 'Grep']);
+
+/**
+ * Why the guard hook denies a tool call, or undefined. File tools never touch the secret folders,
+ * since they run outside the sandbox (D-092), in the background Claude and in every other session.
+ */
+export function guard(use: ToolUse, secrets: string[]): string | undefined {
+  const input = use.tool_input;
+  const named = input.file_path ?? input.notebook_path ?? (use.tool_name === 'Glob' || use.tool_name === 'Grep' ? (input.path ?? use.cwd) : undefined);
+  const target = FILE_TOOLS.has(use.tool_name) && typeof named === 'string' ? real(path.resolve(use.cwd, named)) : undefined;
+  if (target && secrets.some((dir) => within(target, real(dir)))) return 'That folder holds secrets the WebChat plugin keeps from the model.';
 }
