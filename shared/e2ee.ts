@@ -600,7 +600,7 @@ function readChoice(raw: unknown): SetupChoice | undefined {
   const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown; off?: unknown } | null | undefined;
   if (typeof choice?.claudeMd !== 'boolean' || typeof choice.noAttribution !== 'boolean' || !Array.isArray(choice.skills)) return;
   const skills = choice.skills.filter((s): s is string => typeof s === 'string' && SKILL_NAME.test(s)).slice(0, LIMITS.setupSkills);
-  const off = Array.isArray(choice.off) ? choice.off.filter((n): n is string => !!short(n, 64)).slice(0, LIMITS.harnesses) : undefined;
+  const off = Array.isArray(choice.off) ? choice.off.filter((n): n is string => !!short(n, LIMITS.harnessFieldLength)).slice(0, LIMITS.harnesses) : undefined;
   return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution, ...(off && { off }) };
 }
 
@@ -609,7 +609,7 @@ function readHarnesses(raw: unknown): HarnessState[] | undefined {
   if (!Array.isArray(raw)) return;
   const field = (value: unknown) => short(value, LIMITS.harnessFieldLength);
   return (raw as Array<Record<string, unknown> | null>).slice(0, LIMITS.harnesses).flatMap((h) => {
-    const name = short(h?.name, 64);
+    const name = field(h?.name);
     if (!h || !name) return [];
     const knobs = Array.isArray(h.knobs) ? h.knobs.filter((k): k is string => typeof k === 'string' && /^\w{1,32}$/.test(k)) : [];
     const signedIn = typeof h.signedIn === 'boolean' ? h.signedIn : undefined;

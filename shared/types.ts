@@ -927,7 +927,7 @@ export const LIMITS = {
   /** Skills an agent offers its owner, and a skill's description, so its answer stays one message (R-039). */
   setupSkills: 40,
   skillDescriptionLength: 140,
-  /** Harnesses an agent's answer lists, with a name, a version, a path or a refusal's length (D-115). */
+  /** Harnesses an agent's answer lists, and the length of a name, a version, a path or a refusal (D-115). */
   harnesses: 8,
   harnessFieldLength: 500,
 } as const;

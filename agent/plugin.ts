@@ -377,7 +377,7 @@ export class Plugin {
   private async refusal() {
     // Going to sleep: what runs finishes, and nothing new starts (K-66, D-113).
     if (existsSync(this.asleep)) return 'I am going to sleep, so I start nothing new. To wake me, type /webchat:wake in Claude Code on your laptop.';
-    const { name } = this.options.harness.offers();
+    const { name } = this.options.harness;
     if (this.setup.choice.off?.includes(name)) return `You turned ${name} off, so I start nothing. Turn it on in my settings under Coding agents.`;
     return this.options.harness.refusal();
   }
@@ -715,9 +715,11 @@ export class Plugin {
     }
     const { choice, applied } = this.setup;
     const { harness } = this.options;
+    const offer = harness.offers();
+    const [owner, state] = await Promise.all([ownerSetup(offer), harnessState(harness, offer)]);
     await this.client!.send(message.conversationId, {
       text: `My runs load ${setupWords(choice)}.`,
-      setupState: { to: message.clientId!, ...(await ownerSetup(harness.offers())), choice, ...(applied && { applied }), harnesses: [await harnessState(harness)] },
+      setupState: { to: message.clientId!, ...owner, choice, ...(applied && { applied }), harnesses: [state] },
     });
   }
 
@@ -1582,10 +1584,9 @@ async function ownerSetup({ instructions, skills: dir }: ReturnType<Harness['off
 }
 
 /** A harness as the owner's Settings shows it (D-115): what the laptop has of it, whether it takes cards, and what it offers. */
-async function harnessState(harness: Harness): Promise<HarnessState> {
-  const { name, instructions, skills, knobs } = harness.offers();
-  const home = (file?: string) => file && (file.startsWith(os.homedir() + path.sep) ? `~${file.slice(os.homedir().length)}` : file);
-  return { name, ...(await harness.found()), refusal: await harness.refusal(), instructions: home(instructions), skills: home(skills), knobs };
+async function harnessState(harness: Harness, { instructions, skills, knobs }: ReturnType<Harness['offers']>): Promise<HarnessState> {
+  const [found, refusal] = await Promise.all([harness.found(), harness.refusal()]);
+  return { name: harness.name, ...found, refusal, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
 }
 
 /** A SKILL.md's description, from its front matter: one line, or the indented lines a block scalar folds. */

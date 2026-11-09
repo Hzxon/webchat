@@ -15,12 +15,8 @@ import { formatAgo } from './format';
 const ANSWER_MS = 60_000;
 
 const sorted = (list: string[] = []) => [...list].sort().join();
+const flip = (list: string[], item: string) => (list.includes(item) ? list.filter((i) => i !== item) : [...list, item]);
 const same = (a: SetupChoice, b: SetupChoice) => a.claudeMd === b.claudeMd && a.noAttribution === b.noAttribution && sorted(a.skills) === sorted(b.skills) && sorted(a.off) === sorted(b.off);
-
-/** What each knob a harness may declare does, in words. A knob this page does not know stays as it is. */
-const KNOBS: Record<'noAttribution', (harness: string) => { label: string; detail: string }> = {
-  noAttribution: (harness) => ({ label: 'No AI attribution in commits and pull requests', detail: `No “Co-Authored-By” or “Generated with ${harness}” lines.` }),
-};
 
 /** What a plugin from before the harness list runs: Claude Code alone, with no toggle, since it ignores `off`. */
 const OLD_PLUGIN: HarnessState = { name: 'Claude Code', instructions: '~/.claude/CLAUDE.md', skills: '~/.claude/skills', knobs: ['noAttribution'] };
@@ -82,9 +78,7 @@ function SetupForm({ agent }: { agent: UserDTO }) {
   const offered = new Set(answer.skills.map((s) => s.name));
   // A chosen skill that left the laptop stays listed, so it can be turned off.
   const skills = [...answer.skills, ...choice.skills.filter((name) => !offered.has(name)).map((name) => ({ name, description: 'Not on the laptop' }))];
-  const toggle = (name: string) => setEdit({ ...choice, skills: choice.skills.includes(name) ? choice.skills.filter((s) => s !== name) : [...choice.skills, name] });
   const off = choice.off ?? [];
-  const turn = (name: string) => setEdit({ ...choice, off: off.includes(name) ? off.filter((n) => n !== name) : [...off, name] });
   const busy = saving && waiting && !late;
 
   return (
@@ -102,7 +96,7 @@ function SetupForm({ agent }: { agent: UserDTO }) {
       {(answer.harnesses ?? [OLD_PLUGIN]).map((h) => (
         <section key={h.name} className="dialog-form">
           <label className="toggle-row">
-            {answer.harnesses && <input type="checkbox" checked={!off.includes(h.name)} onChange={() => turn(h.name)} />}
+            {answer.harnesses && <input type="checkbox" checked={!off.includes(h.name)} onChange={() => setEdit({ ...choice, off: flip(off, h.name) })} />}
             <span>
               <strong>{[h.name, h.version].filter(Boolean).join(' ')}</strong>
               <small>{[h.signedIn !== undefined && (h.signedIn ? 'Signed in' : 'Not signed in'), h.refusal ?? (answer.harnesses && 'Takes cards')].filter(Boolean).join('. ')}</small>
@@ -120,22 +114,18 @@ function SetupForm({ agent }: { agent: UserDTO }) {
                 </label>
               </li>
             )}
-            {h.knobs
-              .filter((knob): knob is keyof typeof KNOBS => Object.hasOwn(KNOBS, knob))
-              .map((knob) => {
-                const { label, detail } = KNOBS[knob](h.name);
-                return (
-                  <li key={knob}>
-                    <label className="person">
-                      <input type="checkbox" checked={choice[knob]} onChange={() => setEdit({ ...choice, [knob]: !choice[knob] })} />
-                      <span>
-                        <strong>{label}</strong>
-                        <small>{detail}</small>
-                      </span>
-                    </label>
-                  </li>
-                );
-              })}
+            {/* A knob this page does not know yet stays as it is. */}
+            {h.knobs.includes('noAttribution') && (
+              <li>
+                <label className="person">
+                  <input type="checkbox" checked={choice.noAttribution} onChange={() => setEdit({ ...choice, noAttribution: !choice.noAttribution })} />
+                  <span>
+                    <strong>No AI attribution in commits and pull requests</strong>
+                    <small>No “Co-Authored-By” or “Generated with {h.name}” lines.</small>
+                  </span>
+                </label>
+              </li>
+            )}
           </ul>
           {h.skills &&
             (skills.length > 0 ? (
@@ -143,7 +133,7 @@ function SetupForm({ agent }: { agent: UserDTO }) {
                 {skills.map((s) => (
                   <li key={s.name}>
                     <label className="person">
-                      <input type="checkbox" checked={choice.skills.includes(s.name)} onChange={() => toggle(s.name)} />
+                      <input type="checkbox" checked={choice.skills.includes(s.name)} onChange={() => setEdit({ ...choice, skills: flip(choice.skills, s.name) })} />
                       <span>
                         <strong>{s.name}</strong>
                         <small>{s.description}</small>
