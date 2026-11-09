@@ -174,6 +174,8 @@ export interface CardRun {
   request: number;
   runtime: number;
   repo?: string;
+  /** The harness the request named, or none for the laptop's host. */
+  harness?: string;
   state: 'sending' | 'waiting' | 'unanswered' | 'cancelled' | RunReport['kind'];
   note?: string;
   /** The pull request a run that is done opened. */
@@ -230,7 +232,7 @@ export function cardRuns(messages: ChatMessage[], meId: number, docId: string, p
       if (m.senderId !== meId || run.docId !== docId || status === 'failed') continue;
       sections.set(m.id, run.section);
       const state = status === 'sending' ? 'sending' : now - (run.sentAt ?? 0) < RUN_PICKUP_MS ? 'waiting' : 'unanswered';
-      runs.set(run.section, { request: m.id, runtime: run.runtime, repo: run.repo, state });
+      runs.set(run.section, { request: m.id, runtime: run.runtime, repo: run.repo, harness: run.harness, state });
     } else if (run.kind === 'cancel') {
       const target = m.senderId === meId ? latest(run.request) : undefined;
       if (target?.state === 'waiting') target.state = 'cancelled';

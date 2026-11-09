@@ -779,10 +779,10 @@ export function sendMessage(conversationId: number, body: string, urgent: boolea
  * answers with reports that name this message, which the pane and the board fold into the card. The
  * text says the same in words. Returns the conversation, by the request's client id.
  */
-export async function requestRun(docId: string, card: Card, runtime: UserDTO, repo: string, hash: string) {
+export async function requestRun(docId: string, card: Card, runtime: UserDTO, repo: string, hash: string, harness?: string) {
   const conversationId = await startDirectChat(runtime.id);
   const id = `${card.kind}-${card.number}`;
-  const run: RunRequest = { kind: 'request', card: id, title: card.title.slice(0, LIMITS.runNoteLength), docId, section: card.id, runtime: runtime.id, sentAt: Date.now(), repo, hash, was: card.status };
+  const run: RunRequest = { kind: 'request', card: id, title: card.title.slice(0, LIMITS.runNoteLength), docId, section: card.id, runtime: runtime.id, sentAt: Date.now(), repo, hash, was: card.status, ...(harness && { harness }) };
   const clientId = newClientId();
   void sendContent(conversationId, { text: `Run ${id}: ${card.title}`, run }, false, clientId);
   return clientId;
@@ -810,14 +810,15 @@ export function askClone(conversationId: number, repo: string, waiting: { reques
 /**
  * Asks one of the user's coding agents in a project (D-102, R-038): a message in their direct chat
  * with it, whose `prompt` field names the project, whose board alone goes in the brief (D-104), and
- * one of its repositories, or none for a project that links none. The agent's laptop answers.
- * Returns the conversation, by the prompt's client id.
+ * one of its repositories, or none for a project that links none, and the harness picked, or none
+ * for the laptop's host harness. The agent's laptop answers. Returns the conversation, by the
+ * prompt's client id.
  */
-export async function askAgent(agentId: number, project: number, repo: string | undefined, question: string) {
+export async function askAgent(agentId: number, project: number, repo: string | undefined, question: string, harness?: string) {
   const conversationId = await startDirectChat(agentId);
   const clientId = newClientId();
   // The message shows as sending at once, so the pane can open its conversation.
-  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, ...(repo && { repo }) } }, false, clientId);
+  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, ...(repo && { repo }), ...(harness && { harness }) } }, false, clientId);
   return clientId;
 }
 

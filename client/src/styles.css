@@ -3051,11 +3051,17 @@ a {
 
 .agents-repo {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   margin: 0 0 8px;
   color: var(--muted);
   font-size: 13px;
+}
+
+/* The harness picker beside the repository, on the same line. */
+.agents-repo .agents-repo {
+  margin: 0;
 }
 
 .agents-repo select {

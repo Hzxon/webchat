@@ -22,16 +22,24 @@ export interface Turn {
 }
 
 export interface Harness {
+  /** Its name for the owner, such as "Claude Code", which `SetupChoice.off` names. */
+  readonly name: string;
   /**
    * Why this laptop cannot run its turns, or undefined. With `dir`, why its shell could read a
-   * secret folder while it works there, or undefined when the adapter proves it cannot.
+   * secret folder while it works there, or undefined when the adapter proves it cannot. A turn for
+   * `answers` runs in a scratch copy and pushes nothing, so an adapter whose only gap is the
+   * owner's login may allow it while it refuses `cards`, the default: answers only is the floor.
    */
-  refusal(dir?: string): Promise<string | undefined>;
+  refusal(dir?: string, purpose?: 'cards' | 'answers'): Promise<string | undefined>;
   /**
    * What of the owner's setup it can load: the instructions file and the skills folder it reads,
-   * and the knobs it honors, named as in `SetupChoice`, such as `noAttribution`.
+   * and the knobs it honors, named as in `SetupChoice`, such as `noAttribution`. It declares a knob
+   * only when it honors it without running code outside the sandbox and without changing
+   * permission or sandbox mode (D-115).
    */
   offers(): { instructions?: string; skills?: string; knobs: string[] };
+  /** What the laptop has of it: its version, and whether it is signed in, each left out when it cannot tell. */
+  found(): Promise<{ version?: string; signedIn?: boolean }>;
   /** Takes the owner's choice for its knobs: before any proof or turn, and again whenever it changes. */
   apply(choice: SetupChoice): Promise<void>;
   /** Runs one turn, and resolves to its answer for the schema. */
