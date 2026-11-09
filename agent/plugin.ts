@@ -10,7 +10,7 @@
 // same Claude session takes another turn.
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, readlinkSync, realpathSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,10 +19,10 @@ import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
 import { copyOf, entriesOf, proposalOf, readCard } from '../shared/board.ts';
 import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, SKILL_NAME, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
-import { claudeArgs, claudeSettings } from './claude.ts';
 import { AgentClient, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
-import { addWorktree, claudeResult, fetchOrigin, start } from './runner.ts';
+import type { Harness } from './harness.ts';
+import { addWorktree, fetchOrigin } from './runner.ts';
 import { messageOf, REQUEST_TTL_MS, Runs, type Runner, type RunResult } from './runs.ts';
 
 const exec = promisify(execFile);
@@ -44,16 +44,14 @@ const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null'];
 export interface PluginOptions {
   /** The pairing code from the plugin's settings, after WebChat's address. */
   code: string;
-  /** The plugin's own folder: the account, the lock, its Claude's settings. Neither the shell nor the file tools may read it. */
+  /** The plugin's own folder: the account, the lock, its harness's settings. Neither the shell nor the file tools may read it. */
   dataDir: string;
   /** The folder the window is open in: any folder, since one window serves them all (R-036). */
   projectDir: string;
   /** Where the agent clones a repository its owner asks for: `~/WebChat` (D-108). */
   cloneRoot: string;
-  /** The `claude` that runs cards: the session's own, so the background Claude has its version and login. */
-  claude: string;
-  /** The guard hook's command, which the background Claude runs before each file tool. */
-  guard: string;
+  /** The coding agent whose turns run cards and answer questions. */
+  harness: Harness;
   /** A background job of Claude Code: it never serves, so closing the window you work in puts the agent to sleep (K-66). */
   job?: boolean;
 }
@@ -244,8 +242,6 @@ export class Plugin {
   problem = 'Starting.';
   private runs: Runs | null = null;
   private conversations: Conversations | null = null;
-  /** The folders the background Claude must never read. */
-  private secrets: string[] = [];
   /** The laptop's folder in the plugin's: its copy of the account, its Claude's settings, its pull requests and conversations. */
   private readonly home: string;
   /** Every folder the laptop has, by repository in lower case, as GitHub ignores case (R-036). */
@@ -333,7 +329,6 @@ export class Plugin {
     if (!client || client.pairing !== paired!.pairing) client = await paired!.copyTo(this.file('account.json'));
     this.client = client;
     client.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup;
-    this.secrets = secretDirs(dataDir);
     this.setup = JSON.parse(await fs.readFile(this.file('setup.json'), 'utf8').catch(() => 'null')) ?? this.setup;
     await this.saveSetup();
     this.runs = new Runs(client, (job) => this.run(job), (run) => this.cardRefusal(run), (taken, why) => this.abandon(taken, why));
@@ -382,15 +377,14 @@ export class Plugin {
   private async refusal() {
     // Going to sleep: what runs finishes, and nothing new starts (K-66, D-113).
     if (existsSync(this.asleep)) return 'I am going to sleep, so I start nothing new. To wake me, type /webchat:wake in Claude Code on your laptop.';
-    if (process.platform === 'win32') return 'Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.';
-    if (!this.options.claude) return 'I cannot find Claude Code on this laptop.';
+    return this.options.harness.refusal();
   }
 
   /** Why the work in one folder fails before it starts, or undefined (D-097). */
   private folderRefusal(folder: Folder) {
     // The background Claude's shell reads the repository's .git, where an https address can hold a login.
     if (/^https?:\/\/[^/]*@/i.test(folder.origin)) return `The address of ${folder.repo} on this laptop holds a password, which I must not see. Ask Claude Code there to take the login out of the address of origin.`;
-    return sandboxProblem(folder.dir, this.secrets, restrictedSettings(this.file('claude.json')));
+    return this.options.harness.refusal(folder.dir);
   }
 
   /** Why its runs fail before they start, which Runs asks before each claim: they also push and open drafts with this laptop's GitHub login (D-092). */
@@ -719,44 +713,40 @@ export class Plugin {
     const { choice, applied } = this.setup;
     await this.client!.send(message.conversationId, {
       text: `My runs load ${setupWords(choice)}.`,
-      setupState: { to: message.clientId!, ...(await ownerSetup(claudeHome())), choice, ...(applied && { applied }) },
+      setupState: { to: message.clientId!, ...(await ownerSetup(this.options.harness.offers())), choice, ...(applied && { applied }) },
     });
   }
 
-  /** Keeps the setup on disk, and the background Claude's settings with its attribution choice. */
+  /** Keeps the setup on disk, and hands the harness its choice. */
   private async saveSetup() {
-    // The background Claude runs under the plugin's settings alone, so the owner's do not count (D-097).
-    const npmCache = path.join(os.tmpdir(), 'webchat-npm', 'laptop');
-    await fs.mkdir(npmCache, { recursive: true });
-    const settings = claudeSettings({ secrets: this.secrets, npmCache, guard: this.options.guard, env: process.env, noAttribution: this.setup.choice.noAttribution });
-    await fs.writeFile(this.file('claude.json'), JSON.stringify(settings));
+    await this.options.harness.apply(this.setup.choice);
     await fs.writeFile(this.file('setup.json'), JSON.stringify(this.setup));
   }
 
   /**
-   * What a run or turn loads of the owner's Claude setup, as they chose (R-039): their CLAUDE.md,
-   * and copies of their chosen skills in a plugin folder made for it, which holds only `skills/`.
+   * What a run or turn loads of the owner's setup, as they chose (R-039): the instructions file the
+   * harness reads, and copies of their chosen skills in a folder made for it, `owner/skills`.
    * Copies, since a run edits the files of its folders. A skill gone since is left out, and what
    * was loaded is kept for the owner's next look.
    */
   private async loadSetup(session: string) {
-    const home = claudeHome();
+    const offer = this.options.harness.offers();
     const { choice } = this.setup;
-    const claudeMd = choice.claudeMd && existsSync(path.join(home, 'CLAUDE.md')) ? path.join(home, 'CLAUDE.md') : undefined;
+    const instructions = choice.claudeMd && offer.instructions && existsSync(offer.instructions) ? offer.instructions : undefined;
     // The same folder for every turn of a session, which the system prompt names as a working
     // directory, and named "owner", so a skill shows to the model as owner:<name>.
-    const plugin = path.join(os.tmpdir(), 'webchat-skills', session, 'owner');
+    const folder = path.join(os.tmpdir(), 'webchat-skills', session, 'owner', 'skills');
     const skills: string[] = [];
-    for (const name of choice.skills) {
-      const from = path.join(home, 'skills', name);
+    for (const name of offer.skills ? choice.skills : []) {
+      const from = path.join(offer.skills!, name);
       if (!existsSync(path.join(from, 'SKILL.md'))) continue;
       // Through a link to the skill's folder, but not through links in it, which could lead to secrets.
-      await fs.cp(await fs.realpath(from), path.join(plugin, 'skills', name), { recursive: true, filter: async (file) => !(await fs.lstat(file)).isSymbolicLink() });
+      await fs.cp(await fs.realpath(from), path.join(folder, name), { recursive: true, filter: async (file) => !(await fs.lstat(file)).isSymbolicLink() });
       skills.push(name);
     }
-    this.setup.applied = { claudeMd: !!claudeMd, skills, noAttribution: choice.noAttribution, at: Date.now() };
+    this.setup.applied = { claudeMd: !!instructions, skills, noAttribution: choice.noAttribution, at: Date.now() };
     await fs.writeFile(this.file('setup.json'), JSON.stringify(this.setup));
-    return { claudeMd, skills: skills.length ? plugin : undefined };
+    return { instructions, skills: skills.length ? folder : undefined };
   }
 
   /**
@@ -940,15 +930,13 @@ export class Plugin {
     return (doc && this.client!.conversations.get(doc.conversationId)?.projectId) ?? undefined;
   }
 
-  /** One turn of the background Claude in `cwd`: the message on stdin, the JSON answer `schema` asks for (D-097). */
+  /** One turn of the harness in `cwd`: the message on stdin, the JSON answer `schema` asks for (D-097). */
   private async ask(cwd: string, session: string, resume: boolean, message: string, schema: object, signal: AbortSignal) {
     const setup = await this.loadSetup(session);
-    const args = claudeArgs({ settings: this.file('claude.json'), session, resume, answer: schema, ...setup });
-    const turn = await start(this.options.claude, args, cwd, signal, claudeResult, message).finally(() => setup.skills && fs.rm(path.dirname(setup.skills), { recursive: true, force: true }));
-    if (turn.error || !turn.answer) throw new Error(turn.text.trim().slice(0, 500) || 'Claude stopped without an answer.');
+    const answer = await this.options.harness.turn({ cwd, session, resume, message, schema, setup, signal }).finally(() => setup.skills && fs.rm(path.join(os.tmpdir(), 'webchat-skills', session), { recursive: true, force: true }));
     // The owner may cancel while the turn ends; nothing is pushed or posted then.
     if (signal.aborted) throw new Error('the owner cancelled the run.');
-    return turn.answer;
+    return answer;
   }
 
   /** A turn on a card: done or paused with a note, or failed with what blocks it. */
@@ -1575,21 +1563,18 @@ async function takeLock(file: string) {
 /** A repository's folder in the plugin's, such as `repos/acme__app` (D-094). */
 export const repoHome = (dataDir: string, repo: string) => path.join(dataDir, 'repos', repo.replace('/', '__'));
 
-/** The owner's Claude Code folder, `~/.claude` unless they moved it. */
-const claudeHome = () => process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
-
-/** What the owner's Claude setup on this laptop offers a run (R-039): whether CLAUDE.md is there, and each skill with its description. */
-async function ownerSetup(home: string) {
-  const names = (await fs.readdir(path.join(home, 'skills')).catch(() => [] as string[])).filter((name) => SKILL_NAME.test(name)).sort();
+/** What the owner's setup on this laptop offers a run (R-039): whether the instructions file is there, and each skill with its description. */
+async function ownerSetup({ instructions, skills: dir }: ReturnType<Harness['offers']>) {
+  const names = (dir ? await fs.readdir(dir).catch(() => [] as string[]) : []).filter((name) => SKILL_NAME.test(name)).sort();
   const skills: Array<{ name: string; description: string }> = [];
   for (const name of names.slice(0, LIMITS.setupSkills)) {
-    const text = await fs.readFile(path.join(home, 'skills', name, 'SKILL.md'), 'utf8').catch(() => undefined);
+    const text = await fs.readFile(path.join(dir!, name, 'SKILL.md'), 'utf8').catch(() => undefined);
     if (text === undefined) continue;
     const description = skillDescription(text);
     const max = LIMITS.skillDescriptionLength;
     skills.push({ name, description: description.length > max ? `${description.slice(0, max - 1)}…` : description });
   }
-  return { claudeMd: existsSync(path.join(home, 'CLAUDE.md')), skills };
+  return { claudeMd: !!instructions && existsSync(instructions), skills };
 }
 
 /** A SKILL.md's description, from its front matter: one line, or the indented lines a block scalar folds. */
@@ -1597,117 +1582,4 @@ function skillDescription(text: string) {
   const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? '';
   const value = /^description:[ \t]*(?:[>|][+-]?[ \t]*$)?(.*(?:\r?\n[ \t]+.*)*)/m.exec(front)?.[1] ?? '';
   return value.replace(/\s+/g, ' ').trim().replace(/^(["'])(.*)\1$/, '$2');
-}
-
-/**
- * The folders the model must never read: the plugin's, with the agent's keys, and gh's, with the
- * owner's token. On macOS gh keeps that token in the login keychain, whose files a shell reads (K-54).
- * Claude Code keeps the environment SessionStart hooks leave, tokens and all, in `session-env`, and
- * lets a sandboxed shell read it.
- */
-export function secretDirs(dataDir: string) {
-  const ghDir = process.env.GH_CONFIG_DIR ?? path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'gh');
-  const sessionEnv = path.join(claudeHome(), 'session-env');
-  const keychains = process.platform === 'darwin' ? [path.join(os.homedir(), 'Library', 'Keychains')] : [];
-  return [dataDir, ghDir, sessionEnv, ...keychains].filter(Boolean);
-}
-
-const within = (file: string, dir: string) => {
-  const rel = path.relative(dir, file);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-};
-
-/**
- * The real path of a file that may not exist yet: its nearest existing folder's, then the rest. A
- * link to a file not made yet counts as its target, where a write through it lands (K-55).
- */
-function real(file: string, hops = 0): string {
-  try {
-    // Unlike Node's own, the native call resolves as the kernel does: `..` after a link goes up from
-    // the link's target, and on macOS a name in other letter case is the same folder.
-    return realpathSync.native(file);
-  } catch {
-    const parent = path.dirname(file);
-    if (parent === file) return file;
-    const dir = real(parent, hops);
-    const here = path.join(dir, path.basename(file));
-    let target: string;
-    try {
-      target = readlinkSync(here);
-    } catch {
-      return here;
-    }
-    // Not path.resolve, which applies `..` before the links. A kernel follows at most 40 links, so
-    // this stops there too, which also ends a loop.
-    return hops < 40 ? real(path.isAbsolute(target) ? target : `${dir}${path.sep}${target}`, hops + 1) : here;
-  }
-}
-
-interface Settings {
-  sandbox?: { enabled?: boolean; failIfUnavailable?: boolean; filesystem?: { denyRead?: string[]; allowRead?: string[] } };
-  permissions?: { blockReadsOutsideWorkingDirectories?: boolean };
-}
-
-/** A settings file Claude Code reads, and the folder a relative path in it counts from. */
-type SettingsFile = [file: string, base: string];
-
-const MANAGED =
-  process.platform === 'darwin'
-    ? '/Library/Application Support/ClaudeCode/managed-settings.json'
-    : process.platform === 'win32'
-      ? 'C:\\Program Files\\ClaudeCode\\managed-settings.json'
-      : '/etc/claude-code/managed-settings.json';
-
-/** The files a `claude -p --restricted` run reads: managed settings, then the one it got with --settings (D-097). */
-export const restrictedSettings = (file: string): SettingsFile[] => [
-  [MANAGED, path.dirname(MANAGED)],
-  [file, path.dirname(file)],
-];
-
-/**
- * Why the background Claude's shell could read a secret, from the settings files it runs with, or
- * undefined when it cannot. Only managed settings can undo the plugin's own (D-097).
- */
-export async function sandboxProblem(projectDir: string, secrets: string[], sources: SettingsFile[]) {
-  const home = os.homedir();
-  const settings = await Promise.all(
-    sources.map(async ([file, base]) => ({ base, json: (JSON.parse(await fs.readFile(file, 'utf8').catch(() => '{}')) ?? {}) as Settings })),
-  );
-  const first = <T>(pick: (s: Settings) => T | undefined) => settings.map((s) => pick(s.json)).find((value) => value !== undefined);
-  if (first((s) => s.sandbox?.enabled) !== true) return 'Claude Code’s managed settings turn its sandbox off on my machine.';
-  const resolve = (base: string, rule: string) => (rule === '~' || rule.startsWith('~/') ? path.join(home, rule.slice(1)) : path.resolve(base, rule));
-  const rules = settings.flatMap(({ base, json }) => [
-    ...(json.sandbox?.filesystem?.denyRead ?? []).map((rule) => ({ dir: resolve(base, rule), deny: true })),
-    ...(json.sandbox?.filesystem?.allowRead ?? []).map((rule) => ({ dir: resolve(base, rule), deny: false })),
-  ]);
-  const outsideBlocked = first((s) => s.permissions?.blockReadsOutsideWorkingDirectories) === true;
-  for (const secret of secrets) {
-    // The narrowest rule that covers the folder decides, as in Claude Code; a deny wins a tie.
-    const rule = rules.filter((r) => within(secret, r.dir)).sort((a, b) => b.dir.length - a.dir.length || Number(b.deny) - Number(a.deny))[0];
-    if (rule ? !rule.deny : !(outsideBlocked && !within(secret, projectDir))) {
-      return `My sandboxed shell could read ${secret}, as Claude Code’s managed settings allow.`;
-    }
-  }
-  // Where the sandbox cannot start, Claude Code would run the shell without it (K-53).
-  if (first((s) => s.sandbox?.failIfUnavailable) !== true) return 'Claude Code’s managed settings would let my shell run unsandboxed if its sandbox failed to start.';
-}
-
-/** A tool call, as Claude Code hands it to a PreToolUse hook. */
-export interface ToolUse {
-  tool_name: string;
-  tool_input: Record<string, unknown>;
-  cwd: string;
-}
-
-const FILE_TOOLS = new Set(['Read', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Glob', 'Grep']);
-
-/**
- * Why the guard hook denies a tool call, or undefined. File tools never touch the secret folders,
- * since they run outside the sandbox (D-092), in the background Claude and in every other session.
- */
-export function guard(use: ToolUse, secrets: string[]): string | undefined {
-  const input = use.tool_input;
-  const named = input.file_path ?? input.notebook_path ?? (use.tool_name === 'Glob' || use.tool_name === 'Grep' ? (input.path ?? use.cwd) : undefined);
-  const target = FILE_TOOLS.has(use.tool_name) && typeof named === 'string' ? real(path.resolve(use.cwd, named)) : undefined;
-  if (target && secrets.some((dir) => within(target, real(dir)))) return 'That folder holds secrets the WebChat plugin keeps from the model.';
 }

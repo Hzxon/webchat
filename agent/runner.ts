@@ -11,24 +11,12 @@ import type { RunRequest } from '../shared/types.ts';
 
 const run = promisify(execFile);
 
-/** Claude Code's final word: its text, its session, and the answer `--json-schema` asked for. */
+/** An agent's final word: its text, its session, and the answer its schema asked for. */
 export interface Final {
   text: string;
   error: boolean;
   session?: string;
   answer?: unknown;
-}
-
-/** Claude Code's final word, from the line of its stream-json output that holds it (D-097). */
-export function claudeResult(line: string): Final | undefined {
-  let event: { type?: string; result?: string; is_error?: boolean; session_id?: string; structured_output?: unknown } | null;
-  try {
-    event = JSON.parse(line) as typeof event;
-  } catch {
-    return undefined;
-  }
-  if (event?.type !== 'result') return undefined;
-  return { text: String(event.result ?? ''), error: event.is_error === true, session: event.session_id, answer: event.structured_output };
 }
 
 /** An agent that prints nothing for this long is stuck, and its run fails. */
