@@ -80,6 +80,11 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.equal(state(claimed, done, review, go).state, 'working');
     assert.equal(state(claimed, done, ended).state, 'done');
     assert.equal(state(claimed, sayRun(AGENT, { kind: 'failed', request: request.id })).state, 'unfinished');
+    // A progress line is a note under Working…, not a message; a stop before the work is done pauses the run (docs/decisions/stop-pauses-run.md).
+    const progress = sayRun(AGENT, { kind: 'progress', request: request.id, note: 'Run the tests' });
+    assert.deepEqual([state(claimed, progress).state, state(claimed, progress).progress, state(claimed, progress).messages.length], ['working', 'Run the tests', 2]);
+    assert.equal(state(claimed, progress, sayRun(AGENT, { kind: 'paused', request: request.id })).progress, undefined);
+    assert.equal(state(claimed, sayRun(AGENT, { kind: 'paused', request: request.id })).state, 'paused');
     // A round that failed on a draft leaves the draft, and a go that did not send starts nothing.
     assert.equal(state(claimed, done, sayRun(AGENT, { kind: 'failed', request: request.id })).state, 'draft');
     const unsentGo = sayRun(ME, { kind: 'fix', request: request.id, sentAt: 3 });

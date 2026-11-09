@@ -59,8 +59,9 @@ export async function fetchOrigin(repo: string) {
 /**
  * Starts the agent in the worktree, with `input`, if any, on its stdin, and waits for its final word,
  * as `read` finds it in its output lines, or for it to go quiet for too long, or for the owner to cancel.
+ * `seen` gets each output line as it comes.
  */
-export function start(command: string, args: string[], cwd: string, signal: AbortSignal, read: (line: string) => Final | undefined, input?: string) {
+export function start(command: string, args: string[], cwd: string, signal: AbortSignal, read: (line: string) => Final | undefined, input?: string, seen?: (line: string) => void) {
   return new Promise<Final>((resolve, reject) => {
     // A cancel that came while the worktree was being made has aborted already, and fires no event.
     if (signal.aborted) return reject(new Error('the owner cancelled the run.'));
@@ -81,6 +82,7 @@ export function start(command: string, args: string[], cwd: string, signal: Abor
     readline.createInterface({ input: child.stdout }).on('line', (line) => {
       arm();
       last = read(line) ?? last;
+      seen?.(line);
     });
     child.on('error', (error) => (clearTimeout(timer), reject(error)));
     child.on('close', (code) => {

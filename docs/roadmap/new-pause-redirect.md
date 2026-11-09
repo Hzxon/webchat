@@ -1,6 +1,7 @@
 ### R: Pause a run and redirect it
 
-Status: Idea. Proposed 2026-11-09 from the harness audit. Needs the harness adapter card.
+Status: In progress: the progress line and pause in #178, on the seam (#174). Proposed 2026-11-09
+from the harness audit. Needs the harness adapter card.
 
 Order: fourth, after the harness card is done and not beside it: it edits the watched record
 and the run, finish and cancel paths that the per-session pick also edits, so running them at

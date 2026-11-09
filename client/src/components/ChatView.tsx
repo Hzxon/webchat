@@ -443,7 +443,7 @@ function RunCard({ run, state, users, onCancel }: { run: RunRequest; state: RunR
   // A request nobody took in time waits no more, as on the board (D-100).
   const unanswered = !state && Date.now() - (run.sentAt ?? 0) > RUN_PICKUP_MS;
   const [tone, label] = state ? RUN_TAGS[state.kind] : ((['muted', unanswered ? 'No answer' : 'Waiting for the agent']) as [Tone, string]);
-  const going = (!state && !unanswered) || state?.kind === 'claimed' || state?.kind === 'fixing';
+  const going = (!state && !unanswered) || state?.kind === 'claimed' || state?.kind === 'fixing' || state?.kind === 'progress';
   // Nothing runs while the agent, or its session in the request's repository, checks in nowhere.
   // A daemon that starts again reports the run (K-46).
   const agent = users[run.runtime];

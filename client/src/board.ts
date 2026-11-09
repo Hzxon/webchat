@@ -207,8 +207,8 @@ export function statusMove(run: CardRun, card: string, was: string, working: str
   return moves[run.state] ?? [[], ''];
 }
 
-/** The states in which a run may still go, so the page asks for no second one. */
-export const GOING = new Set<CardRun['state']>(['sending', 'waiting', 'claimed', 'fixing', 'nocopy', 'decision']);
+/** The states in which a run may still go, so the page asks for no second one. A paused run goes on with the owner's words, or ends on a second stop. */
+export const GOING = new Set<CardRun['state']>(['sending', 'waiting', 'claimed', 'fixing', 'nocopy', 'decision', 'paused']);
 
 /**
  * The user's latest run of each card of a board doc, by section id. A request that failed to send
@@ -235,6 +235,10 @@ export function cardRuns(messages: ChatMessage[], meId: number, docId: string, p
       const target = m.senderId === meId ? latest(run.request) : undefined;
       if (target?.state === 'waiting') target.state = 'cancelled';
       else if (target) target.stopping = true;
+    } else if (run.kind === 'progress') {
+      // A note on the state, not a state: the card keeps claimed or fixing, and its status line stays.
+      const target = latest(run.request);
+      if (target && m.senderId === target.runtime) target.note = run.note;
     } else if (run.kind !== 'fix' && run.kind !== 'clone' && run.kind !== 'draft') {
       const target = latest(run.request);
       if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull, decisions: run.decisions, at: m.id, stopping: false });
