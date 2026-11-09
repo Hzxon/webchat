@@ -24,9 +24,11 @@ export interface Harness {
   readonly name: string;
   /**
    * Why this laptop cannot run its turns, or undefined. With `dir`, why its shell could read a
-   * secret folder while it works there, or undefined when the adapter proves it cannot.
+   * secret folder while it works there, or undefined when the adapter proves it cannot. A turn for
+   * `answers` runs in a scratch copy and pushes nothing, so an adapter whose only gap is the
+   * owner's login may allow it while it refuses `cards`, the default: answers only is the floor.
    */
-  refusal(dir?: string): Promise<string | undefined>;
+  refusal(dir?: string, purpose?: 'cards' | 'answers'): Promise<string | undefined>;
   /**
    * What of the owner's setup it can load: the instructions file and the skills folder it reads,
    * and the knobs it honors, named as in `SetupChoice`, such as `noAttribution`. It declares a knob

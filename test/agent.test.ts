@@ -624,6 +624,7 @@ describe('agent client (R-027)', () => {
         PATH: `${bin}${path.delimiter}${process.env.PATH}`,
         FAKE_GH_STATE: ghState,
         FAKE_CLAUDE_LOG: claudeLog,
+        FAKE_CODEX_LOG: path.join(home, 'codex.log'),
         GH_CONFIG_DIR: path.join(home, 'gh'),
         CLAUDE_CONFIG_DIR: path.join(home, 'claude'),
       });
@@ -729,6 +730,8 @@ describe('agent client (R-027)', () => {
         });
         const branch = 'agent/k-7-sums-are-off-by-one';
         assert.deepEqual(await reportsOn(asked), ['I am on K-7: Sums are off by one', `I finished K-7 on ${branch} (acme/app#1). Sums add up now.`]);
+        const pullsFile = path.join(dataDir, 'laptop', 'pulls.json');
+        assert.equal(JSON.parse(await fs.readFile(pullsFile, 'utf8'))[0].harness, 'Claude Code', 'a request that names no harness ran on the host, which its rounds keep');
 
         // Two turns ran in a worktree of the checkout, restricted, under the plugin's settings: the
         // check that the card holds, then the work, in the same session (R-042).
@@ -840,8 +843,8 @@ describe('agent client (R-027)', () => {
         const { harnesses, ...shown } = (await setup(alice, direct))[0]!;
         assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
         const claudeCode = { name: 'Claude Code', version: '2.1.0', signedIn: true, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution'] };
-        const codex = { name: 'Codex', version: '0.58.0', signedIn: true, refusal: CODEX_GAP, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: [] };
-        assert.deepEqual(harnesses, [claudeCode, codex], 'the pane learns each harness the laptop has, the knobs it honors, and why Codex takes no cards');
+        const codexState = { name: 'Codex', version: '0.58.0', signedIn: true, refusal: CODEX_GAP, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: [] };
+        assert.deepEqual(harnesses, [claudeCode, codexState], 'the pane learns each harness the laptop has, the knobs it honors, and why Codex takes no cards');
         // Turned off, the only harness starts nothing; a page from before the list keeps it off.
         await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false, off: ['Claude Code'] });
         await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false });
@@ -851,8 +854,21 @@ describe('agent client (R-027)', () => {
         assert.deepEqual(await setup(carol, general, chosen), []);
         assert.deepEqual((await setup(alice, direct, { ...chosen, off: [] })).map((s) => s.choice), [{ ...chosen, off: [] }]);
         assert.deepEqual(JSON.parse(await fs.readFile(settings, 'utf8')).attribution, { commit: '', pr: '' }, 'the settings hide the attribution lines');
+        // A prompt naming a coding agent the laptop does not have fails with the reason, and no turn runs.
+        const turnsBeforePrompts = (await turns()).length;
+        await tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Hermes' }, 'What does sum.js do?');
+        const refusedPrompt = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'failed').map((m) => m.content?.text);
+        assert.deepEqual(refusedPrompt, ['I could not answer. I have no Hermes on this laptop. Pick another coding agent.']);
+        assert.equal((await turns()).length, turnsBeforePrompts, 'no Claude ran for it');
+        // One naming Codex is answered by it, in a scratch copy: it takes no cards, but answers only is the floor.
+        await tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Codex' }, 'What does sum.js do?');
+        const codexAnswer = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'answer').map((m) => m.content?.text);
+        assert.deepEqual(codexAnswer.slice(-1), ['It adds.']);
+        assert.equal((await turns()).length, turnsBeforePrompts, 'no Claude ran for it either');
         // The board Alice's page picked goes in the brief, and no other (D-104).
         const prompted = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id }, 'What does sum.js do?'));
+        const kept = JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'conversations.json'), 'utf8')) as Array<{ root: string; harness?: string }>;
+        assert.equal(kept.find((c) => c.root === prompted)?.harness, 'Claude Code', 'a prompt that names no harness runs on the host, which each reply keeps');
         const [chat] = (await turns()).slice(-1);
         assert.ok(chat!.input.includes('### D-1: Sums stay exact') && !chat!.input.includes('### D-2'), 'the brief holds the decisions the team holds');
         assert.ok(chat!.input.includes('#5: Fix sums'), 'the brief holds the open pull requests');
@@ -1141,6 +1157,11 @@ describe('agent client (R-027)', () => {
         const turnsBefore = (await turns()).length;
         assert.deepEqual((await runK7()).said.map((r) => r.text), ['I could not run K-7: acme/app#8 claims K-7 already. Pick another card, or ask whoever opened it.']);
         assert.equal((await turns()).length, turnsBefore, 'no Claude ran for it');
+        // So does a request naming a coding agent that takes no cards here, with the reason.
+        const codex = (await ask(alice, { hash: await briefNow(), harness: 'Codex' })).id;
+        await (await checkIn()).handled;
+        assert.deepEqual(await reportsOn(codex), [`I could not run K-7: ${CODEX_GAP}`]);
+        assert.equal((await turns()).length, turnsBefore, 'no Claude ran for it either');
 
         // A card the code already does ends at its check, pushes nothing, and offers its new status
         // as a change Alice adds (D-104).

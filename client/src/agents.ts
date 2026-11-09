@@ -21,6 +21,8 @@ export interface Thread {
   conversationId: number;
   /** The repository it is about, or '' for a question about its project's board alone (R-038). */
   repo: string;
+  /** The harness its request named, or none for the laptop's host. */
+  harness?: string;
   /** For a question: the project its prompt names, whose board the agent reads (D-104, R-038); for a proposal, its board's. */
   project?: number;
   /** The prompt first, then the messages that name it, in the chat's order, one per answer. */
@@ -146,7 +148,7 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     if (run?.kind === 'request') {
       if (message.senderId === meId && message.clientId) {
         const state = pending[message.clientId] === 'failed' ? 'unsent' : 'working';
-        const thread: Thread = { kind: 'card', root: message.clientId, request: message.id, conversationId: message.conversationId, repo: run.repo ?? '', messages: [message], state, last: message.createdAt, added: {} };
+        const thread: Thread = { kind: 'card', root: message.clientId, request: message.id, conversationId: message.conversationId, repo: run.repo ?? '', harness: run.harness, messages: [message], state, last: message.createdAt, added: {} };
         threads.set(message.clientId, thread);
         requests.set(message.id, thread);
       }
@@ -170,7 +172,7 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     if (prompt.kind === 'prompt') {
       if (message.senderId === meId && message.clientId) {
         const state = pending[message.clientId] === 'failed' ? 'unsent' : 'working';
-        threads.set(message.clientId, { kind: 'question', root: message.clientId, conversationId: message.conversationId, repo: prompt.repo ?? '', project: prompt.project, messages: [message], state, last: message.createdAt, added: {} });
+        threads.set(message.clientId, { kind: 'question', root: message.clientId, conversationId: message.conversationId, repo: prompt.repo ?? '', harness: prompt.harness, project: prompt.project, messages: [message], state, last: message.createdAt, added: {} });
       }
       continue;
     }
@@ -202,6 +204,11 @@ export function threadProject(thread: Thread, docs: State['docs'], conversations
 }
 
 /** The user's chats with their agents. */
+/** The user's direct chat with one of their agents, where its sealed setup answers come (R-039). */
+export function useAgentChat(agent: UserDTO | undefined) {
+  return useAgentChats().find((c) => agent && c.members.some((m) => m.userId === agent.id));
+}
+
 export function useAgentChats() {
   const conversations = useAppState((s) => s.conversations);
   const users = useAppState((s) => s.users);

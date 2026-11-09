@@ -3,42 +3,17 @@
 // one message per line. One window on a laptop serves every folder its owner connected or had
 // cloned, wherever it is open (R-036). With
 // "guard" it is the PreToolUse hook: it reads the tool call on stdin and prints a denial, or nothing.
-import { execFile } from 'node:child_process';
-import { constants, readFileSync } from 'node:fs';
-import fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
-import { ClaudePlugin, claudeSecrets, guard, type ToolUse } from './claude.ts';
+import { ClaudePlugin, claudeProgram, claudeSecrets, guard, onPath, type ToolUse } from './claude.ts';
 import { codexHarness } from './codex.ts';
 import { messageOf } from './runs.ts';
 
 const none = { type: 'object', properties: {} };
 
-/**
- * The session's own `claude`, by its absolute path: this server's parent, which the desktop app keeps
- * outside the PATH. Else the first on the PATH, from absolute folders only, since the background
- * Claude starts in a worktree whose files the model writes. Empty when there is none (D-097).
- */
-async function claudeProgram() {
-  const parent =
-    process.platform === 'linux'
-      ? await fs.readlink(`/proc/${process.ppid}/exe`).catch(() => '')
-      : await promisify(execFile)('ps', ['-o', 'comm=', '-p', String(process.ppid)]).then((r) => r.stdout.trim(), () => '');
-  if (path.isAbsolute(parent) && path.basename(parent) === 'claude') return parent;
-  return onPath('claude');
-}
-
-/** A program's absolute path, from the absolute folders of the PATH only, or empty when there is none. */
-async function onPath(name: string) {
-  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d))) {
-    const file = path.join(dir, name);
-    if (await fs.access(file, constants.X_OK).then(() => true, () => false)) return file;
-  }
-  return '';
-}
 const TOOLS = [
   {
     name: 'status',

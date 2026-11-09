@@ -91,9 +91,9 @@ export function codexHarness(program: string, dataDir: string): Harness {
   let threads: Record<string, string> | undefined;
   return {
     name: 'Codex',
-    async refusal(dir) {
+    async refusal(dir, purpose) {
       if (!program) return 'I cannot find Codex on this laptop.';
-      if (dir) return CODEX_GAP;
+      if (dir && purpose !== 'answers') return CODEX_GAP;
     },
     // Codex reads both on every turn, whatever the owner chose: its config has no switch for them.
     offers: () => ({ instructions: path.join(home, 'AGENTS.md'), skills: path.join(os.homedir(), '.agents', 'skills'), knobs: [] }),

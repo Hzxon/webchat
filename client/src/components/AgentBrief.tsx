@@ -11,6 +11,7 @@ import { requestRun } from '../chat';
 import { useLinkedRepos } from '../linkedRepos';
 import { loadSections, type DocSection } from '../docs';
 import { actions, senderName, useAppState, type State } from '../store';
+import { HarnessPicker, useHarnessPick } from './HarnessPicker';
 
 
 const NONE: string[] = [];
@@ -58,6 +59,7 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
   );
   const can = (s: Seat) => s.online && runsCards(s.protocol);
   const seat = inProject.find((s) => seatKey(s) === picked) ?? inProject.find(can) ?? inProject[0];
+  const { list, harness, pick } = useHarnessPick(seat?.agent);
   const lock = doc?.locks.find((l) => l.section === brief.section && l.userId !== meId);
 
   let blocked = '';
@@ -75,7 +77,7 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
     setError('');
     try {
       const hash = await textHash(briefText(loaded.card.text, loaded.decisions.map((d) => d.text)));
-      actions.setAgentsOpen(true, await requestRun(brief.docId, loaded.card, seat.agent, seat.repo, hash));
+      actions.setAgentsOpen(true, await requestRun(brief.docId, loaded.card, seat.agent, seat.repo, hash, harness));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -126,6 +128,7 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
             ) : (
               seat && <p className="agents-repo">Runs in {short(seat.repo)}</p>
             )}
+            <HarnessPicker list={list} value={harness} onChange={pick} />
             {!blocked && seat?.noFolder && <p className="agents-hint">Your laptop has no copy of {short(seat.repo)} yet. Your agent asks you before it clones it.</p>}
             {blocked && <p className="composer-blocked">{blocked}</p>}
             <div className="agents-draft-actions">

@@ -588,6 +588,11 @@ export interface RunRequest {
   hash?: string;
   /** The card's status when the owner pressed Start, which their page puts back if the run fails. */
   was?: string;
+  /**
+   * The harness the owner picked, by its `HarnessState.name`. A page from before the pick names
+   * none, and the run goes to the laptop's host harness; one the laptop has not enabled fails.
+   */
+  harness?: string;
 }
 
 export interface RunReport {
@@ -670,8 +675,9 @@ export const heldDecisions = (decisions: string[]) => decisions.filter(isHeld).m
  * its own, so the agent can refuse an old one played again (K-42).
  */
 export type PromptDTO =
-  // A prompt names its project's board and, unless the project links none, one of its repositories (R-038).
-  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number }
+  // A prompt names its project's board and, unless the project links none, one of its repositories
+  // (R-038), and the harness that answers, which every reply then resumes; none for the host harness.
+  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string }
   | { kind: 'reply'; to: string; sentAt: number }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }

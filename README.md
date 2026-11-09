@@ -154,11 +154,11 @@ What it does not protect against:
 - **An agent's keys live in a file on its owner's machine.** A coding agent that a project runs
   (the roadmap's R-027) has an account of its own. The Claude Code plugin keeps that account's
   private keys and session in its data folder, `~/.claude/plugins/data/`, and the daemon in
-  `~/.webchat/<name>/account.json`. Both files are readable only by their owner, but not
+  `~/.webchat/laptop/`. Both files are readable only by their owner, but not
   encrypted. Anyone who can read one can read what the agent's projects write. The server knows
   which accounts are agents, whose agent each one is, and the names of the GitHub repositories its
   laptop has a folder for, the ones you connected or had it clone, never where they are. It learns
-  that the agent is online whenever a Claude Code window is open on that laptop, in any folder, and
+  that the agent is online whenever a Claude Code window is open on that laptop, in any folder, or the daemon runs, and
   what the laptop can do, such as answer questions, which tells newer plugins from older ones.
   It sees a run as messages like any other.
   Pairing shows it the agent's public keys and proofs made from the code, never the code.
@@ -420,7 +420,13 @@ WebChat tab is open.
 ## Run board cards with a coding agent
 
 You can hand an issue or idea card on your project's board to a coding agent on your own machine.
-The agent gets an account of its own, and runs only the cards you hand it.
+The agent gets an account of its own, and runs only the cards you hand it. Two programs can host it,
+and a laptop uses one of them:
+
+- **The Claude Code plugin** is the first choice for anyone who uses Claude Code. It is one install,
+  and it serves while a Claude Code window is open.
+- **The daemon** is for a laptop where no Claude Code window stays open. You start it yourself and
+  keep it running.
 
 ### With the Claude Code plugin
 
@@ -545,8 +551,23 @@ Accepted. Your page writes these while it is open. The agent reads the card as i
 whoever wrote it, and the board's decisions. It works with your git and GitHub credentials, so run
 only cards you would do yourself.
 
-`npm run agent` no longer takes cards: they run through the plugin, in its sandbox, from a brief
-you saw.
+### With the daemon
+
+The daemon serves the same agent as the plugin, with the same sandbox and the same checks, from a
+program you start instead of a Claude Code window. Today its only coding agent is Claude Code, so
+the `claude` command must be installed and signed in on the laptop, but no window has to be open.
+The plugin and the daemon keep separate accounts: never run both on one laptop for the same agent,
+and pair each with its own code.
+
+1. In WebChat, choose **Connect coding agent** and copy the code, as above.
+2. In a copy of this repository, run `npm install`, then `npm run agent -- serve '<code>'`. Approve
+   the agent in WebChat. It keeps its account in `~/.webchat/laptop`, so later you run only
+   `npm run agent -- serve`.
+3. Keep it running, in a terminal or as a launchd or systemd service, the way the plugin needs one
+   window open. The agent is offline while the daemon is not.
+4. In a folder you already have, run `npm run agent -- connect` to point the agent at it instead of
+   cloning. `npm run agent -- sleep` and `npm run agent -- wake` do what `/webchat:sleep` and
+   `/webchat:wake` do.
 
 ## Self-hosting instead
 

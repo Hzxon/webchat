@@ -21,6 +21,8 @@ export interface Conversation {
   chat: number;
   /** The repository its prompt names, as "owner/name", or none for a question about the board alone (R-038). */
   repo?: string;
+  /** The harness its prompt names, or none for the host's; the plugin writes the one that answered, which every reply resumes. */
+  harness?: string;
   /** The background Claude session its turns share. A new one until a turn has answered. */
   session: string;
   answered: boolean;
@@ -94,7 +96,7 @@ export class Conversations {
     const conversation =
       prompt.kind === 'prompt'
         ? message.clientId
-          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project }
+          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, harness: prompt.harness, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project }
           : undefined
         : this.list.find((c) => c.root === prompt.to && c.chat === message.conversationId);
     // A copy the server posted again under a new id does nothing (K-47).

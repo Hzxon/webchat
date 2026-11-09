@@ -5,7 +5,7 @@
 // message goes on stdin, since arguments show in `ps`, and the turn ends with a JSON answer. This
 // is the plugin's harness adapter for Claude Code (harness.ts).
 import { execFile } from 'node:child_process';
-import { readlinkSync, realpathSync } from 'node:fs';
+import { constants, readlinkSync, realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -153,10 +153,33 @@ export function claudeHarness(program: string, hook: string, dataDir: string): H
   };
 }
 
+/**
+ * The session's own `claude`, by its absolute path: this server's parent, which the desktop app keeps
+ * outside the PATH. Else the first on the PATH, from absolute folders only, since the background
+ * Claude starts in a worktree whose files the model writes. Empty when there is none (D-097).
+ */
+export async function claudeProgram() {
+  const parent =
+    process.platform === 'linux'
+      ? await fs.readlink(`/proc/${process.ppid}/exe`).catch(() => '')
+      : await promisify(execFile)('ps', ['-o', 'comm=', '-p', String(process.ppid)]).then((r) => r.stdout.trim(), () => '');
+  if (path.isAbsolute(parent) && path.basename(parent) === 'claude') return parent;
+  return onPath('claude');
+}
+
+/** A program's absolute path, from the absolute folders of the PATH only, or empty when there is none. */
+export async function onPath(name: string) {
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d))) {
+    const file = path.join(dir, name);
+    if (await fs.access(file, constants.X_OK).then(() => true, () => false)) return file;
+  }
+  return '';
+}
+
 /** The plugin as Claude Code hosts it: its turns run in the session's own `claude`, with the guard hook `guard`. */
 export class ClaudePlugin extends Plugin {
-  constructor({ claude, guard: hook, ...options }: Omit<PluginOptions, 'harness'> & { claude: string; guard: string }) {
-    super({ ...options, harness: claudeHarness(claude, hook, options.dataDir) });
+  constructor({ claude, guard: hook, others = [], ...options }: Omit<PluginOptions, 'harnesses'> & { claude: string; guard: string; others?: Harness[] }) {
+    super({ ...options, harnesses: [claudeHarness(claude, hook, options.dataDir), ...others] });
   }
 }
 
