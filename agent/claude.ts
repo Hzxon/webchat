@@ -4,13 +4,17 @@
 // repository's settings, hooks or .mcp.json, which a -p run otherwise loads without asking. The
 // message goes on stdin, since arguments show in `ps`, and the turn ends with a JSON answer. This
 // is the plugin's harness adapter for Claude Code (harness.ts).
+import { execFile } from 'node:child_process';
 import { readlinkSync, realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { secretDirs, type Harness } from './harness.ts';
 import { Plugin, type PluginOptions } from './plugin.ts';
 import { start, type Final } from './runner.ts';
+
+const exec = promisify(execFile);
 
 /** The only host the shell reaches, for installs (D-097). */
 const REGISTRY = 'registry.npmjs.org';
@@ -119,12 +123,21 @@ export function claudeHarness(program: string, hook: string, dataDir: string): H
   const settings = path.join(dataDir, 'laptop', 'claude.json');
   const npmCache = path.join(os.tmpdir(), 'webchat-npm', 'laptop');
   return {
+    name: 'Claude Code',
     async refusal(dir) {
       if (dir) return sandboxProblem(dir, secrets, restrictedSettings(settings));
       if (process.platform === 'win32') return 'Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.';
       if (!program) return 'I cannot find Claude Code on this laptop.';
     },
     offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution'] }),
+    async found() {
+      if (!program) return {};
+      // `auth status` prints its JSON and exits 1 when signed out.
+      const stdout = (args: string[]) => exec(program, args, { timeout: 10_000 }).then((r) => r.stdout, (e: { stdout?: string }) => e.stdout ?? '');
+      const [version, status] = await Promise.all([stdout(['--version']), stdout(['auth', 'status'])]);
+      const loggedIn = /"loggedIn":\s*(true|false)/.exec(status)?.[1];
+      return { version: /^\d[\w.-]*/.exec(version.trim())?.[0], ...(loggedIn && { signedIn: loggedIn === 'true' }) };
+    },
     // The turn runs under the plugin's settings alone, so the owner's do not count (D-097).
     async apply({ noAttribution }) {
       await fs.mkdir(npmCache, { recursive: true });

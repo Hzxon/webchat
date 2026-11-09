@@ -54,14 +54,34 @@ export const takesSetup = (level: number) => (level & AGENT_LEVEL.setup) !== 0;
 export const setupWords = (c: SetupChoice) => [c.claudeMd && 'your CLAUDE.md', ...c.skills, c.noAttribution && 'no AI attribution'].filter(Boolean).join(', ') || 'nothing of your Claude setup';
 
 /**
- * What the owner's agent loads from their Claude setup on its laptop into every run and turn
- * (R-039, D-115): their `~/.claude/CLAUDE.md`, skills of `~/.claude/skills` by folder name, and no
- * AI attribution lines in commits and pull requests.
+ * What the owner's agent loads from their setup on its laptop into every run and turn (R-039,
+ * D-115): the instructions file its harness reads, skills of its skills folder by folder name, and
+ * no AI attribution lines in commits and pull requests. One choice serves every harness, each
+ * through the knobs it declares.
  */
 export interface SetupChoice {
+  /** The instructions file, under its first name, which old pages and plugins still use. */
   claudeMd: boolean;
   skills: string[];
   noAttribution: boolean;
+  /** The harnesses the owner turned off, by name. A page from before the list sends none, and the agent keeps what it had. */
+  off?: string[];
+}
+
+/** A harness the owner's agent found on its laptop, as Settings shows it (D-115). */
+export interface HarnessState {
+  /** Its name for the owner, such as "Claude Code", which `SetupChoice.off` names. */
+  name: string;
+  version?: string;
+  /** Whether it is signed in, when its adapter can tell. */
+  signedIn?: boolean;
+  /** Why it takes no cards on this laptop, or nothing when it does. */
+  refusal?: string;
+  /** The instructions file and the skills folder it reads, such as `~/.claude/CLAUDE.md`. */
+  instructions?: string;
+  skills?: string;
+  /** The knobs its adapter honors, named as in `SetupChoice`, such as `noAttribution`. */
+  knobs: string[];
 }
 
 /** The agent's answer to its owner's `setup`: what the laptop offers, the choice it keeps, and what its last run or turn loaded (R-039). */
@@ -73,6 +93,8 @@ export interface SetupState {
   skills: Array<{ name: string; description: string }>;
   choice: SetupChoice;
   applied?: SetupChoice & { at: number };
+  /** Each harness the laptop has. A plugin from before D-115's rewrite sends none: it runs Claude Code alone. */
+  harnesses?: HarnessState[];
 }
 
 /** A skill's folder name, which cannot lead out of `~/.claude/skills` (R-039). */
@@ -905,6 +927,9 @@ export const LIMITS = {
   /** Skills an agent offers its owner, and a skill's description, so its answer stays one message (R-039). */
   setupSkills: 40,
   skillDescriptionLength: 140,
+  /** Harnesses an agent's answer lists, and the length of a name, a version, a path or a refusal (D-115). */
+  harnesses: 8,
+  harnessFieldLength: 500,
 } as const;
 
 /** Slack-style channel names (D-027): lowercase letters and digits in any script, joined by single hyphens. */
