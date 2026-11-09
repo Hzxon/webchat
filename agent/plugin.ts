@@ -43,6 +43,25 @@ const PULL_FIELDS = 'state,isDraft,headRefOid,mergeable,statusCheckRollup,review
 /** For this server's git in a worktree: its files, hooks and all, are what the model wrote. */
 const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null'];
 
+/**
+ * This server's git in a worktree under `<checkout>/.claude/worktrees`, with hooks off. It names
+ * the worktree's git folder from the checkout's list, never from the worktree's `.git` file, which
+ * the model could point at a folder whose config runs a command, such as `core.fsmonitor`.
+ */
+export async function worktreeGit(worktree: string, ...args: string[]) {
+  const checkout = path.resolve(worktree, '..', '..', '..');
+  const common = path.resolve(checkout, (await exec('git', ['-C', checkout, 'rev-parse', '--git-common-dir'])).stdout.trim());
+  const dotGit = path.join(await fs.realpath(worktree), '.git');
+  const admins = path.join(common, 'worktrees');
+  let gitDir: string | undefined;
+  for (const name of await fs.readdir(admins)) {
+    const pointer = await fs.readFile(path.join(admins, name, 'gitdir'), 'utf8').catch(() => '');
+    if (pointer && path.resolve(admins, name, pointer.trim()) === dotGit) gitDir = path.join(admins, name);
+  }
+  if (!gitDir) throw new Error(`${worktree} is no worktree of ${checkout}.`);
+  return (await exec('git', [`--git-dir=${gitDir}`, `--work-tree=${worktree}`, ...NO_HOOKS, ...args])).stdout.trim();
+}
+
 export interface PluginOptions {
   /** The pairing code from the plugin's settings, after WebChat's address. */
   code: string;
@@ -746,7 +765,7 @@ export class Plugin {
    */
   private async pushCopy(copy: BoardCopy, folder: Folder, base: string, files: { roadmap: string; decisions: string }) {
     const dir = path.join(folder.dir, '.claude', 'worktrees', 'agent-board');
-    const git = (...args: string[]) => exec('git', ['-C', dir, ...NO_HOOKS, ...args]).then((r) => r.stdout.trim());
+    const git = (...args: string[]) => worktreeGit(dir, ...args);
     const remote = await exec('git', ['-C', folder.dir, 'rev-parse', '--verify', '-q', `refs/remotes/origin/${BOARD_BRANCH}`]).then((r) => r.stdout.trim(), () => '');
     if (!existsSync(dir)) await exec('git', ['-C', folder.dir, ...NO_HOOKS, 'worktree', 'add', '-q', '--detach', dir, remote || base]);
     await git('checkout', '-q', '-f', '-B', BOARD_BRANCH, remote || base);
@@ -985,7 +1004,7 @@ export class Plugin {
 
   /** An empty commit and the draft claim the card before any code (D-062), then the work goes on in the check's session. */
   private async claim({ taken, request, session, harness, repo, body, at, ...place }: Planned, brief: (pull: { repo: string; number: number }) => string, signal: AbortSignal) {
-    await exec('git', ['-C', place.worktree, ...NO_HOOKS, 'commit', '-q', '--allow-empty', '-m', `chore: Claim ${request.card}`]);
+    await worktreeGit(place.worktree, 'commit', '-q', '--allow-empty', '-m', `chore: Claim ${request.card}`);
     const head = await this.push(place);
     const pull = await this.openDraft(place, `${request.card}: ${request.title}`, body, repo);
     // By name, so every round resumes with the harness that started the session.
@@ -1195,7 +1214,7 @@ export class Plugin {
 
   /** Pushes the worktree's branch, never forced, and returns the commit it pushed. */
   private async push(place: Place) {
-    const git = (...args: string[]) => exec('git', ['-C', place.worktree, ...NO_HOOKS, ...args]).then((r) => r.stdout.trim());
+    const git = (...args: string[]) => worktreeGit(place.worktree, ...args);
     if ((await git('symbolic-ref', '--short', 'HEAD').catch(() => '')) !== place.branch) {
       throw new Error(`The work is not on ${place.branch}, the branch the worktree started on.`);
     }
@@ -1617,7 +1636,7 @@ const draftsOf = (raw: unknown, seen: NonNullable<Conversation['seen']>, held: S
   (Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : []).flatMap((d) => draftOf(d, seen, held) ?? []);
 
 /** The commits of a place's branch since its base, a line each, or '' when there are none. */
-const newCommits = (place: Place) => exec('git', ['-C', place.worktree, 'log', '--oneline', `${place.base}..HEAD`]).then((r) => r.stdout.trim());
+const newCommits = (place: Place) => worktreeGit(place.worktree, 'log', '--oneline', `${place.base}..HEAD`);
 
 /**
  * A draft in a turn's answer, if it has the right shape (D-104). A change names a card or decision

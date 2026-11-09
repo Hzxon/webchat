@@ -17,6 +17,7 @@ import { AgentClient, type OpenedMessage } from '../agent/client.ts';
 import { CODEX_GAP, codexHarness } from '../agent/codex.ts';
 import type { Harness } from '../agent/harness.ts';
 import { Conversations, parts, type Answerer } from '../agent/conversations.ts';
+import { worktreeGit } from '../agent/plugin.ts';
 import { addWorktree, start, type Final } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
@@ -1662,6 +1663,25 @@ describe('agent client (R-027)', () => {
     const denied = claudeSettings({ secrets: [], npmCache: '', guard: '', env }).sandbox.credentials.envVars.map((v) => v.name);
     assert.deepEqual(denied, ['GH_TOKEN', 'DATABASE_URL', 'SSH_AUTH_SOCK', 'MY_VAR']);
   });
+});
+
+test("runs git in a worktree on the git folder its checkout lists, whatever the worktree's .git file says", async () => {
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'worktree-git-')));
+  const project = path.join(dir, 'app');
+  await sh('git', ['init', '-q', project]);
+  await git(project, 'commit', '-q', '--allow-empty', '-m', 'Start');
+  const worktree = path.join(project, '.claude', 'worktrees', 'k-7');
+  await git(project, 'worktree', 'add', '-q', '--detach', worktree);
+  // The model points the worktree at a git folder of its own, whose config runs a command.
+  const planted = path.join(dir, 'planted');
+  await sh('git', ['init', '-q', planted]);
+  const ran = path.join(dir, 'ran');
+  await git(planted, 'config', 'core.fsmonitor', `touch ${ran}`);
+  await fs.writeFile(path.join(worktree, '.git'), `gitdir: ${path.join(planted, '.git')}\n`);
+  assert.equal(await worktreeGit(worktree, 'rev-parse', '--absolute-git-dir'), path.join(project, '.git', 'worktrees', 'k-7'));
+  await worktreeGit(worktree, 'status', '--porcelain');
+  assert.equal(existsSync(ran), false, 'the planted config ran nothing');
+  await fs.rm(dir, { recursive: true, force: true });
 });
 
 test('cuts an answer into messages after line breaks, never inside a surrogate pair', () => {
