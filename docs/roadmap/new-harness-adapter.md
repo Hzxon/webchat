@@ -2,6 +2,14 @@
 
 Status: Idea. Proposed 2026-11-09 from the harness audit.
 
+Order: first. Three pull requests in a row, each merged before the next is claimed: the seam
+alone, as a `refactor` with no change in behavior; then the sealed per-harness state and the
+Settings rows; then the harness named in each signed request, with the pickers and the host
+harness for unprompted turns. The seam's pull request also rewrites the "background Claude"
+lines of `.claude/rules/projects.md` to "the harness's turn" and adds one line: an adapter owns
+the turn, the isolation proof and the setup it offers, and `plugin.ts` never names a harness.
+Every other card waits for the seam. The daemon host may start beside the second pull request.
+
 Why: the agent's turn, its isolation proof and the setup it loads are Claude Code's command
 line, settings files and hook format, in `agent/claude.ts` and `agent/plugin.ts`. The sealed
 protocol, `Runs`, `Conversations` and the workflow in the plugin know no harness. A student

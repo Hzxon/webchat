@@ -2,6 +2,12 @@
 
 Status: Idea. Proposed 2026-11-09 from the harness audit. Needs the harness adapter card.
 
+Order: the spike first and at any time, since it needs no code and its result decides the
+second half. The adapter fourth, after the harness card is done, since the picker is how an
+owner reaches Codex and the Settings row is where it says why it takes no cards; it may run
+beside the pause card, which touches other files. Codex takes cards last, only once the spike
+held and the gh token question is answered.
+
 Why: with the seam in place no second harness exists. Codex is the likely first, and it cannot
 prove that its shell is kept from the secret folders: its sandbox allows reads everywhere, as
 far as its documentation shows. D-097 requires that proof before a run pushes with the owner's

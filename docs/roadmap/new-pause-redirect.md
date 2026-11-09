@@ -1,6 +1,11 @@
 ### R: Pause a run and redirect it
 
-Status: Idea. Proposed 2026-11-09 from the harness audit. Needs only the seam of the harness adapter card.
+Status: Idea. Proposed 2026-11-09 from the harness audit. Needs the harness adapter card.
+
+Order: fourth, after the harness card is done and not beside it: it edits the watched record
+and the run, finish and cancel paths that the per-session pick also edits, so running them at
+once buys one conflict for nothing. Three pull requests in a row: the progress line and pause,
+then redirect and the rule it reveals, then the plan gate. It may run beside the Codex adapter.
 
 Why: a run is a black box for up to two hours, and Stop throws its work away: the draft closes
 (D-118), the branch stays, and a new run starts from zero. The owner cannot see a run go wrong,

@@ -2,6 +2,10 @@
 
 Status: Idea. Proposed 2026-11-09 from the harness audit. Needs the harness adapter card.
 
+Order: second, once the harness card's seam has landed, and beside its second pull request.
+It touches `agent/index.ts` and `agent/mcp.ts`, which the other cards leave alone, so it
+conflicts with none of them.
+
 Why: the trusted half of the agent runs only as the MCP server that Claude Code starts
 (`agent/mcp.ts`), and one Claude Code window must stay open (D-092, D-094). A laptop without
 Claude Code cannot run an agent, whatever harness it has.
