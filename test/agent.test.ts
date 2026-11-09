@@ -1171,6 +1171,15 @@ describe('agent client (R-027)', () => {
           { text: `I stopped watching acme/app#${number}: it was merged.`, run: { kind: 'merged', request: paused.id, note: 'it was merged', pull: { repo: 'acme/app', number }, decisions: ['D-1'] } },
         ]);
 
+        // A finished run's draft closed unmerged says so, and Alice's page moves the card back.
+        await unthrottle();
+        const dropped = await runK7({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'done', note: 'Done.', title: 'fix: Sums', body: 'Fixed.' }) });
+        const closing = await pullsNow();
+        closing[closing.length - 1] = { ...closing.at(-1)!, view: { state: 'CLOSED' } };
+        await fs.writeFile(ghState, JSON.stringify({ ...JSON.parse(await fs.readFile(ghState, 'utf8')), pulls: closing }));
+        await plugin.pollPulls();
+        assert.deepEqual((await reports(dropped.id)).map((r) => r.run.kind), ['closed']);
+
         // A run left waiting for 7 days fails, and its draft closes with its branch kept.
         await unthrottle();
         const left = await runK7({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'decision', note: 'Totals need a rule.', drafts: [{ ...needed, title: 'Totals round once' }] }) });
@@ -1194,14 +1203,17 @@ describe('agent client (R-027)', () => {
     const code = newPairingCode();
     const first = new Plugin({ ...options, code: `${baseUrl}#${code}` });
     const second = new Plugin({ ...options, code: '' });
-    void first.serve();
+    // Caught, as agent/mcp.ts does: a window whose check-in outlasts the test starts again after
+    // the file's server closed and its folder went, and pairs again with nobody to answer.
+    const serve = (window: Plugin) => void window.serve().catch(() => undefined);
+    serve(first);
     try {
       const agent = await approve(alice, code, 'Sleepy');
       await waitFor('the first window serves', () => first.problem === '');
       const job = new Plugin({ ...options, code: '', job: true });
       assert.equal(await job.start(), false);
       assert.match(await job.call('status'), /background job, so it does not serve/);
-      void second.serve();
+      serve(second);
       await waitFor('the second window waits', () => /Another Claude Code window/.test(second.problem));
 
       // Nothing runs, so the agent sleeps at once on Alice's word in the pane, and says so.

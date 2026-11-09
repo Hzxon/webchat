@@ -1160,7 +1160,7 @@ export class Plugin {
           continue;
         }
         if (ended) {
-          await this.end(pull, ended, view.state === 'MERGED');
+          await this.end(pull, ended, view.state);
           continue;
         }
         // It goes on only on its owner's go, and reminds them once after a day (R-042).
@@ -1209,10 +1209,12 @@ export class Plugin {
   }
 
   /** Stops watching a pull request and says why in the chat of its request (D-105). */
-  private async end(pull: Watched, why: string, merged = false) {
+  private async end(pull: Watched, why: string, state = '') {
     await this.unwatch(pull);
-    // A merge finishes the card, which the owner's page marks Done or Fixed (R-042).
-    await this.runs!.report(pull.taken, { kind: merged ? 'merged' : 'ended', note: why, pull: pull.pull, ...(merged && pull.decisions && { decisions: pull.decisions }) }, `I stopped watching ${pull.pull.repo}#${pull.pull.number}: ${why}.`);
+    const merged = state === 'MERGED';
+    // A merge finishes the card, which the owner's page marks Done or Fixed (R-042). A close
+    // unmerged gives the card back its old status, or it would say In review for good.
+    await this.runs!.report(pull.taken, { kind: merged ? 'merged' : state === 'CLOSED' ? 'closed' : 'ended', note: why, pull: pull.pull, ...(merged && pull.decisions && { decisions: pull.decisions }) }, `I stopped watching ${pull.pull.repo}#${pull.pull.number}: ${why}.`);
   }
 
   /** What is new to fix: CI that failed on the head, a conflict, or review notes from people who may push. */

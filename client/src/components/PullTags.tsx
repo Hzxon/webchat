@@ -17,6 +17,7 @@ export const RUN_TAGS: Record<RunReport['kind'], [Tone, string]> = {
   stale: ['warn', 'No longer holds'],
   decision: ['warn', 'Waiting for a decision'],
   merged: ['ok', 'Merged'],
+  closed: ['muted', 'Closed'],
   draft: ['ok', 'Draft ready'],
 };
 

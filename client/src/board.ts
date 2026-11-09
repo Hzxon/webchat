@@ -138,8 +138,13 @@ export function duplicates(cards: Card[]): Set<string> {
 /** The status a new card of each kind starts with. */
 export const NEW_STATUS: Record<CardKind, string> = { D: 'Proposed', R: 'Idea', K: 'Open', Q: 'Open' };
 
-/** A card's text: the heading with its id and title, the status line, then what is under them. */
-export const cardText = (id: string, title: string, status: string, body: string) => `### ${id}: ${title}\n\nStatus: ${status}.\n\n${body}`;
+/**
+ * A card's text: the heading with its id and title, the status line, then what is under them. A
+ * status line the body starts with goes, as an agent's draft may write one: the card would show
+ * both, and a run moves only the first (K-1 in #170).
+ */
+export const cardText = (id: string, title: string, status: string, body: string) =>
+  `### ${id}: ${title}\n\nStatus: ${status}.\n\n${body.replace(/^\s*Status:[^\n]*\n*/, '')}`;
 
 /** What a new card starts with: the heading with its id, the status, and the fields of its kind. */
 export function cardTemplate(kind: CardKind, id: string): string {
@@ -179,6 +184,27 @@ export interface CardRun {
   decisions?: string[];
   /** The user asked to stop a run the agent took, and the agent has not reported since. */
   stopping?: boolean;
+}
+
+/**
+ * Where a card must stand for its run's report to move it, and where it goes, or no move: so a
+ * status a teammate set since stays (D-100, D-118). `was` is the status before the run.
+ */
+export function statusMove(run: CardRun, card: string, was: string, working: string): [string[], string] {
+  const pull = run.pull ? `${run.pull.repo}#${run.pull.number}` : '';
+  const review = pull ? `In review: ${pull}` : 'In review';
+  const moves: Partial<Record<CardRun['state'], [string[], string]>> = {
+    claimed: [[was], working],
+    decision: [[was, working], WAITING],
+    fixing: [[WAITING], working],
+    done: [[was, working, WAITING], review],
+    failed: [[working, WAITING], was],
+    stale: [[working], was],
+    // A merge moves it only with its pull request.
+    merged: [[was, working, WAITING, review], pull && `${card.startsWith('K-') ? 'Fixed' : 'Done'} in ${pull}`],
+    closed: [[review], was],
+  };
+  return moves[run.state] ?? [[], ''];
 }
 
 /** The states in which a run may still go, so the page asks for no second one. */

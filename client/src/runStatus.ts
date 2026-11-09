@@ -2,13 +2,13 @@
 // (D-105, D-100). Teammates see no run messages, so the status line is how they learn that a card
 // runs: "In progress: Ann's agent" once the agent took it, after it checked the brief, "Waiting for
 // a decision" while it waits for one, "In review: repo#N" once its work is in its draft, "Done in
-// repo#N" once that is merged, and the status it had before when the run fails or the card no
-// longer holds (R-042). Each move is made only from the status it expects, so a status a teammate
-// set since stays, and only under the card's lock, read there, never while anyone, another tab
-// included, holds it.
+// repo#N" once that is merged, and the status it had before when the run fails, the card no
+// longer holds (R-042) or the draft is closed unmerged. Each move is made only from the status it
+// expects, so a status a teammate set since stays, and only under the card's lock, read there,
+// never while anyone, another tab included, holds it.
 import { cardStatus, type BoardSyncDTO, type RunRequest } from '../../shared/types';
 import { agentChats, inOrder } from './agents';
-import { boardDocs, cardRuns, dateOf, GROUPS, groupOf, parseCard, WAITING, withStatus, workingStatus, type Card, type CardRun } from './board';
+import { boardDocs, cardRuns, dateOf, GROUPS, groupOf, parseCard, statusMove, withStatus, workingStatus, type Card } from './board';
 import { syncNow } from './chat';
 import { loadSections, rewriteSection } from './docs';
 import type { ChatDoc, ChatMessage } from './e2ee/keyring';
@@ -35,21 +35,9 @@ export async function followRuns() {
     for (const [section, run] of cardRuns(messages, me.id, docId, state.pending, Date.now())) {
       const request = requests.get(run.request)!;
       const was = request.was ?? '';
-      const pull = run.pull ? `${run.pull.repo}#${run.pull.number}` : '';
-      const review = pull ? `In review: ${pull}` : 'In review';
       const key = `${run.request}:${run.at}`;
-      if (run.state === 'merged' && pull) await accept(doc, run.decisions ?? [], `Accepted ${dateOf(new Date())} in ${pull} (${request.card})`, key, cardsOf);
-      // Where the card must stand for the move, and where it goes; a merge moves it only with its pull request.
-      const moves: Partial<Record<CardRun['state'], [string[], string]>> = {
-        claimed: [[was], working],
-        decision: [[was, working], WAITING],
-        fixing: [[WAITING], working],
-        done: [[was, working, WAITING], review],
-        failed: [[working, WAITING], was],
-        stale: [[working], was],
-        merged: [[was, working, WAITING, review], pull && `${request.card.startsWith('K-') ? 'Fixed' : 'Done'} in ${pull}`],
-      };
-      const [from, to] = moves[run.state] ?? [[], ''];
+      if (run.state === 'merged' && run.pull) await accept(doc, run.decisions ?? [], `Accepted ${dateOf(new Date())} in ${run.pull.repo}#${run.pull.number} (${request.card})`, key, cardsOf);
+      const [from, to] = statusMove(run, request.card, was, working);
       if (!to || tried.has(key) || doc.locks.some((l) => l.section === section)) continue;
       tried.add(key);
       // Most reports moved their card already, so only a card that stands where the move starts takes its lock.
