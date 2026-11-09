@@ -80,6 +80,11 @@ const FAKE_CLAUDE = `#!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 const args = process.argv.slice(2);
+// What the adapter asks of the laptop's Claude Code for Settings (D-115).
+if (args[0] === '--version' || args.join(' ') === 'auth status') {
+  console.log(args[0] === '--version' ? '2.1.0 (Claude Code)' : '{"loggedIn": true}');
+  process.exit(0);
+}
 const input = fs.readFileSync(0, 'utf8');
 // The owner's skills it got, as a plugin folder made for the turn (R-039).
 const plugin = args.includes('--plugin-dir') ? fs.readdirSync(args[args.indexOf('--plugin-dir') + 1], { recursive: true }).sort() : undefined;
@@ -802,12 +807,18 @@ describe('agent client (R-027)', () => {
         };
         const offer = { claudeMd: true, skills: [{ name: 'commit-style', description: 'Writes commit messages.' }, { name: 'other', description: 'Does other things.' }] };
         // The runs before loaded nothing of it, as nothing was chosen.
-        const [shown] = await setup(alice, direct);
-        assert.deepEqual({ ...shown, applied: { ...shown!.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
+        const { harnesses, ...shown } = (await setup(alice, direct))[0]!;
+        assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
+        const claudeCode = { name: 'Claude Code', version: '2.1.0', signedIn: true, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution'] };
+        assert.deepEqual(harnesses, [claudeCode], 'the pane learns each harness the laptop has, and the knobs it honors');
+        // Turned off, the only harness starts nothing; a page from before the list keeps it off.
+        await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false, off: ['Claude Code'] });
+        await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false });
+        assert.match(await plugin.call('status'), /You turned Claude Code off, so I start nothing/);
         // Carol's word changes nothing and hears nothing; Alice's is kept, a skill she chose that is gone too.
         const chosen = { claudeMd: true, skills: ['commit-style', 'gone'], noAttribution: true };
         assert.deepEqual(await setup(carol, general, chosen), []);
-        assert.deepEqual((await setup(alice, direct, chosen)).map((s) => s.choice), [chosen]);
+        assert.deepEqual((await setup(alice, direct, { ...chosen, off: [] })).map((s) => s.choice), [{ ...chosen, off: [] }]);
         assert.deepEqual(JSON.parse(await fs.readFile(settings, 'utf8')).attribution, { commit: '', pr: '' }, 'the settings hide the attribution lines');
         // The board Alice's page picked goes in the brief, and no other (D-104).
         const prompted = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id }, 'What does sum.js do?'));
