@@ -949,8 +949,8 @@ const CHANNEL_NAME = /^[\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+(-[\p{Ll}\p{Lo}\p{Lm}\p{M}
 
 export const isChannelName = (name: string) => name.length <= LIMITS.channelNameLength && CHANNEL_NAME.test(name);
 
-/** A GitHub repository as "owner/name". */
-export const isRepoName = (name: string) => name.length <= 200 && /^[\w.-]+\/[\w.-]+$/.test(name);
+/** A GitHub repository as "owner/name". GitHub refuses "." and ".." as names, and the agent joins the name onto its clone folder, so they are refused here too. */
+export const isRepoName = (name: string) => name.length <= 200 && /^(?!\.\.?\/)[\w.-]+\/(?!\.\.?$)[\w.-]+$/.test(name);
 
 /** Turns what someone types into a channel name, such as "Slides & Design" into "slides-design". */
 export const toChannelName = (value: string) =>
