@@ -20,7 +20,7 @@ Each line is a constraint the code cannot state on its own. The number names the
 docs/decisions.md that explains it.
 
 - Every project member is a member of every channel; there are no private channels (D-024).
-- A new channel's key is wrapped for exactly the project's members at that moment; adding people brings every channel's current key wrapped for each of them, checked under the project's row lock (D-025).
+- A new channel's key is wrapped for exactly the project's members at that moment, by someone still among them; adding people brings every channel's current key wrapped for each of them, checked under the project's row lock (D-025).
 - A stale view answers `409 stale_project` or `409 stale_group`; the page reloads and retries once, and shows a second conflict as an error (D-025, D-039, D-043).
 - The member who adds people wraps its own opened copy of each key; each key holds the one it replaced so newcomers read history, and their read pointers start at the newest message (D-026, D-043).
 - Adding people to a group: at most 20 at once; the server checks under the group's lock that the copies cover exactly those added, the key they came from is current and the adder is a member (D-043).

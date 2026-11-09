@@ -1181,6 +1181,12 @@ describe('chat server', () => {
       assert.equal(outsider.status, 404);
     });
 
+    test('someone removed after the membership check cannot add a channel', async () => {
+      // The route checked Carol while she was a member; the lock is where the removal shows.
+      const key = await carol.newChatKey([alice, bob].map((c) => ({ id: c.id, keys: keysOf(c) })));
+      assert.equal(await (await openDb(instance.sql)).createChannel(project.id, 'late', carol.id, key), 'stale');
+    });
+
     test('a channel cannot take an id from before #general, which pages tell by the lowest id (D-111)', async () => {
       const members = [{ id: alice.id, keys: keysOf(alice) }];
       const early = await alice.newChatKey(members);

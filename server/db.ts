@@ -1139,6 +1139,8 @@ export async function openDb(sql: Sql) {
     ): Promise<number | ProjectChangeRefusal> {
       return sql.transaction(async (tx) => {
         const { memberIds } = await lockProject(tx, projectId);
+        // Removed since the route checked: the copies would come from someone outside the project.
+        if (!memberIds.includes(createdBy)) return 'stale';
         if (!sameIds(memberIds, key.wrappedKeys.map((k) => k.userId))) return 'stale';
         if (key.conversationId < Math.min(...(await projectChannels(tx, projectId)).map((c) => c.id))) return 'stale';
         return (await insertChannel(tx, projectId, title, memberIds, { ...key, wrappedBy: createdBy })) ?? 'name_taken';
