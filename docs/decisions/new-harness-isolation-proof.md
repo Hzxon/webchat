@@ -4,8 +4,10 @@ Status: Proposed 2026-11-09 in #180, from "A Codex adapter, and a sandbox WebCha
 
 A harness takes cards only when its adapter's `refusal(dir)` proves that its shell cannot read the
 secret folders: the plugin's data, gh's config and the macOS keychain. Without that proof it
-answers questions only, in a conversation's scratch copy, which pushes nothing. Settings shows the
-gap on its row. Codex is the first such harness: its sandbox lets the shell read every folder, as
+answers questions only, in a conversation's scratch copy, which pushes nothing: `refusal` takes
+the turn's purpose, `cards` or `answers`, and an adapter whose only gap is the owner's login
+refuses the first and allows the second. Settings shows the gap on its row, and a card request
+naming the harness fails with it before the claim check. Codex is the first such harness: its sandbox lets the shell read every folder, as
 far as its documentation shows. Its turns run `codex exec` without the owner's config.toml, rules
 or hooks, with only the core environment variables, no network and writes only in the copy. Why:
 D-097 wants the proof before a run pushes with the owner's login.
