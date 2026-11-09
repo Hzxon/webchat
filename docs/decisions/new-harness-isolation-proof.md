@@ -1,6 +1,6 @@
 ### D: A harness runs cards only when its adapter proves the shell cannot read the secrets
 
-Status: Proposed 2026-11-09 in #PR, from "A Codex adapter, and a sandbox WebChat owns".
+Status: Proposed 2026-11-09 in #180, from "A Codex adapter, and a sandbox WebChat owns".
 
 A harness takes cards only when its adapter's `refusal(dir)` proves that its shell cannot read the
 secret folders: the plugin's data, gh's config and the macOS keychain. Without that proof it
