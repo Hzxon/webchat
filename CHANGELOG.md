@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.9.0](https://github.com/Hzxon/webchat/compare/v0.8.0...v0.9.0) (2026-11-09)
+
+
+### Features
+
+* **agent:** Answer questions through Codex ([#180](https://github.com/Hzxon/webchat/issues/180)) ([b31211b](https://github.com/Hzxon/webchat/commit/b31211bb4ed73cbc9a36db777264a40fcf06af4c))
+* **agent:** Pick the harness in each request ([#179](https://github.com/Hzxon/webchat/issues/179)) ([c841b29](https://github.com/Hzxon/webchat/commit/c841b29c3fbc7e16e2ba2c00a5104f7e44ed5ea0))
+* **agent:** Redirect a paused run with the owner's words ([#181](https://github.com/Hzxon/webchat/issues/181)) ([1f65564](https://github.com/Hzxon/webchat/commit/1f65564137121fa089b416daee7043d0fc804723))
+* **agent:** Serve the agent from a daemon ([#177](https://github.com/Hzxon/webchat/issues/177)) ([87a842e](https://github.com/Hzxon/webchat/commit/87a842e535d0b431b500b3b3cb7b83402f9a78b3))
+* **agent:** Show a run's plan before it commits ([#182](https://github.com/Hzxon/webchat/issues/182)) ([d961ab7](https://github.com/Hzxon/webchat/commit/d961ab72dc5eb8bfc028ab43fea6d683056c5657))
+* **agent:** Show each harness in Settings ([#176](https://github.com/Hzxon/webchat/issues/176)) ([82bceeb](https://github.com/Hzxon/webchat/commit/82bceeb602d8e998fee7fa3bf99337794c523c4d))
+* **agent:** Show progress and pause a run on Stop ([#178](https://github.com/Hzxon/webchat/issues/178)) ([aa32826](https://github.com/Hzxon/webchat/commit/aa328260242e672be47992cc2cd303497d38f964))
+
+
+### Bug Fixes
+
+* **board:** Keep one true status on a card ([#171](https://github.com/Hzxon/webchat/issues/171)) ([adc10a3](https://github.com/Hzxon/webchat/commit/adc10a3e358c5bbf6182caedfd5da6b8800d3b5e))
+
 ## [0.8.0](https://github.com/Hzxon/webchat/compare/v0.7.0...v0.8.0) (2026-11-07)
 
 
