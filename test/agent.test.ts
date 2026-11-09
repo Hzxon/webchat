@@ -789,6 +789,7 @@ describe('agent client (R-027)', () => {
         await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'done', note: 'Renamed.' }) }, async () => (await checkIn()).handled);
         const [, , , go] = await turns();
         assert.ok(go!.input.includes('Please rename sum.') && go!.input.includes('Call it add.'), "the round has the review and Alice's words");
+        assert.ok(go!.input.startsWith('You are fixing the draft') && !go!.input.includes("OWNER'S WORDS"), 'a draft that is not paused gets the fix brief');
         assert.deepEqual(await reportsOn(asked), ['I am back on K-7: review from bob', `I finished K-7 on ${branch} (acme/app#1). Renamed.`]);
 
         // Someone else pushes to it: it is theirs now, and Claude runs no more.
@@ -1314,6 +1315,21 @@ describe('agent client (R-027)', () => {
         assert.equal(silent.said.at(-1)!.run.kind, 'paused');
         await plugin.pollPulls(Date.now() + 8 * DAY);
         assert.deepEqual((await reports(silent.id)).map((r) => r.text), ['I could not run K-7: No words came within 7 days.']);
+        // The owner's words redirect a stopped run: its session goes on with them, fenced, and ends the run.
+        const redirected = await stopK7();
+        const words = 'Do not add a table; reuse messages.';
+        await alice.send(general, { text: words, run: { kind: 'fix', request: redirected.id, note: words, sentAt: Date.now() } });
+        await (await checkIn()).handled;
+        const [redirectedCheck] = redirected.turns;
+        const steered = (await turns()).at(-1)!;
+        assert.equal(steered.args[steered.args.indexOf('--resume') + 1], redirectedCheck!.args[redirectedCheck!.args.indexOf('--session-id') + 1], 'the same session goes on');
+        assert.ok(steered.input.includes(`OWNER'S WORDS START ============\n${words}\n============`), 'the words are fenced');
+        assert.ok(steered.input.includes('read `git status` first'), 'it looks at the worktree first');
+        const redirectedPull = (await pullsNow()).at(-1)!;
+        assert.deepEqual((await reports(redirected.id)).map((r) => r.text), [
+          'I am back on K-7: you told me what to change',
+          `I finished K-7 on ${redirectedPull.head} (acme/app#${(await pullsNow()).length}). Sums add up now.`,
+        ]);
       } finally {
         restore();
       }
