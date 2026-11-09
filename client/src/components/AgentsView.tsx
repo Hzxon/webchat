@@ -16,6 +16,7 @@ import { AgentBrief } from './AgentBrief';
 import { AgentDialog } from './AgentDialog';
 import { AgentDraft } from './AgentDraft';
 import { AgentSetup } from './AgentSetup';
+import { HarnessPicker, useHarnessPick } from './HarnessPicker';
 import { Markdown } from './Markdown';
 import { Tag, type Tone } from './PullTags';
 
@@ -68,7 +69,10 @@ export function AgentsView() {
   let subtitle = awake ? 'Your agent is online' : asleep(Math.max(0, ...agents.map((a) => a.lastSeen ?? 0)) || null);
   if (agents.length === 0) subtitle = 'No agent connected';
   else if (thread?.kind === 'proposal') subtitle = `Proposed in ${short(thread.repo)} · ${THREAD_STATE[thread.state].label}`;
-  else if (thread) subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board'} · ${THREAD_STATE[thread.state].label}`;
+  else if (thread) {
+    const where = thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board';
+    subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${where}${thread.harness ? ` with ${thread.harness}` : ''} · ${THREAD_STATE[thread.state].label}`;
+  }
   else if (brief) subtitle = 'Before it starts';
   // An agent runs several cards at once, so the list says how many go (R-037).
   const running = threads.filter((t) => t.kind === 'card' && t.state === 'working').length;
@@ -210,6 +214,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
   const repos = project ? choicesOf(project.id) : [];
   const repo = repos.find((r) => r === picked.repo) ?? repos[0];
   const agent = project && agentIn(project.id);
+  const { list, harness, pick } = useHarnessPick(agent);
   // With no repository, the agent answers from the board alone, on its laptop (R-038).
   const blocked = !agent ? 'Add your agent to one of your projects first: Add it, below.' : blockedBy(seatFor(agent, repo ?? ''));
   const loading = !!project && !linked[project.id];
@@ -218,7 +223,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
 
   async function ask(text: string) {
     try {
-      actions.setAgentsOpen(true, await askAgent(agent!.id, project!.id, repo || undefined, text));
+      actions.setAgentsOpen(true, await askAgent(agent!.id, project!.id, repo || undefined, text, harness));
     } catch (err) {
       actions.addToast({ conversationId: null, title: 'Question not sent', body: (err as Error).message });
       throw err;
@@ -267,6 +272,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
             ) : (
               <span>{repo ? short(repo) : 'its board'}</span>
             )}
+            <HarnessPicker list={list} value={harness} onChange={pick} />
           </div>
         )}
         {blocked && <p className="composer-blocked">{blocked}</p>}

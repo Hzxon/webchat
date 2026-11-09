@@ -155,8 +155,8 @@ export function claudeHarness(program: string, hook: string, dataDir: string): H
 
 /** The plugin as Claude Code hosts it: its turns run in the session's own `claude`, with the guard hook `guard`. */
 export class ClaudePlugin extends Plugin {
-  constructor({ claude, guard: hook, ...options }: Omit<PluginOptions, 'harness'> & { claude: string; guard: string }) {
-    super({ ...options, harness: claudeHarness(claude, hook, options.dataDir) });
+  constructor({ claude, guard: hook, ...options }: Omit<PluginOptions, 'harnesses'> & { claude: string; guard: string }) {
+    super({ ...options, harnesses: [claudeHarness(claude, hook, options.dataDir)] });
   }
 }
 
