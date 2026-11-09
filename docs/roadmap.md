@@ -8,13 +8,15 @@ This file is a copy of the Roadmap column of the project's board in WebChat, whi
 
 Status: In review: Hzxon/webchat#159.
 
-Status: Open. Found by the owner on an iPhone before iOS 16.4.
+Checked: 2026-11-09. Read the board's K-1, docs/roadmap/K-1.md and two-status-lines.md on main at 6a95ad6, CHANGELOG 0.9.0, and cardText in client/src/board.ts. No open pull requests.
+
+Found by the owner on an iPhone before iOS 16.4. #159 fixed it and was reverted in #169, so the card is open again. Set its status line to `Open` by hand: a draft can't change it.
 
 On iOS before 16.4 the sidebar always shows "Notifications on iPhone need iOS 16.4. Tap to get alerts through the Bark app instead." It stays after the user links Bark and their alerts already arrive through it. A warning that never goes away teaches people to ignore the banner, and it suggests that their alerts are broken when they are not.
 
 Cause: `AlertSetupBanner` in `client/src/components/Sidebar.tsx` shows the warning while `push.permission !== 'granted'`. That can never change on these phones, which have no Web Push (`oldIos` in `client/src/push.ts`). The page never asks whether Bark is linked. Only `NotificationDialog` fetches `GET /api/bark` (`BarkDTO`), and only while the dialog is open (D-054).
 
-Fix: on iOS before 16.4, the page fetches the Bark state, or keeps the dialog's answer in the store, and hides the warning once `link.devices` has at least one phone. While Bark is linked but no phone has registered, the warning stays, since nothing reaches the user yet. Other browsers keep their banner, and the alert sound banner is unchanged.
+Fix: on iOS before 16.4, the page fetches the Bark state, or keeps the dialog's answer in the store, and hides the warning once `link.devices` has at least one phone. While Bark is linked but no phone has registered, the warning stays, since nothing reaches the user yet. Other browsers keep their banner, and the alert sound banner is unchanged. Find out why #169 reverted #159 before taking it again.
 
 Done when: an iOS 15 user agent with a linked Bark device shows no notification warning, one without a link or device still shows it, and a test proves both.
 
@@ -174,6 +176,27 @@ D-043). The other members see it only in the member count and the member list. W
 "Alice added Carol" in the chat, and Slack shows "Carol joined #general". A note in the message
 list would tell everyone who can read along. The server already knows when each member joined, so
 the notes would show it nothing new. They should not count as unread.
+
+### R-043: Run cards through a harness adapter, picked per session
+
+Status: Idea.
+
+Checked: 2026-11-09. Read docs/roadmap/new-harness-adapter.md, agent/harness.ts, agent/claude.ts, agent/codex.ts and CHANGELOG 0.9.0 (#176, #179) on main at 6a95ad6, and the board's cards and decisions. No open pull requests.
+
+Shipped in #174 (the seam), #176 (the sealed per-harness state and the Settings rows) and #179 (the harness named in each signed request). Proposed 2026-11-09 from the harness audit.
+
+Why: the agent's turn, its isolation proof and the setup it loads were Claude Code's command line, settings files and hook format, in `agent/claude.ts` and `agent/plugin.ts`. The sealed protocol, `Runs`, `Conversations` and the workflow in the plugin know no harness. A student whose team uses Codex or OpenCode could not run an agent at all.
+
+Scope:
+
+- One `Harness` interface in `agent/harness.ts`. `turn` runs one turn in a folder with the brief on stdin and a JSON answer for a schema. `refusal` says why this laptop cannot run cards with it. `offers` names the instructions file, the skills folder and the few knobs it can honor. The Claude adapter is the old code moved behind it, so a Claude Code owner sees no change.
+- Each harness the laptop found goes to the owner sealed in `SetupState`, with its state and knobs. Settings shows one row per harness with an enable toggle.
+- The owner names the harness, signed, in each card run and each conversation, as the repository is named (D-093). A session keeps the harness that started it. Turns nobody picked for run on the host harness.
+- The seam's pull request rewrote the "background Claude" lines of `.claude/rules/projects.md` to "the harness's turn": an adapter owns the turn, the isolation proof and the setup it offers, and `plugin.ts` never names a harness.
+
+Constraints: a knob is offered only when the adapter honors it without running code outside the sandbox and without changing permission or sandbox mode. Model, caps, the instructions file, skills and attribution pass. Permission mode, plugins, hooks and MCP servers never do, for any harness (D-097, D-115). The server learns nothing new: per-harness state is sealed to the owner, and `claudeMd` keeps its wire name. A request from an old page names no harness and runs on the host harness. A request naming a harness that is not enabled fails with the reason. No switching mid-session. `test/agent.test.ts` has a fixture per adapter.
+
+Done when: a Claude Code agent behaves as before and the tests pass; Settings lists the harnesses the laptop has, each with its state and knobs; a card run and a conversation each show the harness the owner picked; a request from an old page runs on the host harness; a request naming a harness that is not enabled fails with the reason.
 
 ## Known issues
 
