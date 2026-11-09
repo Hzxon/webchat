@@ -60,6 +60,7 @@ const RUN_STATE: Partial<Record<RunDTO['kind'], Thread['state']>> = {
   stale: 'stale',
   decision: 'waiting',
   merged: 'done',
+  closed: 'done',
 };
 
 /** Where the user's agent works on a repository: its folder on the laptop (D-094), or none there yet (R-036). */

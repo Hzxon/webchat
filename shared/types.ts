@@ -578,9 +578,10 @@ export interface RunReport {
    * nothing was pushed, and the card is the change of its status the owner can add; "decision" says
    * the run waits for a decision nobody foresaw, whose draft is the card; "draft" hands the owner a
    * change the run asks of the board; "merged" says the draft was merged, so the owner's page
-   * finishes the card and accepts its decisions (D-118).
+   * finishes the card and accepts its decisions (D-118); "closed" says it was closed unmerged, so the
+   * owner's page gives the card back the status it had before the run.
    */
-  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended' | 'nocopy' | 'stale' | 'decision' | 'merged' | 'draft';
+  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended' | 'nocopy' | 'stale' | 'decision' | 'merged' | 'closed' | 'draft';
   request: number;
   /** What happened, in a line. */
   note?: string;

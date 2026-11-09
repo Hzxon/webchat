@@ -5,7 +5,7 @@ import { describe, test } from 'node:test';
 // the client module. tsx still loads it.
 const clientBoard = '../client/src/board.ts';
 
-const { cardRuns, cardTemplate, GOING, duplicates, idOf, groupOf, otherRun, parseCard, unchecked, withChecked, withStatus, workingStatus } = await import(clientBoard);
+const { cardRuns, cardTemplate, cardText, statusMove, GOING, duplicates, idOf, groupOf, otherRun, parseCard, unchecked, withChecked, withStatus, workingStatus } = await import(clientBoard);
 
 const section = (id: string, text: string) => ({ id, text, pos: 1, failed: false });
 
@@ -37,6 +37,20 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.deepEqual([moved.status, moved.body], ['In review: o/r#3', 'Seen: here']);
     const added = card(withStatus('### K-1: Bug\n\nSeen: here', 'In review'));
     assert.deepEqual([added.title, added.status, added.body], ['Bug', 'In review', 'Seen: here']);
+  });
+
+  test('a body that starts with its own status line gives the card one status line', () => {
+    const made = parseCard(section('a', cardText('K-1', 'Bug', 'Open', 'Status: Open. Found by the owner.\n\nSeen: here')));
+    assert.deepEqual([made.status, made.body], ['Open', 'Seen: here']);
+  });
+
+  test("a run's report moves its card only from where the run left it (D-118)", () => {
+    const pull = { repo: 'o/r', number: 3 };
+    const move = (state: string) => statusMove({ request: 1, runtime: 9, state, pull }, 'K-1', 'Open', 'In progress: Ann’s agent');
+    assert.deepEqual(move('done'), [['Open', 'In progress: Ann’s agent', 'Waiting for a decision'], 'In review: o/r#3']);
+    assert.deepEqual(move('merged')[1], 'Fixed in o/r#3');
+    assert.deepEqual(move('closed'), [['In review: o/r#3'], 'Open'], 'a draft closed unmerged gives the card its old status back');
+    assert.deepEqual(move('ended'), [[], ''], 'watching that stops on an open draft leaves the card in review');
   });
 
   test('a card reads its Checked line, and has an empty check without one (R-041)', () => {

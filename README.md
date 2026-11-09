@@ -540,7 +540,7 @@ The request and the agent's reports show in the card's conversation under **Codi
 you can stop a run. The card's status line tells your team: `In progress: Ann's agent` while it
 works, `Waiting for a decision` while it waits for one, `In review: repo#12` once its work is in the
 draft, `Done in repo#12` or `Fixed in repo#12` once that is merged, and what it was before if the
-run fails or the card no longer holds. A merge also sets the decisions the work made true to
+run fails, the card no longer holds or the draft is closed without a merge. A merge also sets the decisions the work made true to
 Accepted. Your page writes these while it is open. The agent reads the card as it is on the board,
 whoever wrote it, and the board's decisions. It works with your git and GitHub credentials, so run
 only cards you would do yourself.
