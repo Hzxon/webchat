@@ -561,7 +561,9 @@ describe('chat server', () => {
       (await instance.sql.query<{ user_id: number }>('SELECT user_id FROM webchat.push_subscriptions WHERE endpoint = $1', [browser.json.endpoint]))[0]?.user_id;
     assert.equal((await bob.request('POST', '/push/subscribe', browser.json)).status, 204);
     const forged = makeSubscription(browser.json.endpoint);
-    assert.equal((await carol.request('POST', '/push/subscribe', forged.json)).status, 204);
+    // Refused, so the page makes a new subscription instead of believing it has one.
+    const refused = await carol.request<{ code?: string }>('POST', '/push/subscribe', forged.json);
+    assert.deepEqual([refused.status, refused.data.code], [409, 'endpoint_taken']);
     assert.equal(await ownerOf(), bob.id, 'knowing the endpoint is not enough');
     // The same browser signed in to another account sends the same subscription.
     assert.equal((await carol.request('POST', '/push/subscribe', browser.json)).status, 204);
