@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { secretDirs, type Harness } from './harness.ts';
-import { Plugin, type PluginOptions } from './plugin.ts';
+import { line, Plugin, type PluginOptions } from './plugin.ts';
 import { start, type Final } from './runner.ts';
 
 const exec = promisify(execFile);
@@ -107,6 +107,49 @@ export function claudeResult(line: string): Final | undefined {
   return { text: String(event.result ?? ''), error: event.is_error === true, session: event.session_id, answer: event.structured_output };
 }
 
+/** A content block of a stream-json `assistant` event: the model's words, or a tool it calls. */
+interface Block {
+  type: string;
+  text?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+}
+
+/**
+ * What Claude Code does now, in a sentence, from one line of its stream-json output: the tool it
+ * calls, with the file as the worktree knows it, or the first line of what it says. Undefined for
+ * every other line.
+ */
+export function claudeProgress(output: string, cwd: string): string | undefined {
+  // A tool's result can run to hundreds of kilobytes; only an assistant event is worth parsing.
+  if (!output.includes('"type":"assistant"')) return undefined;
+  let event: { type?: string; message?: { content?: Block[] } } | null;
+  try {
+    event = JSON.parse(output) as typeof event;
+  } catch {
+    return undefined;
+  }
+  if (event?.type !== 'assistant') return undefined;
+  const block = event.message?.content?.at(-1);
+  if (!block) return undefined;
+  const input = block.input ?? {};
+  const field = (name: string) => String(input[name] ?? '');
+  const file = typeof input.file_path === 'string' ? path.relative(cwd, input.file_path) : '';
+  const words: Record<string, string | undefined> = {
+    Bash: typeof input.description === 'string' ? input.description : `Running ${field('command')}`,
+    Read: `Reading ${file}`,
+    Edit: `Editing ${file}`,
+    Write: `Writing ${file}`,
+    Glob: `Looking for ${field('pattern')}`,
+    Grep: `Searching for ${field('pattern')}`,
+    WebSearch: `Searching the web for ${field('query')}`,
+    WebFetch: `Reading ${field('url')}`,
+    Skill: `Using the ${field('skill')} skill`,
+  };
+  const said = block.type === 'tool_use' ? words[block.name ?? ''] : block.type === 'text' ? block.text?.trim().split('\n')[0] : undefined;
+  return line(said, 200) || undefined;
+}
+
 /** The owner's Claude Code folder, `~/.claude` unless they moved it. */
 const claudeHome = () => process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
 
@@ -143,10 +186,14 @@ export function claudeHarness(program: string, hook: string, dataDir: string): H
       await fs.mkdir(npmCache, { recursive: true });
       await fs.writeFile(settings, JSON.stringify(claudeSettings({ secrets, npmCache, guard: hook, env: process.env, noAttribution })));
     },
-    async turn({ cwd, session, resume, message, schema, setup, signal }) {
+    async turn({ cwd, session, resume, message, schema, setup, signal, progress }) {
       // The skills' copies load as a plugin, which holds only `skills/`.
       const args = claudeArgs({ settings, session, resume, answer: schema, claudeMd: setup.instructions, skills: setup.skills && path.dirname(setup.skills) });
-      const turn = await start(program, args, cwd, signal, claudeResult, message);
+      const seen = progress && ((line: string) => {
+        const said = claudeProgress(line, cwd);
+        if (said) progress(said);
+      });
+      const turn = await start(program, args, cwd, signal, claudeResult, message, seen);
       if (turn.error || !turn.answer) throw new Error(turn.text.trim().slice(0, 500) || 'Claude stopped without an answer.');
       return turn.answer;
     },

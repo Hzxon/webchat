@@ -347,8 +347,9 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
   const list = useRef<HTMLDivElement>(null);
   const [notNow, setNotNow] = useState(false);
   const working = thread.state === 'working';
+  const paused = thread.state === 'paused';
   const last = thread.messages.at(-1)!;
-  const stopping = working && isCancel(last) && pending[last.clientId ?? ''] !== 'failed';
+  const stopping = (working || paused) && isCancel(last) && pending[last.clientId ?? ''] !== 'failed';
   // A card's conversation: its request, which a stop and the owner's go name (D-105).
   const request = thread.kind === 'card' ? (thread.messages[0] as ChatMessage & { run: RunRequest }) : undefined;
   const review = thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'review') : undefined;
@@ -382,7 +383,7 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
     waiting = `Your laptop isn’t answering, so no answer can come yet. ${WAKE} If this waits more than 10 minutes, your agent will ask you to send it again.`;
   } else {
     const minutes = Math.floor((now - (thread.messages.findLast((m) => m.senderId === meId && !isCancel(m))?.createdAt ?? thread.last)) / 60_000);
-    waiting = minutes > 0 ? `Working… ${minutes} min` : 'Working…';
+    waiting = `${minutes > 0 ? `Working… ${minutes} min` : 'Working…'}${thread.progress ? ` · ${thread.progress}` : ''}`;
   }
 
   return (
@@ -484,6 +485,17 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
               Ask again
             </button>
           </div>
+        ) : paused ? (
+          // The owner's words resume the run's session; a second stop ends it, and Start again follows (docs/decisions/stop-pauses-run.md).
+          <>
+            <div className="agents-ended">
+              <p className="composer-blocked">Stopped. Tell it what to change, or start over.</p>
+              <button className="button-secondary" disabled={stopping} onClick={stop}>
+                {stopping ? 'Stopping…' : 'Start over'}
+              </button>
+            </div>
+            <Box name={`agents:${thread.root}`} placeholder="Tell it what to change" canSend={!blocked && !stopping} onSend={(text) => askFix(thread.conversationId, request!.id, text)} />
+          </>
         ) : thread.state === 'unfinished' ? (
           <div className="agents-ended">
             <p className="composer-blocked">It stopped before a draft was ready.</p>

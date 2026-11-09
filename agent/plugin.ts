@@ -32,6 +32,8 @@ const GITHUB = 'Cards need GitHub on this laptop: the GitHub CLI signed in with 
 /** How long a run or a turn waits for its owner to have its repository cloned (R-036). */
 const CLONE_WAIT_MS = 30 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
+/** The least time between two progress reports on a run (docs/decisions/stop-pauses-run.md). */
+const PROGRESS_MS = 30_000;
 
 /** Rounds of fixes one pull request gets. */
 const MAX_FIXES = 3;
@@ -118,8 +120,12 @@ interface Watched extends Place {
   waiting?: Array<{ report: number; line: string; details: string }>;
   /** The owner's go, with the review it approves and their own words, which the next look takes up. */
   go?: { review?: number; note: string };
-  /** Set until the run's work is done: since when it waits for a decision nobody foresaw, and whether its owner was reminded (R-042). */
-  unfinished?: { paused?: number; reminded?: boolean };
+  /**
+   * Set until the run's work is done: since when it waits for a decision nobody foresaw, and whether
+   * its owner was reminded (R-042). `stopped` says the owner paused it instead, and it waits for
+   * their words (docs/decisions/stop-pauses-run.md).
+   */
+  unfinished?: { paused?: number; reminded?: boolean; stopped?: true };
   /** The Proposed decisions the work made true, which its merge accepts (R-042). */
   decisions?: string[];
 }
@@ -924,7 +930,7 @@ export class Plugin {
     const { branch, dir, base } = await addWorktree(folder.dir, request, path.join(folder.dir, '.claude', 'worktrees'));
     const place: Place = { branch, worktree: dir, base };
     const session = randomUUID();
-    const check = (await this.ask(dir, session, false, checkBrief(request.card, place, card, decisions, cards), CHECK, signal, harness)) as Record<string, unknown>;
+    const check = (await this.ask(dir, session, false, checkBrief(request.card, place, card, decisions, cards), CHECK, signal, harness, taken)) as Record<string, unknown>;
     const date = new Date().toISOString().slice(0, 10);
     if (check.outcome === 'stale') {
       // The owner's page offers the card's new status, with the reason, as a change they add (D-104).
@@ -948,10 +954,17 @@ export class Plugin {
   /**
    * A turn of work on a claimed card, in its session: done, with a title and body that replace the
    * claim's, or stopped for a decision nobody foresaw, which waits for its owner's go (R-042). What
-   * it commits is pushed, never forced. Its drafts are what it asks of the board.
+   * it commits is pushed, never forced. Its drafts are what it asks of the board. A stop before the
+   * work is done pauses it instead (docs/decisions/stop-pauses-run.md).
    */
   private async finish(pull: Watched, brief: string, resume: boolean, signal: AbortSignal): Promise<RunResult> {
-    const answer = await this.work(pull, pull.session!, resume, brief, signal, await this.harnessFor(pull.harness));
+    let answer: Answer;
+    try {
+      answer = await this.work(pull, pull.session!, resume, brief, signal, await this.harnessFor(pull.harness));
+    } catch (error) {
+      if (!signal.aborted || !pull.unfinished) throw error;
+      return this.pause(pull);
+    }
     // The board is read only for an answer that names cards or decisions.
     const named = [answer.drafts, answer.decisions].some((list) => Array.isArray(list) && list.length);
     const { seen } = await seenOf(named ? await this.board(this.projectOf(pull.request)) : undefined);
@@ -978,6 +991,47 @@ export class Plugin {
     return { branch: pull.branch, pull: pull.pull, note: answer.note || undefined, drafts };
   }
 
+  /**
+   * Keeps a run its owner stopped before its work was done: what is committed is pushed, and the
+   * worktree, branch, draft and session wait for their next words, or for a second stop, which
+   * closes the draft (docs/decisions/stop-pauses-run.md). The process is dead already.
+   */
+  private async pause(pull: Watched): Promise<RunResult> {
+    const place: Place = { ...pull, base: pull.head };
+    if (await newCommits(place)) pull.head = await this.push(place);
+    pull.unfinished = { paused: Date.now(), stopped: true };
+    await this.saveWatched();
+    // The stop is answered; the next one ends the run.
+    this.runs!.cancelled.delete(pull.taken.message);
+    return { kind: 'paused', branch: pull.branch, pull: pull.pull };
+  }
+
+  /**
+   * The progress reports of a run: what its turn does now, at most every 30 seconds and only when
+   * it changed, as a sealed message in the owner's direct chat (docs/decisions/stop-pauses-run.md).
+   * `end` drops a line still waiting, so none comes after the turn's own report.
+   */
+  private progress(taken: TakenRequest) {
+    let sent = '';
+    let at = 0;
+    let timer: NodeJS.Timeout | undefined;
+    const say = (text: string) => {
+      if (text === sent) return;
+      sent = text;
+      at = Date.now();
+      this.runs!.report(taken, { kind: 'progress', note: text }, text).catch(log);
+    };
+    return {
+      line: (text: string) => {
+        clearTimeout(timer);
+        const wait = at + PROGRESS_MS - Date.now();
+        if (wait <= 0) say(text);
+        else timer = setTimeout(() => say(text), wait);
+      },
+      end: () => clearTimeout(timer),
+    };
+  }
+
   /** Closes the draft of a run that fails before its work is done, saying why, and stops watching it; the branch stays (R-042). */
   private async abandon(taken: TakenRequest, why: string) {
     const pull = this.watched.find((w) => w.unfinished && w.taken.message === taken.message);
@@ -992,18 +1046,22 @@ export class Plugin {
     return (doc && this.client!.conversations.get(doc.conversationId)?.projectId) ?? undefined;
   }
 
-  /** One turn of `harness` in `cwd`: the message on stdin, the JSON answer `schema` asks for (D-097). */
-  private async ask(cwd: string, session: string, resume: boolean, message: string, schema: object, signal: AbortSignal, harness: Harness) {
+  /** One turn of `harness` in `cwd`: the message on stdin, the JSON answer `schema` asks for (D-097). A card's turn reports its progress to `taken`. */
+  private async ask(cwd: string, session: string, resume: boolean, message: string, schema: object, signal: AbortSignal, harness: Harness, taken?: TakenRequest) {
     const setup = await this.loadSetup(session, harness);
-    const answer = await harness.turn({ cwd, session, resume, message, schema, setup, signal }).finally(() => setup.skills && fs.rm(path.join(os.tmpdir(), 'webchat-skills', session), { recursive: true, force: true }));
+    const progress = taken && this.progress(taken);
+    const answer = await harness.turn({ cwd, session, resume, message, schema, setup, signal, progress: progress?.line }).finally(() => {
+      progress?.end();
+      return setup.skills && fs.rm(path.join(os.tmpdir(), 'webchat-skills', session), { recursive: true, force: true });
+    });
     // The owner may cancel while the turn ends; nothing is pushed or posted then.
     if (signal.aborted) throw new Error('the owner cancelled the run.');
     return answer;
   }
 
   /** A turn on a card: done or paused with a note, or failed with what blocks it. */
-  private async work(place: Place, session: string, resume: boolean, message: string, signal: AbortSignal, harness: Harness) {
-    const answer = (await this.ask(place.worktree, session, resume, message, ANSWER, signal, harness)) as Answer;
+  private async work(pull: Watched, session: string, resume: boolean, message: string, signal: AbortSignal, harness: Harness) {
+    const answer = (await this.ask(pull.worktree, session, resume, message, ANSWER, signal, harness, pull.taken)) as Answer;
     const note = answer.note.trim().slice(0, 500);
     if (answer.outcome !== 'done' && answer.outcome !== 'decision') throw new Error(note || 'I gave up.');
     return { ...answer, note };
@@ -1223,7 +1281,11 @@ export class Plugin {
           if (now - pull.unfinished.paused > DAY_MS && !pull.unfinished.reminded) {
             pull.unfinished.reminded = true;
             await this.saveWatched();
-            await this.runs.report(pull.taken, { kind: 'decision', note: 'I still wait for the decision.', pull: pull.pull }, `I still wait for your decision on ${pull.request.card}. Add it on the board, then tell me to go on.`);
+            const card = pull.request.card;
+            const [kind, note, text] = pull.unfinished.stopped
+              ? (['paused', 'I am still stopped.', `I am still stopped on ${card}. Tell me what to change, or start the card over.`] as const)
+              : (['decision', 'I still wait for the decision.', `I still wait for your decision on ${card}. Add it on the board, then tell me to go on.`] as const);
+            await this.runs.report(pull.taken, { kind, note, pull: pull.pull }, text);
           }
           continue;
         }
@@ -1254,13 +1316,14 @@ export class Plugin {
     }
   }
 
-  /** Why watching a pull request stops, or '' while it goes on. A run that waits for a decision waits 7 days at most (R-042). */
+  /** Why watching a pull request stops, or '' while it goes on. A run that waits for a decision, or for words after a stop, waits 7 days at most (R-042). */
   private endOf(pull: Watched, view: PullView, now: number) {
-    if (this.runs!.cancelled.has(pull.taken.message)) return 'you stopped it';
+    const stopped = pull.unfinished?.stopped;
+    if (this.runs!.cancelled.has(pull.taken.message)) return stopped ? 'you started it over' : 'you stopped it';
     if (view.state === 'MERGED') return 'it was merged';
     if (view.state !== 'OPEN') return 'it was closed';
     if (view.headRefOid !== pull.head) return 'someone else pushed to it';
-    return pull.unfinished?.paused && now - pull.unfinished.paused > 7 * DAY_MS ? 'no decision came within 7 days' : '';
+    return pull.unfinished?.paused && now - pull.unfinished.paused > 7 * DAY_MS ? `no ${stopped ? 'words' : 'decision'} came within 7 days` : '';
   }
 
   /** Stops watching a pull request and says why in the chat of its request (D-105). */
@@ -1473,7 +1536,8 @@ function promptBrief(input: string, board: Board | undefined, repo: string | und
 }
 
 /** A value the model gave, as one line of at most `max` characters, or '' when it is no text. */
-const line = (value: unknown, max: number) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
+/** A value as one line of at most `max` characters, or '' when it is no string. */
+export const line = (value: unknown, max: number) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
 
 /** The drafts in a turn's answer that have the right shape, as `draftOf` reads each. */
 const draftsOf = (raw: unknown, seen: NonNullable<Conversation['seen']>, held: Set<string>) =>

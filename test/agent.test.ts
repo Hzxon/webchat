@@ -102,6 +102,14 @@ if (process.env.FAKE_CLAUDE_COMMIT !== '0' && !check) {
   execFileSync('git', ['add', file]);
   execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-q', '-m', 'Change ' + file]);
 }
+// A work turn its owner will stop: it says what it does, twice within a second, then holds.
+if (process.env.FAKE_CLAUDE_HOLD && !check) {
+  const use = (name, input) => console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name, input }] } }));
+  use('Bash', { command: 'npm test', description: 'Run the tests' });
+  use('Edit', { file_path: process.cwd() + '/sum.js' });
+  // A minute at most, so a test that fails before the stop leaves no process behind.
+  for (const until = Date.now() + 60_000; !fs.existsSync(process.env.FAKE_CLAUDE_HOLD) && Date.now() < until; ) await new Promise((resolve) => setTimeout(resolve, 20));
+}
 const answer = check
   ? JSON.parse(process.env.FAKE_CLAUDE_CHECK ?? '{"outcome":"holds","note":"","checked":"Read K-7 and sum.js on main."}')
   : process.env.FAKE_CLAUDE_ANSWER
@@ -1251,6 +1259,61 @@ describe('agent client (R-027)', () => {
         const leftPull = (await pullsNow()).at(-1)!;
         assert.equal(leftPull.closed, 'The agent stopped: No decision came within 7 days. The branch stays.');
         assert.ok((await branches()).includes(leftPull.head), 'the branch stays');
+
+        // A stop before the work is done pauses the run: what is committed is pushed, and the
+        // worktree, branch, draft and session wait for the owner's words (docs/decisions/stop-pauses-run.md).
+        const hold = path.join(home, 'hold');
+        const stopK7 = async () => {
+          await unthrottle();
+          const before = (await turns()).length;
+          return withEnv({ FAKE_CLAUDE_HOLD: hold }, async () => {
+            const id = (await ask(alice, { hash: await briefNow() })).id;
+            const { handled } = await checkIn();
+            // The work turn says what it does as soon as it starts, and the report follows. Polled
+            // slowly: a tight loop of check-ins starves the plugin's own requests to the server.
+            await waitFor('the work turn started', async () => (await turns()).length === before + 2);
+            const said: Array<{ text: string; run: RunReport }> = [];
+            const more = async () => void said.push(...(await reports(id)));
+            for (let tries = 0; tries < 50 && !said.some((r) => r.run.kind === 'progress'); tries++) await sleep(100).then(more);
+            await alice.send(general, { text: 'Stop', run: { kind: 'cancel', request: id } });
+            await (await checkIn()).handled;
+            await handled;
+            await more();
+            return { id, said, turns: (await turns()).slice(before) };
+          });
+        };
+        const stopped = await stopK7();
+        const [stoppedCheck, stoppedWork] = stopped.turns;
+        const stoppedPull = (await pullsNow()).at(-1)!;
+        assert.deepEqual(
+          stopped.said.map((r) => [r.run.kind, r.text]),
+          [
+            ['claimed', 'I am on K-7: Sums are off by one'],
+            ['progress', 'Run the tests'],
+            ['paused', `I stopped K-7 as you asked. What I committed is on ${stoppedPull.head} (acme/app#${(await pullsNow()).length}), and I keep where I was. Tell me what to change, or start the card over.`],
+          ],
+          'two progress lines within 30 seconds send one report',
+        );
+        assert.deepEqual(await log(stoppedPull.head), ['Change sum.test.js', 'chore: Claim K-7'], 'what was committed is pushed');
+        assert.equal(stoppedPull.closed, undefined, 'the draft stays open');
+        await fs.access(stoppedWork!.cwd);
+        const stoppedRecord = (JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'pulls.json'), 'utf8')) as Array<{ taken: { message: number }; session: string; unfinished?: { paused?: number; stopped?: true } }>).find((w) => w.taken.message === stopped.id)!;
+        assert.equal(stoppedRecord.session, stoppedCheck!.args[stoppedCheck!.args.indexOf('--session-id') + 1], 'the session is kept');
+        assert.ok(stoppedRecord.unfinished?.paused && stoppedRecord.unfinished.stopped, 'the run waits as paused');
+        await plugin.pollPulls();
+        assert.deepEqual(await reports(stopped.id), [], 'nothing ends a paused run');
+        // A second stop starts the card over: the draft closes, and the branch stays.
+        await alice.send(general, { text: 'Stop', run: { kind: 'cancel', request: stopped.id } });
+        await (await checkIn()).handled;
+        await plugin.pollPulls();
+        assert.deepEqual((await reports(stopped.id)).map((r) => r.text), ['I could not run K-7: You started it over.']);
+        assert.equal((await pullsNow()).at(-1)!.closed, 'The agent stopped: You started it over. The branch stays.');
+        assert.ok((await branches()).includes(stoppedPull.head), 'the branch stays');
+        // With no words, a paused run fails after 7 days, as a decision pause does.
+        const silent = await stopK7();
+        assert.equal(silent.said.at(-1)!.run.kind, 'paused');
+        await plugin.pollPulls(Date.now() + 8 * DAY);
+        assert.deepEqual((await reports(silent.id)).map((r) => r.text), ['I could not run K-7: No words came within 7 days.']);
       } finally {
         restore();
       }

@@ -606,9 +606,12 @@ export interface RunReport {
    * the run waits for a decision nobody foresaw, whose draft is the card; "draft" hands the owner a
    * change the run asks of the board; "merged" says the draft was merged, so the owner's page
    * finishes the card and accepts its decisions (D-118); "closed" says it was closed unmerged, so the
-   * owner's page gives the card back the status it had before the run.
+   * owner's page gives the card back the status it had before the run. "progress" says in the note
+   * what the run does now, at most every 30 seconds; "paused" says the owner stopped a run whose
+   * work was unfinished, which keeps its worktree, branch, draft and session for their next words
+   * (docs/decisions/stop-pauses-run.md).
    */
-  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended' | 'nocopy' | 'stale' | 'decision' | 'merged' | 'closed' | 'draft';
+  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended' | 'nocopy' | 'stale' | 'decision' | 'merged' | 'closed' | 'draft' | 'progress' | 'paused';
   request: number;
   /** What happened, in a line. */
   note?: string;

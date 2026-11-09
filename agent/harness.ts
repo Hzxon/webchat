@@ -17,6 +17,8 @@ export interface Turn {
   /** What of the owner's setup to load, as they chose (R-039): their instructions file, and a folder of copies of their chosen skills. */
   setup: { instructions?: string; skills?: string };
   signal: AbortSignal;
+  /** Takes what the model does now, in a sentence, each time the adapter can tell (docs/decisions/stop-pauses-run.md). */
+  progress?: (sentence: string) => void;
 }
 
 export interface Harness {

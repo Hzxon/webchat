@@ -48,9 +48,9 @@ function preview(text: string, length = 180): string {
  * Decrypts a pushed message with this device's chat key and checks the sender's signature. If
  * the key is not on this device yet, or the check fails, the notification says so without text.
  */
-async function notificationBody(payload: PushPayload): Promise<string> {
+async function notificationBody(payload: PushPayload): Promise<{ body: string; progress?: boolean }> {
   if (payload.kind !== 'message' || !payload.envelope) {
-    return payload.body || (payload.urgent ? 'Urgent message. Open the chat to read it.' : 'New message');
+    return { body: payload.body || (payload.urgent ? 'Urgent message. Open the chat to read it.' : 'New message') };
   }
   const { envelope, conversationId, senderId, clientId } = payload;
   try {
@@ -59,9 +59,9 @@ async function notificationBody(payload: PushPayload): Promise<string> {
     const senderKeys = directory?.[senderId];
     if (!key || !senderKeys) throw new Error('Keys are not on this device yet.');
     const content = await decryptContent(key, senderKeys.sign, { conversationId, senderId, urgent: payload.urgent, clientId }, envelope);
-    return payload.bodyPrefix + preview(previewOf(content));
+    return { body: payload.bodyPrefix + preview(previewOf(content)), progress: content.run?.kind === 'progress' };
   } catch {
-    return payload.bodyPrefix + (payload.urgent ? 'Urgent message. Open the chat to read it.' : 'New encrypted message');
+    return { body: payload.bodyPrefix + (payload.urgent ? 'Urgent message. Open the chat to read it.' : 'New encrypted message') };
   }
 }
 
@@ -119,8 +119,13 @@ self.addEventListener('push', (event) => {
         await self.navigator.setAppBadge(payload.unreadTotal).catch(() => undefined);
       }
 
+      // A run's progress line, every half minute, is for the pane, not the lock screen; only Safari
+      // shows it, since it revokes a subscription after pushes that show nothing (D-047).
+      const { body, progress } = await notificationBody(payload);
+      if (progress && !(await showsEveryPushHere())) return;
+
       const options: ExtendedNotificationOptions = {
-        body: await notificationBody(payload),
+        body,
         tag: payload.tag,
         renotify: true,
         requireInteraction: payload.urgent,

@@ -11,9 +11,10 @@ import type { AgentClient, OpenedMessage, TakenRequest } from './client.ts';
 export interface RunResult {
   /**
    * How the run ended: done, stale when its check found the card no longer holds and nothing was
-   * pushed, or paused for a decision nobody foresaw, which waits for its owner's go (R-042).
+   * pushed, paused for a decision nobody foresaw, which waits for its owner's go (R-042), or paused
+   * because its owner stopped it before its work was done (docs/decisions/stop-pauses-run.md).
    */
-  kind?: 'done' | 'stale' | 'decision';
+  kind?: 'done' | 'stale' | 'decision' | 'paused';
   branch: string;
   pull?: { repo: string; number: number };
   /** A line for the report, such as what the agent said last, or why the card no longer holds. */
@@ -159,6 +160,7 @@ export class Runs {
       done: `I finished ${taken.card} on ${branch}${pull ? ` (${pull.repo}#${pull.number})` : ''}.${note ? ` ${note}` : ''}`,
       stale: `${taken.card} no longer holds: ${note}.`,
       decision: `${taken.card} needs a decision first: ${card?.title}. Add it on the board, then tell me to go on.`,
+      paused: `I stopped ${taken.card} as you asked. What I committed is on ${branch}${pull ? ` (${pull.repo}#${pull.number})` : ''}, and I keep where I was. Tell me what to change, or start the card over.`,
     }[kind];
     await this.report(taken, { kind, branch, pull, card, ...(note && { note }) }, text);
     for (const draft of drafts) await this.report(taken, { kind: 'draft', card: draft }, `${draft.kind === 'D' ? 'Decision' : 'Card'} draft: ${draft.title}`);

@@ -27,9 +27,11 @@ export interface Thread {
   project?: number;
   /** The prompt first, then the messages that name it, in the chat's order, one per answer. */
   messages: ChatMessage[];
-  state: 'working' | 'answered' | 'failed' | 'unsent' | 'ended' | 'draft' | 'waiting' | 'unfinished' | 'done' | 'stale';
+  state: 'working' | 'answered' | 'failed' | 'unsent' | 'ended' | 'draft' | 'waiting' | 'unfinished' | 'done' | 'stale' | 'paused';
   /** When its newest message was sent. */
   last: number;
+  /** For a card that is being worked on: what the run does now, from its newest progress report (docs/decisions/stop-pauses-run.md). */
+  progress?: string;
   /** The cards its drafts became on the board, by the draft's client id (D-104). */
   added: Record<string, string>;
 }
@@ -46,6 +48,7 @@ export const THREAD_STATE: Record<Thread['state'], { label: string; tone: Tone }
   unfinished: { label: 'Couldn’t finish', tone: 'danger' },
   done: { label: 'Done', tone: 'muted' },
   stale: { label: 'No longer holds', tone: 'warn' },
+  paused: { label: 'Stopped', tone: 'warn' },
 };
 
 /** What each run message makes of its card's conversation; a cancel changes nothing until the agent says it stopped. */
@@ -63,6 +66,7 @@ const RUN_STATE: Partial<Record<RunDTO['kind'], Thread['state']>> = {
   decision: 'waiting',
   merged: 'done',
   closed: 'done',
+  paused: 'paused',
 };
 
 /** Where the user's agent works on a repository: its folder on the laptop (D-094), or none there yet (R-036). */
@@ -158,8 +162,14 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
       const thread = requests.get(run.request);
       const fromMe = run.kind === 'cancel' || run.kind === 'fix' || run.kind === 'clone';
       if (!thread || message.senderId !== (fromMe ? meId : agentId)) continue;
-      thread.messages.push(message);
       thread.last = Math.max(thread.last, message.createdAt);
+      // A progress line is a note on the state, shown under Working…, not a message of its own; the next message ends it.
+      if (run.kind === 'progress') {
+        thread.progress = run.note;
+        continue;
+      }
+      delete thread.progress;
+      thread.messages.push(message);
       if (run.kind === 'done') drafted.add(thread);
       let state = RUN_STATE[run.kind];
       // A round that failed leaves the draft it worked on; a go that did not send is no round.
