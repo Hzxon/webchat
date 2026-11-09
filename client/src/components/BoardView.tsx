@@ -409,6 +409,7 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
                             <span>
                               {nameOf(cardRun.runtime)}
                               {cardRun.repo && ` in ${cardRun.repo}`}
+                              {cardRun.harness && ` with ${cardRun.harness}`}
                               {cardRun.note && ` · ${cardRun.note}`}
                             </span>
                             <button

@@ -5,7 +5,7 @@
 // reaches the server unsealed.
 import { useEffect, useMemo, useState } from 'react';
 import { setupWords, type HarnessState, type SetupChoice, type UserDTO } from '../../../shared/types';
-import { blockedBy, ownAgents, useAgentChats, WAKE } from '../agents';
+import { blockedBy, ownAgents, useAgentChat, WAKE } from '../agents';
 import { askSetup } from '../chat';
 import { useAppState } from '../store';
 import { Dialog } from './Dialog';
@@ -44,7 +44,7 @@ export function AgentSetup({ onClose }: { onClose: () => void }) {
 }
 
 function SetupForm({ agent }: { agent: UserDTO }) {
-  const chat = useAgentChats().find((c) => c.members.some((m) => m.userId === agent.id));
+  const chat = useAgentChat(agent);
   const messages = useAppState((s) => (chat ? s.messages[chat.id] : undefined));
   // This dialog's asks, by client id. Only their answers count: another device may change the choice.
   const [asks, setAsks] = useState<string[]>([]);

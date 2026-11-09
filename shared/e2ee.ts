@@ -521,6 +521,7 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
       ...(typeof raw.repo === 'string' && isRepoName(raw.repo) && { repo: raw.repo }),
       ...(short(raw.hash, 64) && { hash: raw.hash as string }),
       ...(short(raw.was, LIMITS.runNoteLength) !== undefined && { was: raw.was as string }),
+      ...(short(raw.harness, LIMITS.harnessFieldLength) && { harness: raw.harness as string }),
     };
   }
   if (raw.kind === 'cancel') return isId(raw.request) ? { kind: 'cancel', request: raw.request } : undefined;
@@ -554,7 +555,8 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
     // A project with no repository asks about its board alone (R-038).
     const repo = typeof raw.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
     if ((raw.repo !== undefined && !repo) || (!repo && !isId(raw.project)) || !isId(raw.sentAt)) return;
-    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }) };
+    const harness = short(raw.harness, LIMITS.harnessFieldLength);
+    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }) };
   }
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
