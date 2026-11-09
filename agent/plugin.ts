@@ -52,6 +52,8 @@ export interface PluginOptions {
   cloneRoot: string;
   /** The coding agent whose turns run cards and answer questions. */
   harness: Harness;
+  /** The other harnesses the laptop has, each with a row in Settings. Turns run on `harness` alone. */
+  others?: Harness[];
   /** A background job of Claude Code: it never serves, so closing the window you work in puts the agent to sleep (K-66). */
   job?: boolean;
 }
@@ -714,12 +716,11 @@ export class Plugin {
       await this.saveSetup();
     }
     const { choice, applied } = this.setup;
-    const { harness } = this.options;
-    const offer = harness.offers();
-    const [owner, state] = await Promise.all([ownerSetup(offer), harnessState(harness, offer)]);
+    const { harness, others = [], cloneRoot } = this.options;
+    const [owner, ...harnesses] = await Promise.all([ownerSetup(harness.offers()), ...[harness, ...others].map((h) => harnessState(h, cloneRoot))]);
     await this.client!.send(message.conversationId, {
       text: `My runs load ${setupWords(choice)}.`,
-      setupState: { to: message.clientId!, ...owner, choice, ...(applied && { applied }), harnesses: [state] },
+      setupState: { to: message.clientId!, ...owner, choice, ...(applied && { applied }), harnesses },
     });
   }
 
@@ -1583,10 +1584,15 @@ async function ownerSetup({ instructions, skills: dir }: ReturnType<Harness['off
   return { claudeMd: !!instructions && existsSync(instructions), skills };
 }
 
-/** A harness as the owner's Settings shows it (D-115): what the laptop has of it, whether it takes cards, and what it offers. */
-async function harnessState(harness: Harness, { instructions, skills, knobs }: ReturnType<Harness['offers']>): Promise<HarnessState> {
-  const [found, refusal] = await Promise.all([harness.found(), harness.refusal()]);
-  return { name: harness.name, ...found, refusal, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
+/**
+ * A harness as the owner's Settings shows it (D-115): what the laptop has of it, whether it takes
+ * cards, and what it offers. A harness that answers but cannot keep its shell from the secrets
+ * says so for a folder of `cloneRoot`, where cards run.
+ */
+async function harnessState(harness: Harness, cloneRoot: string): Promise<HarnessState> {
+  const { instructions, skills, knobs } = harness.offers();
+  const [found, anywhere, cards] = await Promise.all([harness.found(), harness.refusal(), harness.refusal(cloneRoot)]);
+  return { name: harness.name, ...found, refusal: anywhere ?? cards, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
 }
 
 /** A SKILL.md's description, from its front matter: one line, or the indented lines a block scalar folds. */

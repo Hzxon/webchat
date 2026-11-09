@@ -12,6 +12,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { ClaudePlugin, claudeSecrets, guard, type ToolUse } from './claude.ts';
+import { codexHarness } from './codex.ts';
 import { messageOf } from './runs.ts';
 
 const none = { type: 'object', properties: {} };
@@ -27,8 +28,13 @@ async function claudeProgram() {
       ? await fs.readlink(`/proc/${process.ppid}/exe`).catch(() => '')
       : await promisify(execFile)('ps', ['-o', 'comm=', '-p', String(process.ppid)]).then((r) => r.stdout.trim(), () => '');
   if (path.isAbsolute(parent) && path.basename(parent) === 'claude') return parent;
+  return onPath('claude');
+}
+
+/** A program's absolute path, from the absolute folders of the PATH only, or empty when there is none. */
+async function onPath(name: string) {
   for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d))) {
-    const file = path.join(dir, 'claude');
+    const file = path.join(dir, name);
     if (await fs.access(file, constants.X_OK).then(() => true, () => false)) return file;
   }
   return '';
@@ -65,12 +71,14 @@ const TOOLS = [
 
 async function serve() {
   const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? '';
+  const [claude, codex] = await Promise.all([claudeProgram(), onPath('codex')]);
   const plugin = new ClaudePlugin({
     code: process.env.WEBCHAT_PAIRING_CODE ?? '',
     dataDir,
     projectDir: process.env.CLAUDE_PROJECT_DIR ?? process.cwd(),
     cloneRoot: path.join(os.homedir(), 'WebChat'),
-    claude: await claudeProgram(),
+    claude,
+    others: codex ? [codexHarness(codex, dataDir)] : [],
     // The folder goes as an argument, since the background Claude's hooks get no plugin variables.
     guard: `"${process.execPath}" "${fileURLToPath(import.meta.url)}" guard "${dataDir}"`,
     job: !!process.env.CLAUDE_JOB_DIR,
