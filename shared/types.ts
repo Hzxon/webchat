@@ -51,7 +51,7 @@ export const runsCards = (level: number) => (level & AGENT_LEVEL.cards) !== 0;
 export const takesSetup = (level: number) => (level & AGENT_LEVEL.setup) !== 0;
 
 /** What a choice loads, in words, for the agent's answer and the pane alike (R-039). */
-export const setupWords = (c: SetupChoice) => [c.claudeMd && 'your CLAUDE.md', ...c.skills, c.noAttribution && 'no AI attribution'].filter(Boolean).join(', ') || 'nothing of your Claude setup';
+export const setupWords = (c: SetupChoice) => [c.claudeMd && 'your CLAUDE.md', ...c.skills, c.noAttribution && 'no AI attribution', c.noPlan && 'no plan first'].filter(Boolean).join(', ') || 'nothing of your Claude setup';
 
 /**
  * What the owner's agent loads from their setup on its laptop into every run and turn (R-039,
@@ -66,6 +66,8 @@ export interface SetupChoice {
   noAttribution: boolean;
   /** The harnesses the owner turned off, by name. A page from before the list sends none, and the agent keeps what it had. */
   off?: string[];
+  /** Whether a card run goes on without showing its plan first; a page from before the gate sends none, which keeps it on (docs/decisions/redirect-plan-gate.md). */
+  noPlan?: boolean;
 }
 
 /** A harness the owner's agent found on its laptop, as Settings shows it (D-115). */
@@ -609,9 +611,10 @@ export interface RunReport {
    * owner's page gives the card back the status it had before the run. "progress" says in the note
    * what the run does now, at most every 30 seconds; "paused" says the owner stopped a run whose
    * work was unfinished, which keeps its worktree, branch, draft and session for their next words
-   * (docs/decisions/stop-pauses-run.md).
+   * (docs/decisions/stop-pauses-run.md). "planned" holds in the note the plan of a card that holds,
+   * which waits for the owner's go or words before the claim commit (docs/decisions/redirect-plan-gate.md).
    */
-  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended' | 'nocopy' | 'stale' | 'decision' | 'merged' | 'closed' | 'draft' | 'progress' | 'paused';
+  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended' | 'nocopy' | 'stale' | 'decision' | 'merged' | 'closed' | 'draft' | 'progress' | 'paused' | 'planned';
   request: number;
   /** What happened, in a line. */
   note?: string;

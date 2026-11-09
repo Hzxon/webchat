@@ -1,0 +1,15 @@
+### D: A run shows its plan first, and the owner's go or words redirect it
+
+Status: Proposed 2026-11-09 in #182. Extends the redirect of docs/decisions/stop-pauses-run.md (#181).
+
+The check turn of a card run also answers with a plan: a few lines on how it will do the work.
+When the card holds, the run reports `planned` with the plan and waits, before the claim commit and
+the draft, in `plans.json` beside the watched drafts. The owner's go, or their words, through the
+same `fix` message a redirect takes, resume the check's session: the claim commit and the draft,
+then the work with their words. A stop ends it, and with no go it fails after 7 days, as a paused
+run does. The gate is on by default. `noPlan` in the setup choice turns it off, and only a harness
+whose adapter declares the knob honors it. Why: one round trip per run fits WebChat's cadence while
+dozens do not (decided 2026-11-09), and a wrong plan costs a minute instead of a draft.
+
+Cost: every run waits for its owner once. No draft claims the card while it waits, so another pull
+request can claim it first; the card shows In progress meanwhile.

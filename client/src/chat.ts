@@ -794,7 +794,8 @@ export function askFix(conversationId: number, request: number, note: string, re
   if (note.trim()) fix.note = note.trim();
   // The review it approves, so only the text the owner saw runs (D-105).
   if (review !== undefined) fix.review = review;
-  return sendContent(conversationId, { text: note.trim() || 'Let the agent fix it.', run: fix }, false);
+  // With neither words nor a review it is the go on a plan (docs/decisions/redirect-plan-gate.md).
+  return sendContent(conversationId, { text: note.trim() || (review === undefined ? 'Go.' : 'Let the agent fix it.'), run: fix }, false);
 }
 
 /**

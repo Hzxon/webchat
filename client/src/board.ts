@@ -209,8 +209,11 @@ export function statusMove(run: CardRun, card: string, was: string, working: str
   return moves[run.state] ?? [[], ''];
 }
 
-/** The states in which a run may still go, so the page asks for no second one. A paused run goes on with the owner's words, or ends on a second stop. */
-export const GOING = new Set<CardRun['state']>(['sending', 'waiting', 'claimed', 'fixing', 'nocopy', 'decision', 'paused']);
+/**
+ * The states in which a run may still go, so the page asks for no second one. A paused run goes on
+ * with the owner's words, or ends on a second stop; a planned one goes on with their go or words.
+ */
+export const GOING = new Set<CardRun['state']>(['sending', 'waiting', 'claimed', 'fixing', 'nocopy', 'decision', 'paused', 'planned']);
 
 /**
  * The user's latest run of each card of a board doc, by section id. A request that failed to send

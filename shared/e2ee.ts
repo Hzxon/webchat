@@ -498,7 +498,7 @@ export function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | u
 }
 
 const CARD_ID = /^[DRKQ]-\d{1,6}$/;
-const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed', 'fixing', 'review', 'ended', 'nocopy', 'stale', 'decision', 'merged', 'closed', 'draft', 'progress', 'paused'];
+const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed', 'fixing', 'review', 'ended', 'nocopy', 'stale', 'decision', 'merged', 'closed', 'draft', 'progress', 'paused', 'planned'];
 const short = (value: unknown, max: number) => (typeof value === 'string' && value.length <= max ? value : undefined);
 
 /** A run request or report, if it has the right shape. A pull request is named by repository and number only. */
@@ -599,11 +599,11 @@ function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | und
 
 /** A setup choice, if it has the right shape: skills only by a folder name that cannot leave `~/.claude/skills` (R-039). */
 function readChoice(raw: unknown): SetupChoice | undefined {
-  const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown; off?: unknown } | null | undefined;
+  const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown; off?: unknown; noPlan?: unknown } | null | undefined;
   if (typeof choice?.claudeMd !== 'boolean' || typeof choice.noAttribution !== 'boolean' || !Array.isArray(choice.skills)) return;
   const skills = choice.skills.filter((s): s is string => typeof s === 'string' && SKILL_NAME.test(s)).slice(0, LIMITS.setupSkills);
   const off = Array.isArray(choice.off) ? choice.off.filter((n): n is string => !!short(n, LIMITS.harnessFieldLength)).slice(0, LIMITS.harnesses) : undefined;
-  return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution, ...(off && { off }) };
+  return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution, ...(off && { off }), ...(typeof choice.noPlan === 'boolean' && { noPlan: choice.noPlan }) };
 }
 
 /** The harnesses an agent's answer lists, those of the right shape, or nothing from a plugin before them (D-115). */

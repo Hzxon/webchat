@@ -12,12 +12,13 @@ export interface RunResult {
   /**
    * How the run ended: done, stale when its check found the card no longer holds and nothing was
    * pushed, paused for a decision nobody foresaw, which waits for its owner's go (R-042), or paused
-   * because its owner stopped it before its work was done (docs/decisions/stop-pauses-run.md).
+   * because its owner stopped it before its work was done (docs/decisions/stop-pauses-run.md), or
+   * planned, when its card holds and its plan waits for its owner's go (docs/decisions/redirect-plan-gate.md).
    */
-  kind?: 'done' | 'stale' | 'decision' | 'paused';
+  kind?: 'done' | 'stale' | 'decision' | 'paused' | 'planned';
   branch: string;
   pull?: { repo: string; number: number };
-  /** A line for the report, such as what the agent said last, or why the card no longer holds. */
+  /** A line for the report, such as what the agent said last, why the card no longer holds, or the plan. */
   note?: string;
   /** For stale, the change of the card's status that the owner's page offers; for decision, the decision's draft (R-042). */
   card?: CardDraftDTO;
@@ -161,6 +162,7 @@ export class Runs {
       stale: `${taken.card} no longer holds: ${note}.`,
       decision: `${taken.card} needs a decision first: ${card?.title}. Add it on the board, then tell me to go on.`,
       paused: `I stopped ${taken.card} as you asked. What I committed is on ${branch}${pull ? ` (${pull.repo}#${pull.number})` : ''}, and I keep where I was. Tell me what to change, or start the card over.`,
+      planned: `${taken.card} holds. My plan:\n\n${note ?? 'I made none.'}\n\nSay go, or tell me what to change.`,
     }[kind];
     await this.report(taken, { kind, branch, pull, card, ...(note && { note }) }, text);
     for (const draft of drafts) await this.report(taken, { kind: 'draft', card: draft }, `${draft.kind === 'D' ? 'Decision' : 'Card'} draft: ${draft.title}`);
