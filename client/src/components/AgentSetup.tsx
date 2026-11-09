@@ -1,9 +1,10 @@
-// The agent's settings (R-039, D-115): what its runs and answers load from the owner's Claude Code
-// setup on its laptop. Opening them asks the agent, which answers in the owner's direct chat with
-// what the laptop offers, the choice it keeps and what its last run loaded. Save sends a new choice,
-// and the agent's answer to it confirms it. Nothing of it reaches the server unsealed.
+// The agent's settings (R-039, D-115): each harness on its laptop, and what its runs and answers
+// load from the owner's setup there. Opening them asks the agent, which answers in the owner's
+// direct chat with the harnesses it found, what the laptop offers, the choice it keeps and what its
+// last run loaded. Save sends a new choice, and the agent's answer to it confirms it. Nothing of it
+// reaches the server unsealed.
 import { useEffect, useMemo, useState } from 'react';
-import { setupWords, type SetupChoice, type UserDTO } from '../../../shared/types';
+import { setupWords, type HarnessState, type SetupChoice, type UserDTO } from '../../../shared/types';
 import { blockedBy, ownAgents, useAgentChats, WAKE } from '../agents';
 import { askSetup } from '../chat';
 import { useAppState } from '../store';
@@ -13,7 +14,16 @@ import { formatAgo } from './format';
 /** How long the dialog waits for the agent's answer before it says none came. */
 const ANSWER_MS = 60_000;
 
-const same = (a: SetupChoice, b: SetupChoice) => a.claudeMd === b.claudeMd && a.noAttribution === b.noAttribution && [...a.skills].sort().join() === [...b.skills].sort().join();
+const sorted = (list: string[] = []) => [...list].sort().join();
+const same = (a: SetupChoice, b: SetupChoice) => a.claudeMd === b.claudeMd && a.noAttribution === b.noAttribution && sorted(a.skills) === sorted(b.skills) && sorted(a.off) === sorted(b.off);
+
+/** What each knob a harness may declare does, in words. A knob this page does not know stays as it is. */
+const KNOBS: Record<'noAttribution', (harness: string) => { label: string; detail: string }> = {
+  noAttribution: (harness) => ({ label: 'No AI attribution in commits and pull requests', detail: `No “Co-Authored-By” or “Generated with ${harness}” lines.` }),
+};
+
+/** What a plugin from before the harness list runs: Claude Code alone, with no toggle, since it ignores `off`. */
+const OLD_PLUGIN: HarnessState = { name: 'Claude Code', instructions: '~/.claude/CLAUDE.md', skills: '~/.claude/skills', knobs: ['noAttribution'] };
 
 export function AgentSetup({ onClose }: { onClose: () => void }) {
   const users = useAppState((s) => s.users);
@@ -73,6 +83,8 @@ function SetupForm({ agent }: { agent: UserDTO }) {
   // A chosen skill that left the laptop stays listed, so it can be turned off.
   const skills = [...answer.skills, ...choice.skills.filter((name) => !offered.has(name)).map((name) => ({ name, description: 'Not on the laptop' }))];
   const toggle = (name: string) => setEdit({ ...choice, skills: choice.skills.includes(name) ? choice.skills.filter((s) => s !== name) : [...choice.skills, name] });
+  const off = choice.off ?? [];
+  const turn = (name: string) => setEdit({ ...choice, off: off.includes(name) ? off.filter((n) => n !== name) : [...off, name] });
   const busy = saving && waiting && !late;
 
   return (
@@ -84,46 +96,67 @@ function SetupForm({ agent }: { agent: UserDTO }) {
       }}
     >
       <p className="dialog-intro">
-        What your agent’s runs and answers load from Claude Code on its laptop. Your settings, hooks, MCP servers and plugins stay
-        off, since a run follows cards your teammates wrote.
+        Each coding agent on your agent’s laptop, and what its runs and answers load from your setup there. Your settings, hooks,
+        MCP servers and plugins stay off, since a run follows cards your teammates wrote.
       </p>
-      <ul className="people-list">
-        <li>
-          <label className="person">
-            <input type="checkbox" checked={choice.claudeMd} disabled={!answer.claudeMd && !choice.claudeMd} onChange={() => setEdit({ ...choice, claudeMd: !choice.claudeMd })} />
+      {(answer.harnesses ?? [OLD_PLUGIN]).map((h) => (
+        <section key={h.name} className="dialog-form">
+          <label className="toggle-row">
+            {answer.harnesses && <input type="checkbox" checked={!off.includes(h.name)} onChange={() => turn(h.name)} />}
             <span>
-              <strong>Follow my CLAUDE.md</strong>
-              <small>{answer.claudeMd ? '~/.claude/CLAUDE.md' : 'Not on the laptop'}</small>
+              <strong>{[h.name, h.version].filter(Boolean).join(' ')}</strong>
+              <small>{[h.signedIn !== undefined && (h.signedIn ? 'Signed in' : 'Not signed in'), h.refusal ?? (answer.harnesses && 'Takes cards')].filter(Boolean).join('. ')}</small>
             </span>
           </label>
-        </li>
-        <li>
-          <label className="person">
-            <input type="checkbox" checked={choice.noAttribution} onChange={() => setEdit({ ...choice, noAttribution: !choice.noAttribution })} />
-            <span>
-              <strong>No AI attribution in commits and pull requests</strong>
-              <small>No “Co-Authored-By” or “Generated with Claude Code” lines.</small>
-            </span>
-          </label>
-        </li>
-      </ul>
-      {skills.length > 0 ? (
-        <ul className="people-list" aria-label="Skills">
-          {skills.map((s) => (
-            <li key={s.name}>
-              <label className="person">
-                <input type="checkbox" checked={choice.skills.includes(s.name)} onChange={() => toggle(s.name)} />
-                <span>
-                  <strong>{s.name}</strong>
-                  <small>{s.description}</small>
-                </span>
-              </label>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="dialog-intro">No skills in ~/.claude/skills on the laptop.</p>
-      )}
+          <ul className="people-list">
+            {h.instructions && (
+              <li>
+                <label className="person">
+                  <input type="checkbox" checked={choice.claudeMd} disabled={!answer.claudeMd && !choice.claudeMd} onChange={() => setEdit({ ...choice, claudeMd: !choice.claudeMd })} />
+                  <span>
+                    <strong>Follow my {h.instructions.split('/').pop()}</strong>
+                    <small>{answer.claudeMd ? h.instructions : 'Not on the laptop'}</small>
+                  </span>
+                </label>
+              </li>
+            )}
+            {h.knobs
+              .filter((knob): knob is keyof typeof KNOBS => Object.hasOwn(KNOBS, knob))
+              .map((knob) => {
+                const { label, detail } = KNOBS[knob](h.name);
+                return (
+                  <li key={knob}>
+                    <label className="person">
+                      <input type="checkbox" checked={choice[knob]} onChange={() => setEdit({ ...choice, [knob]: !choice[knob] })} />
+                      <span>
+                        <strong>{label}</strong>
+                        <small>{detail}</small>
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
+          </ul>
+          {h.skills &&
+            (skills.length > 0 ? (
+              <ul className="people-list" aria-label={`Skills of ${h.name}`}>
+                {skills.map((s) => (
+                  <li key={s.name}>
+                    <label className="person">
+                      <input type="checkbox" checked={choice.skills.includes(s.name)} onChange={() => toggle(s.name)} />
+                      <span>
+                        <strong>{s.name}</strong>
+                        <small>{s.description}</small>
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="dialog-intro">No skills in {h.skills} on the laptop.</p>
+            ))}
+        </section>
+      ))}
       {answer.applied && (
         <p className="dialog-intro">
           Its last run, {formatAgo(answer.applied.at)}, loaded {setupWords(answer.applied)}.

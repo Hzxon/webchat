@@ -18,7 +18,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
 import { copyOf, entriesOf, proposalOf, readCard } from '../shared/board.ts';
-import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, SKILL_NAME, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
+import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, SKILL_NAME, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
 import { AgentClient, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
 import type { Harness } from './harness.ts';
@@ -377,6 +377,8 @@ export class Plugin {
   private async refusal() {
     // Going to sleep: what runs finishes, and nothing new starts (K-66, D-113).
     if (existsSync(this.asleep)) return 'I am going to sleep, so I start nothing new. To wake me, type /webchat:wake in Claude Code on your laptop.';
+    const { name } = this.options.harness.offers();
+    if (this.setup.choice.off?.includes(name)) return `You turned ${name} off, so I start nothing. Turn it on in my settings under Coding agents.`;
     return this.options.harness.refusal();
   }
 
@@ -707,13 +709,15 @@ export class Plugin {
     const { setup } = message.content!;
     if (!this.fromOwner(message, setup!.sentAt)) return;
     if (setup!.choice) {
-      this.setup.choice = setup!.choice;
+      // A page from before the harness list names none it turned off, so those stay as they were.
+      this.setup.choice = { off: this.setup.choice.off, ...setup!.choice };
       await this.saveSetup();
     }
     const { choice, applied } = this.setup;
+    const { harness } = this.options;
     await this.client!.send(message.conversationId, {
       text: `My runs load ${setupWords(choice)}.`,
-      setupState: { to: message.clientId!, ...(await ownerSetup(this.options.harness.offers())), choice, ...(applied && { applied }) },
+      setupState: { to: message.clientId!, ...(await ownerSetup(harness.offers())), choice, ...(applied && { applied }), harnesses: [await harnessState(harness)] },
     });
   }
 
@@ -1575,6 +1579,13 @@ async function ownerSetup({ instructions, skills: dir }: ReturnType<Harness['off
     skills.push({ name, description: description.length > max ? `${description.slice(0, max - 1)}…` : description });
   }
   return { claudeMd: !!instructions && existsSync(instructions), skills };
+}
+
+/** A harness as the owner's Settings shows it (D-115): what the laptop has of it, whether it takes cards, and what it offers. */
+async function harnessState(harness: Harness): Promise<HarnessState> {
+  const { name, instructions, skills, knobs } = harness.offers();
+  const home = (file?: string) => file && (file.startsWith(os.homedir() + path.sep) ? `~${file.slice(os.homedir().length)}` : file);
+  return { name, ...(await harness.found()), refusal: await harness.refusal(), instructions: home(instructions), skills: home(skills), knobs };
 }
 
 /** A SKILL.md's description, from its front matter: one line, or the indented lines a block scalar folds. */

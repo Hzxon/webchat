@@ -20,6 +20,7 @@ import {
   type BoardSyncDTO,
   type CardDraftDTO,
   type EnvelopeDTO,
+  type HarnessState,
   type MessageKind,
   type PublicKeysDTO,
   type PullCardDTO,
@@ -596,10 +597,24 @@ function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | und
 
 /** A setup choice, if it has the right shape: skills only by a folder name that cannot leave `~/.claude/skills` (R-039). */
 function readChoice(raw: unknown): SetupChoice | undefined {
-  const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown } | null | undefined;
+  const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown; off?: unknown } | null | undefined;
   if (typeof choice?.claudeMd !== 'boolean' || typeof choice.noAttribution !== 'boolean' || !Array.isArray(choice.skills)) return;
   const skills = choice.skills.filter((s): s is string => typeof s === 'string' && SKILL_NAME.test(s)).slice(0, LIMITS.setupSkills);
-  return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution };
+  const off = Array.isArray(choice.off) ? choice.off.filter((n): n is string => !!short(n, 64)).slice(0, LIMITS.harnesses) : undefined;
+  return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution, ...(off && { off }) };
+}
+
+/** The harnesses an agent's answer lists, those of the right shape, or nothing from a plugin before them (D-115). */
+function readHarnesses(raw: unknown): HarnessState[] | undefined {
+  if (!Array.isArray(raw)) return;
+  const field = (value: unknown) => short(value, LIMITS.harnessFieldLength);
+  return (raw as Array<Record<string, unknown> | null>).slice(0, LIMITS.harnesses).flatMap((h) => {
+    const name = short(h?.name, 64);
+    if (!h || !name) return [];
+    const knobs = Array.isArray(h.knobs) ? h.knobs.filter((k): k is string => typeof k === 'string' && /^\w{1,32}$/.test(k)) : [];
+    const signedIn = typeof h.signedIn === 'boolean' ? h.signedIn : undefined;
+    return [{ name, version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs }];
+  });
 }
 
 /** An agent's answer to its owner's `setup`, if it has the right shape (R-039). */
@@ -612,7 +627,8 @@ function readSetupState(raw: Record<string, unknown> | undefined): SetupState | 
   );
   const applied = readChoice(raw.applied);
   const at = (raw.applied as { at?: unknown } | undefined)?.at;
-  return { to, claudeMd: raw.claudeMd, skills: skills.slice(0, LIMITS.setupSkills), choice, ...(applied && isId(at) && { applied: { ...applied, at } }) };
+  const harnesses = readHarnesses(raw.harnesses);
+  return { to, claudeMd: raw.claudeMd, skills: skills.slice(0, LIMITS.setupSkills), choice, ...(applied && isId(at) && { applied: { ...applied, at } }), ...(harnesses && { harnesses }) };
 }
 
 /** A message of the board's copy in a repository, if it has the right shape (R-040). */

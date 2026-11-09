@@ -26,10 +26,14 @@ export interface Harness {
    */
   refusal(dir?: string): Promise<string | undefined>;
   /**
-   * What of the owner's setup it can load: the instructions file and the skills folder it reads,
-   * and the knobs it honors, named as in `SetupChoice`, such as `noAttribution`.
+   * Its name for the owner, and what of their setup it can load: the instructions file and the
+   * skills folder it reads, and the knobs it honors, named as in `SetupChoice`, such as
+   * `noAttribution`. It declares a knob only when it honors it without running code outside the
+   * sandbox and without changing permission or sandbox mode (D-115).
    */
-  offers(): { instructions?: string; skills?: string; knobs: string[] };
+  offers(): { name: string; instructions?: string; skills?: string; knobs: string[] };
+  /** What the laptop has of it: its version, and whether it is signed in, each left out when it cannot tell. */
+  found(): Promise<{ version?: string; signedIn?: boolean }>;
   /** Takes the owner's choice for its knobs: before any proof or turn, and again whenever it changes. */
   apply(choice: SetupChoice): Promise<void>;
   /** Runs one turn, and resolves to its answer for the schema. */
