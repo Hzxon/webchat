@@ -204,6 +204,11 @@ export function threadProject(thread: Thread, docs: State['docs'], conversations
 }
 
 /** The user's chats with their agents. */
+/** The user's direct chat with one of their agents, where its sealed setup answers come (R-039). */
+export function useAgentChat(agent: UserDTO | undefined) {
+  return useAgentChats().find((c) => agent && c.members.some((m) => m.userId === agent.id));
+}
+
 export function useAgentChats() {
   const conversations = useAppState((s) => s.conversations);
   const users = useAppState((s) => s.users);

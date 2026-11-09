@@ -382,8 +382,7 @@ export class Plugin {
   private async refusal() {
     // Going to sleep: what runs finishes, and nothing new starts (K-66, D-113).
     if (existsSync(this.asleep)) return 'I am going to sleep, so I start nothing new. To wake me, type /webchat:wake in Claude Code on your laptop.';
-    // Nothing runs while no harness takes turns; the host's reason stands for them all.
-    if (!(await this.enabled()).length) return this.harnessRefusal(this.host);
+    return this.noHarness();
   }
 
   /** The host harness, which takes the turns no request names one for: Claude Code when the plugin hosts. */
@@ -397,22 +396,28 @@ export class Plugin {
     return harness.refusal();
   }
 
-  /** The harnesses that take turns now, in the laptop's order. */
-  private async enabled() {
+  /** Why no harness takes turns, or undefined while one does: the host's reason stands for them all. */
+  private async noHarness() {
     const refusals = await Promise.all(this.options.harnesses.map((h) => this.harnessRefusal(h)));
-    return this.options.harnesses.filter((_, i) => !refusals[i]);
+    return refusals.every(Boolean) ? refusals[0] : undefined;
   }
 
   /**
    * The harness a request names, or the host for one from before the pick, such as a Check again
-   * or a proposal's draft. Throws why it starts nothing, which the request's failure says.
+   * or a proposal's draft, and why it starts nothing, when it does. Picked once per run or turn,
+   * and the harness goes on as an object from there.
    */
-  private async harnessFor(name?: string) {
+  private async pick(name?: string): Promise<{ harness?: Harness; refused?: string }> {
     const harness = name === undefined ? this.host : this.options.harnesses.find((h) => h.name === name);
-    if (!harness) throw new Error(`I have no ${name} on this laptop. Pick another coding agent.`);
-    const refused = await this.harnessRefusal(harness);
+    if (!harness) return { refused: `I have no ${name} on this laptop. Pick another coding agent.` };
+    return { harness, refused: await this.harnessRefusal(harness) };
+  }
+
+  /** The harness a request names, which takes its turns; throws why it starts nothing, which the request's failure says. */
+  private async harnessFor(name?: string) {
+    const { harness, refused } = await this.pick(name);
     if (refused) throw new Error(refused);
-    return harness;
+    return harness!;
   }
 
   /** Why the work in one folder fails before it starts, or undefined (D-097). */
@@ -428,7 +433,7 @@ export class Plugin {
     if (run && !run.repo) return 'Reload WebChat, then open the card again and press Start.';
     const refused =
       (await this.refusal()) ??
-      (run && (await this.harnessFor(run.harness).then(() => undefined, (error: Error) => error.message))) ??
+      (run && (await this.pick(run.harness)).refused) ??
       ((await signedIn()) ? undefined : 'Cards need a GitHub sign-in on this laptop. In Claude Code there, type /webchat:connect, and it helps you sign in.');
     if (refused || !run) return refused;
     // A card that an open pull request claims is taken, as `scripts/claim.sh` refuses it (R-042).
@@ -476,7 +481,7 @@ export class Plugin {
     await this.conversations!.recover().catch(log);
     missed.forEach((m) => this.handle(m));
     // The union over the harnesses that take turns: cards need one of them, and the GitHub sign-in.
-    const level = async () => (this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | ((await signedIn()) && (await this.enabled()).length ? AGENT_LEVEL.cards : 0));
+    const level = async () => (this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0));
     await level();
     // Another window may connect a folder meanwhile, a folder may move, and another window may put the agent to sleep.
     const timers = [
@@ -902,10 +907,8 @@ export class Plugin {
    */
   private async run({ request, taken, card, cards, decisions, signal }: Parameters<Runner>[0]): Promise<RunResult> {
     const text = noCopy(request.repo!);
-    // Kept by name, so every round resumes with the harness that started the session.
-    const picked = await this.harnessFor(request.harness);
-    const harness = picked.name;
-    const folder = await this.folderFor(request.repo!, picked, signal, () => this.runs!.report(taken, { kind: 'nocopy', note: text }, text));
+    const harness = await this.harnessFor(request.harness);
+    const folder = await this.folderFor(request.repo!, harness, signal, () => this.runs!.report(taken, { kind: 'nocopy', note: text }, text));
     const { branch, dir, base } = await addWorktree(folder.dir, request, path.join(folder.dir, '.claude', 'worktrees'));
     const place: Place = { branch, worktree: dir, base };
     const session = randomUUID();
@@ -923,7 +926,8 @@ export class Plugin {
     const head = await this.push(place);
     const body = `Claims ${request.card}. Checked ${date}: ${line(check.checked, 500)}`;
     const pull = await this.openDraft(place, `${request.card}: ${request.title}`, body, folder.repo);
-    const watched: Watched = { ...place, taken, request, pull, head, session, harness, fixes: 0, seenHead: '', seenNote: new Date().toISOString(), unfinished: {} };
+    // By name, so every round resumes with the harness that started the session.
+    const watched: Watched = { ...place, taken, request, pull, head, session, harness: harness.name, fixes: 0, seenHead: '', seenNote: new Date().toISOString(), unfinished: {} };
     this.watched.push(watched);
     await this.saveWatched();
     return this.finish(watched, workBrief(pull), true, signal);
@@ -935,7 +939,7 @@ export class Plugin {
    * it commits is pushed, never forced. Its drafts are what it asks of the board.
    */
   private async finish(pull: Watched, brief: string, resume: boolean, signal: AbortSignal): Promise<RunResult> {
-    const answer = await this.work(pull, pull.session!, resume, brief, signal, pull.harness);
+    const answer = await this.work(pull, pull.session!, resume, brief, signal, await this.harnessFor(pull.harness));
     // The board is read only for an answer that names cards or decisions.
     const named = [answer.drafts, answer.decisions].some((list) => Array.isArray(list) && list.length);
     const { seen } = await seenOf(named ? await this.board(this.projectOf(pull.request)) : undefined);
@@ -976,9 +980,8 @@ export class Plugin {
     return (doc && this.client!.conversations.get(doc.conversationId)?.projectId) ?? undefined;
   }
 
-  /** One turn of the harness named, or the host's, in `cwd`: the message on stdin, the JSON answer `schema` asks for (D-097). */
-  private async ask(cwd: string, session: string, resume: boolean, message: string, schema: object, signal: AbortSignal, name?: string) {
-    const harness = await this.harnessFor(name);
+  /** One turn of `harness` in `cwd`: the message on stdin, the JSON answer `schema` asks for (D-097). */
+  private async ask(cwd: string, session: string, resume: boolean, message: string, schema: object, signal: AbortSignal, harness: Harness) {
     const setup = await this.loadSetup(session, harness);
     const answer = await harness.turn({ cwd, session, resume, message, schema, setup, signal }).finally(() => setup.skills && fs.rm(path.join(os.tmpdir(), 'webchat-skills', session), { recursive: true, force: true }));
     // The owner may cancel while the turn ends; nothing is pushed or posted then.
@@ -987,7 +990,7 @@ export class Plugin {
   }
 
   /** A turn on a card: done or paused with a note, or failed with what blocks it. */
-  private async work(place: Place, session: string, resume: boolean, message: string, signal: AbortSignal, harness?: string) {
+  private async work(place: Place, session: string, resume: boolean, message: string, signal: AbortSignal, harness: Harness) {
     const answer = (await this.ask(place.worktree, session, resume, message, ANSWER, signal, harness)) as Answer;
     const note = answer.note.trim().slice(0, 500);
     if (answer.outcome !== 'done' && answer.outcome !== 'decision') throw new Error(note || 'I gave up.');
@@ -1053,7 +1056,7 @@ export class Plugin {
           ...(listed !== (conversation.pulls ?? '') ? ['', listed] : []),
         ].join('\n')
       : promptBrief(input, board, folder?.repo, listed);
-    const answer = (await this.ask(conversation.scratch, conversation.session, resume, message, REPLY, signal, harness.name)) as { reply?: unknown; drafts?: unknown };
+    const answer = (await this.ask(conversation.scratch, conversation.session, resume, message, REPLY, signal, harness)) as { reply?: unknown; drafts?: unknown };
     // Only once the turn read them, so a turn cut short tells the next one again.
     conversation.seen = seen;
     conversation.pulls = listed;
@@ -1187,8 +1190,9 @@ export class Plugin {
         if (this.runs.running.some((r) => r.docId === pull.request.docId && r.section === pull.request.section)) continue;
         // A draft whose folder is gone, or unsafe now, or whose harness starts nothing now, waits until it is back.
         const folder = this.folderOf(pull.pull.repo);
-        const harness = await this.harnessFor(pull.harness).catch(() => undefined);
-        if (!folder || !harness || (await this.folderRefusal(folder, harness))) continue;
+        if (!folder) continue;
+        const { harness, refused } = await this.pick(pull.harness);
+        if (!harness || refused || (await this.folderRefusal(folder, harness))) continue;
         // A run that waits for a decision needs only whether its draft ended.
         const fields = pull.unfinished?.paused ? 'state,headRefOid' : PULL_FIELDS;
         const view = JSON.parse(await gh(['pr', 'view', String(pull.pull.number), '--repo', pull.pull.repo, '--json', fields])) as PullView;

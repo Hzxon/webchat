@@ -2,9 +2,9 @@
 // lists in its sealed setup answer, one of which each run request and prompt names, signed. The
 // agent runs every harness its laptop enables and keeps no default, so the page remembers the last
 // pick in this browser only. A harness that takes no cards is greyed, with the reason.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { UserDTO } from '../../../shared/types';
-import { blockedBy, useAgentChats } from '../agents';
+import { blockedBy, useAgentChat } from '../agents';
 import { askSetup } from '../chat';
 import { useAppState } from '../store';
 
@@ -25,9 +25,9 @@ export interface HarnessChoice {
  * request to it names none, so it runs on the host harness.
  */
 export function useHarnessPick(agent: UserDTO | undefined) {
-  const chat = useAgentChats().find((c) => agent && c.members.some((m) => m.userId === agent.id));
-  const messages = useAppState((s) => (chat ? s.messages[chat.id] : undefined));
-  const state = messages?.findLast((m) => m.senderId === agent?.id && m.setupState)?.setupState;
+  const chat = useAgentChat(agent);
+  // The newest answer alone, so a new message in the chat renders nothing here.
+  const state = useAppState((s) => (chat ? s.messages[chat.id]?.findLast((m) => m.senderId === agent?.id && m.setupState)?.setupState : undefined));
   const [picked, setPicked] = useState(remembered);
   useEffect(() => {
     if (agent && !state && !asked.has(agent.id) && !blockedBy(agent, true)) {
@@ -35,12 +35,8 @@ export function useHarnessPick(agent: UserDTO | undefined) {
       void askSetup(agent.id);
     }
   }, [agent?.id, !!state]);
-  const list = useMemo(
-    () => state?.harnesses?.map((h): HarnessChoice => ({ name: h.name, reason: h.refusal ?? (state.choice.off?.includes(h.name) ? 'turned off in Agent settings' : undefined) })),
-    [state],
-  );
-  const takes = (h: HarnessChoice) => !h.reason;
-  const harness = (list?.find((h) => h.name === picked && takes(h)) ?? list?.find(takes))?.name;
+  const list = state?.harnesses?.map((h): HarnessChoice => ({ name: h.name, reason: h.refusal ?? (state.choice.off?.includes(h.name) ? 'turned off in Agent settings' : undefined) }));
+  const harness = (list?.find((h) => h.name === picked && !h.reason) ?? list?.find((h) => !h.reason))?.name;
   const pick = (name: string) => {
     setPicked(name);
     try {

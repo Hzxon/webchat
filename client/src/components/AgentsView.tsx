@@ -69,10 +69,7 @@ export function AgentsView() {
   let subtitle = awake ? 'Your agent is online' : asleep(Math.max(0, ...agents.map((a) => a.lastSeen ?? 0)) || null);
   if (agents.length === 0) subtitle = 'No agent connected';
   else if (thread?.kind === 'proposal') subtitle = `Proposed in ${short(thread.repo)} · ${THREAD_STATE[thread.state].label}`;
-  else if (thread) {
-    const where = thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board';
-    subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${where}${thread.harness ? ` with ${thread.harness}` : ''} · ${THREAD_STATE[thread.state].label}`;
-  }
+  else if (thread) subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board'}${thread.harness ? ` with ${thread.harness}` : ''} · ${THREAD_STATE[thread.state].label}`;
   else if (brief) subtitle = 'Before it starts';
   // An agent runs several cards at once, so the list says how many go (R-037).
   const running = threads.filter((t) => t.kind === 'card' && t.state === 'working').length;
