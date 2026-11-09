@@ -1203,14 +1203,17 @@ describe('agent client (R-027)', () => {
     const code = newPairingCode();
     const first = new Plugin({ ...options, code: `${baseUrl}#${code}` });
     const second = new Plugin({ ...options, code: '' });
-    void first.serve();
+    // Caught, as agent/mcp.ts does: a window whose check-in outlasts the test starts again after
+    // the file's server closed and its folder went, and pairs again with nobody to answer.
+    const serve = (window: Plugin) => void window.serve().catch(() => undefined);
+    serve(first);
     try {
       const agent = await approve(alice, code, 'Sleepy');
       await waitFor('the first window serves', () => first.problem === '');
       const job = new Plugin({ ...options, code: '', job: true });
       assert.equal(await job.start(), false);
       assert.match(await job.call('status'), /background job, so it does not serve/);
-      void second.serve();
+      serve(second);
       await waitFor('the second window waits', () => /Another Claude Code window/.test(second.problem));
 
       // Nothing runs, so the agent sleeps at once on Alice's word in the pane, and says so.
