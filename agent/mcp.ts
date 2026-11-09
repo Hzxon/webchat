@@ -8,7 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { ClaudePlugin, claudeProgram, claudeSecrets, guard, type ToolUse } from './claude.ts';
+import { ClaudePlugin, claudeProgram, claudeSecrets, guard, onPath, type ToolUse } from './claude.ts';
+import { codexHarness } from './codex.ts';
 import { messageOf } from './runs.ts';
 
 const none = { type: 'object', properties: {} };
@@ -45,12 +46,14 @@ const TOOLS = [
 
 async function serve() {
   const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? '';
+  const [claude, codex] = await Promise.all([claudeProgram(), onPath('codex')]);
   const plugin = new ClaudePlugin({
     code: process.env.WEBCHAT_PAIRING_CODE ?? '',
     dataDir,
     projectDir: process.env.CLAUDE_PROJECT_DIR ?? process.cwd(),
     cloneRoot: path.join(os.homedir(), 'WebChat'),
-    claude: await claudeProgram(),
+    claude,
+    others: codex ? [codexHarness(codex, dataDir)] : [],
     // The folder goes as an argument, since the background Claude's hooks get no plugin variables.
     guard: `"${process.execPath}" "${fileURLToPath(import.meta.url)}" guard "${dataDir}"`,
     job: !!process.env.CLAUDE_JOB_DIR,

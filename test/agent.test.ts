@@ -14,6 +14,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { Api } from '../agent/api.ts';
 import { claudeArgs, claudeResult, claudeSettings, ClaudePlugin as Plugin, guard, restrictedSettings, sandboxProblem } from '../agent/claude.ts';
 import { AgentClient, type OpenedMessage } from '../agent/client.ts';
+import { CODEX_GAP, codexHarness } from '../agent/codex.ts';
+import type { Harness } from '../agent/harness.ts';
 import { Conversations, parts, type Answerer } from '../agent/conversations.ts';
 import { addWorktree, start, type Final } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
@@ -107,6 +109,33 @@ const answer = check
     : { outcome: 'done', note: 'Sums add up now.', title: 'Fix sums', body: 'Sums were off by one.' };
 console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: id }));
 console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: id, structured_output: answer }));
+`;
+/**
+ * Stands in for `codex exec`, as FAKE_CLAUDE does for Claude Code: logs how it was run and prints
+ * the JSONL events of a turn, as Codex's documentation shows them, with the answer as its last
+ * message. A resume names its thread after `resume`.
+ */
+const FAKE_CODEX = `#!/usr/bin/env node
+import fs from 'node:fs';
+const args = process.argv.slice(2);
+if (args[0] === '--version' || args.join(' ') === 'login status') {
+  console.log(args[0] === '--version' ? 'codex-cli 0.58.0' : 'Logged in using ChatGPT');
+  process.exit(0);
+}
+const input = fs.readFileSync(0, 'utf8');
+const schema = JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema') + 1], 'utf8'));
+fs.appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ args, input, cwd: process.cwd(), schema }) + '\\n');
+const thread = args.includes('resume') ? args[args.indexOf('resume') + 1] : '0199a213-81c0-7800-8aa1-bbab2a035a53';
+const events = [
+  { type: 'thread.started', thread_id: thread },
+  { type: 'turn.started' },
+  { type: 'item.completed', item: { id: 'item_0', type: 'command_execution', command: 'bash -lc ls', status: 'completed' } },
+  { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: process.env.FAKE_CODEX_ANSWER ?? '{"reply":"It adds.","drafts":null}' } },
+  process.env.FAKE_CODEX_FAIL
+    ? { type: 'turn.failed', error: { message: process.env.FAKE_CODEX_FAIL } }
+    : { type: 'turn.completed', usage: { input_tokens: 24763, cached_input_tokens: 24448, output_tokens: 122, reasoning_output_tokens: 0 } },
+];
+for (const event of events) console.log(JSON.stringify(event));
 `;
 const PASSWORD = 'correct horse battery';
 
@@ -584,6 +613,7 @@ describe('agent client (R-027)', () => {
       await fs.mkdir(bin);
       await fs.writeFile(path.join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
       await fs.writeFile(path.join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+      await fs.writeFile(path.join(bin, 'codex'), FAKE_CODEX, { mode: 0o755 });
       const ghState = path.join(home, 'gh.json');
       await fs.writeFile(ghState, JSON.stringify({ origin, pulls: [] }));
       const claudeLog = path.join(home, 'claude.log');
@@ -594,6 +624,7 @@ describe('agent client (R-027)', () => {
         PATH: `${bin}${path.delimiter}${process.env.PATH}`,
         FAKE_GH_STATE: ghState,
         FAKE_CLAUDE_LOG: claudeLog,
+        FAKE_CODEX_LOG: path.join(home, 'codex.log'),
         GH_CONFIG_DIR: path.join(home, 'gh'),
         CLAUDE_CONFIG_DIR: path.join(home, 'claude'),
       });
@@ -602,7 +633,7 @@ describe('agent client (R-027)', () => {
       await fs.mkdir(path.join(project, '.claude'));
       await fs.writeFile(path.join(project, '.claude', 'settings.local.json'), JSON.stringify({ sandbox: { enabled: false } }));
       const cloneRoot = path.join(home, 'WebChat');
-      const options = { claude: path.join(bin, 'claude'), guard: 'true', cloneRoot };
+      const options = { claude: path.join(bin, 'claude'), guard: 'true', cloneRoot, others: [codexHarness(path.join(bin, 'codex'), dataDir)] };
       // A window open in a folder that is no repository serves the agent all the same (R-036).
       const anywhere = path.join(home, 'anywhere');
       await fs.mkdir(anywhere);
@@ -812,7 +843,8 @@ describe('agent client (R-027)', () => {
         const { harnesses, ...shown } = (await setup(alice, direct))[0]!;
         assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
         const claudeCode = { name: 'Claude Code', version: '2.1.0', signedIn: true, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution'] };
-        assert.deepEqual(harnesses, [claudeCode], 'the pane learns each harness the laptop has, and the knobs it honors');
+        const codexState = { name: 'Codex', version: '0.58.0', signedIn: true, refusal: CODEX_GAP, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: [] };
+        assert.deepEqual(harnesses, [claudeCode, codexState], 'the pane learns each harness the laptop has, the knobs it honors, and why Codex takes no cards');
         // Turned off, the only harness starts nothing; a page from before the list keeps it off.
         await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false, off: ['Claude Code'] });
         await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false });
@@ -822,12 +854,17 @@ describe('agent client (R-027)', () => {
         assert.deepEqual(await setup(carol, general, chosen), []);
         assert.deepEqual((await setup(alice, direct, { ...chosen, off: [] })).map((s) => s.choice), [{ ...chosen, off: [] }]);
         assert.deepEqual(JSON.parse(await fs.readFile(settings, 'utf8')).attribution, { commit: '', pr: '' }, 'the settings hide the attribution lines');
-        // A prompt naming a coding agent the laptop has not enabled fails with the reason, and no turn runs.
+        // A prompt naming a coding agent the laptop does not have fails with the reason, and no turn runs.
         const turnsBeforePrompts = (await turns()).length;
-        await tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Codex' }, 'What does sum.js do?');
+        await tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Hermes' }, 'What does sum.js do?');
         const refusedPrompt = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'failed').map((m) => m.content?.text);
-        assert.deepEqual(refusedPrompt, ['I could not answer. I have no Codex on this laptop. Pick another coding agent.']);
+        assert.deepEqual(refusedPrompt, ['I could not answer. I have no Hermes on this laptop. Pick another coding agent.']);
         assert.equal((await turns()).length, turnsBeforePrompts, 'no Claude ran for it');
+        // One naming Codex is answered by it, in a scratch copy: it takes no cards, but answers only is the floor.
+        await tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Codex' }, 'What does sum.js do?');
+        const codexAnswer = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'answer').map((m) => m.content?.text);
+        assert.deepEqual(codexAnswer.slice(-1), ['It adds.']);
+        assert.equal((await turns()).length, turnsBeforePrompts, 'no Claude ran for it either');
         // The board Alice's page picked goes in the brief, and no other (D-104).
         const prompted = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id }, 'What does sum.js do?'));
         const kept = JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'conversations.json'), 'utf8')) as Array<{ root: string; harness?: string }>;
@@ -1120,10 +1157,10 @@ describe('agent client (R-027)', () => {
         const turnsBefore = (await turns()).length;
         assert.deepEqual((await runK7()).said.map((r) => r.text), ['I could not run K-7: acme/app#8 claims K-7 already. Pick another card, or ask whoever opened it.']);
         assert.equal((await turns()).length, turnsBefore, 'no Claude ran for it');
-        // So does a request naming a coding agent the laptop has not enabled, with the reason.
+        // So does a request naming a coding agent that takes no cards here, with the reason.
         const codex = (await ask(alice, { hash: await briefNow(), harness: 'Codex' })).id;
         await (await checkIn()).handled;
-        assert.deepEqual(await reportsOn(codex), ['I could not run K-7: I have no Codex on this laptop. Pick another coding agent.']);
+        assert.deepEqual(await reportsOn(codex), [`I could not run K-7: ${CODEX_GAP}`]);
         assert.equal((await turns()).length, turnsBefore, 'no Claude ran for it either');
 
         // A card the code already does ends at its check, pushes nothing, and offers its new status
@@ -1525,6 +1562,44 @@ test('cuts an answer into messages after line breaks, never inside a surrogate p
   assert.ok(emoji.length > 1);
   for (const part of emoji) assert.ok(!/[\ud800-\udbff]$/.test(part), 'no part ends inside a pair');
   assert.equal(emoji.join(''), `${'a'.repeat(3999)}\u{1F600} and more`);
+});
+
+test('answers through Codex with the message on stdin, and resumes its thread after a restart; takes no cards', async () => {
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-codex-')));
+  const program = path.join(dir, 'codex');
+  const log = path.join(dir, 'codex.log');
+  await fs.writeFile(program, FAKE_CODEX, { mode: 0o755 });
+  const restore = setEnv({ FAKE_CODEX_LOG: log });
+  try {
+    const schema = { type: 'object', properties: { reply: { type: 'string' }, drafts: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] } } }, required: ['reply'] };
+    const turn = (harness: Harness, resume: boolean, message: string) => harness.turn({ cwd: dir, session: 's-1', resume, message, schema, setup: {}, signal: new AbortController().signal });
+    const harness = codexHarness(program, dir);
+    assert.equal(await harness.refusal(), undefined, 'it answers questions');
+    assert.equal(await harness.refusal(dir), CODEX_GAP, 'it takes no cards');
+    assert.equal(await codexHarness('', dir).refusal(), 'I cannot find Codex on this laptop.');
+    assert.deepEqual(await turn(harness, false, 'What does sum.js do?'), { reply: 'It adds.' }, 'a null for a left-out field is dropped');
+    // A restart keeps the thread of each session.
+    await withEnv({ FAKE_CODEX_ANSWER: '{"reply":"Still adds.","drafts":[{"title":"Sums"}]}' }, () => turn(codexHarness(program, dir), true, 'And now?'));
+    const [first, second] = (await fs.readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { args: string[]; input: string; cwd: string; schema: object });
+    assert.equal(first!.input, 'What does sum.js do?');
+    assert.ok(!first!.args.some((arg) => arg.includes('sum.js')), 'the message is never in the arguments');
+    assert.deepEqual(first!.args.slice(-1), ['-'], 'the message is read from stdin');
+    assert.deepEqual(second!.args.slice(-3), ['resume', '0199a213-81c0-7800-8aa1-bbab2a035a53', '-']);
+    assert.ok(first!.args.includes('--ignore-user-config') && first!.args.includes('shell_environment_policy.inherit="core"'), "none of the owner's config or tokens");
+    assert.deepEqual(first!.schema, {
+      type: 'object',
+      properties: {
+        reply: { type: 'string' },
+        drafts: { anyOf: [{ type: 'array', items: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'], additionalProperties: false } }, { type: 'null' }] },
+      },
+      required: ['reply', 'drafts'],
+      additionalProperties: false,
+    });
+    await assert.rejects(withEnv({ FAKE_CODEX_FAIL: 'Usage limit reached.' }, () => turn(harness, true, 'Again?')), /Usage limit reached/);
+  } finally {
+    restore();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 // Claude Code's own behaviour, which the plugin relies on (R-035, D-097). It costs a few cents of

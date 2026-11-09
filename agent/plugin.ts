@@ -402,6 +402,18 @@ export class Plugin {
     return refusals.every(Boolean) ? refusals[0] : undefined;
   }
 
+  /** Why the harness a request names takes no cards: turned off, missing, or no isolation proof in the folder it would work in. */
+  private async noCardsWith(run: RunRequest) {
+    const { harness, refused } = await this.pick(run.harness);
+    return refused ?? harness!.refusal(this.folderOf(run.repo!)?.dir ?? this.options.cloneRoot);
+  }
+
+  /** Why no harness takes cards, or undefined while one does: a harness that answers may still lack the isolation proof a folder needs. */
+  private async noCards() {
+    const refusals = await Promise.all(this.options.harnesses.map(async (h) => (await this.harnessRefusal(h)) ?? h.refusal(this.options.cloneRoot)));
+    return refusals.every(Boolean) ? refusals[0] : undefined;
+  }
+
   /**
    * The harness a request names, or the host for one from before the pick, such as a Check again
    * or a proposal's draft, and why it starts nothing, when it does. Picked once per run or turn,
@@ -421,10 +433,10 @@ export class Plugin {
   }
 
   /** Why the work in one folder fails before it starts, or undefined (D-097). */
-  private folderRefusal(folder: Folder, harness: Harness) {
+  private folderRefusal(folder: Folder, harness: Harness, purpose?: 'cards' | 'answers') {
     // The background Claude's shell reads the repository's .git, where an https address can hold a login.
     if (/^https?:\/\/[^/]*@/i.test(folder.origin)) return `The address of ${folder.repo} on this laptop holds a password, which I must not see. Ask Claude Code there to take the login out of the address of origin.`;
-    return harness.refusal(folder.dir);
+    return harness.refusal(folder.dir, purpose);
   }
 
   /** Why its runs fail before they start, which Runs asks before each claim: they also push and open drafts with this laptop's GitHub login (D-092). */
@@ -433,7 +445,7 @@ export class Plugin {
     if (run && !run.repo) return 'Reload WebChat, then open the card again and press Start.';
     const refused =
       (await this.refusal()) ??
-      (run && (await this.pick(run.harness)).refused) ??
+      (run ? await this.noCardsWith(run) : await this.noCards()) ??
       ((await signedIn()) ? undefined : 'Cards need a GitHub sign-in on this laptop. In Claude Code there, type /webchat:connect, and it helps you sign in.');
     if (refused || !run) return refused;
     // A card that an open pull request claims is taken, as `scripts/claim.sh` refuses it (R-042).
@@ -445,7 +457,7 @@ export class Plugin {
    * The folder of a repository. When the laptop has none, says so with `offer`, which the owner
    * answers by having it cloned, and waits for that: at most 30 minutes, or until a cancel (R-036).
    */
-  private async folderFor(repo: string, harness: Harness, signal: AbortSignal, offer: () => Promise<unknown>) {
+  private async folderFor(repo: string, harness: Harness, signal: AbortSignal, offer: () => Promise<unknown>, purpose?: 'cards' | 'answers') {
     if (!this.folderOf(repo)) {
       await offer();
       const key = repo.toLowerCase();
@@ -460,7 +472,7 @@ export class Plugin {
       });
     }
     const folder = this.folderOf(repo)!;
-    const refused = await this.folderRefusal(folder, harness);
+    const refused = await this.folderRefusal(folder, harness, purpose);
     if (refused) throw new Error(refused);
     return folder;
   }
@@ -756,9 +768,9 @@ export class Plugin {
       await this.saveSetup();
     }
     const { choice, applied } = this.setup;
-    const { harnesses } = this.options;
+    const { harnesses, cloneRoot } = this.options;
     // One choice serves every harness (D-115), so the host's files stand for what the laptop offers.
-    const [owner, ...states] = await Promise.all([ownerSetup(this.host.offers()), ...harnesses.map((h) => harnessState(h, h.offers()))]);
+    const [owner, ...states] = await Promise.all([ownerSetup(this.host.offers()), ...harnesses.map((h) => harnessState(h, cloneRoot))]);
     await this.client!.send(message.conversationId, {
       text: `My runs load ${setupWords(choice)}.`,
       setupState: { to: message.clientId!, ...owner, choice, ...(applied && { applied }), harnesses: states },
@@ -1010,7 +1022,7 @@ export class Plugin {
     conversation.harness = harness.name;
     // A project that links no repository asks about its board alone, in an empty folder (R-038).
     const { repo } = conversation;
-    const folder = repo ? await this.folderFor(repo, harness, signal, () => this.client!.send(conversation.chat, { text: noCopy(repo), prompt: { kind: 'nocopy', to: conversation.root } })) : undefined;
+    const folder = repo ? await this.folderFor(repo, harness, signal, () => this.client!.send(conversation.chat, { text: noCopy(repo), prompt: { kind: 'nocopy', to: conversation.root } }), 'answers') : undefined;
     // Sessions outside WebChat claim with draft pull requests, which the sandboxed shell cannot list (R-041).
     const listing = folder && openPulls(folder.repo);
     const board = await this.board(conversation.project);
@@ -1632,10 +1644,15 @@ async function ownerSetup({ instructions, skills: dir }: ReturnType<Harness['off
   return { claudeMd: !!instructions && existsSync(instructions), skills };
 }
 
-/** A harness as the owner's Settings shows it (D-115): what the laptop has of it, whether it takes cards, and what it offers. */
-async function harnessState(harness: Harness, { instructions, skills, knobs }: ReturnType<Harness['offers']>): Promise<HarnessState> {
-  const [found, refusal] = await Promise.all([harness.found(), harness.refusal()]);
-  return { name: harness.name, ...found, refusal, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
+/**
+ * A harness as the owner's Settings shows it (D-115): what the laptop has of it, whether it takes
+ * cards, and what it offers. A harness that answers but cannot keep its shell from the secrets
+ * says so for a folder of `cloneRoot`, where cards run.
+ */
+async function harnessState(harness: Harness, cloneRoot: string): Promise<HarnessState> {
+  const { instructions, skills, knobs } = harness.offers();
+  const [found, anywhere, cards] = await Promise.all([harness.found(), harness.refusal(), harness.refusal(cloneRoot)]);
+  return { name: harness.name, ...found, refusal: anywhere ?? cards, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
 }
 
 /** A SKILL.md's description, from its front matter: one line, or the indented lines a block scalar folds. */

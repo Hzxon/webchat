@@ -164,8 +164,13 @@ export async function claudeProgram() {
       ? await fs.readlink(`/proc/${process.ppid}/exe`).catch(() => '')
       : await promisify(execFile)('ps', ['-o', 'comm=', '-p', String(process.ppid)]).then((r) => r.stdout.trim(), () => '');
   if (path.isAbsolute(parent) && path.basename(parent) === 'claude') return parent;
+  return onPath('claude');
+}
+
+/** A program's absolute path, from the absolute folders of the PATH only, or empty when there is none. */
+export async function onPath(name: string) {
   for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d))) {
-    const file = path.join(dir, 'claude');
+    const file = path.join(dir, name);
     if (await fs.access(file, constants.X_OK).then(() => true, () => false)) return file;
   }
   return '';
@@ -173,8 +178,8 @@ export async function claudeProgram() {
 
 /** The plugin as Claude Code hosts it: its turns run in the session's own `claude`, with the guard hook `guard`. */
 export class ClaudePlugin extends Plugin {
-  constructor({ claude, guard: hook, ...options }: Omit<PluginOptions, 'harnesses'> & { claude: string; guard: string }) {
-    super({ ...options, harnesses: [claudeHarness(claude, hook, options.dataDir)] });
+  constructor({ claude, guard: hook, others = [], ...options }: Omit<PluginOptions, 'harnesses'> & { claude: string; guard: string; others?: Harness[] }) {
+    super({ ...options, harnesses: [claudeHarness(claude, hook, options.dataDir), ...others] });
   }
 }
 
