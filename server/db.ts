@@ -1913,7 +1913,11 @@ export async function openDb(sql: Sql) {
     savePushSubscription: async (userId: number, endpoint: string, p256dh: string, auth: string) => {
       await sql.query(
         `INSERT INTO webchat.push_subscriptions (endpoint, user_id, p256dh, auth, created_at) VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
+         ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth
+         -- Another account takes an endpoint only with its keys, as the same browser signed in to it
+         -- sends them; the endpoint alone would let anyone who learned it take someone's pushes.
+         WHERE push_subscriptions.user_id = EXCLUDED.user_id
+            OR (push_subscriptions.p256dh = EXCLUDED.p256dh AND push_subscriptions.auth = EXCLUDED.auth)`,
         [endpoint, userId, p256dh, auth, Date.now()],
       );
     },

@@ -555,6 +555,20 @@ describe('chat server', () => {
     await bob.request('POST', '/push/unsubscribe', { endpoint: good.json.endpoint });
   });
 
+  test('a push endpoint moves to another account only with its keys', async () => {
+    const browser = makeSubscription(`http://${pushService.host}/bob-shared`);
+    const ownerOf = async () =>
+      (await instance.sql.query<{ user_id: number }>('SELECT user_id FROM webchat.push_subscriptions WHERE endpoint = $1', [browser.json.endpoint]))[0]?.user_id;
+    assert.equal((await bob.request('POST', '/push/subscribe', browser.json)).status, 204);
+    const forged = makeSubscription(browser.json.endpoint);
+    assert.equal((await carol.request('POST', '/push/subscribe', forged.json)).status, 204);
+    assert.equal(await ownerOf(), bob.id, 'knowing the endpoint is not enough');
+    // The same browser signed in to another account sends the same subscription.
+    assert.equal((await carol.request('POST', '/push/subscribe', browser.json)).status, 204);
+    assert.equal(await ownerOf(), carol.id);
+    await carol.request('POST', '/push/unsubscribe', { endpoint: browser.json.endpoint });
+  });
+
   test('a sync with nothing new answers "unchanged"', async () => {
     await bob.bootstrap();
     // The first check-in brings Bob online, which is itself a change.
