@@ -46,7 +46,9 @@ const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null'];
 /**
  * This server's git in a worktree under `<checkout>/.claude/worktrees`, with hooks off. It names
  * the worktree's git folder from the checkout's list, never from the worktree's `.git` file, which
- * the model could point at a folder whose config runs a command, such as `core.fsmonitor`.
+ * the model could point at a folder whose config runs a command, such as `core.fsmonitor`. A
+ * submodule the model stages has such a `.git` file too: status and diff skip submodules here,
+ * and `git add` of a whole folder still opens them, so the plugin adds files by name only.
  */
 export async function worktreeGit(worktree: string, ...args: string[]) {
   const checkout = path.resolve(worktree, '..', '..', '..');
@@ -56,13 +58,15 @@ export async function worktreeGit(worktree: string, ...args: string[]) {
   let gitDir: string | undefined;
   for (const name of await fs.readdir(admins)) {
     const pointer = await fs.readFile(path.join(admins, name, 'gitdir'), 'utf8').catch(() => '');
-    if (pointer && path.resolve(admins, name, pointer.trim()) === dotGit) {
+    // A relative pointer goes through the checkout's path as given, which can hold a link.
+    const target = path.resolve(admins, name, pointer.trim());
+    if (pointer && path.join(await fs.realpath(path.dirname(target)).catch(() => ''), '.git') === dotGit) {
       gitDir = path.join(admins, name);
       break;
     }
   }
   if (!gitDir) throw new Error(`${worktree} is no worktree of ${checkout}.`);
-  return (await exec('git', [`--git-dir=${gitDir}`, `--work-tree=${worktree}`, ...NO_HOOKS, ...args])).stdout.trim();
+  return (await exec('git', [`--git-dir=${gitDir}`, `--work-tree=${worktree}`, ...NO_HOOKS, '-c', 'diff.ignoreSubmodules=all', ...args])).stdout.trim();
 }
 
 export interface PluginOptions {
