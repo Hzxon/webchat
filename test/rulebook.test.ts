@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
-import { judge, type Action, type Rules } from '../agent/rulebook.ts';
+import { judge, shellPaths, type Action, type Rules } from '../agent/rulebook.ts';
 
 describe('the rulebook', () => {
   let root: string;
@@ -60,5 +60,14 @@ describe('the rulebook', () => {
     assert.equal((verdict({ kind: 'execute' }) as { ask?: true }).ask, true);
     const mode = verdict({ kind: 'switch_mode' });
     assert.deepEqual([mode.allow, (mode as { ask?: true }).ask], [false, undefined]);
+  });
+});
+
+describe('the places a shell command names', () => {
+  test('are its words after the program that start like a place, from the folder it runs in', () => {
+    const cwd = path.join(os.tmpdir(), 'webchat-shell');
+    assert.deepEqual(shellPaths("/bin/zsh -lc 'curl https://example.com'", cwd), [], 'the program and a web address are no place');
+    assert.deepEqual(shellPaths("/bin/zsh -lc 'cat /etc/hosts ../up ~/.ssh/id_rsa a/../b x.txt'", cwd), ['/etc/hosts', path.resolve(cwd, '../up'), path.join(os.homedir(), '.ssh/id_rsa'), path.resolve(cwd, 'a/../b')]);
+    assert.deepEqual(shellPaths('npm test', cwd), []);
   });
 });

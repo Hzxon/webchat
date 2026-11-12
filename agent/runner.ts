@@ -1,10 +1,9 @@
 // What the plugin's runs and conversations share (R-035, D-097): a worktree of the project's
-// repository on a branch named after the card, the fetch of origin, and a background Claude started
-// headless, with its final word read from its output.
-import { execFile, spawn } from 'node:child_process';
+// repository on a branch named after the card, the fetch of origin, and the silence timer of a
+// background agent's turn.
+import { execFile, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import readline from 'node:readline';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import type { RunRequest } from '../shared/types.ts';
@@ -20,7 +19,64 @@ export interface Final {
 }
 
 /** An agent that prints nothing for this long is stuck, and its run fails. */
-export const IDLE_MS = 2 *60 * 60_000;
+export const IDLE_MS = 2 * 60 * 60_000;
+
+/**
+ * Holds a turn's silence timer while the owner is asked: an agent that waits for an answer prints
+ * nothing, and is not stuck. The timer starts again, whole, when the last question is answered.
+ */
+export class Quiet {
+  private holds = 0;
+  /** Set by the turn's watchdog. */
+  release?: () => void;
+
+  get held() {
+    return this.holds > 0;
+  }
+
+  async during<T>(work: Promise<T>) {
+    this.holds++;
+    try {
+      return await work;
+    } finally {
+      if (--this.holds === 0) this.release?.();
+    }
+  }
+}
+
+/** Every agent process kept for a session, so none outlives the daemon. */
+const kept = new Set<ChildProcess>();
+process.on('exit', () => kept.forEach((child) => child.kill()));
+
+/** Notes a process kept for a session, which is dropped when it ends. */
+export function keep(child: ChildProcess) {
+  kept.add(child);
+  child.on('close', () => kept.delete(child));
+}
+
+/** An idle process must not keep the daemon, or a test, from ending; one in a turn must. */
+export const hold = (child: ChildProcess, on: boolean) => ([child, child.stdin, child.stdout] as unknown as Array<{ ref(): void; unref(): void }>).forEach((h) => (on ? h.ref() : h.unref()));
+
+/**
+ * The silence timer of one turn: `arm` on every sign of life, `stop` when the turn ends. While
+ * `quiet` holds it, it does not run.
+ */
+export function watchdog(ms: number, quiet: Quiet, stalled: () => void) {
+  let timer: NodeJS.Timeout | undefined;
+  const arm = () => {
+    clearTimeout(timer);
+    timer = quiet.held ? undefined : setTimeout(stalled, ms);
+  };
+  quiet.release = arm;
+  arm();
+  return {
+    arm,
+    stop() {
+      clearTimeout(timer);
+      quiet.release = undefined;
+    },
+  };
+}
 
 const slugOf = (text: string) =>
   text
@@ -54,41 +110,4 @@ export async function fetchOrigin(repo: string) {
     await run('git', ['-C', repo, 'fetch', '-q', 'origin']);
   });
   return run('git', ['-C', repo, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).then((r) => r.stdout.trim(), () => 'origin/main');
-}
-
-/**
- * Starts the agent in the worktree, with `input`, if any, on its stdin, and waits for its final word,
- * as `read` finds it in its output lines, or for it to go quiet for too long, or for the owner to cancel.
- * `seen` gets each output line as it comes.
- */
-export function start(command: string, args: string[], cwd: string, signal: AbortSignal, read: (line: string) => Final | undefined, input?: string, seen?: (line: string) => void) {
-  return new Promise<Final>((resolve, reject) => {
-    // A cancel that came while the worktree was being made has aborted already, and fires no event.
-    if (signal.aborted) return reject(new Error('the owner cancelled the run.'));
-    const child = spawn(command, args, { cwd, stdio: ['pipe', 'pipe', 'inherit'] });
-    // An agent that exits before it reads its input closes the pipe; its exit says why.
-    child.stdin.on('error', () => undefined).end(input);
-    signal.addEventListener('abort', () => (child.kill(), reject(new Error('the owner cancelled the run.'))), { once: true });
-    let last: Final | undefined;
-    let timer: NodeJS.Timeout;
-    const arm = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        child.kill();
-        reject(new Error(`the agent printed nothing for ${IDLE_MS / 60_000} minutes.`));
-      }, IDLE_MS);
-    };
-    arm();
-    readline.createInterface({ input: child.stdout }).on('line', (line) => {
-      arm();
-      last = read(line) ?? last;
-      seen?.(line);
-    });
-    child.on('error', (error) => (clearTimeout(timer), reject(error)));
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (last) resolve(last);
-      else reject(new Error(`the agent exited with code ${code} and no result.`));
-    });
-  });
 }

@@ -4,6 +4,17 @@
 import os from 'node:os';
 import path from 'node:path';
 import type { SetupChoice } from '../shared/types.ts';
+import type { Quiet } from './runner.ts';
+import type { Action } from './rulebook.ts';
+
+/** What a harness asks before an action: the rulebook's `Action`, and what the owner reads of it. */
+export interface Ask extends Action {
+  /** The command, the paths or the URL, exactly as the harness gave it, never the model's own description. */
+  detail: string;
+}
+
+/** The answer to an `Ask`. A refusal's message is a fixed sentence, which the model reads. */
+export type Reply = { allow: true } | { allow: false; message: string };
 
 /** One turn: `message` goes on stdin, never in arguments, which `ps` shows. */
 export interface Turn {
@@ -14,16 +25,28 @@ export interface Turn {
   message: string;
   /** The JSON schema the answer must fit. */
   schema: object;
+  /** Every schema the turns of this session may use, for a harness that fixes one for its process. */
+  schemas?: object[];
   /** What of the owner's setup to load, as they chose (R-039): their instructions file, and a folder of copies of their chosen skills. */
   setup: { instructions?: string; skills?: string };
   signal: AbortSignal;
   /** Takes what the model does now, in a sentence, each time the adapter can tell (docs/decisions/stop-pauses-run.md). */
   progress?: (sentence: string) => void;
+  /**
+   * Asks the owner before an action the harness would ask about, and rejects when the run cannot go
+   * on. Set only when the owner's page can show the question; without it an adapter refuses such an
+   * action, as it always did (docs/decisions/harness-approvals.md).
+   */
+  ask?: (ask: Ask) => Promise<Reply>;
+  /** Holds the turn's silence timer while `ask` waits for the owner. */
+  quiet?: Quiet;
 }
 
 export interface Harness {
   /** Its name for the owner, such as "Claude Code", which `SetupChoice.off` names. */
   readonly name: string;
+  /** Whether it calls `Turn.ask`, which the level an agent names says (AGENT_LEVEL.asks). */
+  readonly asks: boolean;
   /**
    * Why this laptop cannot run its turns, or undefined. With `dir`, why its shell could read a
    * secret folder while it works there, or undefined when the adapter proves it cannot. A turn for
