@@ -27,7 +27,7 @@ const CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash';
 const GIB = 2 ** 30;
 
 /** One line of the summary. `needs` names what setup would install for a `todo`. */
-export interface Row {
+interface Row {
   level: 'ok' | 'warn' | 'todo' | 'fail';
   text: string;
   fix?: string;
@@ -288,7 +288,7 @@ function show(rows: Row[]) {
 }
 
 /** One thing setup does for the packages and the harness, as the question says it, with the commands that do it. */
-export interface Step {
+interface Step {
   say: string;
   commands: string[][];
 }
@@ -385,8 +385,10 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
   for (const step of steps) for (const [cmd, ...args] of step.commands) await inherit(cmd, args);
   if (rows.some((row) => row.needs === 'git') && mac()) await waitForTools();
   await installService(program, pathEnv, home);
-  for (let tries = 0; tries < 10 && (await serviceState()) !== 'running'; tries++) await sleep(1000);
-  if ((await serviceState()) !== 'running') throw new Error(`The login service is installed but does not run. ${logHint(home)}`);
+  for (let tries = 0; (await serviceState()) !== 'running'; tries++) {
+    if (tries === 10) throw new Error(`The login service is installed but does not run. ${logHint(home)}`);
+    await sleep(1000);
+  }
   console.log('The agent runs as a login service, and shows as online in WebChat within a minute.');
   const left = (await checks(home, server)).rows.filter((row) => row.level !== 'ok');
   if (left.length) {
