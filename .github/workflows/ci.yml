@@ -73,6 +73,10 @@ jobs:
         run: npm ci
       - if: steps.changed.outputs.run == 'true'
         run: npm run build:agent
+      # GitHub's Linux image lets others write /opt, and the keyholder refuses a program under a folder
+      # that anyone but root writes. A real laptop has it root's alone, and this machine is thrown away.
+      - if: steps.changed.outputs.run == 'true' && runner.os == 'Linux'
+        run: sudo chown root:root /opt && sudo chmod 755 /opt
       # The test lints the keyholder's unit with `systemd-analyze verify`, or its plist with `plutil -lint`.
       - if: steps.changed.outputs.run == 'true'
         run: WEBCHAT_REAL_ROOM=1 node --test --test-timeout=200000 --test-force-exit --import tsx test/room.real.test.ts
