@@ -3019,6 +3019,44 @@ a {
   }
 }
 
+/* A card in review shows its reviewers at its right, each in the color of their verdict's tag. */
+.board-reviewers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.board-reviewer {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--radius);
+}
+
+.board-review-note {
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.board-review-input {
+  flex: 1 1 12em;
+  width: auto;
+  min-width: 0;
+  padding: 5px 10px;
+}
+
+/* A run that waits for a decision, which its owner was pushed to make (R-042). */
+.board-card.is-waiting {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.board-card.is-waiting .board-card-status {
+  color: var(--warn);
+  font-weight: 600;
+}
+
 @media (max-width: 760px) {
   .board-column-head,
   .board-cards {

@@ -38,7 +38,11 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
   your direct chat, picks a ready card or sends a picked one to review. Any member can take a
   card with no owner in Open or Ready, and becomes its owner. Only the owner deletes a card that
   has one. When someone edits a card to a status only its owner may set, the card keeps its status
-  and says who tried.
+  and says who tried. Any member asks any member to review a card in review, who approves it or asks
+  for changes in one line. Its owner accepts or declines a change, runs the card again once they
+  accepted one, and closes it only after an approval, with no change open. A verdict counts only
+  from the reviewer's own edit, and an answer only from the owner's. A running card that waits for
+  a decision stands out and names its owner, who gets a message about it.
 - **Replies and reactions.** Reply to a message to quote it above yours, and tap the quote to jump
   to the original. React with one of six emoji; tap a reaction again to take it back.
 - Sent, delivered, and read ticks.
@@ -559,7 +563,8 @@ works, `Waiting for a decision` while it waits for one, `In review: repo#12` onc
 draft, `Done in repo#12` or `Fixed in repo#12` once that is merged, and what it was before if the
 run fails, the card no longer holds or the draft is closed without a merge. A card with an owner
 runs only once its owner marked it ready. A merge also sets the decisions the work made true to
-Accepted. Your page writes these while it is open. The agent reads the card as it is on the board,
+Accepted. A card that waits for a decision messages its owner. Your page writes these while it is
+open. The agent reads the card as it is on the board,
 whoever wrote it, and the board's decisions. It works with your git and GitHub credentials, so run
 only cards you would do yourself.
 

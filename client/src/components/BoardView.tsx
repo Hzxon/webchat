@@ -4,7 +4,7 @@
 // editor docs have, and keep its locks and history. The board docs are created the first time
 // someone adds a card.
 import { useEffect, useMemo, useState } from 'react';
-import type { ProjectDTO, RunRequest, UserDTO } from '../../../shared/types';
+import type { CardNoteDTO, ProjectDTO, RunRequest, UserDTO } from '../../../shared/types';
 import {
   boardDocs,
   cardRuns,
@@ -20,10 +20,15 @@ import {
   laneOf,
   MOVE_FROM,
   moved,
+  openChange,
   runnerOf,
   takeable,
   unchecked,
+  usernamesOf,
   WAITING,
+  withReviews,
+  withStatus,
+  workingStatus,
   type BoardColumn,
   type Card,
   type CardKind,
@@ -32,9 +37,9 @@ import {
 } from '../board';
 import { inOrder, ownAgents, ready, seatFor, useAgentChats } from '../agents';
 import { copyOf } from '../../../shared/board';
-import { askAgent, askLink, cancelRun, sendCardNote, startDirectChat, syncNow } from '../chat';
+import { askAgent, askFix, askLink, cancelRun, sendCardNote, startDirectChat, syncNow } from '../chat';
 import { addCard, beginEditing, createBoard, loadCards, loadSections, markSeen, newSectionId, replaceSection, rewriteCard, takeCard, type DocSection, type Editing } from '../docs';
-import type { ChatDoc } from '../e2ee/keyring';
+import type { ChatDoc, ChatMessage } from '../e2ee/keyring';
 import { importEntries } from '../boardLink';
 import { useLinkedRepos } from '../linkedRepos';
 import { actions, senderName, useAppState } from '../store';
@@ -42,7 +47,7 @@ import { Avatar } from './Avatar';
 import { HistoryDialog, SectionEditor } from './DocView';
 import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlayIcon, PlusIcon, StopIcon, TrashIcon } from './icons';
 import { Markdown } from './Markdown';
-import { RUN_TAGS, Tag, type Tone } from './PullTags';
+import { REVIEWS, RUN_TAGS, Tag, type Tone } from './PullTags';
 
 export function BoardView({ project }: { project: ProjectDTO }) {
   const docs = useAppState((s) => s.docs);
@@ -181,10 +186,11 @@ const RUN_STATES: Record<CardRun['state'], [Tone, string]> = {
 };
 const FILTERS = { all: 'All', R: 'Ideas', K: 'Issues' };
 // Pick shows on a Ready card's face; the others in the opened card.
-const MOVES: Array<[Move, string]> = [
+const MOVES: Array<[keyof typeof MOVE_FROM, string]> = [
   ['ask', 'Ask owner'],
   ['ready', 'Mark ready'],
   ['review', 'Send to review'],
+  ['again', 'Run again'],
   ['close', 'Close'],
 ];
 type Filter = keyof typeof FILTERS;
@@ -208,8 +214,9 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
     [memberIds, users, meId],
   );
   const [sections, setSections] = useState<DocSection[]>([]);
-  // An owner who left the project owns nothing, so owners follow the members without a reload.
-  const cards = useMemo(() => cardsOf(sections, memberIds), [sections, memberIds]);
+  const usernames = useMemo(() => usernamesOf(memberIds, users, me), [memberIds, users, me]);
+  // An owner or a reviewer who left the project counts for nothing, so cards follow the members without a reload.
+  const cards = useMemo(() => cardsOf(sections, memberIds, usernames), [sections, memberIds, usernames]);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
@@ -224,6 +231,9 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
     section: Editing;
   } | null>(null);
   const [historyOf, setHistoryOf] = useState<Card | null>(null);
+  // In the open card: the member picked to ask for a review, and the note of a requested change being written.
+  const [asking, setAsking] = useState('');
+  const [changes, setChanges] = useState<string | null>(null);
   const pending = useAppState((s) => s.pending);
   const messages = useAppState((s) => s.messages);
   // A card's runs are messages in the user's chats with their agents, which load at start (D-105).
@@ -270,6 +280,7 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
   const canDelete = (card: Card) => card.owner === undefined || card.owner === meId;
   /** A member as a sentence names them. */
   const whom = (id: number) => (id === meId ? 'you' : senderName(users, id));
+  const avatarOf = (id: number, size: number) => <Avatar name={id === meId ? meName : senderName(users, id)} seed={id} size={size} />;
 
   /** What a Roadmap card's face shows at its right: who runs it, or the pull request it waits in. */
   function moveOf(card: Card) {
@@ -312,12 +323,27 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
     await rewriteCard(doc!, card.id, (now) => moved(now, kind, me!));
   }
 
-  /** Asks the card's owner to mark it ready: a line on the card, then a message in the direct chat with them, so only they get a push. */
-  async function ask(card: Card) {
+  /** Asks a member about a card, to mark it ready or to review it: a line on the card, then a message in the direct chat with them, so only they get a push. */
+  async function ask(card: Card, to: number, kind: Move, note: CardNoteDTO['kind'], text: string) {
     // First: a new chat needs a key for them, which a person whose keys changed and are unchecked cannot get (D-018), and then nothing is written.
-    const chat = await startDirectChat(card.owner!);
-    if (await rewriteCard(doc!, card.id, (now) => moved(now, 'ask', me!)))
-      await sendCardNote(chat, { kind: 'ready', card: card.cardId, docId: doc!.id, section: card.id }, `Asks you to mark ${card.cardId} ready: ${card.title}`);
+    const chat = to === meId ? null : await startDirectChat(to);
+    if ((await rewriteCard(doc!, card.id, (now) => moved(now, kind, me!))) && chat !== null)
+      await sendCardNote(chat, { kind: note, card: card.cardId, docId: doc!.id, section: card.id }, text);
+  }
+
+  /**
+   * Runs a card again after its owner accepted a change: their own run's open draft gets another
+   * round with the changes as their words (D-105), or else the card is their pick, which they run or
+   * hand to whoever ran it (the card-review decision).
+   */
+  async function again(card: Card, draft?: ChatMessage) {
+    let notes = '';
+    const wrote = await rewriteCard(doc!, card.id, (now) => {
+      notes = now.reviews.flatMap((r) => (r.answer === 'accepted' ? [r.note] : [])).join('\n');
+      const text = moved(now, 'again', me!);
+      return text && draft ? withStatus(text, workingStatus(meName)) : text;
+    });
+    if (wrote && draft) await askFix(draft.conversationId, draft.id, notes);
   }
 
   async function copy() {
@@ -347,26 +373,61 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
       ? [card.status, card.setBy !== undefined && card.setBy !== card.owner && laneOf(card.status) !== 'open' && `set by ${whom(card.setBy)}`, card.owner !== undefined && `opened by ${whom(card.owner)}`].filter(Boolean).join(' · ')
       : '';
     const canMove = face && me && !lock;
+    const inReview = face && laneOf(card.status) === 'review';
     const pick = canMove && moved(card, 'pick', me);
     const take = canMove && takeable(card, meName);
-    const moves = canMove ? MOVES.filter(([kind]) => MOVE_FROM[kind] === laneOf(card.status) && (kind !== 'ask' || (card.owner !== undefined && card.owner !== me.id))) : [];
+    const moves = canMove
+      ? MOVES.filter(
+          ([kind]) =>
+            MOVE_FROM[kind].includes(laneOf(card.status)) &&
+            (kind !== 'ask' || (card.owner !== undefined && card.owner !== me.id)) &&
+            (kind !== 'ready' || !inReview || card.owner === me.id) &&
+            (kind !== 'again' || card.reviews.some((r) => r.answer === 'accepted')),
+        )
+      : [];
+    // Members who are people and have no line on the card yet, whom anyone may ask for a review.
+    const askable = canMove && inReview ? Object.keys(usernames).map(Number).filter((id) => !card.reviews.some((r) => r.who === id)) : [];
+    // As `moved` allows approve and ask for changes.
+    const reviewer = canMove && inReview && !!card.kind && card.reviews.some((r) => r.who === me.id);
+    // Its review lines show above the rest, as who said what.
+    const shown = isOpen && face ? withReviews(card.body, []) : card.body;
     const head = (
-      <button className={`board-card-head ${face ? 'board-face' : ''}`} onClick={() => setOpen(isOpen ? null : card.id)} aria-expanded={isOpen}>
+      <button
+        className={`board-card-head ${face ? 'board-face' : ''}`}
+        onClick={() => {
+          setOpen(isOpen ? null : card.id);
+          setChanges(null);
+          setAsking('');
+        }}
+        aria-expanded={isOpen}
+      >
         {!face ? (
           card.kind && <span className="board-card-id">{card.cardId}</span>
         ) : card.owner !== undefined ? (
-          // The users in the store leave out the user themself.
-          <Avatar name={card.owner === meId ? meName : senderName(users, card.owner)} seed={card.owner} size={24} />
+          avatarOf(card.owner, 24)
         ) : (
           <span className="board-no-owner" role="img" title="No owner" aria-label="No owner" />
         )}
         <strong>{card.failed ? 'This card could not be decrypted.' : card.title || 'Untitled'}</strong>
-        {right && <span className="board-card-status">{right}</span>}
+        {inReview && card.reviews.length > 0 ? (
+          <span className="board-reviewers">
+            {card.reviews.map((r) => {
+              const [tone, label] = REVIEWS[r.verdict];
+              return (
+                <span key={r.who} className={`board-reviewer tag-${tone}`} role="img" title={`${nameOf(r.who)}: ${label}`} aria-label={`${nameOf(r.who)}: ${label}`}>
+                  {avatarOf(r.who, 20)}
+                </span>
+              );
+            })}
+          </span>
+        ) : (
+          right && <span className="board-card-status">{right}</span>
+        )}
         {face && cardRun && !isOpen && <Tag tone={runTone}>{runLabel}</Tag>}
       </button>
     );
     return (
-      <article key={card.id} className={`board-card ${lock ? 'is-locked' : ''} ${isOpen ? 'is-open' : ''}`}>
+      <article key={card.id} className={`board-card ${lock ? 'is-locked' : ''} ${isOpen ? 'is-open' : ''} ${face && card.status.startsWith(WAITING) ? 'is-waiting' : ''}`}>
         {pick ? (
           <div className="board-face-row">
             {head}
@@ -445,13 +506,100 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
                 )}
                 {moves.map(([kind, label]) => {
                   const ok = moved(card, kind, me!) !== null;
-                  const why = kind === 'ask' ? 'You asked already' : kind === 'review' ? 'An agent or a pull request runs it' : card.owner === undefined ? 'It has no owner' : `Only ${whom(card.owner)} can`;
+                  const why =
+                    kind === 'ask'
+                      ? 'You asked already'
+                      : kind === 'review'
+                        ? 'An agent or a pull request runs it'
+                        : card.owner === undefined
+                          ? 'It has no owner'
+                          : card.owner !== meId
+                            ? `Only ${whom(card.owner)} can`
+                            : kind === 'again'
+                              ? 'Answer every requested change first'
+                              : openChange(card.reviews)
+                                ? 'A requested change is open'
+                                : 'It needs an approval';
+                  const act = () =>
+                    kind === 'ask'
+                      ? ask(card, card.owner!, 'ask', 'ready', `Asks you to mark ${card.cardId} ready: ${card.title}`)
+                      : kind === 'again'
+                        ? // Only the run whose pull request the card waits in: another draft of the user's is not this work.
+                          again(card, cardRun?.state === 'done' && cardRun.pull && runnerOf(card.status) === `${cardRun.pull.repo}#${cardRun.pull.number}` ? request : undefined)
+                        : move(card, kind);
                   return (
-                    <button key={kind} className="button-secondary board-new" disabled={!ok} title={ok ? undefined : why} onClick={() => run(kind === 'ask' ? ask(card) : move(card, kind))}>
+                    <button key={kind} className="button-secondary board-new" disabled={!ok} title={ok ? undefined : why} onClick={() => run(act())}>
                       {label}
                     </button>
                   );
                 })}
+              </p>
+            )}
+            {card.reviews.map((r) => (
+              <p key={r.who} className="board-card-run">
+                {avatarOf(r.who, 20)}
+                <span>{nameOf(r.who)}</span>
+                <Tag tone={REVIEWS[r.verdict][0]}>{REVIEWS[r.verdict][1]}</Tag>
+                {r.note && <span className="board-review-note">{r.note}</span>}
+                {r.answer && <span>{r.answer === 'accepted' ? 'Accepted' : 'Declined'}</span>}
+                {canMove && moved(card, { accept: r.who }, me) !== null && (
+                  <>
+                    <button className="button-secondary board-new" onClick={() => run(move(card, { accept: r.who }))}>
+                      Accept
+                    </button>
+                    <button className="button-secondary board-new" onClick={() => run(move(card, { decline: r.who }))}>
+                      Decline
+                    </button>
+                  </>
+                )}
+              </p>
+            ))}
+            {(reviewer || askable.length > 0) && (
+              <p className="board-card-run">
+                {reviewer && changes === null && (
+                  <>
+                    <button className="button-secondary board-new" onClick={() => run(move(card, 'approve'))}>
+                      Approve
+                    </button>
+                    <button className="button-secondary board-new" onClick={() => setChanges('')}>
+                      Ask for changes
+                    </button>
+                  </>
+                )}
+                {reviewer && changes !== null && (
+                  <>
+                    <input className="field-input board-review-input" value={changes} onChange={(e) => setChanges(e.target.value)} maxLength={200} placeholder="What to change, in one line" aria-label="What to change" autoFocus />
+                    <button className="button-secondary board-new" disabled={!changes.trim()} onClick={() => run(move(card, { changes }).then(() => setChanges(null)))}>
+                      Send
+                    </button>
+                    <button className="button-secondary board-new" onClick={() => setChanges(null)}>
+                      Cancel
+                    </button>
+                  </>
+                )}
+                {askable.length > 0 && changes === null && (
+                  <>
+                    <select className="field-input board-review-input" value={asking} onChange={(e) => setAsking(e.target.value)} aria-label="Reviewer">
+                      <option value="">Ask for a review…</option>
+                      {askable.map((id) => (
+                        <option key={id} value={id}>
+                          {nameOf(id)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="button-secondary board-new"
+                      disabled={!asking}
+                      onClick={() => {
+                        const id = Number(asking);
+                        setAsking('');
+                        run(ask(card, id, { request: { id, username: usernames[id]! } }, 'review', `Asks you to review ${card.cardId}: ${card.title}`));
+                      }}
+                    >
+                      Ask
+                    </button>
+                  </>
+                )}
               </p>
             )}
             {face && (card.kind || about) && (
@@ -487,7 +635,7 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
                 </button>
               </p>
             )}
-            {card.body ? <Markdown text={card.body} /> : <p className="doc-note">Nothing more.</p>}
+            {shown ? <Markdown text={shown} /> : <p className="doc-note">Nothing more.</p>}
           </div>
         )}
       </article>

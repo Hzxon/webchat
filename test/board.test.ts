@@ -5,7 +5,7 @@ import { describe, test } from 'node:test';
 // the client module. tsx still loads it.
 const clientBoard = '../client/src/board.ts';
 
-const { cardOf, cardsOf, cardRuns, cardSections, cardTemplate, cardText, statusMove, GOING, duplicates, idOf, groupOf, moved, otherRun, parseCard, runnerOf, standing, startable, takeable, unchecked, withChecked, withStatus, workingStatus } = await import(clientBoard);
+const { cardOf, cardsOf, cardRuns, cardSections, cardTemplate, cardText, statusMove, GOING, duplicates, idOf, groupOf, moved, otherRun, parseCard, runnerOf, standing, startable, takeable, unchecked, usernamesOf, withChecked, withReviews, withStatus, workingStatus } = await import(clientBoard);
 
 const section = (id: string, text: string) => ({ id, text, pos: 1, failed: false });
 
@@ -43,10 +43,10 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
 
   test('a card belongs to the member who opened it, while they are a member (the board-lanes decision)', () => {
     const opened = { ...section('a', '### K-1: Bug\n\nStatus: Open.'), openedBy: 4 };
-    assert.equal(cardOf(opened, [3, 4]).owner, 4);
-    assert.equal(cardOf(opened, [3]).owner, undefined, 'an owner who left owns nothing');
-    assert.equal(cardOf(section('a', '### K-1: Bug'), [3, 4]).owner, undefined, 'an imported card has no owner');
-    assert.equal(cardOf(opened, [4]).title, 'Bug');
+    assert.equal(cardOf(opened, [3, 4], {}).owner, 4);
+    assert.equal(cardOf(opened, [3], {}).owner, undefined, 'an owner who left owns nothing');
+    assert.equal(cardOf(section('a', '### K-1: Bug'), [3, 4], {}).owner, undefined, 'an imported card has no owner');
+    assert.equal(cardOf(opened, [4], {}).title, 'Bug');
   });
 
   test("a card's opener and words come from its oldest revision and each author's newest (the board-lanes decision)", () => {
@@ -69,7 +69,7 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.deepEqual(a.words.map((w: { id: number }) => w.id), [9, 6], 'one word per author, newest first, not the oldest row');
     assert.equal(b.openedBy, undefined, 'a first revision without the mark opens no card');
     assert.deepEqual([c.text, c.removedBy, c.words], ['C1', 1, []], 'a removed card shows its newest other revision, and a removal is no word');
-    assert.equal(cardOf(c, [1, 2, 3]), null, 'its owner removed it, so it is gone');
+    assert.equal(cardOf(c, [1, 2, 3], {}), null, 'its owner removed it, so it is gone');
     assert.deepEqual([d.failed, d.text, d.pos, d.openedBy, d.words], [true, '', 8, 3, []], 'a newest revision that does not open keeps its opener and no word');
   });
 
@@ -183,6 +183,15 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.deepEqual(state([ask(1, 'a'), report(1, 'done'), { ...report(1, 'draft'), id: 300 }]), ['done', false]);
     const merged = runs([ask(1, 'a'), { id: 400, senderId: 9, run: { kind: 'merged', request: 1, decisions: ['D-2'] } }]).get('a');
     assert.deepEqual([merged?.state, merged?.at, merged?.decisions], ['merged', 400, ['D-2']]);
+    // The user's go on a draft that is done, as Run again sends, starts the next round at once (the card-review decision).
+    const fix = (id: number, senderId = 1) => ({ id, senderId, run: { kind: 'fix', request: 1, sentAt: now } });
+    const fixing = runs([ask(1, 'a'), report(1, 'done'), fix(500)]).get('a');
+    assert.deepEqual([fixing?.state, fixing?.at], ['fixing', 500]);
+    assert.deepEqual(statusMove(fixing, 'K-1', 'Ready', workingStatus('Ann')), [['Waiting for a decision'], workingStatus('Ann')], 'which moves nothing from Running: Ann’s agent');
+    assert.deepEqual(state([ask(1, 'a'), report(1, 'done'), fix(500, 2)]), ['done', false], 'only the user’s own');
+    assert.deepEqual(state([ask(1, 'a'), report(1, 'planned'), fix(500)]), ['planned', true], 'a plan’s go is as before');
+    assert.deepEqual(state([ask(1, 'a'), report(1, 'decision'), fix(500)]), ['decision', true], 'and a decision’s');
+    assert.deepEqual(state([ask(1, 'a'), report(1, 'done'), fix(500), { ...report(1, 'fixing'), id: 600 }, { ...report(1, 'done'), id: 700 }]), ['done', false], 'the agent’s reports land as before');
   });
 
   test('a status that shows another run of the card refuses a second one (K-59)', () => {
@@ -214,7 +223,7 @@ describe("A card owner's gates in client/src/board.ts (the card-owner decision)"
   type Word = ReturnType<typeof word>;
   /** The card as a page shows it from these words, newest first, the newest being the section's text. */
   const card = (words: Word[], openedBy: number | null = 1, members = [1, 2, 3]) =>
-    cardOf({ id: 's', text: words[0]!.text, pos: 1, failed: false, authorId: words[0]!.authorId, openedBy: openedBy ?? undefined, words }, members);
+    cardOf({ id: 's', text: words[0]!.text, pos: 1, failed: false, authorId: words[0]!.authorId, openedBy: openedBy ?? undefined, words }, members, { 1: 'ann', 2: 'bo', 3: 'cy' });
   const statusOf = (written: string) => parseCard(section('s', written)).status;
 
   test("a member who is not the owner cannot pass a gate by editing the card's Markdown", () => {
@@ -256,10 +265,12 @@ describe("A card owner's gates in client/src/board.ts (the card-owner decision)"
     const open = card([word(1, 1, 'Open')]);
     assert.equal(moved(open, 'ready', bo, today), null);
     assert.equal(statusOf(moved(open, 'ready', ann, today)), 'Ready');
-    const review = card([word(3, 2, 'In review: o/r#3'), word(2, 1, 'Ready')]);
+    // Closing also takes an approval (the card-review decision).
+    const approved = 'Review: @cy Approved 2026-11-12.';
+    const review = card([word(4, 3, 'In review: o/r#3', approved), word(3, 2, 'In review: o/r#3'), word(2, 1, 'Ready')]);
     assert.equal(moved(review, 'close', bo, today), null);
     assert.equal(statusOf(moved(review, 'close', ann, today)), 'Fixed in o/r#3', 'an issue is fixed, in its pull request');
-    assert.equal(statusOf(moved(card([word(3, 2, 'In review'), word(2, 1, 'Ready')]), 'close', ann, today)), 'Fixed on 2026-11-12');
+    assert.equal(statusOf(moved(card([word(4, 3, 'In review', approved), word(3, 2, 'In review'), word(2, 1, 'Ready')]), 'close', ann, today)), 'Fixed on 2026-11-12');
     assert.equal(moved(card([word(1, 1, 'Open')], null), 'ready', ann, today), null, 'a card with no owner is taken first');
   });
 
@@ -330,28 +341,198 @@ describe("A card owner's gates in client/src/board.ts (the card-owner decision)"
     const row = (id: number, authorId: number, content: object | null) => ({ revision: { id, section: 's', authorId, createdAt: id }, content });
     const opened = row(1, 1, { text: text('Ready'), pos: 1, opened: true });
     const removal = (authorId: number) => row(5, authorId, { text: text('Ready'), pos: 1, removed: true });
-    const [byBo] = cardsOf(cardSections([opened, row(2, 3, { text: text('Running: Cy'), pos: 1 }), removal(2)]), [1, 2, 3]);
+    const [byBo] = cardsOf(cardSections([opened, row(2, 3, { text: text('Running: Cy'), pos: 1 }), removal(2)]), [1, 2, 3], {});
     assert.deepEqual([byBo.status, byBo.refused, byBo.text], ['Running: Cy', { status: null, by: 2 }, text('Running: Cy')], 'the card stays, from the words that are no removal');
-    assert.deepEqual(cardsOf(cardSections([opened, removal(1)]), [1, 2, 3]), [], 'the owner removed it');
-    assert.deepEqual(cardsOf(cardSections([opened, removal(2)]), [2, 3]), [], 'its owner left, so it has none');
-    assert.deepEqual(cardsOf(cardSections([row(1, 1, { text: text('Open'), pos: 1 }), removal(2)]), [1, 2, 3]), [], 'an imported card');
-    assert.deepEqual(cardsOf(cardSections([opened, removal(1), row(6, 2, { text: text('Ready'), pos: 1 })]), [1, 2, 3]), [], 'nobody brings back what its owner removed');
-    assert.deepEqual(cardsOf(cardSections([opened, removal(1), row(6, 2, { text: text('Ready'), pos: 1, removed: true })]), [1, 2, 3]), [], 'not with a removal either');
-    assert.equal(cardsOf(cardSections([opened, removal(1), row(6, 1, { text: text('Ready'), pos: 1 })]), [1, 2, 3]).length, 1, 'but its owner does, by writing it again');
+    assert.deepEqual(cardsOf(cardSections([opened, removal(1)]), [1, 2, 3], {}), [], 'the owner removed it');
+    assert.deepEqual(cardsOf(cardSections([opened, removal(2)]), [2, 3], {}), [], 'its owner left, so it has none');
+    assert.deepEqual(cardsOf(cardSections([row(1, 1, { text: text('Open'), pos: 1 }), removal(2)]), [1, 2, 3], {}), [], 'an imported card');
+    assert.deepEqual(cardsOf(cardSections([opened, removal(1), row(6, 2, { text: text('Ready'), pos: 1 })]), [1, 2, 3], {}), [], 'nobody brings back what its owner removed');
+    assert.deepEqual(cardsOf(cardSections([opened, removal(1), row(6, 2, { text: text('Ready'), pos: 1, removed: true })]), [1, 2, 3], {}), [], 'not with a removal either');
+    assert.equal(cardsOf(cardSections([opened, removal(1), row(6, 1, { text: text('Ready'), pos: 1 })]), [1, 2, 3], {}).length, 1, 'but its owner does, by writing it again');
     const healed = cardSections([opened, removal(2), row(6, 3, { text: text('Ready'), pos: 1 })])[0];
     assert.equal(healed.removedBy, undefined, 'the next write brings it back');
   });
 
   test("a card whose owner's newest revision does not open shows nobody else's gate as passed", () => {
     const row = (id: number, authorId: number, content: object | null) => ({ revision: { id, section: 's', authorId, createdAt: id }, content });
-    const [failed] = cardsOf(cardSections([row(1, 1, { text: text('Ready'), pos: 1, opened: true }), row(2, 2, { text: text('Running: Bo'), pos: 1 }), row(3, 1, null)]), [1, 2, 3]);
+    const [failed] = cardsOf(cardSections([row(1, 1, { text: text('Ready'), pos: 1, opened: true }), row(2, 2, { text: text('Running: Bo'), pos: 1 }), row(3, 1, null)]), [1, 2, 3], {});
     assert.deepEqual([failed.failed, failed.status, failed.refused], [true, 'Open', { status: 'Running: Bo', by: 2 }]);
   });
 
   test('a revision that says opened but is not the oldest gives no owner', () => {
     const row = (id: number, authorId: number, content: object) => ({ revision: { id, section: 's', authorId, createdAt: id }, content });
     const [later] = cardSections([row(1, 2, { text: text('Open'), pos: 1 }), row(2, 1, { text: text('Open'), pos: 1, opened: true })]);
-    assert.equal(cardOf(later, [1, 2]).owner, undefined);
+    assert.equal(cardOf(later, [1, 2], {}).owner, undefined);
+  });
+});
+
+describe('Reviews on a card in client/src/board.ts (the card-review decision)', () => {
+  // Ann (1) opened the card; Bo (2), Cy (3) and Dan (4) are members.
+  const [ann, bo, cy, dan] = [
+    { id: 1, username: 'ann', displayName: 'Ann' },
+    { id: 2, username: 'bo', displayName: 'Bo' },
+    { id: 3, username: 'cy', displayName: 'Cy' },
+    { id: 4, username: 'dan', displayName: 'Dan' },
+  ];
+  const names = { 1: 'ann', 2: 'bo', 3: 'cy', 4: 'dan' };
+  const today = new Date(2026, 10, 13);
+  type Save = [number, string];
+  const text = (status: string, reviews: string[] = []) => cardText('K-4', 'Fix it', status, withReviews('Seen: on a phone.', reviews));
+  /** The card after these saves, oldest first, as every page reads it: the newest text and each member's newest save. */
+  const after = (saves: Save[], members = [1, 2, 3, 4], openedBy = 1) => {
+    const words = new Map(saves.map(([authorId, written], i) => [authorId, { id: i + 1, authorId, text: written }]));
+    const [authorId, newest] = saves.at(-1)!;
+    // As `usernamesOf` names them: the members now.
+    return cardOf({ id: 's', text: newest, pos: 1, failed: false, authorId, openedBy, words: [...words.values()].sort((a, b) => b.id - a.id) }, members, Object.fromEntries(members.map((id) => [id, names[id as 1]])));
+  };
+  /** The saves with a member's move, made by an honest page from the card as it stands. */
+  const play = (saves: Save[], user: typeof ann, move: unknown): Save[] => {
+    const next = moved(after(saves), move, user, today);
+    assert.ok(next, `${user.username} may ${JSON.stringify(move)}`);
+    return [...saves, [user.id, next]];
+  };
+  const linesOf = (written: string) => written.split('\n').filter((l) => l.startsWith('Review: '));
+  const verdicts = (saves: Save[], members?: number[]) => after(saves, members).reviews.map((r: { name: string; verdict: string; answer?: string }) => [r.name, r.verdict, r.answer]);
+  // The card a member picked and sent to review, once its owner marked it ready.
+  const inReview = play(play([[1, text('Ready')]], bo, 'pick'), bo, 'review');
+  const changed = play(play(inReview, bo, { request: dan }), dan, { changes: 'The empty\nstate is missing.' });
+
+  test('a member asks for a review, and the reviewer approves or asks for changes, in the pull request tags’ words', () => {
+    const asked = play(inReview, bo, { request: dan });
+    assert.deepEqual(linesOf(asked.at(-1)![1]), ['Review: @dan Review required. Asked by @bo 2026-11-13.']);
+    assert.equal(moved(after(asked), { request: dan }, cy, today), null, 'not someone who has a line');
+    assert.equal(moved(after(asked), 'approve', cy, today), null, 'only someone asked, or who asked themself, reviews');
+    assert.deepEqual(linesOf(play(asked, dan, 'approve').at(-1)![1]), ['Review: @dan Approved 2026-11-13.']);
+    assert.deepEqual(linesOf(changed.at(-1)![1]), ['Review: @dan Changes requested 2026-11-13: The empty state is missing.'], 'a note is one line');
+    assert.equal(moved(after(asked), { changes: ' ' }, dan, today), null, 'a change needs a note');
+    assert.equal(moved(after(play([[1, text('Ready')]], bo, 'pick')), { request: dan }, bo, today), null, 'only in review');
+  });
+
+  test('only the owner answers a requested change, runs it again or closes it', () => {
+    const accepted = play(changed, ann, { accept: 4 });
+    for (const move of [{ accept: 4 }, { decline: 4 }, 'close']) assert.equal(moved(after(changed), move, bo, today), null, JSON.stringify(move));
+    assert.equal(moved(after(accepted), 'again', bo, today), null);
+    assert.equal(moved(after(accepted), 'again', dan, today), null, 'not the reviewer either');
+    assert.deepEqual(linesOf(accepted.at(-1)![1]), ['Review: @dan Changes requested 2026-11-13: The empty state is missing. Accepted 2026-11-13.']);
+    assert.deepEqual(verdicts(play(changed, ann, { decline: 4 })), [['dan', 'changes_requested', 'declined']]);
+    assert.equal(moved(after(accepted), { decline: 4 }, ann, today), null, 'an answer stands');
+  });
+
+  test('the owner closes only after an approval, and not while a change is pending or accepted', () => {
+    assert.equal(moved(after(inReview), 'close', ann, today), null, 'no approval');
+    const approved = play(play(changed, bo, { request: cy }), cy, 'approve');
+    assert.equal(moved(after(approved), 'close', ann, today), null, 'a change is pending');
+    assert.equal(moved(after(play(approved, ann, { accept: 4 })), 'close', ann, today), null, 'a change is accepted and not done');
+    assert.equal(after(play(play(approved, ann, { decline: 4 }), ann, 'close')).status, 'Fixed on 2026-11-13', 'a declined change blocks nothing');
+    assert.equal(after(play(play(changed, dan, 'approve'), ann, 'close')).status, 'Fixed on 2026-11-13', 'a reviewer who approves takes back their change');
+  });
+
+  test('a verdict in someone else’s name does not count, and the owner’s next write drops it', () => {
+    // Bo's changed client writes Dan's approval and Ann's answer.
+    const forged = [...changed, [2, text('In review', ['Review: @dan Approved 2026-11-13.', 'Review: @cy Approved 2026-11-13.'])] as Save];
+    assert.deepEqual(verdicts(forged), [['dan', 'changes_requested', undefined]], 'Dan’s own change still stands');
+    assert.equal(moved(after(forged), 'close', ann, today), null);
+    const answered = [...changed, [2, text('In review', ['Review: @dan Changes requested 2026-11-13: The empty state is missing. Accepted 2026-11-13.'])] as Save];
+    assert.deepEqual(verdicts(answered), [['dan', 'changes_requested', undefined]], 'an answer counts only from the owner');
+    assert.equal(moved(after(answered), 'again', ann, today), null);
+    assert.equal(after(forged).text, text('In review', ['Review: @dan Changes requested 2026-11-13: The empty state is missing.']), 'every page writes the reviews that stand');
+    assert.deepEqual(linesOf(play(forged, ann, { decline: 4 }).at(-1)![1]), ['Review: @dan Changes requested 2026-11-13: The empty state is missing. Declined 2026-11-13.'], 'the owner signs only what stands');
+  });
+
+  test('a change request someone deleted still blocks the close', () => {
+    const approved = play(play(changed, bo, { request: cy }), cy, 'approve');
+    const deleted = [...approved, [2, text('In review', ['Review: @cy Approved 2026-11-13.'])] as Save];
+    assert.deepEqual(verdicts(deleted), [['cy', 'approved', undefined], ['dan', 'changes_requested', undefined]]);
+    assert.equal(moved(after(deleted), 'close', ann, today), null);
+    // Once the owner repeats it, it stands from their word even when Dan's word is older.
+    const accepted = play(deleted, ann, { accept: 4 });
+    assert.deepEqual(verdicts([...accepted, [2, text('In review')] as Save]), [['cy', 'approved', undefined], ['dan', 'changes_requested', 'accepted']]);
+  });
+
+  test('Run again asks again for each accepted change and drops every other verdict, so an old approval no longer counts', () => {
+    const approved = play(play(changed, bo, { request: cy }), cy, 'approve');
+    assert.equal(moved(after(approved), 'again', ann, today), null, 'not while a change is unanswered');
+    const rerun = play(play(approved, ann, { accept: 4 }), ann, 'again');
+    assert.equal(after(rerun).status, 'Running: Ann');
+    assert.deepEqual(linesOf(rerun.at(-1)![1]), ['Review: @dan Review required. Asked by @ann 2026-11-13.']);
+    const back = play(rerun, bo, 'review');
+    assert.deepEqual(verdicts(back), [['dan', 'review_required', undefined]]);
+    assert.equal(moved(after(back), 'close', ann, today), null, 'Cy’s approval was of the work before');
+    const replayed = [...back, [2, text('In review', ['Review: @cy Approved 2026-11-13.'])] as Save];
+    assert.deepEqual(verdicts(replayed), [], 'nor when someone writes it back');
+    assert.equal(after(play(play(back, dan, 'approve'), ann, 'close')).status, 'Fixed on 2026-11-13');
+  });
+
+  test('while a verdict stands, only the owner runs the card again', () => {
+    const running = [...changed, [2, text('Running: Bo', linesOf(changed.at(-1)![1]))] as Save];
+    assert.deepEqual([after(running).status, after(running).refused], ['In review', { status: 'Running: Bo', by: 2 }], 'a change stands');
+    const approved = play(play(inReview, bo, { request: cy }), cy, 'approve');
+    assert.equal(after([...approved, [2, text('Running: Bo')] as Save]).status, 'In review', 'an approval stands');
+    assert.equal(after([...inReview, [2, text('Running: Bo')] as Save]).status, 'Running: Bo', 'with no verdict, as before');
+    // Back in Open, which any member may set, its owner's Mark ready starts over without the reviews.
+    const readied = play([...approved, [2, text('Open', ['Review: @cy Approved 2026-11-13.'])]], ann, 'ready');
+    assert.deepEqual([linesOf(readied.at(-1)![1]), verdicts(readied)], [[], []]);
+    assert.equal(after(play(readied, bo, 'pick')).status, 'Running: Bo');
+  });
+
+  test('the owner reviews their own card, and a reviewer who left counts for nothing', () => {
+    const own = play(play(inReview, ann, { request: ann }), ann, 'approve');
+    assert.equal(after(play(own, ann, 'close')).status, 'Fixed on 2026-11-13');
+    assert.deepEqual(verdicts(changed, [1, 2, 3]), [], 'Dan left');
+    assert.equal(after(changed, [1, 2, 3]).text.includes('@dan'), false, 'so pages drop his line');
+  });
+
+  test('a card with no owner reads its reviews from the newest text, and nobody closes it by button', () => {
+    const saves: Save[] = [[2, text('In review', ['Review: @dan Approved 2026-11-13.', 'Review: @eve Approved 2026-11-13.'])]];
+    // An opener who is no member, as when they left.
+    const ownerless = after(saves, [1, 2, 3, 4], 5);
+    assert.deepEqual(ownerless.reviews.map((r: { name: string }) => r.name), ['dan'], 'only members review');
+    assert.equal(moved(ownerless, 'close', bo, today), null);
+  });
+
+  test('while a verdict stands, nobody but the owner moves the card off the status its reviewers saw', () => {
+    const approved = play(play(inReview, bo, { request: dan }), dan, 'approve');
+    // Mallory (Cy here) is no owner: she signs Ready, starts her own run, and its done writes In review.
+    const ready = [...approved, [3, text('Ready', ['Review: @dan Approved 2026-11-13.'])] as Save];
+    assert.deepEqual([after(ready).status, after(ready).refused], ['In review', { status: 'Ready', by: 3 }]);
+    const ran = [...approved, [3, text('In review: o/r#9', ['Review: @dan Approved 2026-11-13.'])] as Save];
+    assert.deepEqual([after(ran).status, after(ran).refused], ['In review', { status: 'In review: o/r#9', by: 3 }]);
+    assert.equal(after([...approved, [3, text('Open')] as Save]).status, 'Open', 'Open stands from anyone');
+    assert.equal(after([...approved, [3, text('Fixed in o/r#3')] as Save]).status, 'Fixed in o/r#3', 'and a merge');
+    // A requester's page puts the card back where the run started when its draft closes unmerged (D-118).
+    const draft = play([[1, text('Ready')]], bo, 'pick');
+    const inPull = [...draft, [2, text('In review: o/r#3')] as Save];
+    const reviewed = play(play(inPull, bo, { request: dan }), dan, 'approve');
+    const [from, to] = statusMove({ request: 1, runtime: 9, state: 'closed', pull: { repo: 'o/r', number: 3 } }, 'K-4', 'Ready', workingStatus('Bo'));
+    const card = after(reviewed);
+    assert.ok(from.includes(card.status));
+    const closed = [...reviewed, [2, withStatus(card.text, to)] as Save];
+    assert.deepEqual([after(closed).status, after(closed).refused], ['In review: o/r#3', { status: 'Ready', by: 2 }], 'it stays in review, refused');
+    // The owner's way out: Mark ready from In review, which drops the reviews.
+    const readied = play(closed, ann, 'ready');
+    assert.deepEqual([after(readied).status, linesOf(readied.at(-1)![1]), verdicts(readied)], ['Ready', [], []]);
+    assert.equal(moved(after(closed), 'ready', bo, today), null, 'only the owner');
+    assert.equal(after(play(readied, bo, 'pick')).status, 'Running: Bo');
+  });
+
+  test('a change with no note does not count', () => {
+    const asked = play(inReview, bo, { request: dan });
+    const bare = [...asked, [4, text('In review', ['Review: @dan Changes requested 2026-11-13.'])] as Save];
+    assert.deepEqual(verdicts(bare), [], 'so it is no line at all');
+    assert.equal(moved(after(bare), { accept: 4 }, ann, today), null);
+  });
+
+  test('no verdict counts while the owner has no word', () => {
+    const approved = play(play(inReview, bo, { request: dan }), dan, 'approve');
+    const words = new Map(approved.map(([authorId, written], i) => [authorId, { id: i + 1, authorId, text: written }]));
+    words.delete(1);
+    const [authorId, newest] = approved.at(-1)!;
+    const card = cardOf({ id: 's', text: newest, pos: 1, failed: false, authorId, openedBy: 1, words: [...words.values()].sort((a, b) => b.id - a.id) }, [1, 2, 3, 4], names);
+    assert.deepEqual(card.reviews, []);
+  });
+
+  test('an agent reviews nothing', () => {
+    assert.deepEqual(usernamesOf([1, 9], { 1: { username: 'ann', agentOwner: null }, 9: { username: 'anns-agent', agentOwner: 1 } }, null), { 1: 'ann' });
   });
 });
 

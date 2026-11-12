@@ -35,6 +35,24 @@ export interface Card extends DocSection {
   /** For a card with an owner: who wrote the status that stands (`standing`). */
   setBy?: number;
   refused?: Refused;
+  /** Its reviews as they stand (`reviewsOf`), one per reviewer, in the order the card lists them. */
+  reviews: Review[];
+}
+
+/** A review's verdict, in the words of the pull request tags (`PullTags.tsx`). */
+export type Verdict = 'review_required' | 'approved' | 'changes_requested';
+
+/** A reviewer's line on a card: `Review: @dan Changes requested 2026-11-13: the empty state is missing.` */
+export interface Review {
+  who: number;
+  name: string;
+  verdict: Verdict;
+  /** What a requested change asks for. */
+  note: string;
+  /** The owner's answer to a requested change. */
+  answer?: 'accepted' | 'declined';
+  /** The line as it stands, with the owner's answer. */
+  line: string;
 }
 
 /** What a member wrote on a card with an owner that only its owner may: a status, or the card's removal (`status` null). */
@@ -72,6 +90,7 @@ export function parseCard(section: DocSection): Card {
     body,
     checked: CHECKED.exec(body)?.[1]?.trim() ?? '',
     written: section.text,
+    reviews: [],
   };
 }
 
@@ -122,24 +141,109 @@ export function cardSections(rows: Opened[]): DocSection[] {
 }
 
 /**
- * A card with its owner, the member who opened it while they are still among `members`, and the
- * status that stands, or null when it was removed by its owner, or by anyone when it has none. On a
- * refused card, `text` holds the status that stands, so every page writes from it.
+ * A card with its owner, the member who opened it while they are still among `members`, the status
+ * and reviews that stand, or null when it was removed by its owner, or by anyone when it has none.
+ * `text` and `body` hold the status and reviews that stand, so every page writes from them.
+ * `usernames` names the members who are people, whom review lines name.
  */
-export function cardOf(section: DocSection, members: number[]): Card | null {
+export function cardOf(section: DocSection, members: number[], usernames: Record<number, string>): Card | null {
   const owner = section.openedBy !== undefined && members.includes(section.openedBy) ? section.openedBy : undefined;
   // An owner's removal stands whatever anyone saved after it, or a changed client could bring the card back.
   if (owner === undefined ? section.removedBy !== undefined : section.openerRemoved) return null;
-  const card = parseCard(section);
+  const parsed = parseCard(section);
+  const card = { ...parsed, owner, reviews: parsed.kind ? reviewsOf(section.text, section.words, owner, usernames) : [] };
   // Only the Roadmap's cards come with words.
-  if (owner === undefined || !section.words) return { ...card, owner };
-  const stands = standing(section.words, owner);
+  if (owner === undefined || !section.words) return card;
+  // The statuses the words that hold a verdict say, which is what its reviewer saw.
+  const seen = card.reviews.flatMap((r) => (r.verdict === 'review_required' ? [] : [readCard(section.words!.find((w) => w.authorId === r.who)!.text)?.status ?? '']));
+  const stands = standing(section.words, owner, seen);
   const refused = section.removedBy !== undefined ? { status: null, by: section.removedBy } : stands.refused;
-  return { ...card, owner, status: stands.status, setBy: stands.by, refused, text: refused ? withStatus(card.text, stands.status) : card.text };
+  const body = withReviews(card.body, card.reviews.map((r) => r.line));
+  // Rewritten only when the review lines differ from those that stand, so a card nobody reviewed keeps its text as written.
+  const text = body !== card.body ? cardText(card.cardId, card.title, stands.status, body) : refused ? withStatus(card.text, stands.status) : card.text;
+  return { ...card, status: stands.status, setBy: stands.by, refused, body, text };
 }
 
 /** A board doc's cards from its sections, without the ones whose removal stands. */
-export const cardsOf = (sections: DocSection[], members: number[]) => sections.flatMap((s) => cardOf(s, members) ?? []);
+export const cardsOf = (sections: DocSection[], members: number[], usernames: Record<number, string>) => sections.flatMap((s) => cardOf(s, members, usernames) ?? []);
+
+/** The usernames of a project's members who are people, by id: an agent reviews nothing. The store's `users` leave out `me`. */
+export function usernamesOf(members: number[], users: Record<number, Pick<UserDTO, 'username' | 'agentOwner'>>, me: Pick<UserDTO, 'id' | 'username' | 'agentOwner'> | null) {
+  const all = me ? { ...users, [me.id]: me } : users;
+  return Object.fromEntries(members.flatMap((id) => (all[id] && all[id].agentOwner === null ? [[id, all[id].username]] : [])));
+}
+
+const VERDICTS: Record<string, Verdict> = { 'Review required': 'review_required', Approved: 'approved', 'Changes requested': 'changes_requested' };
+// The owner's answer ends the line, so a reviewer's note never holds one that counts.
+const REVIEW = /^Review: @(\S+) (Review required|Approved|Changes requested)\b(.*?)( (Accepted|Declined) \d{4}-\d{2}-\d{2}\.)?$/;
+
+/** A review line as written: `base` without the answer, and the answer's word and `suffix`. */
+interface Line {
+  verdict: Verdict;
+  base: string;
+  note: string;
+  answer?: string;
+  suffix: string;
+}
+
+/** A text's review lines, the first per username. */
+function reviewLines(text: string) {
+  const found = new Map<string, Line>();
+  for (const l of text.split('\n')) {
+    const m = REVIEW.exec(l.trim());
+    const note = (/: (.*?)\.?$/.exec(m?.[3] ?? '')?.[1] ?? '').trim();
+    // A change counts only with what to change, which Run again sends the agent.
+    if (m && !found.has(m[1]!) && (note || m[2] !== 'Changes requested')) found.set(m[1]!, { verdict: VERDICTS[m[2]!]!, base: `Review: @${m[1]} ${m[2]}${m[3]}`, note, answer: m[5], suffix: m[4] ?? '' });
+  }
+  return found;
+}
+
+/** A card body with these review lines on top, in place of the ones it had. */
+export const withReviews = (body: string, lines: string[]) =>
+  [lines.join('\n'), body.split('\n').filter((l) => !REVIEW.test(l.trim())).join('\n').trim()].filter(Boolean).join('\n\n');
+
+/**
+ * A card's reviews as every page reads them (the card-review decision). A request, `Review required`,
+ * is read from the newest text and not checked. A verdict counts only when its reviewer's own word
+ * holds it, and that word is newer than the owner's or the owner's word repeats the line: so nobody
+ * writes a verdict for someone else, nobody deletes one, and an approval from before the owner ran
+ * the card again, which drops it from the owner's word, stops counting. The owner's answer to a
+ * requested change counts only from the owner's word. Only members who are people review. On a card
+ * with no owner, everything is read from the newest text.
+ */
+export function reviewsOf(text: string, words: Word[] | undefined, owner: number | undefined, usernames: Record<number, string>): Review[] {
+  const ids = new Map(Object.entries(usernames).map(([id, name]) => [name, Number(id)]));
+  const review = (name: string, r: Line, answered: boolean): Review => ({
+    who: ids.get(name)!,
+    name,
+    verdict: r.verdict,
+    note: r.note,
+    ...(answered && r.answer && { answer: r.answer.toLowerCase() as Review['answer'] }),
+    line: answered ? r.base + r.suffix : r.base,
+  });
+  const newest = reviewLines(text);
+  if (owner === undefined || !words) return [...newest].flatMap(([name, r]) => (ids.has(name) ? [review(name, r, true)] : []));
+  const own = words.find((w) => w.authorId === owner);
+  const owners = reviewLines(own?.text ?? '');
+  const counted = new Map<string, Review>();
+  for (const [name, id] of ids) {
+    const word = words.find((w) => w.authorId === id);
+    const r = word && reviewLines(word.text).get(name);
+    const repeated = owners.get(name);
+    if (!r || r.verdict === 'review_required') continue;
+    if (repeated?.base === r.base) counted.set(name, review(name, { ...r, answer: repeated.answer, suffix: repeated.suffix }, r.verdict === 'changes_requested'));
+    // With no word of the owner's, as when theirs does not open, nothing says which verdicts came after it.
+    else if (own && word!.id > own.id) counted.set(name, review(name, r, false));
+  }
+  const names = [...new Set([...newest.keys(), ...counted.keys()])];
+  return names.flatMap((name) => {
+    const r = newest.get(name);
+    return counted.get(name) ?? (ids.has(name) && r?.verdict === 'review_required' ? [review(name, r, false)] : []);
+  });
+}
+
+/** A requested change its owner did not decline, which keeps the card from closing. */
+export const openChange = (reviews: Review[]) => reviews.some((r) => r.verdict === 'changes_requested' && r.answer !== 'declined');
 
 /** A merge's status, which its run's page writes for any member (D-118); a page cannot check the merge. */
 const MERGED = /^(Done|Fixed) in \S*#\d+/;
@@ -153,9 +257,12 @@ export const laneOf = (status: string) => GROUPS.roadmap[groupOf('roadmap', stat
  * the newest word whose author may set its status. Any member may set Open; Ready, Running and In
  * review stand once the owner's own word left Open; Done only from the owner, or as a merge once it
  * left Open. With no owner the newest word stands. Words are not history: a Ready the owner gave
- * stands until the owner takes it back.
+ * stands until the owner takes it back. While a verdict stands, a word of anyone else's stands, but
+ * for Open and a merge, only with an In review status that a verdict's word says: only the owner,
+ * whose Run again or Mark ready drops the verdicts, moves the card on from the work its reviewers
+ * saw (the card-review decision). `seen` holds the statuses of the words that hold a verdict.
  */
-export function standing(words: Word[], owner?: number): { status: string; by?: number; refused?: Refused } {
+export function standing(words: Word[], owner?: number, seen: string[] = []): { status: string; by?: number; refused?: Refused } {
   const statusOf = (word: Word) => readCard(word.text)?.status ?? '';
   const own = words.find((w) => w.authorId === owner);
   const passed = !!own && laneOf(statusOf(own)) !== 'open';
@@ -164,6 +271,7 @@ export function standing(words: Word[], owner?: number): { status: string; by?: 
     const lane = laneOf(status);
     if (owner === undefined || lane === 'open') return true;
     if (lane === 'done') return word.authorId === owner || (passed && MERGED.test(status));
+    if (seen.length && word.authorId !== owner) return passed && lane === 'review' && seen.includes(status);
     return passed;
   };
   const word = words.find(stands);
@@ -173,9 +281,21 @@ export function standing(words: Word[], owner?: number): { status: string; by?: 
   return { status, by: word?.authorId, ...(newest && statusOf(newest) !== status && { refused: { status: statusOf(newest), by: newest.authorId } }) };
 }
 
-/** A card's moves by button, which write its status line, and the lane each starts from (the card-owner decision). */
-export type Move = 'ask' | 'ready' | 'pick' | 'review' | 'close';
-export const MOVE_FROM: Record<Move, Lane> = { ask: 'open', ready: 'open', pick: 'ready', review: 'running', close: 'review' };
+/**
+ * A card's moves by button, which write its status line or a review line, and the lane each starts
+ * from (the card-owner and card-review decisions). A move on a review starts in review.
+ */
+export type Move = keyof typeof MOVE_FROM | { request: Pick<UserDTO, 'id' | 'username'> } | { changes: string } | { accept: number } | { decline: number };
+// The owner marks a card in review ready too, which drops its reviews, as their way out of a review.
+export const MOVE_FROM: Record<'ask' | 'ready' | 'pick' | 'review' | 'close' | 'approve' | 'again', Lane[]> = {
+  ask: ['open'],
+  ready: ['open', 'review'],
+  pick: ['ready'],
+  review: ['running'],
+  close: ['review'],
+  approve: ['review'],
+  again: ['review'],
+};
 
 const ASKED = /^Asked: \d{4}-\d{2}-\d{2}\. @\S+ asks its owner to mark it ready\.$/gm;
 
@@ -184,21 +304,39 @@ const pickedBy = (status: string) => (status.startsWith('Running:') && !/['’]s
 
 /**
  * The card's text after a member's move, or null when the move is not theirs or the card is not
- * where it starts. Any member asks its owner to mark it ready, picks it or sends it to review; only
- * its owner marks it ready or closes it. The text starts from the status that stands, so a status
- * someone could not set goes with the next move.
+ * where it starts. Any member asks its owner to mark it ready, picks it, sends it to review or asks
+ * anyone who has no line on it for a review; a reviewer approves or asks for changes; only its owner
+ * marks it ready, which drops its asks and reviews, answers a requested change, runs it again once
+ * every change is answered and one accepted, which asks those reviewers again and drops every other
+ * verdict, and closes it, after an approval and with no change open. The text starts from the
+ * status and reviews that stand, so what someone could not write goes with the next move.
  */
 export function moved(card: Card, move: Move, me: Pick<UserDTO, 'id' | 'username' | 'displayName'>, today = new Date()): string | null {
   // A card that does not open has no kind.
-  if (!card.kind || laneOf(card.status) !== MOVE_FROM[move]) return null;
+  if (!card.kind || !(typeof move === 'string' ? MOVE_FROM[move] : ['review']).includes(laneOf(card.status))) return null;
   const mine = card.owner === me.id;
   const asks = `@${me.username} asks its owner to mark it ready.`;
   const write = (status: string, body = card.body) => cardText(card.cardId, card.title, status, body);
+  const date = dateOf(today);
+  const asked = (name: string) => `Review: @${name} Review required. Asked by @${me.username} ${date}.`;
+  /** The card with one reviewer's line set, in place of the one they had. */
+  const review = (who: number, line: string) => write(card.status, withReviews(card.body, [...card.reviews.filter((r) => r.who !== who).map((r) => r.line), line]));
+  const reviewer = card.reviews.find((r) => r.who === me.id);
+  if (typeof move === 'object') {
+    if ('request' in move) return card.reviews.some((r) => r.who === move.request.id) ? null : review(move.request.id, asked(move.request.username));
+    if ('changes' in move) {
+      const note = move.changes.replace(/\s+/g, ' ').trim().replace(/\.$/, '');
+      return reviewer && note ? review(me.id, `Review: @${me.username} Changes requested ${date}: ${note}.`) : null;
+    }
+    const [who, answer] = 'accept' in move ? [move.accept, 'Accepted'] : [move.decline, 'Declined'];
+    const change = card.reviews.find((r) => r.who === who && r.verdict === 'changes_requested' && !r.answer);
+    return mine && change ? review(who, `${change.line} ${answer} ${date}.`) : null;
+  }
   switch (move) {
     case 'ask':
-      return card.owner === undefined || mine || card.body.includes(asks) ? null : write(card.status, `Asked: ${dateOf(today)}. ${asks}\n\n${card.body}`);
+      return card.owner === undefined || mine || card.body.includes(asks) ? null : write(card.status, `Asked: ${date}. ${asks}\n\n${card.body}`);
     case 'ready':
-      return mine ? write('Ready', card.body.replace(ASKED, '').trim()) : null;
+      return mine ? write('Ready', withReviews(card.body.replace(ASKED, '').trim(), [])) : null;
     case 'pick':
       return write(`Running: ${me.displayName}`);
     // Only a member's pick: a run moves its own card to review, and would no longer find it (D-100).
@@ -206,8 +344,18 @@ export function moved(card: Card, move: Move, me: Pick<UserDTO, 'id' | 'username
       return pickedBy(card.status) ? write('In review') : null;
     case 'close': {
       const pull = runnerOf(card.status);
-      return mine ? write(`${card.kind === 'K' ? 'Fixed' : 'Done'} ${pull ? `in ${pull}` : `on ${dateOf(today)}`}`) : null;
+      const approved = card.reviews.some((r) => r.verdict === 'approved');
+      return mine && approved && !openChange(card.reviews) ? write(`${card.kind === 'K' ? 'Fixed' : 'Done'} ${pull ? `in ${pull}` : `on ${date}`}`) : null;
     }
+    case 'approve':
+      return reviewer ? review(me.id, `Review: @${me.username} Approved ${date}.`) : null;
+    // Only once every requested change is answered and one was accepted.
+    case 'again':
+      if (!mine || !card.reviews.some((r) => r.answer === 'accepted') || card.reviews.some((r) => r.verdict === 'changes_requested' && !r.answer)) return null;
+      return write(
+        `Running: ${me.displayName}`,
+        withReviews(card.body, card.reviews.flatMap((r) => (r.answer === 'accepted' ? [asked(r.name)] : r.verdict === 'review_required' ? [r.line] : []))),
+      );
   }
 }
 
@@ -418,7 +566,12 @@ export function cardRuns(messages: ChatMessage[], meId: number, docId: string, p
       // A note on the state, not a state: the card keeps claimed or fixing, and its status line stays.
       const target = latest(run.request);
       if (target && m.senderId === target.runtime) target.note = run.note;
-    } else if (run.kind !== 'fix' && run.kind !== 'clone' && run.kind !== 'draft') {
+    } else if (run.kind === 'fix') {
+      // The user's go for another round on a draft that is done, as Run again sends: the run fixes from
+      // here, so a page that reloads before the agent says so does not move the card back to review.
+      const target = m.senderId === meId ? latest(run.request) : undefined;
+      if (target?.state === 'done') Object.assign(target, { state: 'fixing', at: m.id });
+    } else if (run.kind !== 'clone' && run.kind !== 'draft') {
       const target = latest(run.request);
       if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull, decisions: run.decisions, at: m.id, stopping: false });
     }

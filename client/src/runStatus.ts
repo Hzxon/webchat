@@ -9,7 +9,8 @@
 import { newStatus } from '../../shared/board';
 import type { BoardSyncDTO, RunRequest } from '../../shared/types';
 import { agentChats, inOrder } from './agents';
-import { boardDocs, cardRuns, dateOf, startable, statusMove, withStatus, workingStatus, type Card } from './board';
+import { boardDocs, cardRuns, dateOf, startable, statusMove, WAITING, withStatus, workingStatus, type Card } from './board';
+import { sendCardNote, startDirectChat } from './chat';
 import { boardCards, rewriteCard } from './docs';
 import type { ChatDoc, ChatMessage } from './e2ee/keyring';
 import { store } from './store';
@@ -43,16 +44,21 @@ export async function followRuns() {
       tried.add(key);
       // Most reports moved their card already, so only a card that stands where the move starts takes its lock.
       const card = (await cardsOf(doc)).find((c) => c.id === section);
-      if (card && from.includes(card.status)) await move(doc, section, (status) => from.includes(status), to);
+      if (!card || !from.includes(card.status) || !(await move(doc, section, (status) => from.includes(status), to))) continue;
+      // The owner decides for the card, so they get a push; only the requester's go resumes the run (D-118). A second tab finds it moved and sends none.
+      // With a verdict on the card, a WAITING of anyone but its owner would not stand.
+      if (to === WAITING && card.owner !== undefined && card.owner !== me.id && card.reviews.every((r) => r.verdict === 'review_required'))
+        await startDirectChat(card.owner)
+          .then((chat) => sendCardNote(chat, { kind: 'waiting', card: card.cardId, docId, section }, `${card.cardId} waits for your decision: ${card.title}`))
+          .catch(() => undefined);
     }
   }
   await followClaims(messages, me.id, cardsOf);
 }
 
-/** Sets a card's status under its lock, only while `from` allows the status that stands there, and syncs once it moved. */
-async function move(doc: ChatDoc, section: string, from: (status: string) => boolean, to: string) {
-  await rewriteCard(doc, section, (card) => (from(card.status) ? withStatus(card.text, to) : null)).catch(() => false);
-}
+/** Sets a card's status under its lock, only while `from` allows the status that stands there, and syncs once it moved. Returns whether it moved. */
+const move = (doc: ChatDoc, section: string, from: (status: string) => boolean, to: string) =>
+  rewriteCard(doc, section, (card) => (from(card.status) ? withStatus(card.text, to) : null)).catch(() => false);
 
 const PROPOSED = /^Proposed\b/i;
 

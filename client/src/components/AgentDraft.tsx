@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { textHash } from '../../../shared/e2ee';
 import { cardStatus, type CardDraftDTO } from '../../../shared/types';
 import { threadProject, type Thread } from '../agents';
-import { boardDocs, cardText, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, withChecked, type Card } from '../board';
+import { boardDocs, cardText, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, withChecked, withReviews, type Card } from '../board';
 import { noteAdded, syncNow, tellAgent } from '../chat';
 import { addCard, boardCards, createBoard, newSectionId, rewriteCard, sectionHistory } from '../docs';
 import type { ChatMessage } from '../e2ee/keyring';
@@ -110,7 +110,8 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
           if ((await textHash(card.written.trim())) !== change.seen) return null;
           // A proposal's file may set a new status, as one that finishes its card does (R-040). Without one
           // the status stays as written: `card.status` reads an older word as the new one.
-          return cardText(card.cardId, draft.title, draft.status ?? cardStatus(card.text), body);
+          // Reviews keep the lines that stand, so the owner's page never signs one a draft copied (the card-review decision).
+          return cardText(card.cardId, draft.title, draft.status ?? cardStatus(card.text), withReviews(body, card.reviews.map((r) => r.line)));
         });
         // Changed since the page last looked: the next load says how.
         if (!written) return void syncNow();
