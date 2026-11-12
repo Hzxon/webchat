@@ -1,6 +1,6 @@
 ### K: The flipped-ciphertext test fails about once in 4,000 runs
 
-Status: Open. Found on 2026-11-12 while building #188.
+Status: Fixed in #194.
 
 Seen: one `npm test` run of four failed in `test/e2ee.test.ts`. The `rejects /bad signature/` after
 `flipped` resolved. The next three runs passed.
@@ -9,4 +9,5 @@ Cause: the test changes the ciphertext's last two characters to `BA` when it end
 `AA` otherwise. A ciphertext that already ends in `BA` is left as it was, so the message still
 opens. That is about one run in 4,096.
 
-Fix: flip the last character to one it is not, such as `A` to `B` and anything else to `A`.
+Fix: the test flips the ciphertext's first character, which always carries data. The last
+characters can hold only padding bits, so changing them does not always change the bytes.
