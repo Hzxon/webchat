@@ -2,37 +2,14 @@
 // the key of the project's #general channel and signed by its author. One person edits a section at
 // a time: editing locks it on the server, and every check-in of the editing tab keeps the lock.
 import { newKeyId, randomBytes, toBase64Url, type DocContent } from '../../shared/e2ee';
+import { cardsOf, cardSections, parseCard, sectionOf, usernamesOf, type Card, type DocSection } from '../../shared/board';
 import type { DocRevisionDTO } from '../../shared/types';
 import { api, ApiError } from './api';
-import { cardsOf, cardSections, COLUMN_TITLES, idOf, parseCard, sectionOf, takeable, usernamesOf, type BoardColumn, type Card, type CardKind } from './board';
+import { COLUMN_TITLES, idOf, takeable, type BoardColumn, type CardKind } from './board';
 import { currentLookup, loadDraft, openDocs, setEditing, syncNow, withChatKey } from './chat';
 import { keystore } from './e2ee/keystore';
 import { keyring, type ChatDoc } from './e2ee/keyring';
 import { actions, generalOf, store } from './store';
-
-export interface DocSection {
-  id: string;
-  text: string;
-  pos: number;
-  /** Its revision did not decrypt, or its signature did not check. */
-  failed: boolean;
-  /** Who wrote its newest revision, for the brief that marks teammates' text (D-105). */
-  authorId?: number;
-  /** Who wrote its first revision, when that revision says `addCard` opened it: the card's owner. */
-  openedBy?: number;
-  /** Each member's newest revision of it that opens and is no removal, newest first. */
-  words?: Word[];
-  /** Who removed it, when its newest revision is a removal; `cardOf` says whether that stands. */
-  removedBy?: number;
-  /** The author of its first revision removed it and wrote nothing since, whatever others wrote after. */
-  openerRemoved?: true;
-}
-
-export interface Word {
-  id: number;
-  authorId: number;
-  text: string;
-}
 
 export const newSectionId = () => toBase64Url(randomBytes(8));
 

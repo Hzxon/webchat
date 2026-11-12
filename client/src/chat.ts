@@ -42,7 +42,7 @@ import {
 import { keystore, type StoredUnsent } from './e2ee/keystore';
 import { refreshGithub, startGithub } from './github';
 import { disablePushHere, forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
-import type { Card } from './board';
+import type { Card } from '../../shared/board';
 import { keyedQueue } from './queue';
 import { agentChats, agentOf, ownAgents, threadsOf } from './agents';
 import { actions, chatTitle, localEditCount, reloadPath, senderName, store, type State } from './store';

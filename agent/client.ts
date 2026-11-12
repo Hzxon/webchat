@@ -29,6 +29,7 @@ import {
   type IdentitySecrets,
   type MessageContent,
 } from '../shared/e2ee.ts';
+import { cardSections } from '../shared/board.ts';
 import { Keyring } from '../shared/keyring.ts';
 import {
   PAIRING_TTL_MS,
@@ -472,6 +473,12 @@ export class AgentClient {
       if (content && !content.removed) sections.push({ id: revision.section, text: content.text, pos: content.pos ?? revision.createdAt, authorId: revision.authorId });
     });
     return sections.sort((a, b) => a.pos - b.pos);
+  }
+
+  /** A board doc's sections with who opened each and every member's word, as the page's `loadCards` reads them. */
+  async cardSections(doc: DocDTO) {
+    const revisions = await this.request<DocRevisionDTO[]>('GET', `/docs/${doc.id}/words`);
+    return cardSections(await Promise.all(revisions.map(async (revision) => ({ revision, content: await this.openDoc(doc, revision) }))));
   }
 
   /** A revision sealed for the doc's chat, as this account's own. */

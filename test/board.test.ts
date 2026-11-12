@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-// The path lives in a variable so the tools tsconfig, which has no DOM types, does not typecheck
-// the client module. tsx still loads it.
+// The paths live in variables so the tools tsconfig, which has no DOM types, does not typecheck
+// the client module, nor the partial rows these tests pass to the shared one. tsx still loads them.
 const clientBoard = '../client/src/board.ts';
+const sharedBoard = '../shared/board.ts';
 
-const { cardOf, cardsOf, cardRuns, cardSections, cardTemplate, cardText, statusMove, GOING, duplicates, idOf, groupOf, keepReviews, moved, otherRun, parseCard, runnerOf, standing, startable, takeable, unchecked, usernamesOf, withChecked, withReviews, withStatus, workingStatus } = await import(clientBoard);
+const { cardRuns, cardTemplate, statusMove, GOING, duplicates, idOf, moved, otherRun, runnerOf, startable, takeable, unchecked, withChecked, workingStatus } = await import(clientBoard);
+const { cardOf, cardsOf, cardSections, cardText, groupOf, keepReviews, parseCard, standing, usernamesOf, withReviews, withStatus } = await import(sharedBoard);
 
 const section = (id: string, text: string) => ({ id, text, pos: 1, failed: false });
 

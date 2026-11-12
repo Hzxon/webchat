@@ -5,10 +5,11 @@
 // button stand the cards, decisions and pull requests the agent's check found it repeats or goes
 // against, and the card it writes carries the check's line (R-041).
 import { useEffect, useMemo, useState } from 'react';
+import { cardText, withReviews, type Card } from '../../../shared/board';
 import { textHash } from '../../../shared/e2ee';
 import { cardStatus, type CardDraftDTO } from '../../../shared/types';
 import { threadProject, type Thread } from '../agents';
-import { boardDocs, cardText, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, withChecked, withReviews, type Card } from '../board';
+import { boardDocs, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, withChecked } from '../board';
 import { noteAdded, syncNow, tellAgent } from '../chat';
 import { addCard, boardCards, createBoard, newSectionId, rewriteCard, sectionHistory } from '../docs';
 import type { ChatMessage } from '../e2ee/keyring';

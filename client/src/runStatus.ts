@@ -6,10 +6,10 @@
 // longer holds (R-042) or the draft is closed unmerged. Each move is made only from the status it
 // expects, so a status a teammate set since stays, and only under the card's lock, read there,
 // never while anyone, another tab included, holds it.
-import { newStatus } from '../../shared/board';
+import { newStatus, WAITING, withStatus, type Card } from '../../shared/board';
 import type { BoardSyncDTO, RunRequest } from '../../shared/types';
 import { agentChats, inOrder } from './agents';
-import { boardDocs, cardRuns, dateOf, startable, statusMove, WAITING, withStatus, workingStatus, type Card } from './board';
+import { boardDocs, cardRuns, dateOf, startable, statusMove, workingStatus } from './board';
 import { sendCardNote, startDirectChat } from './chat';
 import { boardCards, rewriteCard } from './docs';
 import type { ChatDoc, ChatMessage } from './e2ee/keyring';
