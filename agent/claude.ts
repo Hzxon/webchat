@@ -232,11 +232,16 @@ export function claudeHarness(program: string, hook: string, dataDir: string): H
   // The config files of the approval endpoint, which only the plugin reads (approve.ts).
   const approveDir = path.join(dataDir, 'laptop', 'approve');
 
-  async function close(live: Live) {
+  // Closes still removing their token files, which `end` waits for: a failed turn closes its process without waiting.
+  const closing = new Set<Promise<void>>();
+
+  function close(live: Live) {
     clearTimeout(live.timer);
     if (lives.get(live.session) === live) lives.delete(live.session);
     live.child.kill();
-    await live.approver?.close();
+    const done = Promise.resolve(live.approver?.close()).finally(() => closing.delete(done));
+    closing.add(done);
+    return done;
   }
 
   /** Starts the process for a session's first turn here: a new session, or the one a process that ended kept. */
@@ -355,7 +360,7 @@ export function claudeHarness(program: string, hook: string, dataDir: string): H
       return converse(live, t);
     },
     async end(session) {
-      await Promise.all([...lives].filter(([id]) => !session || id === session).map(([, live]) => close(live)));
+      await Promise.all([...[...lives].filter(([id]) => !session || id === session).map(([, live]) => close(live)), ...closing]);
     },
   };
 }
