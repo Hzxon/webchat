@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { newPairingCode } from '../../../shared/e2ee';
 import { LIMITS, PAIRING_TTL_MS, type PublicKeysDTO, type UserDTO } from '../../../shared/types';
 import { ownAgents } from '../agents';
-import { ApiError } from '../api';
+import { api, ApiError } from '../api';
 import { holdReloadWhile } from '../build';
 import { connectAgent, pairingKeys, removeAgent } from '../chat';
 import { useAppState } from '../store';
@@ -16,6 +16,9 @@ import { CopyRow } from './NotificationDialog';
 
 /** Adds the plugin's marketplace and installs it in one step, from Claude Code 2.1.275 on. */
 const INSTALL = '/plugin install webchat --marketplace Hzxon/webchat#plugin';
+
+/** The release's own installer, which checks the agent file against the release's checksum before it installs it (docs/decisions/agent-install.md). */
+const installLine = (release: string, pasted: string) => `curl -fsSL https://github.com/Hzxon/webchat/releases/download/v${release}/install.sh | sh -s -- '${pasted}'`;
 
 export function AgentDialog({ onClose }: { onClose: () => void }) {
   const projects = useAppState((s) => s.projects);
@@ -30,7 +33,13 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState('');
   const [note, setNote] = useState('');
+  // The server's release names the files the line fetches. Without it, the line is left out.
+  const [release, setRelease] = useState('');
   const sorted = useMemo(() => Object.values(projects).sort((a, b) => a.name.localeCompare(b.name)), [projects]);
+
+  useEffect(() => {
+    void api.config().then(({ release: found }) => setRelease(found), () => undefined);
+  }, []);
 
   // The code lives only in this page. A reload after a deploy would lose it while the agent waits
   // on it, and the owner leaves the tab for Claude Code, so it would go hidden or idle (D-040).
@@ -115,8 +124,8 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
       ) : !keys ? (
         <>
           <p className="dialog-intro">
-            Your coding agent is Claude Code on your laptop, with the WebChat plugin. It answers your questions about
-            your team’s code and works on the cards you hand it, and nobody else’s. It needs a Mac or Linux for now.
+            Your coding agent is Claude Code on your laptop. It answers your questions about your team’s code and
+            works on the cards you hand it, and nobody else’s. It needs a Mac or Linux for now.
           </p>
           <ol className="dialog-steps">
             <li>
@@ -138,6 +147,17 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
               Open Claude Code in your team’s repository and type <code>/webchat:connect</code>.
             </li>
           </ol>
+          {release && (
+            <>
+              <p className="dialog-intro">
+                No Claude Code window to keep open? In a terminal on your laptop, run this line instead. It installs
+                the agent, asks before it installs anything else, and keeps the agent running whenever you are logged
+                in. It needs an account that can use sudo, or an administrator on a Mac.
+                {/windows/i.test(navigator.userAgent) && ' On Windows, open Ubuntu on WSL2 and run it there.'}
+              </p>
+              <CopyRow value={installLine(release, `${location.origin}#${code}`)} onCopied={setNote} />
+            </>
+          )}
           {!error && <p className="dialog-note">{note || 'Waiting for the agent…'}</p>}
           {mine.length > 0 && <p className="dialog-intro">Your agents:</p>}
           <ul className="people-list">
