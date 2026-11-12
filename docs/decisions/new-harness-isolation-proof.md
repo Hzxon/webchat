@@ -8,8 +8,10 @@ answers questions only, in a conversation's scratch copy, which pushes nothing: 
 the turn's purpose, `cards` or `answers`, and an adapter whose only gap is the owner's login
 refuses the first and allows the second. Settings shows the gap on its row, and a card request
 naming the harness fails with it before the claim check. Codex is the first such harness: its sandbox lets the shell read every folder, as
-far as its documentation shows. Its turns run `codex exec` without the owner's config.toml, rules
-or hooks, with only the core environment variables, no network and writes only in the copy. Why:
+far as its documentation shows. Its turns run in one `codex app-server` per session with the owner's MCP servers turned off one by
+name, hooks off, only the core environment variables, no network and writes only in the copy. The
+owner's config.toml and `.rules` still load, since app-server has no flag to skip them
+(docs/decisions/harness-approvals.md). Why:
 D-097 wants the proof before a run pushes with the owner's login.
 
 Cost: the accepted risk, decided 2026-11-09, is that the model reads the GitHub token and puts it
