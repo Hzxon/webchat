@@ -13,5 +13,5 @@ changes owner. Why: the server cannot read a card, so pages hold the gates (D-08
 Cost: gates bind the status line and removal, so anyone can change a card's title and body. A page
 cannot verify a merge; the card says who wrote it. Words are not history: anyone puts a card back in
 Open, and the owner's Ready stands until they take it back. Old cards have no owner until taken,
-which loses their history. A claim leaves an owned Open card in Open (D-117). A repository's copy
-shows refused statuses (docs/roadmap/copy-shows-refused-status.md).
+which loses their history. A claim leaves an owned Open card in Open (D-117). The agent's copy
+reads every member's word, as a page does (#195).

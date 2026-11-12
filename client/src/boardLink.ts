@@ -3,9 +3,9 @@
 // commits and decisions cite them, and then names the repository in the Roadmap doc's title. From
 // then on the agent keeps the repository's docs as copies of the board. Only a page writes the board
 // (D-104), and only the project's owner links it.
-import { readCard } from '../../shared/board';
+import { readCard, type Card } from '../../shared/board';
 import { api } from './api';
-import { boardDocs, COLUMN_TITLES, COLUMNS, idOf, type BoardColumn, type Card } from './board';
+import { boardDocs, COLUMN_TITLES, COLUMNS, idOf, type BoardColumn } from './board';
 import { boardCards, createBoard, newSectionId, replaceSection, rewriteCard, saveSection } from './docs';
 import type { ChatDoc } from './e2ee/keyring';
 import { store } from './store';

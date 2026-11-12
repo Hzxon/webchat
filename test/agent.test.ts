@@ -1149,6 +1149,19 @@ describe('agent client (R-027)', () => {
         assert.equal(await atBoard('docs/roadmap/new-thing.md'), null, 'the added proposal leaves its file');
         assert.ok((await atBoard('docs/roadmap.md'))?.includes('### R-1: A new thing'));
         assert.equal(JSON.parse(await fs.readFile(ghState, 'utf8')).pulls.length, pullsBefore + 1, 'still one draft');
+        // On cards Alice opened, Carol's Ready and Carol's removal do not stand, so the copy shows neither, as the board does (the card-owner decision).
+        const [owned, unremoved] = [newKeyId().slice(0, 11), newKeyId().slice(0, 11)];
+        await alice.editSection(roadmapDoc, owned, () => ({ text: '### K-10: Owned\n\nStatus: Open.', pos: 10, opened: true }));
+        await alice.editSection(roadmapDoc, unremoved, () => ({ text: '### K-11: Kept\n\nStatus: Open.', pos: 11, opened: true }));
+        await carol.sync();
+        await carol.editSection(roadmapDoc, owned, () => ({ text: '### K-10: Owned\n\nStatus: Ready.', pos: 10 }));
+        await carol.editSection(roadmapDoc, unremoved, () => ({ text: '### K-11: Kept\n\nStatus: Open.', pos: 11, removed: true }));
+        await plugin.client!.sync();
+        await plugin.syncBoards(start + 24 * 60_000);
+        await plugin.syncBoards(start + 35 * 60_000);
+        const copyNow = (await atBoard('docs/roadmap.md'))!;
+        assert.ok(copyNow.includes('### K-10: Owned\n\nStatus: Open.') && !copyNow.includes('## Ready'), "Carol's Ready on Alice's card is not copied");
+        assert.ok(copyNow.includes('### K-11: Kept'), "Carol's removal of Alice's card is not copied");
 
         // A card run follows the repository's workflow (R-042, D-118).
         await unthrottle();

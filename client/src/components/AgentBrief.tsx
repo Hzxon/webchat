@@ -3,13 +3,14 @@
 // each passage a teammate wrote marked. The page signs a hash of exactly this text into the
 // request, so the agent refuses to run it once the card or a decision changed.
 import { useEffect, useMemo, useState } from 'react';
+import type { Card, DocSection } from '../../../shared/board';
 import { textHash } from '../../../shared/e2ee';
 import { briefText, isHeld, runsCards } from '../../../shared/types';
 import { asleep, ownAgents, seatFor, seatKey, short, WAKE, type Seat } from '../agents';
-import { boardDocs, otherRun, startable, workingStatus, type Card } from '../board';
+import { boardDocs, otherRun, startable, workingStatus } from '../board';
 import { requestRun } from '../chat';
 import { useLinkedRepos } from '../linkedRepos';
-import { boardCards, loadSections, type DocSection } from '../docs';
+import { boardCards, loadSections } from '../docs';
 import { actions, senderName, useAppState, type State } from '../store';
 import { HarnessPicker, useHarnessPick } from './HarnessPicker';
 

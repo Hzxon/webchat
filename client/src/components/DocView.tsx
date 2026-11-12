@@ -1,6 +1,7 @@
 // A shared doc in a project: its sections as Markdown, who is editing which, and each section's
 // history (R-020). Editing a section locks it, so two people never write over each other.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { DocSection } from '../../../shared/board';
 import { LIMITS } from '../../../shared/types';
 import { ApiError } from '../api';
 import { holdReloadWhile } from '../build';
@@ -17,7 +18,6 @@ import {
   sectionHistory,
   stopEditing,
   wordCount,
-  type DocSection,
   type Editing,
 } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';

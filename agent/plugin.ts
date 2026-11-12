@@ -17,8 +17,8 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
-import { copyOf, entriesOf, proposalOf, readCard } from '../shared/board.ts';
-import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, SKILL_NAME, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
+import { cardsOf, copyOf, entriesOf, proposalOf, readCard, usernamesOf } from '../shared/board.ts';
+import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, SKILL_NAME, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
 import { AgentClient, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
 import type { Harness } from './harness.ts';
@@ -323,7 +323,7 @@ export class Plugin {
   private copies: Record<number, BoardCopy> = {};
   private copying = false;
   /** Each linked board's cards at the versions last read, when origin and GitHub were last looked at, and the proposal files that came to nothing. */
-  private readonly cards = new Map<number, { versions: string; roadmap: Array<{ doc: string; section: string; text: string }>; decisions: Array<{ doc: string; section: string; text: string }> }>();
+  private readonly cards = new Map<number, { versions: string; roadmap: Array<{ doc: string; section: string; text: string; stands: string }>; decisions: Array<{ doc: string; section: string; text: string }> }>();
   private readonly looked = new Map<number, number>();
   private readonly skipped = new Set<string>();
 
@@ -677,7 +677,8 @@ export class Plugin {
         taken.add(repo.toLowerCase());
         let copy = this.copies[project.id];
         if (copy?.repo !== repo) copy = this.copies[project.id] = { repo, seen: '', moved: now, proposals: {} };
-        const versions = `${docs.roadmap!.version}:${docs.decisions?.version ?? 0}`;
+        // The members are in it too, as who is among them decides which statuses stand.
+        const versions = `${docs.roadmap!.version}:${docs.decisions?.version ?? 0}:${project.memberIds.join()}`;
         if (versions !== copy.seen) Object.assign(copy, { seen: versions, moved: now });
         const due = copy.moved > 0 && now - copy.moved >= 10 * 60_000;
         // Origin and GitHub are looked at every 5 minutes, or when a copy is due.
@@ -685,12 +686,12 @@ export class Plugin {
         const folder = this.folderOf(repo);
         if (!folder || (await this.folderRefusal(folder, this.host)) || !(await signedIn())) continue;
         this.looked.set(project.id, now);
-        const { roadmap, decisions } = await this.columns(project.id, versions, docs);
+        const { roadmap, decisions } = await this.columns(project, versions, docs);
         const base = await fetchOrigin(folder.dir);
         await this.sendProposals(project.id, copy, folder, base, [...roadmap, ...decisions], chat);
         await this.sendClaims(project.id, copy, roadmap, chat);
         if (due) {
-          await this.pushCopy(copy, folder, base, { roadmap: copyOf('roadmap', roadmap.map((c) => c.text)), decisions: copyOf('decisions', decisions.map((c) => c.text)) });
+          await this.pushCopy(copy, folder, base, { roadmap: copyOf('roadmap', roadmap.map((c) => c.stands)), decisions: copyOf('decisions', decisions.map((c) => c.text)) });
           copy.moved = 0;
         }
       }
@@ -701,12 +702,24 @@ export class Plugin {
   }
 
   /** A board's cards, read again only when a column changed: each read fetches and opens every card (R-040). */
-  private async columns(project: number, versions: string, docs: { roadmap?: DocDTO; decisions?: DocDTO }) {
-    const kept = this.cards.get(project);
+  private async columns(project: ProjectDTO, versions: string, docs: { roadmap?: DocDTO; decisions?: DocDTO }) {
+    const kept = this.cards.get(project.id);
     if (kept?.versions === versions) return kept;
-    const [roadmap, decisions] = await Promise.all([this.cardsOf(docs.roadmap), this.cardsOf(docs.decisions)]);
-    this.cards.set(project, { versions, roadmap, decisions });
+    const [roadmap, decisions] = await Promise.all([this.roadmapOf(project, docs.roadmap), this.cardsOf(docs.decisions)]);
+    this.cards.set(project.id, { versions, roadmap, decisions });
     return { roadmap, decisions };
+  }
+
+  /**
+   * The Roadmap's cards as every page reads them (the card-owner decision), without the ones whose
+   * removal stands: each with its text as written, which a draft's hash reads (D-105), and the text
+   * that stands, which the copy writes.
+   */
+  private async roadmapOf(project: ProjectDTO, doc?: DocDTO) {
+    const client = this.client!;
+    if (!doc) return [];
+    const sections = await client.cardSections(doc).catch(() => []);
+    return cardsOf(sections, project.memberIds, usernamesOf(project.memberIds, Object.fromEntries(client.users), null)).map((c) => ({ doc: doc.id, section: c.id, text: c.written.trim(), stands: c.text.trim() }));
   }
 
   /** A column's cards, each with its place, or none for a column that does not open. */

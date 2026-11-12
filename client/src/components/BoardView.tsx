@@ -4,41 +4,32 @@
 // editor docs have, and keep its locks and history. The board docs are created the first time
 // someone adds a card.
 import { useEffect, useMemo, useState } from 'react';
+import { cardsOf, copyOf, GROUPS, groupOf, laneOf, usernamesOf, WAITING, withReviews, withStatus, type Card, type DocSection } from '../../../shared/board';
 import type { CardNoteDTO, ProjectDTO, RunRequest, UserDTO } from '../../../shared/types';
 import {
   boardDocs,
   cardRuns,
-  cardsOf,
   GOING,
   cardTemplate,
   COLUMN_TITLES,
   COLUMNS,
   duplicates,
-  GROUPS,
-  groupOf,
   KIND_NAMES,
-  laneOf,
   MOVE_FROM,
   moved,
   openChange,
   runnerOf,
   takeable,
   unchecked,
-  usernamesOf,
-  WAITING,
-  withReviews,
-  withStatus,
   workingStatus,
   type BoardColumn,
-  type Card,
   type CardKind,
   type CardRun,
   type Move,
 } from '../board';
 import { inOrder, ownAgents, ready, seatFor, useAgentChats } from '../agents';
-import { copyOf } from '../../../shared/board';
 import { askAgent, askFix, askLink, cancelRun, sendCardNote, startDirectChat, syncNow } from '../chat';
-import { addCard, beginEditing, createBoard, loadCards, loadSections, markSeen, newSectionId, replaceSection, rewriteCard, takeCard, type DocSection, type Editing } from '../docs';
+import { addCard, beginEditing, createBoard, loadCards, loadSections, markSeen, newSectionId, replaceSection, rewriteCard, takeCard, type Editing } from '../docs';
 import type { ChatDoc, ChatMessage } from '../e2ee/keyring';
 import { importEntries } from '../boardLink';
 import { useLinkedRepos } from '../linkedRepos';
