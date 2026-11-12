@@ -12,11 +12,10 @@ import { codexHarness } from './codex.ts';
 import type { Harness } from './harness.ts';
 
 /**
- * What an adapter needs of its host: the guard hook for Claude Code's turns, the plugin's folder,
+ * What an adapter needs of its host: the runner's folder
  * and the argv that runs this program again, which an ACP agent starts as its answer server.
  */
 interface Host {
-  hook: string;
   dataDir: string;
   self?: string[];
 }
@@ -40,7 +39,7 @@ export const acpRow = (agent: AcpAgent): Supported => ({
 });
 
 export const SUPPORTED: Supported[] = [
-  { id: 'claude', name: 'Claude Code', command: 'claude', build: (program, { hook, dataDir }) => claudeHarness(program, hook, dataDir) },
+  { id: 'claude', name: 'Claude Code', command: 'claude', build: (program, { dataDir }) => claudeHarness(program, dataDir) },
   { id: 'codex', name: 'Codex', command: 'codex', build: (program, { dataDir }) => codexHarness(program, dataDir) },
   ...ACP_AGENTS.map(acpRow),
 ];
@@ -83,15 +82,15 @@ export async function searchDirs(home = os.homedir()) {
  * Finds the supported harnesses again each call, and returns one adapter for each, in the order of
  * `SUPPORTED`, with no program for one the laptop lacks, so Settings can say so. An adapter stays
  * while its program and the program's mtime do, which keeps what it learned of its version; one
- * installed or updated since is built anew. `claude` is the session's own, which comes first.
+ * installed or updated since is built anew.
  */
-export function harnessFinder(host: Host, claude = '', kinds = SUPPORTED) {
+export function harnessFinder(host: Host, kinds = SUPPORTED) {
   const full = { self: selfArgv(), ...host };
   const built = new Map<string, { key: string; harness: Harness }>();
   return () =>
     Promise.all(
       kinds.map(async (kind) => {
-        const program = (kind.id === 'claude' && claude) || (await onPath(kind.command, await searchDirs()));
+        const program = await onPath(kind.command, await searchDirs());
         const key = `${program}:${program ? await fs.stat(program).then((s) => s.mtimeMs, () => 0) : ''}`;
         const old = built.get(kind.id);
         if (old?.key === key) return old.harness;

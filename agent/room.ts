@@ -21,6 +21,7 @@ import { fits } from './answer.ts';
 import { NO_RUNNER, PrerequisitesMissing, type Bench, type Folder, type HarnessInfo, type LocalBench, type Permit, type TurnJob } from './bench.ts';
 import type { Ask, Reply } from './harness.ts';
 import { SUPPORTED } from './harnesses.ts';
+import type { AgentStatus } from './plugin.ts';
 import { Quiet } from './runner.ts';
 import { Peer, RpcError } from './rpc.ts';
 
@@ -40,10 +41,15 @@ const KINDS = ['read', 'edit', 'delete', 'move', 'search', 'execute', 'think', '
 
 /** What the keyholder does for the commands. The `Plugin` is one. */
 export interface Handlers {
-  call(name: 'sleep' | 'wake' | 'status'): Promise<string>;
+  goToSleep(): Promise<string>;
+  wake(): Promise<string>;
+  status(): Promise<AgentStatus>;
   requestLink(harness: string): Promise<string>;
   requestConnect(dir: string, repo: string): Promise<string>;
 }
+
+/** What `status` answers: the agent's own, and whether a runner is connected. */
+export type RoomStatus = AgentStatus & { runner: boolean };
 
 type Hello = { role: 'runner' | 'cli'; version: string; uid: number; user: string; home: string };
 
@@ -288,10 +294,11 @@ export class Room {
         return { text: await handlers.requestConnect(dir, repo) };
       }
       case 'sleep':
+        return { text: await handlers.goToSleep() };
       case 'wake':
-        return { text: await handlers.call(method) };
+        return { text: await handlers.wake() };
       case 'status':
-        return { text: await handlers.call('status'), runner: !!this.runner };
+        return { ...(await handlers.status()), runner: !!this.runner };
       default:
         throw new RpcError(-32601, `Unknown command ${method}.`);
     }
@@ -316,12 +323,12 @@ export class SocketBench implements Bench {
       const h = record(value);
       const offers = record(h.offers);
       if (!SUPPORTED.some((s) => s.name === h.name)) return [];
-      return [{ name: h.name as string, path: text(h.path, 1000), version: text(h.version, 100), signedIn: typeof h.signedIn === 'boolean' ? h.signedIn : undefined, offers: { instructions: text(offers.instructions, 1000), skills: text(offers.skills, 1000), knobs: strings(offers.knobs, 20) }, asks: h.asks === true, commits: h.commits !== false }];
+      return [{ name: h.name as string, path: text(h.path, 1000), version: text(h.version, 100), signedIn: typeof h.signedIn === 'boolean' ? h.signedIn : undefined, offers: { instructions: text(offers.instructions, 1000), skills: text(offers.skills, 1000), knobs: strings(offers.knobs, 20) }, asks: h.asks === true, commits: h.commits !== false, ...(typeof h.warning === 'string' && { warning: h.warning.slice(0, 1000) }) }];
     });
   }
 
-  async refusal(harness: string, dir?: string, purpose?: 'cards' | 'answers') {
-    return text(await this.call('refusal', { harness, dir, purpose })) ?? undefined;
+  async refusal(harness: string) {
+    return text(await this.call('refusal', { harness })) ?? undefined;
   }
 
   async apply(choice: SetupChoice) {
@@ -463,7 +470,7 @@ export async function connectRunner({ file, bench, version }: { file: string; be
         case 'harnesses':
           return bench.harnesses();
         case 'refusal':
-          return bench.refusal(String(params.harness), params.dir as string | undefined, params.purpose as 'cards' | 'answers' | undefined);
+          return bench.refusal(String(params.harness));
         case 'apply':
           return bench.apply(params.choice as SetupChoice);
         case 'ownerSetup':

@@ -4,6 +4,7 @@
 // which tests replace with a recorder. Root writes generated content through its stdin, into a
 // folder only root can write, never through a file the owner could swap.
 import { spawn } from 'node:child_process';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
 /** What marks an account or group as setup's own, in its full name or comment: uninstall deletes only these. */
@@ -346,4 +347,27 @@ export function uninstallPlan(l: Layout, ours: boolean): Cmd[] {
       : [{ argv: ['userdel', l.user], soft: true }, { argv: ['groupdel', l.ipcGroup], soft: true }, { argv: ['groupdel', l.user], soft: true }];
   // Deleting a role account leaves its home, /var/empty, alone, so the folder goes by hand, once more in case it came back.
   return [...stop, ...files, ...gone, { argv: ['rm', '-rf', l.data] }];
+}
+
+/**
+ * Why the keyholder must not start, or undefined: it runs as the role account, its data folder is its
+ * own with mode 700, and each program it runs belongs to root and is writable by no one else, up every
+ * parent folder, since whoever can write there runs code as the keyholder (docs/decisions/locked-room.md).
+ */
+export async function selfProblem({ user, uid, data, programs, rootUid = 0, io = fs }: { user: string; uid: number; data: string; programs: string[]; rootUid?: number; io?: Pick<typeof fs, 'stat' | 'realpath'> }) {
+  if (!user.startsWith('_webchat')) return `The keyholder runs as its role account only, and this is ${user}. Run \`webchat-agent setup\`.`;
+  const own = await io.stat(data).catch(() => null);
+  if (!own || own.uid !== uid || (own.mode & 0o777) !== 0o700) return `${data} is not the keyholder's own folder with mode 700.`;
+  for (const program of programs) {
+    const real = await io.realpath(program).catch(() => '');
+    if (!real) return `${program} is missing.`;
+    // The link's own folders too: whoever can write there can point it elsewhere.
+    for (const start of new Set([program, real])) {
+      for (let dir = start; ; dir = path.dirname(dir)) {
+        const stat = await io.stat(dir);
+        if (stat.uid !== rootUid || stat.mode & 0o022) return `${dir} is not owned by root alone, and ${program} runs as the keyholder.`;
+        if (dir === path.dirname(dir)) break;
+      }
+    }
+  }
 }

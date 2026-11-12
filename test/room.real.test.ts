@@ -106,7 +106,7 @@ test('builds the room for real: a harness cannot read the agent’s account, nob
     await fs.mkdir(path.join(tmp, 'data', 'laptop'), { recursive: true });
     const claude = path.join(tmp, 'claude');
     await fs.writeFile(claude, fakeClaude(path.join(layout.data, 'laptop', 'account.json')), { mode: 0o755 });
-    const harness = claudeHarness(claude, '', path.join(tmp, 'data'));
+    const harness = claudeHarness(claude, path.join(tmp, 'data'));
     const schema = { type: 'object', properties: { note: { type: 'string' } }, required: ['note'] };
     const answer = (await harness.turn({ cwd: tmp, session: 's-1', resume: false, message: 'Read it', schema, setup: {}, signal: AbortSignal.timeout(30_000) })) as { note: string };
     await harness.end?.();

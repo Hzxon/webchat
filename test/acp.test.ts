@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, before, beforeEach, describe, test } from 'node:test';
 import { PassThrough } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { acpGap, acpHarness } from '../agent/acp.ts';
+import { acpHarness } from '../agent/acp.ts';
 import { ACP_AGENTS, type AcpAgent } from '../agent/acp-agents.ts';
 import { fits, listenForAnswers } from '../agent/answer.ts';
 import { Peer } from '../agent/rpc.ts';
@@ -123,7 +123,7 @@ const REPLY = { type: 'object', properties: { reply: { type: 'string' } }, requi
 const CHECK = { type: 'object', properties: { outcome: { type: 'string', enum: ['holds', 'stale'] } }, required: ['outcome'] };
 const tsx = fileURLToPath(import.meta.resolve('tsx'));
 /** What an agent starts as `<self> answer`: the plugin's own program, as the daemon would run it. */
-const SELF = [process.execPath, '--import', tsx, fileURLToPath(new URL('../agent/mcp.ts', import.meta.url))];
+const SELF = [process.execPath, '--import', tsx, fileURLToPath(new URL('../agent/index.ts', import.meta.url))];
 
 const FAKE: AcpAgent = {
   id: 'fake',
@@ -451,8 +451,6 @@ describe('the ACP adapter', () => {
     assert.equal(await acpHarness({ agent: FAKE, program: '', self: SELF, dataDir: data }).refusal(), 'I cannot find Fake on this laptop.');
     const harness = adapter();
     assert.equal(await harness.refusal(), undefined);
-    assert.equal(await harness.refusal(work, 'answers'), undefined);
-    assert.equal(await harness.refusal(work), acpGap('Fake'));
     assert.deepEqual(await harness.found(), { path: program, version: '0.3.1' });
     assert.deepEqual(harness.offers(), { knobs: [] });
     assert.equal(await acpHarness({ agent: { ...FAKE, min: '0.4.0' }, program, self: SELF, dataDir: data }).refusal(), 'Fake 0.3.1 is older than 0.4.0, which I need. Update it.');
@@ -486,7 +484,7 @@ describe('the ACP adapter', () => {
     const marker = path.join(root, `hermes-ran-${randomUUID()}`);
     await fs.writeFile(path.join(root, 'bin', 'hermes'), `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 });
     process.env.PATH = `${path.join(root, 'bin')}${path.delimiter}${saved.PATH}`;
-    const found = await harnessFinder({ hook: '', dataDir: data })();
+    const found = await harnessFinder({ dataDir: data })();
     await Promise.all(found.map((harness) => harness.found()));
     assert.deepEqual(found.map((harness) => harness.name), SUPPORTED.map((s) => s.name));
     assert.equal(await fs.access(marker).then(() => true, () => false), false);
@@ -497,7 +495,7 @@ describe('the ACP adapter', () => {
     assert.equal(supported('fake', kinds)?.name, 'Fake');
     assert.equal(supportedList(kinds), 'claude (Claude Code), codex (Codex), fake (Fake)');
     process.env.PATH = `${path.join(root, 'bin')}${path.delimiter}${saved.PATH}`;
-    const found = await harnessFinder({ hook: '', dataDir: data, self: SELF }, '', kinds)();
+    const found = await harnessFinder({ dataDir: data, self: SELF }, kinds)();
     const fake = found.at(-1)!;
     assert.equal(fake.name, 'Fake');
     assert.equal((await fake.found()).path, program);

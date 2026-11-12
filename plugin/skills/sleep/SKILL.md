@@ -6,9 +6,10 @@ disable-model-invocation: true
 
 # Putting the WebChat agent to sleep
 
-The agent serves from any open Claude Code window on this laptop. Asleep, it serves from none of
-them, new ones included, until the user types /webchat:wake. The cards and questions it runs
-finish first.
+The agent runs from the `webchat-agent` program, which `webchat-agent setup` installs. Asleep, it
+starts nothing new until the user wakes it. The cards and questions it runs finish first.
 
-1. Call the webchat `sleep` tool once.
-2. Tell the user what it answered, in plain words. The user may not be a programmer.
+1. Run `webchat-agent sleep`.
+2. Tell the user what it printed, in plain words. The user may not be a programmer.
+3. If `webchat-agent` is not found, tell the user to run `webchat-agent setup`, which needs an
+   account with administrator rights.

@@ -93,11 +93,11 @@ export interface HarnessState {
   path?: string;
   /** Whether the owner linked it and it is not turned off. Undefined from a plugin that has no linking. */
   linked?: boolean;
-  /** Why a linked harness needs attention: it cannot run turns, is too old, or is signed out. */
+  /** What a linked harness needs the owner to see: it cannot run turns, is too old or signed out, or its sandbox lets its shell read more than WebChat allows. */
   attention?: string;
   /** Why it answers no questions: not linked, turned off, missing or too old. Undefined from an agent before linking, whose `refusal` stands for both. */
   answers?: string;
-  /** Why it takes no cards on this laptop, or nothing when it does. */
+  /** Why it runs nothing on this laptop, which is what `answers` says too, or nothing when it does. */
   refusal?: string;
   /** The instructions file and the skills folder it reads, such as `~/.claude/CLAUDE.md`. */
   instructions?: string;

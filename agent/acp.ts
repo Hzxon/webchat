@@ -34,9 +34,6 @@ export const TIMING = {
 const CANCELLED = 'the owner cancelled the run.';
 const NUDGES = 2;
 
-/** Why an ACP agent takes no cards, which Settings shows on its row. */
-export const acpGap = (name: string) => `${name}’s sandbox is its own, not one WebChat sets or checks, so it answers questions and takes no cards.`;
-
 /** Every agent still running, so none outlives the daemon. */
 const running = new Set<ChildProcess>();
 process.on('exit', () => running.forEach((child) => child.kill()));
@@ -289,12 +286,10 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
   return {
     name,
     asks: true,
-    async refusal(dir, purpose) {
+    async refusal() {
       if (!program) return `I cannot find ${name} on this laptop.`;
       const old = olderThan(name, await versionOf(), agent.min);
       if (old) return old;
-      // Its sandbox is its own, so answers only, in a scratch copy that pushes nothing, as Codex does.
-      if (dir && purpose !== 'answers') return acpGap(name);
     },
     // ACP has no switch for the owner's instructions, skills or any knob, and D-115 lets an adapter declare only what it honors.
     offers: () => ({ knobs: [] }),

@@ -55,7 +55,9 @@ describe('the room', () => {
   /** What the fake harness does in its turn. */
   let work: (turn: Turn) => Promise<unknown>;
   const handlers: Handlers = {
-    call: async (name) => (calls.push(name), `${name} done`),
+    goToSleep: async () => (calls.push('sleep'), 'sleep done'),
+    wake: async () => (calls.push('wake'), 'wake done'),
+    status: async () => (calls.push('status'), { text: 'status done', paired: true, asleep: false }),
     requestLink: async (harness) => (calls.push(`link ${harness}`), `Asked to link ${harness}.`),
     requestConnect: async (dir, repo) => (calls.push(`connect ${repo} ${dir}`), `Asked to connect ${repo}.`),
   };
@@ -182,7 +184,7 @@ describe('the room', () => {
     assert.deepEqual(await callRoom(file, 'request', { kind: 'link', harness: 'Codex' }, VERSION), { text: 'Asked to link Codex.' });
     assert.deepEqual(await callRoom(file, 'sleep', {}, VERSION), { text: 'sleep done' });
     assert.deepEqual(await callRoom(file, 'wake', {}, VERSION), { text: 'wake done' });
-    assert.deepEqual(await callRoom(file, 'status', {}, VERSION), { text: 'status done', runner: false });
+    assert.deepEqual(await callRoom(file, 'status', {}, VERSION), { text: 'status done', paired: true, asleep: false, runner: false });
     assert.deepEqual(calls, ['connect acme/app /home/o/app', 'link Codex', 'sleep', 'wake', 'status']);
     for (const bad of [{ kind: 'link', harness: 'Mystery' }, { kind: 'connect', repo: 'not a repo', dir: '/x' }, { kind: 'connect', repo: 'acme/app', dir: 'relative' }, { kind: 'other' }]) {
       await assert.rejects(callRoom(file, 'request', bad, VERSION), /./, JSON.stringify(bad));

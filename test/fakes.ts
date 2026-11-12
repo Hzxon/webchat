@@ -119,11 +119,15 @@ for await (const text of readline.createInterface({ input: process.stdin })) {
   } else if (message.method === 'turn/start') {
     const turn = 'turn-' + ++turns;
     log({ method: message.method, input: message.params.input[0].text, schema: message.params.outputSchema, thread: message.params.threadId, pid: process.pid });
+    // As Claude's fake does: a check turn changes nothing; with FAKE_CODEX_FILE a work turn leaves that file uncommitted, as Codex's sandbox leaves its work.
+    const check = message.params.input[0].text.includes('Change and commit nothing in this turn');
+    if (env('FAKE_CODEX_FILE') && !check) fs.writeFileSync(env('FAKE_CODEX_FILE'), 'done\\n');
+    const said = (check && env('FAKE_CODEX_CHECK')) || env('FAKE_CODEX_ANSWER') || '{"reply":"It adds.","drafts":null}';
     const started = { id: message.id, result: { turn: { id: turn } } };
     // With nothing to ask, the turn's answer, its message and its end go in one write, as Linux delivers
     // them in one read: the client must not drop an end that comes before it knows the turn's id.
     if (!env('FAKE_CODEX_ASK')) {
-      const answer = { method: 'item/completed', params: { threadId: thread, turnId: turn, item: { type: 'agentMessage', id: 'm1', phase: 'final_answer', text: env('FAKE_CODEX_ANSWER') ?? '{"reply":"It adds.","drafts":null}' } } };
+      const answer = { method: 'item/completed', params: { threadId: thread, turnId: turn, item: { type: 'agentMessage', id: 'm1', phase: 'final_answer', text: said } } };
       const end = { method: 'turn/completed', params: { threadId: thread, turn: { id: turn, status: env('FAKE_CODEX_FAIL') ? 'failed' : 'completed', ...(env('FAKE_CODEX_FAIL') && { error: { message: env('FAKE_CODEX_FAIL') } }) } } };
       process.stdout.write([started, answer, end].map((m) => JSON.stringify(m)).join('\\n') + '\\n');
       continue;
@@ -136,7 +140,7 @@ for await (const text of readline.createInterface({ input: process.stdin })) {
       const decision = await ask(request.method, { threadId: thread, turnId: turn, ...request.params });
       log({ asked: request.method, decision });
     }
-    send({ method: 'item/completed', params: { threadId: thread, turnId: turn, item: { type: 'agentMessage', id: 'm1', phase: 'final_answer', text: env('FAKE_CODEX_ANSWER') ?? '{"reply":"It adds.","drafts":null}' } } });
+    send({ method: 'item/completed', params: { threadId: thread, turnId: turn, item: { type: 'agentMessage', id: 'm1', phase: 'final_answer', text: said } } });
     send({ method: 'turn/completed', params: { threadId: thread, turn: { id: turn, status: env('FAKE_CODEX_FAIL') ? 'failed' : 'completed', ...(env('FAKE_CODEX_FAIL') && { error: { message: env('FAKE_CODEX_FAIL') } }) } } });
     })();
   }

@@ -1,9 +1,9 @@
-// The plugin's harness adapter for OpenAI's Codex CLI (harness.ts): a `codex app-server` for each
+// The harness adapter for OpenAI's Codex CLI (harness.ts): a `codex app-server` for each
 // session, which speaks JSON-RPC over its stdio and takes the session's turns one after another.
 // Where the owner's page can show a question, Codex asks before a command or a file change outside
-// its sandbox, and the owner answers from WebChat. Codex's sandbox lets the shell read every folder,
-// the secret ones among them, so Codex answers questions and takes no cards
-// (docs/decisions/new-harness-isolation-proof.md, docs/decisions/harness-approvals.md).
+// its sandbox, and the owner answers from WebChat. Its sandbox lets the shell read the owner's files,
+// which the keyholder's account keeps from the agent's secrets (docs/decisions/locked-room.md,
+// docs/decisions/harness-approvals.md).
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -18,9 +18,6 @@ import { shellPaths } from './rulebook.ts';
 import { hold, IDLE_MS, keep, Quiet, watchdog } from './runner.ts';
 
 const exec = promisify(execFile);
-
-/** Why Codex takes no cards, which Settings shows on its row. */
-export const CODEX_GAP = 'Codex’s sandbox lets its shell read every folder, your GitHub login among them, so Codex answers questions and takes no cards.';
 
 /** An idle Codex is ended after this long without a turn; the next turn starts it again and resumes the thread. */
 export const CODEX_KEEP_MS = 10 * 60_000;
@@ -220,9 +217,8 @@ export function codexHarness(program: string, dataDir: string): Harness {
     asks: true,
     // Its workspace-write sandbox keeps `.git` and the git folder read-only (codex-rs/core/README.md).
     commits: false,
-    async refusal(dir, purpose) {
+    async refusal() {
       if (!program) return 'I cannot find Codex on this laptop.';
-      if (dir && purpose !== 'answers') return CODEX_GAP;
     },
     // Codex reads both on every turn, whatever the owner chose: its config has no switch for them.
     offers: () => ({ instructions: path.join(home, 'AGENTS.md'), skills: path.join(os.homedir(), '.agents', 'skills'), knobs: [] }),
