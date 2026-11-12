@@ -44,7 +44,14 @@ export interface Harness {
   apply(choice: SetupChoice): Promise<void>;
   /** Runs one turn, and resolves to its answer for the schema. */
   turn(turn: Turn): Promise<unknown>;
+  /** Ends what an adapter keeps running for a session, once the session is over, or for every session when the agent shuts down. An adapter that starts a process for each turn has nothing to end. */
+  end?(session?: string): Promise<void>;
 }
+
+/** Whether a variable holds a credential: by its name, by a known token's prefix, or by a password in a URL. */
+export const isCredential = ([name, value = '']: [string, string | undefined]) =>
+  /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL|AUTH/i.test(name) ||
+  /^(gh[opsur]_|github_pat_|npm_|sk-|xox[abprs]-|glpat-|AKIA)|:\/\/[^/\s:@]+:[^/\s@]+@/.test(value);
 
 /**
  * The folders the model must never read: the plugin's, with the agent's keys, and gh's, with the
