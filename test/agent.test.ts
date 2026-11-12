@@ -27,7 +27,7 @@ import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { openDb, toUserDTO } from '../server/db.ts';
 import { createIdentity, keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, openPicks, sealPicks, textHash, wrapChatKey, type MessageContent } from '../shared/e2ee.ts';
-import { briefText, harnessRow, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
+import { briefText, harnessRow, type AskDTO, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
 import { copyOf, readCard } from '../shared/board.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
@@ -950,20 +950,20 @@ describe('agent client (R-027)', () => {
         };
         const lkLinked = async () => (JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'setup.json'), 'utf8')) as { choice: SetupChoice }).choice.linked;
         // What the laptop remembers it asked, by the request message's client id.
-        const lkPending = () => (plugin as unknown as { setup: { links?: Record<string, { harness: string; at: number }> } }).setup.links ?? {};
+        const lkPending = () => (plugin as unknown as { setup: { asks?: Record<string, { what: string; at: number }> } }).setup.asks ?? {};
         await lkLink('Claude Code');
-        const lkDir = path.join(dataDir, 'links');
+        const lkDir = path.join(dataDir, 'asks');
         const lkFile = (name: string, body: object) => fs.writeFile(path.join(lkDir, name), JSON.stringify(body));
         assert.match(await plugin.requestLink('Codex'), /Approve it in WebChat/);
         // A file naming no supported harness, or filed more than 10 minutes ago, sends nothing.
-        await lkFile('hermes.json', { harness: 'Hermes', at: Date.now() });
-        await lkFile('old.json', { harness: 'Codex', at: Date.now() - REQUEST_TTL_MS - 1000 });
-        await plugin.sendLinkRequests();
+        await lkFile('hermes.json', { kind: 'link', harness: 'Hermes', at: Date.now() });
+        await lkFile('old.json', { kind: 'link', harness: 'Codex', at: Date.now() - REQUEST_TTL_MS - 1000 });
+        await plugin.sendAsks();
         assert.deepEqual((await lkAsks()).map((c) => c.ask), [{ kind: 'link', step: 'request', harness: 'Codex' }]);
         assert.equal((await fs.readdir(lkDir)).length, 0, 'every file was taken');
         // One request waits for each harness.
         await plugin.requestLink('Codex');
-        await plugin.sendLinkRequests();
+        await plugin.sendAsks();
         assert.deepEqual(await lkAsks(), []);
         const [lkAsked] = Object.keys(lkPending());
         // Not the owner's word: Carol's, one outside the direct chat, a request nobody made, and one signed too long ago.
@@ -984,12 +984,12 @@ describe('agent client (R-027)', () => {
         assert.deepEqual(await lkLinked(), ['Claude Code']);
         // A decline links nothing; a request left past 10 minutes fails with a note.
         await plugin.requestLink('Codex');
-        await plugin.sendLinkRequests();
+        await plugin.sendAsks();
         const lkDeclined = Object.keys(lkPending()).find((id) => id !== lkAsked)!;
         await lkAnswer(alice, direct, 'decline', lkDeclined);
         assert.deepEqual(await lkLinked(), ['Claude Code']);
         await plugin.requestLink('Codex');
-        await plugin.sendLinkRequests();
+        await plugin.sendAsks();
         const lkLapsed = Object.keys(lkPending()).find((id) => id !== lkAsked && id !== lkDeclined)!;
         lkPending()[lkLapsed]!.at -= REQUEST_TTL_MS + 1000;
         await lkAsks();
@@ -1546,6 +1546,128 @@ describe('agent client (R-027)', () => {
       await first.call('sleep');
       await second.call('sleep');
     }
+  });
+
+  test('connects a folder only on its owner\'s signed approval, within 10 minutes and once (docs/decisions/connect-approval.md)', { timeout: 60_000 }, async () => {
+    const dataDir = path.join(home, 'connector', 'laptop');
+    const folder = path.join(home, 'connector-app');
+    await sh('git', ['init', '-q', folder]);
+    const setOrigin = (repo: string) => git(folder, 'remote', 'set-url', 'origin', `https://github.com/${repo}.git`);
+    await git(folder, 'remote', 'add', 'origin', 'https://github.com/acme/app.git');
+    const options = { harnesses: [claudeHarness('', 'true', dataDir)], cloneRoot: path.join(home, 'WebChat'), dataDir, projectDir: folder, code: '' };
+    const terminal = new Plugin(options);
+    assert.match(await new Plugin({ ...options, dataDir: path.join(home, 'unpaired') }).requestConnect(), /Pair first/);
+    const code = newPairingCode();
+    const plugin = new Plugin({ ...options, code: `${baseUrl}#${code}`, projectDir: home });
+    const starting = plugin.start();
+    const agent = await approve(alice, code, 'Connector');
+    assert.equal(await starting, true);
+    await alice.sync();
+    await carol.sync();
+    const carols = (await carol.request<{ id: number }>('POST', '/conversations/direct', { userId: agent.id, key: await newChatKey(carol, [carol.id, agent.id]) })).id;
+    const direct = (await alice.request<{ id: number }>('POST', '/conversations/direct', { userId: agent.id, key: await newChatKey(alice, [alice.id, agent.id]) })).id;
+    const group = (await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'Connect', memberIds: [agent.id], key: await newChatKey(alice, [alice.id, agent.id]) })).channel.id;
+    await alice.sync();
+    await carol.sync();
+    await plugin.client!.sync();
+    const mark = path.join(dataDir, 'repos', 'acme__app', 'connected');
+    const pending = () => (plugin as unknown as { setup: { asks?: Record<string, { at: number }> } }).setup.asks ?? {};
+    const heard = async () => {
+      const messages = await plugin.client!.sync();
+      await Promise.all(messages.map((m) => plugin.handle(m)));
+      return messages;
+    };
+    const failures: string[] = [];
+    const said = async () => {
+      const asks = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.ask).map((m) => m.content!);
+      failures.push(...asks.filter((c) => c.ask?.step === 'failed').map((c) => c.text));
+      return asks.filter((c) => c.ask?.step !== 'failed');
+    };
+    // What a person types in the folder, then the serving agent's tick: the request Alice sees, and its client id.
+    const ask = async () => {
+      assert.match(await terminal.requestConnect(), /Asked your agent's owner to connect acme\/app/);
+      await plugin.sendAsks();
+      const [sent] = await said();
+      assert.equal(sent?.ask?.step, 'request');
+      return { request: sent!.ask as Extract<AskDTO, { kind: 'connect'; step: 'request' }>, to: Object.keys(pending()).at(-1)! };
+    };
+    type Asked = Awaited<ReturnType<typeof ask>>;
+    const answer = async (from: AgentClient, chat: number, step: 'approve' | 'decline', asked: Asked, extra: object = {}) => {
+      const { repo, folder: shown } = asked.request;
+      await from.send(chat, { text: 'Answer', ask: { kind: 'connect', step, to: asked.to, sentAt: Date.now(), ...(step === 'approve' && { repo, folder: shown }), ...extra } as MessageContent['ask'] });
+      return heard();
+    };
+    const nothing = async (why: string) => {
+      await plugin.scan();
+      assert.equal(existsSync(mark), false, why);
+      assert.deepEqual(plugin.client!.repos, [], why);
+    };
+
+    // The real command, typed in a terminal, files a request and returns: nothing changes.
+    const run = await sh(process.execPath, ['--import', import.meta.resolve('tsx'), fileURLToPath(new URL('../agent/index.ts', import.meta.url)), 'connect'], {
+      cwd: folder,
+      env: { PATH: '/usr/bin:/bin', HOME: path.join(home, 'connector'), WEBCHAT_AGENT_HOME: path.join(home, 'connector') },
+    });
+    assert.match(run.stdout, /Asked your agent's owner to connect acme\/app/);
+    await nothing('a typed connect marks nothing');
+    await plugin.sendAsks();
+    const [first] = await said();
+    assert.deepEqual([first?.ask?.step, (first?.ask as { repo?: string })?.repo], ['request', 'acme/app']);
+    await nothing('a request marks nothing');
+    // A second command for the repository while one waits sends no second request.
+    await terminal.requestConnect();
+    await plugin.sendAsks();
+    assert.deepEqual(await said(), []);
+    // Not the owner's word: Carol's in her own chat with the agent, Alice's outside her direct chat, a request nobody made, and one signed too long ago.
+    const open: Asked = { request: first!.ask as Asked['request'], to: Object.keys(pending())[0]! };
+    await answer(carol, carols, 'approve', open);
+    await answer(alice, group, 'approve', open);
+    await answer(alice, direct, 'approve', { ...open, to: 'nobody' });
+    await answer(alice, direct, 'approve', open, { sentAt: Date.now() - REQUEST_TTL_MS - 1000 });
+    await nothing('only the owner, in the direct chat, lately, and for a request that was made');
+    // Her approve connects the folder the laptop recorded, once.
+    const approving = await answer(alice, direct, 'approve', open);
+    assert.equal(await fs.readFile(mark, 'utf8'), await fs.realpath(folder), 'the folder the command ran in');
+    assert.deepEqual(plugin.client!.repos, ['acme/app']);
+    assert.equal((await said()).at(-1)?.ask?.step, 'done');
+    // The same message again, or another that names the same request, connects nothing once it is disconnected.
+    await terminal.call('disconnect');
+    await plugin.handle(approving.find((m) => m.content?.ask)!);
+    await answer(alice, direct, 'approve', open);
+    await nothing('an approval counts once');
+
+    // A request left past 10 minutes by the agent's clock fails with a note.
+    const lapsed = await ask();
+    pending()[lapsed.to]!.at -= REQUEST_TTL_MS + 1000;
+    await answer(alice, direct, 'approve', lapsed);
+    await nothing('a lapsed request');
+    await said();
+    assert.match(failures.at(-1)!, /older than 10 minutes/);
+    // An approval for another folder or repository than the request showed, and a folder that moved to another repository, connect nothing.
+    const another = await ask();
+    await answer(alice, direct, 'approve', another, { folder: `${another.request.folder}-other` });
+    await nothing('another folder');
+    const elsewhere = await ask();
+    await answer(alice, direct, 'approve', elsewhere, { repo: 'acme/other' });
+    await nothing('another repository');
+    const moved = await ask();
+    await setOrigin('acme/other');
+    await answer(alice, direct, 'approve', moved);
+    await setOrigin('acme/app');
+    await nothing('a folder that pushes elsewhere now');
+    // A decline connects nothing, and the request cannot be approved after it.
+    const declined = await ask();
+    await answer(alice, direct, 'decline', declined);
+    await answer(alice, direct, 'approve', declined);
+    await nothing('a decline');
+    await said();
+    assert.equal(failures.length, 4, 'each refusal is said, and a decline or an approval of nothing is not');
+    // A folder connected already asks nothing.
+    await terminal.call('connect');
+    assert.match(await terminal.requestConnect(), /connected to this folder already/);
+    // The plugin's own tool keeps its prompt in Claude Code and marks at once (D-101).
+    await terminal.call('disconnect');
+    assert.match(await terminal.call('connect'), /Connected acme\/app: your agent works in this folder/);
   });
 
   test('answers its owner\'s prompts in their direct chat, and resumes the conversation for each reply (R-035)', async () => {

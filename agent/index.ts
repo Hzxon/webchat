@@ -1,8 +1,8 @@
 // The agent daemon's command line (R-027): the host for a laptop without Claude Code, which serves the
 // same Plugin as agent/mcp.ts, in the folder `laptop` of the agent home. `setup` installs a login
 // service that keeps `serve` running (agent/setup.ts), and `doctor`, `status` and `uninstall` go with it.
-// `connect`, `sleep` and `wake` do what the /webchat: skills do, and `connect` marks the folder you run
-// it in. `link` asks the owner to link a harness, which they approve in WebChat. `pair` makes an account of its own, which `serve` does not use unless its name is `laptop`.
+// `sleep` and `wake` do what the /webchat: skills do. `connect` asks the owner to connect the folder you
+// run it in, and marks it when they approve in WebChat. `link` asks the owner to link a harness, which they approve in WebChat. `pair` makes an account of its own, which `serve` does not use unless its name is `laptop`.
 //
 //   npm run agent -- serve [code]
 //   npm run agent -- connect|sleep|wake
@@ -74,6 +74,8 @@ async function main([command, ...args]: string[]) {
       throw new Error(plugin.problem);
     }
     case 'connect':
+      console.log(await (await laptop()).requestConnect());
+      return;
     case 'sleep':
     case 'wake': {
       console.log(await (await laptop()).call(command));

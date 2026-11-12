@@ -8,7 +8,7 @@ import { HARNESS_ROW_WORDS, harnessRow, setupWords, type HarnessRow, type Harnes
 import { blockedBy, ownAgents, useAgentChat, WAKE } from '../agents';
 import { askSetup } from '../chat';
 import { useAppState } from '../store';
-import { AgentLinkAsks } from './AgentLinkAsk';
+import { AgentAsks } from './AgentAsks';
 import { Dialog } from './Dialog';
 import { formatAgo } from './format';
 import { Tag, type Tone } from './PullTags';
@@ -104,7 +104,7 @@ function SetupForm({ agent }: { agent: UserDTO }) {
         Each coding agent on your agent’s laptop, and what its runs and answers load from your setup there. Your settings, hooks,
         MCP servers and plugins stay off, since a run follows cards your teammates wrote.
       </p>
-      <AgentLinkAsks />
+      <AgentAsks />
       {(answer.harnesses ?? [OLD_PLUGIN]).map((h) => (
         <section key={h.name} className="dialog-form">
           {h.linked !== undefined ? (

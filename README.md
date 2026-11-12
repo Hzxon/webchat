@@ -626,9 +626,11 @@ Then:
   asleep.
 - `webchat-agent uninstall` asks, then removes the service and `~/.webchat/laptop`. The agent stays in
   WebChat until you remove it under **Coding agents**. The program and the clones in `~/WebChat` stay.
-- In a folder you already have, run `webchat-agent connect` to point the agent at it instead of
-  cloning. `webchat-agent sleep` and `webchat-agent wake` do what `/webchat:sleep` and `/webchat:wake`
-  do.
+- In a folder you already have, run `webchat-agent connect` to ask to point the agent at it instead of
+  cloning. It returns at once and changes nothing: the request shows under **Coding agents** with the
+  repository and the folder, and the folder is connected only when you approve it there, within 10
+  minutes. The agent must be paired and running. `webchat-agent sleep` and `webchat-agent wake` do
+  what `/webchat:sleep` and `/webchat:wake` do.
 
 The service runs while you are logged in. Cards and clones need the GitHub CLI signed in, as for the
 plugin: setup warns when it is not. The keys stay in `~/.webchat/laptop` and the agent pushes with

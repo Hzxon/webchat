@@ -17,6 +17,7 @@ import {
   type PullCardDTO,
   type PullRequestDTO,
   type MessageDTO,
+  type AskDTO,
   type PairingPick,
   type PublicKeysDTO,
   type RunDTO,
@@ -565,9 +566,10 @@ export async function openConversation(conversationId: number) {
   else actions.setAgentsOpen(true);
   await loadChat(conversationId);
   // A notification is for the chat's newest message, so it opens that message's conversation, unless
-  // the user went elsewhere while it loaded.
+  // the user went elsewhere while it loaded. A request has none: it waits in the list.
   const now = store.get();
-  if (agent && now.agentsOpen && now.agentThread === null) actions.setAgentsOpen(true, threadsOf(now.messages[conversationId] ?? [], meId, agent.id, now.pending)[0]?.root ?? null);
+  const list = now.messages[conversationId] ?? [];
+  if (agent && now.agentsOpen && now.agentThread === null) actions.setAgentsOpen(true, list.at(-1)?.ask ? null : threadsOf(list, meId, agent.id, now.pending)[0]?.root ?? null);
 }
 
 /** Loads a chat's newest messages when the page has none yet, and marks it read while the user looks. */
@@ -842,9 +844,11 @@ export async function askSetup(agentId: number, choice?: SetupChoice) {
   return clientId;
 }
 
-/** Answers an agent's request to link a harness, which names the request by its client id (docs/decisions/harness-linking.md). */
-export function answerLink(conversationId: number, to: string, step: 'approve' | 'decline') {
-  return sendContent(conversationId, { text: step === 'approve' ? 'Link it' : 'Do not link it', ask: { kind: 'link', step, to, sentAt: Date.now() } }, false);
+/** Answers an agent's request, which names it by its client id (docs/decisions/harness-linking.md, docs/decisions/connect-approval.md). A connect's approval signs the repository and folder shown. */
+export function answerAsk(conversationId: number, to: string, request: Extract<AskDTO, { step: 'request' }>, step: 'approve' | 'decline') {
+  const sentAt = Date.now();
+  const ask: AskDTO = step === 'decline' ? { kind: request.kind, step, to, sentAt } : request.kind === 'link' ? { kind: 'link', step, to, sentAt } : { kind: 'connect', step, to, sentAt, repo: request.repo, folder: request.folder };
+  return sendContent(conversationId, { text: step === 'approve' ? 'Approve it' : 'Decline it', ask }, false);
 }
 
 /** Asks the user's agent for a repository's entries, to link the board to it (R-040). Returns the ask's client id, which its answers name. */
@@ -915,6 +919,8 @@ export async function connectAgent(code: string, keys: PublicKeysDTO, displayNam
   await keyring.trust(agent);
   await reloadAll();
   for (const projectId of projectIds) await addProjectMembers(projectId, [agent.id]);
+  // The agent never makes a chat key, so it needs this chat to send a request into (docs/decisions/connect-approval.md).
+  await startDirectChat(agent.id).catch(() => undefined);
   return agent;
 }
 

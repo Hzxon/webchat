@@ -666,16 +666,24 @@ function readBoardSync(raw: Record<string, unknown> | undefined): BoardSyncDTO |
 
 /** An ask or its answer, if it has the right shape: `to` names the request by its client id. */
 function readAsk(raw: Record<string, unknown> | undefined): AskDTO | undefined {
-  if (raw?.kind !== 'link') return;
+  const kind = raw?.kind;
+  if (!raw || (kind !== 'link' && kind !== 'connect')) return;
   const to = short(raw.to, 64);
+  const harness = short(raw.harness, LIMITS.harnessFieldLength);
+  const [repo, folder] = [short(raw.repo, 100), short(raw.folder, LIMITS.harnessFieldLength)];
+  const place = repo && folder && isRepoName(repo) ? { repo, folder } : undefined;
   if (raw.step === 'request') {
-    const harness = short(raw.harness, LIMITS.harnessFieldLength);
-    return harness ? { kind: 'link', step: 'request', harness } : undefined;
+    if (kind === 'link') return harness ? { kind, step: 'request', harness } : undefined;
+    return place && { kind, step: 'request', ...place };
   }
-  if ((raw.step === 'approve' || raw.step === 'decline') && to && isId(raw.sentAt)) return { kind: 'link', step: raw.step, to, sentAt: raw.sentAt };
+  if (raw.step === 'approve' || raw.step === 'decline') {
+    if (!to || !isId(raw.sentAt)) return;
+    if (raw.step === 'decline' || kind === 'link') return { kind, step: raw.step, to, sentAt: raw.sentAt } as AskDTO;
+    return place && { kind, step: 'approve', to, sentAt: raw.sentAt, ...place };
+  }
   if (raw.step !== 'done' && raw.step !== 'failed') return;
   const note = short(raw.note, LIMITS.runNoteLength);
-  return to ? { kind: 'link', step: raw.step, to, ...(note && { note }) } : undefined;
+  return to ? { kind, step: raw.step, to, ...(note && { note }) } : undefined;
 }
 
 const NOTE_KINDS: ReadonlyArray<CardNoteDTO['kind']> = ['ready', 'review', 'waiting'];
