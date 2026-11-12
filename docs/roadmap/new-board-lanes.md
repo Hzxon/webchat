@@ -1,6 +1,6 @@
 ### R: The roadmap as lanes, with a card owner who holds its gates
 
-Status: Idea. Proposed 2026-11-12 from the review of the board's interface.
+Status: Done in #188, #189 and #190.
 
 Why: the board shows work as two lists, and a card's row says only its id, title and status.
 Nobody sees who opened a card, who works on it or whose move it is. A card moves only when someone
