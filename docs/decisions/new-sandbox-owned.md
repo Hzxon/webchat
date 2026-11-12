@@ -1,6 +1,7 @@
 ### D: A harness without a deny-read list runs under a sandbox WebChat owns
 
-Status: Proposed 2026-11-09 in #175, the spike of "A Codex adapter, and a sandbox WebChat owns".
+Status: Dropped 2026-11-12 in #193, for docs/decisions/harness-rulebook.md. Proposed 2026-11-09 in
+#175, the spike of "A Codex adapter, and a sandbox WebChat owns".
 
 A harness whose sandbox has no deny-read list runs under `@anthropic-ai/sandbox-runtime` with the
 plugin's policy: `denyRead` on the gh config, keychains and plugin data, `allowWrite` on the
