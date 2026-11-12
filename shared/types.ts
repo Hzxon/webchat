@@ -727,6 +727,17 @@ export type BoardSyncDTO =
   | { kind: 'claims'; project: number; repo: string; claims: Array<{ card: string; pull: number }> };
 
 /**
+ * A request about a board card, sent to the member asked in their direct chat with the asker, so
+ * only they get a push (the card-notes decision). It names the card inside the sealed content only.
+ */
+export interface CardNoteDTO {
+  kind: 'ready' | 'review' | 'waiting';
+  card: string;
+  docId: string;
+  section: string;
+}
+
+/**
  * A pull request shared into a chat: a snapshot of how it stood when it was shared. It travels
  * inside the message's envelope, so the server never sees which pull request was shared.
  */

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
 import type { QuotedMessage } from '../../../shared/e2ee';
 import { githubCardEvent } from '../../../shared/github';
-import { LIMITS, RUN_PICKUP_MS, type GithubCardDTO, type PullCardDTO, type PullEvent, type RunReport, type RunRequest } from '../../../shared/types';
+import { LIMITS, RUN_PICKUP_MS, type CardNoteDTO, type GithubCardDTO, type PullCardDTO, type PullEvent, type RunReport, type RunRequest } from '../../../shared/types';
 import { seatFor } from '../agents';
 import { holdReloadWhile } from '../build';
 import { cancelRun, discardMessage, loadDraft, loadOlder, quoteOf, react, retryMessage, saveDraft, sendMessage } from '../chat';
@@ -317,6 +317,8 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                       users={users}
                       onCancel={mine ? () => void cancelRun({ ...message, run: message.run as RunRequest }).catch(() => undefined) : undefined}
                     />
+                  ) : message.card ? (
+                    <CardNote note={message.card} text={message.text} />
                   ) : message.pull ? (
                     <PullCard pull={message.pull} />
                   ) : (
@@ -401,10 +403,27 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
   );
 }
 
-/**
- * The message a reply answers. A loaded original passed its sender's signature check, so it wins
- * over the copy inside the reply, which only the person replying wrote.
- */
+/** A request about a board card (the card-notes decision): one line whose click opens the card, for a member of its project. */
+function CardNote({ note, text }: { note: CardNoteDTO; text: string }) {
+  const projectId = useAppState((s) => {
+    const doc = s.docs[note.docId];
+    return (doc && s.conversations[doc.conversationId]?.projectId) ?? null;
+  });
+  if (projectId === null) return <span className="bubble-text">{text}</span>;
+  return (
+    <button
+      type="button"
+      className="pull-card card-note"
+      onClick={(e) => {
+        e.stopPropagation();
+        actions.setBoardOpen(projectId, note.section);
+      }}
+    >
+      {text}
+    </button>
+  );
+}
+
 /**
  * A shared pull request, as it stood when it was shared. A click opens it on GitHub. A card that
  * reports a later event names only the pull request, with a tag for what happened.
@@ -515,6 +534,10 @@ function PullPeople({ label, names, login }: { label: string; names: string[]; l
   );
 }
 
+/**
+ * The message a reply answers. A loaded original passed its sender's signature check, so it wins
+ * over the copy inside the reply, which only the person replying wrote.
+ */
 function Quote({ quote, original, onJump }: { quote: QuotedMessage; original?: ChatMessage; onJump?: () => void }) {
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);

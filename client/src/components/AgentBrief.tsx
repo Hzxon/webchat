@@ -6,10 +6,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { textHash } from '../../../shared/e2ee';
 import { briefText, isHeld, runsCards } from '../../../shared/types';
 import { asleep, ownAgents, seatFor, seatKey, short, WAKE, type Seat } from '../agents';
-import { boardDocs, otherRun, parseCard, type Card } from '../board';
+import { boardDocs, otherRun, startable, workingStatus, type Card } from '../board';
 import { requestRun } from '../chat';
 import { useLinkedRepos } from '../linkedRepos';
-import { loadSections, type DocSection } from '../docs';
+import { boardCards, loadSections, type DocSection } from '../docs';
 import { actions, senderName, useAppState, type State } from '../store';
 import { HarnessPicker, useHarnessPick } from './HarnessPicker';
 
@@ -36,8 +36,8 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
   // only the sections that open, so the page leaves out the others too.
   useEffect(() => {
     let live = true;
-    void Promise.all([doc ? loadSections(doc) : [], decisionsDoc ? loadSections(decisionsDoc) : []]).then(
-      ([cards, decisions]) => live && setLoaded({ card: cards.map(parseCard).find((c) => c.id === brief.section), decisions: decisions.filter((d) => !d.failed) }),
+    void Promise.all([doc ? boardCards(doc) : [], decisionsDoc ? loadSections(decisionsDoc) : []]).then(
+      ([cards, decisions]) => live && setLoaded({ card: cards.find((c) => c.id === brief.section), decisions: decisions.filter((d) => !d.failed) }),
       (err: Error) => live && setError(err.message),
     );
     return () => {
@@ -66,6 +66,10 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
   // The brief's hash covers the status line, so a run that starts after this check makes the agent refuse (D-105).
   if (loaded?.card && otherRun(loaded.card.status, meName))
     blocked = `The card says “${loaded.card.status}”, so another run of it goes or waits for review. Start once its status changes.`;
+  // Not while it holds what only its owner may write, and only from where a run may start (the card-owner decision).
+  else if (loaded?.card?.refused) blocked = 'Someone changed this card in a way only its owner can. Move or edit it first.';
+  // A run of the user's own that never reported back starts again, as it could before lanes.
+  else if (loaded?.card && !startable(loaded.card, meName) && loaded.card.status !== workingStatus(meName)) blocked = loaded.card.owner === undefined ? 'Only an open or Ready card runs.' : 'Only a Ready card runs, and only its owner marks it ready.';
   else if (!seat) blocked = 'Your agent is not in this project. Add it under the project’s people, then start.';
   else if (!seat.online) blocked = `${asleep(seat.lastSeen)}. ${WAKE}`;
   else if (!runsCards(seat.protocol)) blocked = `${short(seat.repo)} can’t take cards yet. In Claude Code on your laptop, type /webchat:connect: it says what is missing.`;
@@ -76,7 +80,7 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
     setBusy(true);
     setError('');
     try {
-      const hash = await textHash(briefText(loaded.card.text, loaded.decisions.map((d) => d.text)));
+      const hash = await textHash(briefText(loaded.card.written, loaded.decisions.map((d) => d.text)));
       actions.setAgentsOpen(true, await requestRun(brief.docId, loaded.card, seat.agent, seat.repo, hash, harness));
     } catch (err) {
       setError((err as Error).message);
@@ -97,7 +101,7 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
         ) : (
           <>
             <p className="agents-draft-label">The card{by(card.authorId) ? ` · last written by ${by(card.authorId)}` : ''}</p>
-            <pre className="agents-brief-text">{card.text.trim()}</pre>
+            <pre className="agents-brief-text">{card.written.trim()}</pre>
             {held.length > 0 && (
               <details>
                 <summary className="agents-draft-label">

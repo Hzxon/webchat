@@ -7,8 +7,8 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ProjectDTO, RunRequest, UserDTO } from '../../../shared/types';
 import {
   boardDocs,
-  cardOf,
   cardRuns,
+  cardsOf,
   GOING,
   cardTemplate,
   COLUMN_TITLES,
@@ -17,18 +17,23 @@ import {
   GROUPS,
   groupOf,
   KIND_NAMES,
+  laneOf,
+  MOVE_FROM,
+  moved,
   runnerOf,
+  takeable,
   unchecked,
   WAITING,
   type BoardColumn,
   type Card,
   type CardKind,
   type CardRun,
+  type Move,
 } from '../board';
 import { inOrder, ownAgents, ready, seatFor, useAgentChats } from '../agents';
 import { copyOf } from '../../../shared/board';
-import { askAgent, askLink, cancelRun, syncNow } from '../chat';
-import { addCard, beginEditing, createBoard, loadCards, loadSections, markSeen, newSectionId, replaceSection, type DocSection, type Editing } from '../docs';
+import { askAgent, askLink, cancelRun, sendCardNote, startDirectChat, syncNow } from '../chat';
+import { addCard, beginEditing, createBoard, loadCards, loadSections, markSeen, newSectionId, replaceSection, rewriteCard, takeCard, type DocSection, type Editing } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
 import { importEntries } from '../boardLink';
 import { useLinkedRepos } from '../linkedRepos';
@@ -175,12 +180,20 @@ const RUN_STATES: Record<CardRun['state'], [Tone, string]> = {
   cancelled: ['muted', 'Cancelled'],
 };
 const FILTERS = { all: 'All', R: 'Ideas', K: 'Issues' };
+// Pick shows on a Ready card's face; the others in the opened card.
+const MOVES: Array<[Move, string]> = [
+  ['ask', 'Ask owner'],
+  ['ready', 'Mark ready'],
+  ['review', 'Send to review'],
+  ['close', 'Close'],
+];
 type Filter = keyof typeof FILTERS;
 
 function BoardColumnView({ column, projectId, doc, check }: { column: BoardColumn; projectId: number; doc: ChatDoc | undefined; check?: (id: string) => Promise<void> }) {
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
-  const meName = useAppState((s) => s.me?.displayName ?? '');
+  const me = useAppState((s) => s.me);
+  const meName = me?.displayName ?? '';
   const memberIds = useAppState((s) => s.projects[projectId]?.memberIds ?? NO_MEMBERS);
   // This user's coding agents in the project (D-089), one choice per repository a Claude Code
   // session of theirs is open in (D-094). A card can be handed to one that is online.
@@ -196,13 +209,15 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
   );
   const [sections, setSections] = useState<DocSection[]>([]);
   // An owner who left the project owns nothing, so owners follow the members without a reload.
-  const cards = useMemo(() => sections.map((s) => cardOf(s, memberIds)), [sections, memberIds]);
+  const cards = useMemo(() => cardsOf(sections, memberIds), [sections, memberIds]);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
-  const [open, setOpen] = useState<string | null>(null);
+  // A request about a card opens the board on it, and a request to mark it ready finds it in the Open drawer.
+  const boardCard = useAppState((s) => s.boardCard);
+  const [open, setOpen] = useState<string | null>(boardCard);
   // Whether the Open drawer is open, once the cards first load or the user toggles it; until then it follows the lanes.
-  const [drawer, setDrawer] = useState<boolean | null>(null);
+  const [drawer, setDrawer] = useState<boolean | null>(boardCard ? true : null);
   // The doc is kept with the editing state, because the first card's doc is made just before it.
   const [editing, setEditing] = useState<{
     doc: ChatDoc;
@@ -251,6 +266,8 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
   useEffect(() => {
     if (sections.length) setDrawer((d) => d ?? !lanesHold);
   }, [sections]);
+  /** Only a card's owner deletes it, or anyone a card with no owner, since only then does the removal stand (the card-owner decision). */
+  const canDelete = (card: Card) => card.owner === undefined || card.owner === meId;
   /** A member as a sentence names them. */
   const whom = (id: number) => (id === meId ? 'you' : senderName(users, id));
 
@@ -290,6 +307,19 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
     void syncNow();
   }
 
+  /** Makes a move on a card under its lock, from the card as it stands there (the card-owner decision). */
+  async function move(card: Card, kind: Move) {
+    await rewriteCard(doc!, card.id, (now) => moved(now, kind, me!));
+  }
+
+  /** Asks the card's owner to mark it ready: a line on the card, then a message in the direct chat with them, so only they get a push. */
+  async function ask(card: Card) {
+    // First: a new chat needs a key for them, which a person whose keys changed and are unchecked cannot get (D-018), and then nothing is written.
+    const chat = await startDirectChat(card.owner!);
+    if (await rewriteCard(doc!, card.id, (now) => moved(now, 'ask', me!)))
+      await sendCardNote(chat, { kind: 'ready', card: card.cardId, docId: doc!.id, section: card.id }, `Asks you to mark ${card.cardId} ready: ${card.title}`);
+  }
+
   async function copy() {
     // The same text as a linked repository's copy (D-117).
     await navigator.clipboard.writeText(copyOf(column, cards.map((c) => c.text)));
@@ -298,6 +328,7 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
   }
 
   const kinds: CardKind[] = column === 'decisions' ? ['D'] : ['R', 'K'];
+  const edited = editing && cards.find((c) => c.id === editing.section.id);
 
   const cardView = (card: Card) => {
     if (editing?.section.id === card.id) return null;
@@ -311,22 +342,41 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
     // A Roadmap card's face shows its owner and whose move it is; its id and status are inside (the board-lanes decision).
     const face = column === 'roadmap';
     const right = face ? moveOf(card) : card.status;
-    const about = face ? [card.status, card.owner !== undefined && `opened by ${whom(card.owner)}`].filter(Boolean).join(' · ') : '';
+    // A page cannot check a merge, so it says who wrote a status that is not the owner's.
+    const about = face
+      ? [card.status, card.setBy !== undefined && card.setBy !== card.owner && laneOf(card.status) !== 'open' && `set by ${whom(card.setBy)}`, card.owner !== undefined && `opened by ${whom(card.owner)}`].filter(Boolean).join(' · ')
+      : '';
+    const canMove = face && me && !lock;
+    const pick = canMove && moved(card, 'pick', me);
+    const take = canMove && takeable(card, meName);
+    const moves = canMove ? MOVES.filter(([kind]) => MOVE_FROM[kind] === laneOf(card.status) && (kind !== 'ask' || (card.owner !== undefined && card.owner !== me.id))) : [];
+    const head = (
+      <button className={`board-card-head ${face ? 'board-face' : ''}`} onClick={() => setOpen(isOpen ? null : card.id)} aria-expanded={isOpen}>
+        {!face ? (
+          card.kind && <span className="board-card-id">{card.cardId}</span>
+        ) : card.owner !== undefined ? (
+          // The users in the store leave out the user themself.
+          <Avatar name={card.owner === meId ? meName : senderName(users, card.owner)} seed={card.owner} size={24} />
+        ) : (
+          <span className="board-no-owner" role="img" title="No owner" aria-label="No owner" />
+        )}
+        <strong>{card.failed ? 'This card could not be decrypted.' : card.title || 'Untitled'}</strong>
+        {right && <span className="board-card-status">{right}</span>}
+        {face && cardRun && !isOpen && <Tag tone={runTone}>{runLabel}</Tag>}
+      </button>
+    );
     return (
       <article key={card.id} className={`board-card ${lock ? 'is-locked' : ''} ${isOpen ? 'is-open' : ''}`}>
-        <button className={`board-card-head ${face ? 'board-face' : ''}`} onClick={() => setOpen(isOpen ? null : card.id)} aria-expanded={isOpen}>
-          {!face ? (
-            card.kind && <span className="board-card-id">{card.cardId}</span>
-          ) : card.owner !== undefined ? (
-            // The users in the store leave out the user themself.
-            <Avatar name={card.owner === meId ? meName : senderName(users, card.owner)} seed={card.owner} size={24} />
-          ) : (
-            <span className="board-no-owner" role="img" title="No owner" aria-label="No owner" />
-          )}
-          <strong>{card.failed ? 'This card could not be decrypted.' : card.title || 'Untitled'}</strong>
-          {right && <span className="board-card-status">{right}</span>}
-          {face && cardRun && !isOpen && <Tag tone={runTone}>{runLabel}</Tag>}
-        </button>
+        {pick ? (
+          <div className="board-face-row">
+            {head}
+            <button className="button-secondary board-new board-pick" onClick={() => run(move(card, 'pick'))}>
+              Pick
+            </button>
+          </div>
+        ) : (
+          head
+        )}
         {same.has(card.id) && <p className="board-card-warn">Another card has this number. Renumber one of them.</p>}
         {isOpen && (
           <div className="board-card-body">
@@ -334,6 +384,7 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
               {lock && <span className="doc-lock">{nameOf(lock.userId)} is editing</span>}
               <button
                 className="icon-button icon-button-small"
+                // From the text that stands, so a typo fix never signs a status someone could not set.
                 onClick={() => run(edit(doc!, card.id, card.text, card.pos))}
                 disabled={editing !== null || !!lock || card.failed}
                 title="Edit"
@@ -368,16 +419,41 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
                   <PlayIcon width={18} height={18} />
                 </button>
               )}
-              <button
-                className="icon-button icon-button-small"
-                onClick={() => run(remove(card))}
-                disabled={editing !== null || !!lock}
-                title="Delete"
-                aria-label="Delete card"
-              >
-                <TrashIcon width={18} height={18} />
-              </button>
+              {canDelete(card) && (
+                <button
+                  className="icon-button icon-button-small"
+                  onClick={() => run(remove(card))}
+                  disabled={editing !== null || !!lock}
+                  title="Delete"
+                  aria-label="Delete card"
+                >
+                  <TrashIcon width={18} height={18} />
+                </button>
+              )}
             </div>
+            {card.refused && (
+              <p className="board-card-warn">
+                {nameOf(card.refused.by)} {card.refused.status === null ? 'deleted this card' : `set “${card.refused.status}”`}. Only {whom(card.owner!)}, who opened it, can do that.
+              </p>
+            )}
+            {(moves.length > 0 || take) && (
+              <p className="board-card-run">
+                {take && (
+                  <button className="button-secondary board-new" onClick={() => run(takeCard(doc!, card.id))} title="Become its owner, who marks it ready and closes it">
+                    Take
+                  </button>
+                )}
+                {moves.map(([kind, label]) => {
+                  const ok = moved(card, kind, me!) !== null;
+                  const why = kind === 'ask' ? 'You asked already' : kind === 'review' ? 'An agent or a pull request runs it' : card.owner === undefined ? 'It has no owner' : `Only ${whom(card.owner)} can`;
+                  return (
+                    <button key={kind} className="button-secondary board-new" disabled={!ok} title={ok ? undefined : why} onClick={() => run(kind === 'ask' ? ask(card) : move(card, kind))}>
+                      {label}
+                    </button>
+                  );
+                })}
+              </p>
+            )}
             {face && (card.kind || about) && (
               <p className="board-card-run">
                 {card.kind && <span className="board-card-id">{card.cardId}</span>}
@@ -463,6 +539,7 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
             key={editing.section.id}
             doc={editing.doc}
             editing={editing.section}
+            canDelete={!edited || canDelete(edited)}
             onClose={(message) => {
               setEditing(null);
               setError(message ?? '');
@@ -488,9 +565,9 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
             <details
               key={group.name}
               className="board-group"
-              open={group.name === 'Open' ? drawerOpen : !group.folded}
+              open={group.key === 'open' ? drawerOpen : !group.folded}
               // Only a toggle that differs from what was rendered is the user's.
-              onToggle={(e) => group.name === 'Open' && e.currentTarget.open !== drawerOpen && setDrawer(e.currentTarget.open)}
+              onToggle={(e) => group.key === 'open' && e.currentTarget.open !== drawerOpen && setDrawer(e.currentTarget.open)}
             >
               <summary>
                 {group.name} <small>{group.cards.length}</small>

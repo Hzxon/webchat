@@ -9,9 +9,8 @@
 import { newStatus } from '../../shared/board';
 import type { BoardSyncDTO, RunRequest } from '../../shared/types';
 import { agentChats, inOrder } from './agents';
-import { boardDocs, cardRuns, dateOf, GROUPS, groupOf, parseCard, statusMove, withStatus, workingStatus, type Card } from './board';
-import { syncNow } from './chat';
-import { loadSections, rewriteSection } from './docs';
+import { boardDocs, cardRuns, dateOf, startable, statusMove, withStatus, workingStatus, type Card } from './board';
+import { boardCards, rewriteCard } from './docs';
 import type { ChatDoc, ChatMessage } from './e2ee/keyring';
 import { store } from './store';
 
@@ -29,7 +28,7 @@ export async function followRuns() {
   const requests = new Map<number, RunRequest>(messages.flatMap((m) => (m.run?.kind === 'request' && m.senderId === me.id ? [[m.id, m.run] as const] : [])));
   const working = workingStatus(me.displayName);
   const read = new Map<string, Promise<Card[]>>();
-  const cardsOf: Cards = (doc) => read.get(doc.id) ?? read.set(doc.id, loadSections(doc).then((sections) => sections.map(parseCard))).get(doc.id)!;
+  const cardsOf: Cards = (doc) => read.get(doc.id) ?? read.set(doc.id, boardCards(doc)).get(doc.id)!;
   for (const docId of new Set([...requests.values()].map((r) => r.docId))) {
     const doc = state.docs[docId];
     if (!doc) continue;
@@ -50,12 +49,9 @@ export async function followRuns() {
   await followClaims(messages, me.id, cardsOf);
 }
 
-/** Sets a card's status under its lock, only while `from` allows the status it has there, and syncs once it moved. */
+/** Sets a card's status under its lock, only while `from` allows the status that stands there, and syncs once it moved. */
 async function move(doc: ChatDoc, section: string, from: (status: string) => boolean, to: string) {
-  const moved = await rewriteSection(doc, section, async (card) =>
-    card && !card.failed && from(parseCard(card).status) ? { text: withStatus(card.text, to), pos: card.pos } : null,
-  ).catch(() => false);
-  if (moved) void syncNow();
+  await rewriteCard(doc, section, (card) => (from(card.status) ? withStatus(card.text, to) : null)).catch(() => false);
 }
 
 const PROPOSED = /^Proposed\b/i;
@@ -76,8 +72,9 @@ async function accept(card: ChatDoc, ids: string[], status: string, key: string,
 
 /**
  * Sets the cards that open pull requests claim to `Running: repo#N`, as the owner's agent names
- * them for a linked board, so a claim made outside WebChat shows there too (R-040). Only an open
- * card moves, never one that runs, waits for review or is finished.
+ * them for a linked board, so a claim made outside WebChat shows there too (R-040). Only a ready
+ * card moves, or an open one with no owner, since only an owner marks theirs ready (the card-owner
+ * decision); never one that runs, waits for review or is finished.
  */
 async function followClaims(messages: ChatMessage[], meId: number, cardsOf: Cards) {
   const state = store.get();
@@ -91,7 +88,7 @@ async function followClaims(messages: ChatMessage[], meId: number, cardsOf: Card
     for (const { card: id, pull } of fresh) {
       tried.add(`${doc.id}:${id}:${pull}`);
       const card = cards.find((c) => c.cardId === id);
-      if (!card || !['Ready', 'Open'].includes(GROUPS.roadmap[groupOf('roadmap', card.status)]!.name) || doc.locks.some((l) => l.section === card.id)) continue;
+      if (!card || !startable(card, state.me?.displayName ?? '') || doc.locks.some((l) => l.section === card.id)) continue;
       await move(doc, card.id, (status) => status === card.status, `Running: ${repo}#${pull}`);
     }
   }

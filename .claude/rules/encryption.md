@@ -23,6 +23,7 @@ docs/decisions.md that explains it.
 - A page accepts a wrapped chat key only when the wrapper is a chat member; the server checks a new key is wrapped exactly once per member (D-015).
 - Sign every field the server could change and the page relies on; the server refuses bad values and never corrects a signed field (D-016).
 - Add a new signed header field only for new kinds, so old messages still verify (D-016).
+- A message's `card` field is sealed content, never a header field (the card-notes decision, proposed in #189).
 - The page checks a decrypted message again when the server sends it with any signed field or the signature changed (D-016).
 - A push payload is at most 3,000 bytes and never carries the plain text of an encrypted message (D-017).
 - Push shows "New message" when too long, and "New encrypted message" when keys are missing or the signature fails (D-017).

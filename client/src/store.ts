@@ -64,6 +64,8 @@ export interface State {
   docOpen: string | null;
   /** The project whose board shows instead of a chat (R-021). */
   boardOpen: number | null;
+  /** The card, by section id, that the board opens on, as a request about it asks (the card-notes decision). */
+  boardCard: string | null;
   /** The version of each doc this device last showed (see keystore.getDocsSeen). */
   docsSeen: Record<string, number>;
   /** The Coding agents pane is showing instead of a chat (D-103). */
@@ -96,6 +98,7 @@ const initialState: State = {
   docs: {},
   docOpen: null,
   boardOpen: null,
+  boardCard: null,
   docsSeen: {},
   agentsOpen: false,
   agentThread: null,
@@ -282,8 +285,9 @@ export const actions = {
   /** Shows a doc in place of the open chat, or closes it. The sidebar turns to its row, also at start (K-62). */
   setDocOpen: (docOpen: string | null) => store.set((s) => (docOpen === null ? { ...s, docOpen } : show(s, { docOpen, tab: 'projects' }))),
 
-  /** Shows a project's board in place of the open chat, or closes it. The sidebar turns to its row (K-62). */
-  setBoardOpen: (boardOpen: number | null) => store.set((s) => (boardOpen === null ? { ...s, boardOpen } : show(s, { boardOpen, tab: 'projects' }))),
+  /** Shows a project's board in place of the open chat, open at a card if one is named, or closes it. The sidebar turns to its row (K-62). */
+  setBoardOpen: (boardOpen: number | null, boardCard: string | null = null) =>
+    store.set((s) => (boardOpen === null ? { ...s, boardOpen } : show(s, { boardOpen, boardCard, tab: 'projects' }))),
 
   setDocsSeen: (docsSeen: Record<string, number>) => store.set((s) => ({ ...s, docsSeen })),
 
