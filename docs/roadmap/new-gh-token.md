@@ -1,6 +1,7 @@
 ### Q: Should a card run stop needing the owner's gh token?
 
-Status: Open. Raised 2026-11-09 by the harness audit.
+Status: Done 2026-11-12 in #193: no, in docs/decisions/no-server-push-token.md. Raised 2026-11-09
+by the harness audit.
 
 Order: answer it before the Codex card's second half, which sets the isolation bar a weak
 harness must clear to take cards. Nothing else waits on it.
