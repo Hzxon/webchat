@@ -5,9 +5,9 @@ Status: Proposed 2026-11-12 in #193 (docs/roadmap/new-agent-build.md).
 The Connect dialog shows one line for the server's own release. The script and a single file per
 OS and processor, with Node inside, come from that GitHub release and are checked against its
 checksums, never served by WebChat. Setup checks read-only first, then asks once: a summary, the
-harnesses to link, the password. It adds only what the agent needs, git through the package
-manager and a checked `gh` for `_webchat`, offers a missing harness's own installer and never
-changes a security setting. A laptop without admin rights is not supported. A root-owned updater
+harnesses to link, the password. It adds only what the agent needs: git through the package
+manager, and on Linux the `bubblewrap` and `socat` that Claude Code's sandbox needs, a checked `gh`
+for `_webchat`, and a missing harness's own installer. It never changes a security setting. A laptop without admin rights is not supported. A root-owned updater
 follows the server's release, forward only. `doctor` reruns the checks. Why: one line, one
 password and two approvals in the browser.
 
