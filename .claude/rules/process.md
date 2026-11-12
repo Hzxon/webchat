@@ -17,7 +17,7 @@ docs/decisions.md that explains it. The process itself is in AGENTS.md.
 
 - Until the board is linked, `scripts/claim.sh` takes the decision number as a third argument, refuses one an open pull request reserves, and takes it by pushing the tag `reserve/D-xxx`, which the remote creates only once; never delete or force such a tag (D-076).
 - Once `docs/decisions.md` is a copy of the board, `scripts/claim.sh` refuses a decision number and pushes no `reserve/D-*` tag, since the board gives every number (D-117).
-- A claim's pull request body starts with `Claims K-12`: the owner's agent reads open pull requests for it and sets that card In progress on the board (D-117).
+- A claim's pull request body starts with `Claims K-12`: the owner's agent reads open pull requests for it and sets that card Running on the board (D-117).
 - Before a claim, check that the item is still open on main, that no decision since settles it, and that no other entry or pull request covers it; `scripts/claim.sh -c` records the check and refuses a finished item (D-107).
 - An item that no longer holds gets a small pull request that sets its status, never a claim: in place until the board is linked, then in a file `docs/roadmap/<id>.md` (D-107, D-117).
 - Until the board is linked, a pull request that finishes a roadmap item edits only that item's status line, in place; a housekeeping pull request deletes the entry and adds its Done row (D-076).

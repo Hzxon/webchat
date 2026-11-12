@@ -4,7 +4,7 @@
 import { newKeyId, randomBytes, toBase64Url, type DocContent } from '../../shared/e2ee';
 import type { DocRevisionDTO } from '../../shared/types';
 import { api, ApiError } from './api';
-import { COLUMN_TITLES, idOf, parseCard, type BoardColumn, type CardKind } from './board';
+import { cardSections, COLUMN_TITLES, idOf, parseCard, sectionOf, type BoardColumn, type CardKind } from './board';
 import { currentLookup, loadDraft, openDocs, setEditing, withChatKey } from './chat';
 import { keystore } from './e2ee/keystore';
 import { keyring, type ChatDoc } from './e2ee/keyring';
@@ -18,6 +18,16 @@ export interface DocSection {
   failed: boolean;
   /** Who wrote its newest revision, for the brief that marks teammates' text (D-105). */
   authorId?: number;
+  /** Who wrote its first revision, when that revision says `addCard` opened it: the card's owner. */
+  openedBy?: number;
+  /** Each member's newest revision of it that opens, newest first. */
+  words?: Word[];
+}
+
+export interface Word {
+  id: number;
+  authorId: number;
+  text: string;
 }
 
 export const newSectionId = () => toBase64Url(randomBytes(8));
@@ -62,16 +72,12 @@ export async function loadSections(doc: ChatDoc): Promise<DocSection[]> {
   const opened = await openRevisions(doc, await api.docSections(doc.id));
   return opened
     .filter(({ revision, content }) => revision.section !== 'title' && !content?.removed)
-    .map(({ revision, content }) => ({
-      id: revision.section,
-      text: content?.text ?? '',
-      // A section that does not open keeps its place among the others by when it was written.
-      pos: content?.pos ?? revision.createdAt,
-      failed: !content,
-      authorId: revision.authorId,
-    }))
+    .map(sectionOf)
     .sort((a, b) => a.pos - b.pos);
 }
+
+/** A board doc's cards, with who opened each and every member's word, which take more than the newest revisions. */
+export const loadCards = async (doc: ChatDoc) => cardSections(await openRevisions(doc, await api.docWords(doc.id)));
 
 /** A section's revisions, newest first, each with what it held. */
 export const sectionHistory = async (doc: ChatDoc, section: string) => openRevisions(doc, await api.sectionHistory(doc.id, section));
@@ -157,7 +163,7 @@ export async function addCard(doc: ChatDoc, section: string, kind: CardKind, tex
     const cards = (await loadSections(doc)).map(parseCard);
     const id = idOf(cards.map((c) => c.cardId), kind);
     const content = { text: text(id), pos: Math.max(0, ...cards.map((c) => c.pos)) + 1 };
-    await replaceSection(doc, section, content);
+    await replaceSection(doc, section, { ...content, opened: true });
     return { id, ...content };
   } finally {
     await api.unlockSection(doc.id, 'title').catch(() => undefined);

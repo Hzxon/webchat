@@ -24,8 +24,9 @@ Node host with an embedded PGlite database. The [README](README.md) explains it 
 
 Roadmap entries are R-items for features and other work, K-items for known issues and Q-items for
 open questions. Each says why it matters, what it covers and when it is done. A question that
-belongs to an item goes under that item. An item's status is one of Next, Planned, Idea, Blocked,
-In progress, Done, Fixed or Dropped. Numbers never change and are never reused. A dropped item
+belongs to an item goes under that item. An item's status is one of Ready, Idea, Blocked, Running,
+In review, Done, Fixed or Dropped. The board still reads Next and Planned as Ready, and In progress
+as Running. Numbers never change and are never reused. A dropped item
 keeps its number and says why.
 
 ## Commands
@@ -89,7 +90,7 @@ its own roadmap item. Nothing coordinates them except what is on GitHub (D-062).
    file that the owner numbers on the board (step 3). The script refuses an item that is finished or
    that an open pull request already names, prints what names the item, then pushes an empty commit
    and opens a draft pull request that records the check. Its body starts with `Claims K-12`; once
-   the board is linked, WebChat's agent reads that to mark the card In progress on the board. If it
+   the board is linked, WebChat's agent reads that to mark the card Running on the board. If it
    refuses, pick another item or number. Work that is not a roadmap item, such as a process change,
    claims the same way by hand: a draft first, with a title and body that say what it covers.
 2. **Work on that branch** and push to the same pull request. Do not merge or rebase on main to stay

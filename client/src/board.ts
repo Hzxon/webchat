@@ -4,7 +4,7 @@
 // so the tests run it without a browser.
 import { readCard, type CardKind } from '../../shared/board';
 import type { DocContent } from '../../shared/e2ee';
-import { RUN_PICKUP_MS, type RunReport } from '../../shared/types';
+import { RUN_PICKUP_MS, type DocRevisionDTO, type RunReport } from '../../shared/types';
 import type { DocSection } from './docs';
 import type { ChatConversation, ChatDoc, ChatMessage } from './e2ee/keyring';
 import type { PendingStatus } from './store';
@@ -25,6 +25,8 @@ export interface Card extends DocSection {
   body: string;
   /** The line after "Checked:" that an agent's check left, or '' for a card never checked (R-041). */
   checked: string;
+  /** The member who opened it, while they are still in the project (the board-lanes decision). */
+  owner?: number;
 }
 
 export const COLUMNS: BoardColumn[] = ['decisions', 'roadmap'];
@@ -60,6 +62,52 @@ export function parseCard(section: DocSection): Card {
 
 const CHECKED = /^Checked:(.*)$/m;
 
+/** A revision with what it holds, or null when it does not open. */
+export interface Opened {
+  revision: DocRevisionDTO;
+  content: DocContent | null;
+}
+
+/** A section as one of its revisions gives it. */
+export const sectionOf = ({ revision, content }: Opened): DocSection => ({
+  id: revision.section,
+  text: content?.text ?? '',
+  // A section that does not open keeps its place among the others by when it was written.
+  pos: content?.pos ?? revision.createdAt,
+  failed: !content,
+  authorId: revision.authorId,
+});
+
+/**
+ * A board doc's cards from the rows `GET /docs/:id/words` gives, in id order: each section's oldest
+ * revision and each author's newest (the board-lanes decision). The newest gives the card, the
+ * oldest its opener when it says `opened`, and each author's newest their word.
+ */
+export function cardSections(rows: Opened[]): DocSection[] {
+  const bySection = new Map<string, Opened[]>();
+  for (const row of rows) if (row.revision.section !== 'title') (bySection.get(row.revision.section) ?? bySection.set(row.revision.section, []).get(row.revision.section)!).push(row);
+  return [...bySection.values()]
+    .filter((list) => !list.at(-1)!.content?.removed)
+    .map((list) => {
+      // Rows come in id order, so each author's last row is their word, not the oldest row the list also holds.
+      const wordOf = new Map(list.map((row) => [row.revision.authorId, row]));
+      return {
+        ...sectionOf(list.at(-1)!),
+        openedBy: list[0]!.content?.opened ? list[0]!.revision.authorId : undefined,
+        words: [...wordOf.values()]
+          .sort((a, b) => b.revision.id - a.revision.id)
+          .flatMap(({ revision, content }) => (content ? [{ id: revision.id, authorId: revision.authorId, text: content.text }] : [])),
+      };
+    })
+    .sort((a, b) => a.pos - b.pos);
+}
+
+/** A card with its owner: the member who opened it, while they are still among `members`. */
+export const cardOf = (section: DocSection, members: number[]): Card => ({
+  ...parseCard(section),
+  owner: section.openedBy !== undefined && members.includes(section.openedBy) ? section.openedBy : undefined,
+});
+
 /**
  * A card body with this check's line on top, in place of any it had: "Checked: 2026-11-07. Read the
  * cards, …", as `scripts/claim.sh -c` records a check (R-041, D-116). An edit keeps it.
@@ -77,17 +125,19 @@ export const unchecked = (card: Card) => (card.kind === 'R' || card.kind === 'K'
 export const WAITING = 'Waiting for a decision';
 
 /** The groups a column shows, in order. A folded group opens on a click. */
-export const GROUPS: Record<BoardColumn, Array<{ name: string; statuses: string[]; folded?: true }>> = {
+export const GROUPS: Record<BoardColumn, Array<{ name: string; statuses: string[]; folded?: true; lane?: true }>> = {
   decisions: [
     { name: 'Proposed', statuses: ['Proposed'] },
     { name: 'Accepted', statuses: ['Accepted'] },
     { name: 'Superseded', statuses: ['Superseded'], folded: true },
   ],
+  // Ready, Running and In review are the lanes, side by side; Open stays fourth, where a status
+  // outside the list goes.
   roadmap: [
-    { name: 'In progress', statuses: ['In progress', WAITING] },
+    { name: 'Ready', statuses: ['Ready'], lane: true },
+    { name: 'Running', statuses: ['Running', WAITING], lane: true },
     // A run that ended in a draft pull request waits here for its owner to review and merge it.
-    { name: 'In review', statuses: ['In review'] },
-    { name: 'Next', statuses: ['Next', 'Planned'] },
+    { name: 'In review', statuses: ['In review'], lane: true },
     { name: 'Open', statuses: ['Idea', 'Open'] },
     { name: 'Done', statuses: ['Done', 'Fixed', 'Dropped'], folded: true },
   ],
@@ -111,7 +161,10 @@ export function withStatus(text: string, status: string): string {
 }
 
 /** The status a user's page sets on a card once their agent takes it (D-100). */
-export const workingStatus = (name: string) => `In progress: ${name}’s agent`;
+export const workingStatus = (name: string) => `Running: ${name}’s agent`;
+
+/** Who runs a running card, such as "Ann’s agent" or "o/r#3", or the pull request a card in review waits in, or ''. */
+export const runnerOf = (status: string) => /^(?:Running|In review):\s*(.*)$/.exec(status)?.[1] ?? '';
 
 /**
  * Whether a card's status shows a run other than the user's own that still goes: a teammate's
@@ -119,7 +172,9 @@ export const workingStatus = (name: string) => `In progress: ${name}’s agent`;
  * agent would open a second draft (K-59).
  */
 export const otherRun = (status: string, name: string) =>
-  status.startsWith('In review') || status.startsWith(WAITING) || (status.startsWith('In progress:') && status !== workingStatus(name));
+  status.startsWith('In review') ||
+  status.startsWith(WAITING) ||
+  (status.startsWith('Running:') && status !== workingStatus(name));
 
 /** A new card's id: the next free number of its kind, as wide as the widest id of that kind, so R-043 follows R-005 (R-040). */
 export function idOf(ids: string[], kind: CardKind) {

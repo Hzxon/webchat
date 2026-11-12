@@ -10,7 +10,7 @@ export interface CardText {
   /** The kind and number as written, since code and commits cite `R-005` with its zeros. */
   id: string;
   title: string;
-  /** The status line without "Status:" and its final period, such as "Accepted 2026-11-04". */
+  /** The status line without "Status:" and its final period, such as "Accepted 2026-11-04", in today's words (`newStatus`). */
   status: string;
   /** What is under the heading and the status line. */
   body: string;
@@ -20,6 +20,15 @@ type Column = 'decisions' | 'roadmap';
 
 const HEADING = /^###\s+([DRKQ])-(\d+):\s*(.*?)\s*$/;
 const STATUS = /^Status:\s*(.*?)\.?\s*$/;
+
+/** The words from before Ready and Running (the board-lanes decision), as each status reads them. */
+const OLD_WORDS: Array<[RegExp, string]> = [
+  [/^in progress\b/i, 'Running'],
+  [/^(next|planned)\b/i, 'Ready'],
+];
+
+/** A status in today's words: an old leading word becomes Running or Ready, and the rest of the line stays. */
+export const newStatus = (status: string) => OLD_WORDS.reduce((s, [word, now]) => s.replace(word, now), status);
 
 /** The first non-empty line, the status line under it if there is one, and the rest as the body. */
 function parts(text: string) {
@@ -39,7 +48,7 @@ export function readCard(text: string): CardText | null {
   const card = parts(text);
   const heading = card && HEADING.exec(card.heading);
   if (!card || !heading) return null;
-  return { kind: heading[1] as CardKind, number: Number(heading[2]), id: `${heading[1]}-${heading[2]}`, title: heading[3], status: card.status, body: card.body };
+  return { kind: heading[1] as CardKind, number: Number(heading[2]), id: `${heading[1]}-${heading[2]}`, title: heading[3], status: newStatus(card.status), body: card.body };
 }
 
 /** What every copy says after its title, so the agent and a check can tell a copy from a file written by hand. */
@@ -56,10 +65,10 @@ const COPIES = {
   },
 };
 
-const SECTIONS = ['In progress', 'Next', 'Ideas', 'Known issues', 'Open questions', 'Dropped', 'Done'];
+const SECTIONS = ['Running', 'Ready', 'Ideas', 'Known issues', 'Open questions', 'Dropped', 'Done'];
 const BY_STATUS: Array<[RegExp, string]> = [
-  [/^(in (progress|review)|waiting)/i, 'In progress'],
-  [/^(next|planned)/i, 'Next'],
+  [/^(running|in review|waiting)/i, 'Running'],
+  [/^ready/i, 'Ready'],
   [/^dropped/i, 'Dropped'],
   [/^(done|fixed)/i, 'Done'],
 ];
@@ -186,7 +195,7 @@ export function proposalOf(path: string, markdown: string): { kind: CardKind; id
     kind: (kind ?? (path.startsWith('docs/decisions/') ? 'D' : 'R')) as CardKind,
     ...(digits && { id: `${kind}-${digits}` }),
     title,
-    ...(card.status && { status: card.status }),
+    ...(card.status && { status: newStatus(card.status) }),
     body: card.body,
   };
 }

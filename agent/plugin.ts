@@ -743,7 +743,7 @@ export class Plugin {
 
   /**
    * Names the cards that open pull requests claim, as `claimOf` reads them, so the owner's page sets
-   * them In progress, as it sets a run's status (R-040, D-100).
+   * them Running, as it sets a run's status (R-040, D-100).
    */
   private async sendClaims(project: number, copy: BoardCopy, cards: Array<{ text: string }>, chat: number) {
     const pulls = await openPulls(copy.repo, 'number,title,body,headRefName');

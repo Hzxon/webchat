@@ -1,10 +1,13 @@
 // A project's board (R-021): the Decisions column and the Roadmap column of ideas and issues, each
-// a doc whose sections are cards. Cards are written in the section editor docs have, and keep its
-// locks and history. The board docs are created the first time someone adds a card.
+// a doc whose sections are cards, one column at a time behind tabs. The Roadmap shows its cards in
+// lanes, each with its owner's face (the board-lanes decision). Cards are written in the section
+// editor docs have, and keep its locks and history. The board docs are created the first time
+// someone adds a card.
 import { useEffect, useMemo, useState } from 'react';
 import type { ProjectDTO, RunRequest, UserDTO } from '../../../shared/types';
 import {
   boardDocs,
+  cardOf,
   cardRuns,
   GOING,
   cardTemplate,
@@ -14,8 +17,9 @@ import {
   GROUPS,
   groupOf,
   KIND_NAMES,
-  parseCard,
+  runnerOf,
   unchecked,
+  WAITING,
   type BoardColumn,
   type Card,
   type CardKind,
@@ -24,11 +28,12 @@ import {
 import { inOrder, ownAgents, ready, seatFor, useAgentChats } from '../agents';
 import { copyOf } from '../../../shared/board';
 import { askAgent, askLink, cancelRun, syncNow } from '../chat';
-import { addCard, beginEditing, createBoard, loadSections, markSeen, newSectionId, replaceSection, type Editing } from '../docs';
+import { addCard, beginEditing, createBoard, loadCards, loadSections, markSeen, newSectionId, replaceSection, type DocSection, type Editing } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
 import { importEntries } from '../boardLink';
 import { useLinkedRepos } from '../linkedRepos';
 import { actions, senderName, useAppState } from '../store';
+import { Avatar } from './Avatar';
 import { HistoryDialog, SectionEditor } from './DocView';
 import { BackIcon, BoardIcon, CopyIcon, HistoryIcon, PencilIcon, PlayIcon, PlusIcon, StopIcon, TrashIcon } from './icons';
 import { Markdown } from './Markdown';
@@ -38,8 +43,7 @@ export function BoardView({ project }: { project: ProjectDTO }) {
   const docs = useAppState((s) => s.docs);
   const conversations = useAppState((s) => s.conversations);
   const boards = useMemo(() => boardDocs(docs, conversations, project.id), [docs, conversations, project.id]);
-  // At phone width the columns are tabs.
-  const [shown, setShown] = useState<BoardColumn>('decisions');
+  const [shown, setShown] = useState<BoardColumn>('roadmap');
   // Check again asks the user's own agent in the project, about its first linked repository, as the pane's Ask does (R-038, R-041).
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
@@ -176,6 +180,7 @@ type Filter = keyof typeof FILTERS;
 function BoardColumnView({ column, projectId, doc, check }: { column: BoardColumn; projectId: number; doc: ChatDoc | undefined; check?: (id: string) => Promise<void> }) {
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
+  const meName = useAppState((s) => s.me?.displayName ?? '');
   const memberIds = useAppState((s) => s.projects[projectId]?.memberIds ?? NO_MEMBERS);
   // This user's coding agents in the project (D-089), one choice per repository a Claude Code
   // session of theirs is open in (D-094). A card can be handed to one that is online.
@@ -189,11 +194,15 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
         ),
     [memberIds, users, meId],
   );
-  const [cards, setCards] = useState<Card[]>([]);
+  const [sections, setSections] = useState<DocSection[]>([]);
+  // An owner who left the project owns nothing, so owners follow the members without a reload.
+  const cards = useMemo(() => sections.map((s) => cardOf(s, memberIds)), [sections, memberIds]);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [open, setOpen] = useState<string | null>(null);
+  // Whether the Open drawer is open, once the cards first load or the user toggles it; until then it follows the lanes.
+  const [drawer, setDrawer] = useState<boolean | null>(null);
   // The doc is kept with the editing state, because the first card's doc is made just before it.
   const [editing, setEditing] = useState<{
     doc: ChatDoc;
@@ -214,8 +223,9 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
   useEffect(() => {
     if (!doc) return;
     let live = true;
-    loadSections(doc).then(
-      (loaded) => live && setCards(loaded.map(parseCard)),
+    // Only the Roadmap's cards have owners, which takes each card's first revision too.
+    (column === 'roadmap' ? loadCards : loadSections)(doc).then(
+      (loaded) => live && setSections(loaded),
       (err: Error) => live && setError(err.message),
     );
     markSeen(doc);
@@ -232,6 +242,23 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
     ...group,
     cards: listed.filter((c) => groupOf(column, c.status) === i).sort((a, b) => (b.number ?? -1) - (a.number ?? -1)),
   }));
+  // The Roadmap's lanes sit side by side; Open and Done are drawers under them.
+  const lanes = groups.filter((group) => group.lane);
+  const drawers = groups.filter((group) => !group.lane);
+  const lanesHold = lanes.some((lane) => lane.cards.length > 0);
+  const drawerOpen = drawer ?? !lanesHold;
+  // Open while the lanes are empty, so a new board's first card does not hide in it; then it stays as it was, so it never shuts on a reader.
+  useEffect(() => {
+    if (sections.length) setDrawer((d) => d ?? !lanesHold);
+  }, [sections]);
+  /** A member as a sentence names them. */
+  const whom = (id: number) => (id === meId ? 'you' : senderName(users, id));
+
+  /** What a Roadmap card's face shows at its right: who runs it, or the pull request it waits in. */
+  function moveOf(card: Card) {
+    if (!card.status.startsWith(WAITING)) return runnerOf(card.status);
+    return card.owner === undefined ? card.status : `Waiting for ${whom(card.owner)}`;
+  }
 
   /** Runs an action and shows what went wrong, such as a lock someone else holds. */
   function run(work: Promise<unknown>) {
@@ -251,6 +278,8 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
     // Saved at once, under the column's lock on numbers, so no other page gives its number; Cancel takes it back (D-116).
     const id = newSectionId();
     const { text, pos } = await addCard(target, id, kind, (cardId) => cardTemplate(kind, cardId));
+    // A new card is open, so it shows in the Open drawer once its editor closes.
+    setDrawer(true);
     await edit(target, id, text, pos, true);
   }
 
@@ -269,6 +298,125 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
   }
 
   const kinds: CardKind[] = column === 'decisions' ? ['D'] : ['R', 'K'];
+
+  const cardView = (card: Card) => {
+    if (editing?.section.id === card.id) return null;
+    const lock = lockOf(card.id);
+    const isOpen = open === card.id;
+    const cardRun = runs?.get(card.id);
+    const [runTone, runLabel] = RUN_STATES[cardRun?.state ?? 'waiting'];
+    const request = cardRun && agentMessages.find((m) => m.id === cardRun.request);
+    // A request still being sent has no id that a cancel could name.
+    const stoppable = !!request && cardRun!.state !== 'sending' && GOING.has(cardRun!.state);
+    // A Roadmap card's face shows its owner and whose move it is; its id and status are inside (the board-lanes decision).
+    const face = column === 'roadmap';
+    const right = face ? moveOf(card) : card.status;
+    const about = face ? [card.status, card.owner !== undefined && `opened by ${whom(card.owner)}`].filter(Boolean).join(' · ') : '';
+    return (
+      <article key={card.id} className={`board-card ${lock ? 'is-locked' : ''} ${isOpen ? 'is-open' : ''}`}>
+        <button className={`board-card-head ${face ? 'board-face' : ''}`} onClick={() => setOpen(isOpen ? null : card.id)} aria-expanded={isOpen}>
+          {!face ? (
+            card.kind && <span className="board-card-id">{card.cardId}</span>
+          ) : card.owner !== undefined ? (
+            // The users in the store leave out the user themself.
+            <Avatar name={card.owner === meId ? meName : senderName(users, card.owner)} seed={card.owner} size={24} />
+          ) : (
+            <span className="board-no-owner" role="img" title="No owner" aria-label="No owner" />
+          )}
+          <strong>{card.failed ? 'This card could not be decrypted.' : card.title || 'Untitled'}</strong>
+          {right && <span className="board-card-status">{right}</span>}
+          {face && cardRun && !isOpen && <Tag tone={runTone}>{runLabel}</Tag>}
+        </button>
+        {same.has(card.id) && <p className="board-card-warn">Another card has this number. Renumber one of them.</p>}
+        {isOpen && (
+          <div className="board-card-body">
+            <div className="doc-section-tools">
+              {lock && <span className="doc-lock">{nameOf(lock.userId)} is editing</span>}
+              <button
+                className="icon-button icon-button-small"
+                onClick={() => run(edit(doc!, card.id, card.text, card.pos))}
+                disabled={editing !== null || !!lock || card.failed}
+                title="Edit"
+                aria-label="Edit card"
+              >
+                <PencilIcon width={18} height={18} />
+              </button>
+              <button className="icon-button icon-button-small" onClick={() => setHistoryOf(card)} title="History" aria-label="Card history">
+                <HistoryIcon width={18} height={18} />
+              </button>
+              {stoppable && (
+                // The agent stops the run and reports it failed; a request it never took ends here (R-030).
+                <button
+                  className="icon-button icon-button-small"
+                  disabled={cardRun!.stopping}
+                  onClick={() => run(cancelRun({ ...request!, run: request!.run as RunRequest }))}
+                  title={cardRun!.stopping ? 'Stopping…' : `Stop · ${nameOf(cardRun!.runtime)}`}
+                  aria-label="Stop the run"
+                >
+                  <StopIcon width={18} height={18} />
+                </button>
+              )}
+              {!stoppable && canRun && card.kind && !card.failed && (
+                // The brief says what the agent will follow and who wrote it, and starts it (D-105).
+                <button
+                  className="icon-button icon-button-small"
+                  disabled={!!cardRun && GOING.has(cardRun.state)}
+                  onClick={() => actions.openBrief({ projectId, docId: doc!.id, section: card.id })}
+                  title={cardRun && GOING.has(cardRun.state) ? `${runLabel} · ${nameOf(cardRun.runtime)}` : 'Run with your agent'}
+                  aria-label="Run with your agent"
+                >
+                  <PlayIcon width={18} height={18} />
+                </button>
+              )}
+              <button
+                className="icon-button icon-button-small"
+                onClick={() => run(remove(card))}
+                disabled={editing !== null || !!lock}
+                title="Delete"
+                aria-label="Delete card"
+              >
+                <TrashIcon width={18} height={18} />
+              </button>
+            </div>
+            {face && (card.kind || about) && (
+              <p className="board-card-run">
+                {card.kind && <span className="board-card-id">{card.cardId}</span>}
+                {about && <span>{about}</span>}
+                {/* No agent checked it against the board, the code and the open pull requests yet (R-041). */}
+                {unchecked(card) && <Tag tone="muted">Unchecked</Tag>}
+              </p>
+            )}
+            {cardRun && (
+              <p className="board-card-run">
+                <Tag tone={runTone}>{runLabel}</Tag>
+                <span>
+                  {nameOf(cardRun.runtime)}
+                  {cardRun.repo && ` in ${cardRun.repo}`}
+                  {cardRun.harness && ` with ${cardRun.harness}`}
+                  {cardRun.note && ` · ${cardRun.note}`}
+                </span>
+                <button
+                  className="board-card-run-link"
+                  onClick={() => actions.setAgentsOpen(true, request?.clientId ?? null)}
+                >
+                  Open the conversation
+                </button>
+              </p>
+            )}
+            {check && card.kind && !card.failed && (
+              <p className="board-card-run">
+                <span>Your agent checks it against the board, the code and the open pull requests.</span>
+                <button className="board-card-run-link" onClick={() => run(check(card.cardId))}>
+                  Check again
+                </button>
+              </p>
+            )}
+            {card.body ? <Markdown text={card.body} /> : <p className="doc-note">Nothing more.</p>}
+          </div>
+        )}
+      </article>
+    );
+  };
 
   return (
     <div className={`board-column board-${column}`}>
@@ -322,118 +470,32 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
           />
         )}
         {!doc && !editing && <p className="doc-note">No {column === 'decisions' ? 'decisions' : 'ideas or issues'} yet.</p>}
-        {groups
+        {lanes.length > 0 && (
+          <div className="board-lanes">
+            {lanes.map((lane) => (
+              <section key={lane.name} className="board-lane">
+                <h3>
+                  {lane.name} <small>{lane.cards.length}</small>
+                </h3>
+                {lane.cards.map((card) => cardView(card))}
+              </section>
+            ))}
+          </div>
+        )}
+        {drawers
           .filter((group) => group.cards.length > 0)
           .map((group) => (
-            <details key={group.name} className="board-group" open={!group.folded}>
+            <details
+              key={group.name}
+              className="board-group"
+              open={group.name === 'Open' ? drawerOpen : !group.folded}
+              // Only a toggle that differs from what was rendered is the user's.
+              onToggle={(e) => group.name === 'Open' && e.currentTarget.open !== drawerOpen && setDrawer(e.currentTarget.open)}
+            >
               <summary>
                 {group.name} <small>{group.cards.length}</small>
               </summary>
-              {group.cards.map((card) => {
-                if (editing?.section.id === card.id) return null;
-                const lock = lockOf(card.id);
-                const isOpen = open === card.id;
-                const cardRun = runs?.get(card.id);
-                const [runTone, runLabel] = RUN_STATES[cardRun?.state ?? 'waiting'];
-                const request = cardRun && agentMessages.find((m) => m.id === cardRun.request);
-                // A request still being sent has no id that a cancel could name.
-                const stoppable = !!request && cardRun!.state !== 'sending' && GOING.has(cardRun!.state);
-                return (
-                  <article key={card.id} className={`board-card ${lock ? 'is-locked' : ''} ${isOpen ? 'is-open' : ''}`}>
-                    <button className="board-card-head" onClick={() => setOpen(isOpen ? null : card.id)} aria-expanded={isOpen}>
-                      {card.kind && (
-                        <span className="board-card-id">
-                          {card.cardId}
-                        </span>
-                      )}
-                      <strong>{card.failed ? 'This card could not be decrypted.' : card.title || 'Untitled'}</strong>
-                      {card.status && <span className="board-card-status">{card.status}</span>}
-                      {/* No agent checked it against the board, the code and the open pull requests yet (R-041). */}
-                      {unchecked(card) && <Tag tone="muted">Unchecked</Tag>}
-                      {cardRun && !isOpen && <Tag tone={runTone}>{runLabel}</Tag>}
-                    </button>
-                    {same.has(card.id) && <p className="board-card-warn">Another card has this number. Renumber one of them.</p>}
-                    {isOpen && (
-                      <div className="board-card-body">
-                        <div className="doc-section-tools">
-                          {lock && <span className="doc-lock">{nameOf(lock.userId)} is editing</span>}
-                          <button
-                            className="icon-button icon-button-small"
-                            onClick={() => run(edit(doc!, card.id, card.text, card.pos))}
-                            disabled={editing !== null || !!lock || card.failed}
-                            title="Edit"
-                            aria-label="Edit card"
-                          >
-                            <PencilIcon width={18} height={18} />
-                          </button>
-                          <button className="icon-button icon-button-small" onClick={() => setHistoryOf(card)} title="History" aria-label="Card history">
-                            <HistoryIcon width={18} height={18} />
-                          </button>
-                          {stoppable && (
-                            // The agent stops the run and reports it failed; a request it never took ends here (R-030).
-                            <button
-                              className="icon-button icon-button-small"
-                              disabled={cardRun!.stopping}
-                              onClick={() => run(cancelRun({ ...request!, run: request!.run as RunRequest }))}
-                              title={cardRun!.stopping ? 'Stopping…' : `Stop · ${nameOf(cardRun!.runtime)}`}
-                              aria-label="Stop the run"
-                            >
-                              <StopIcon width={18} height={18} />
-                            </button>
-                          )}
-                          {!stoppable && canRun && card.kind && !card.failed && (
-                            // The brief says what the agent will follow and who wrote it, and starts it (D-105).
-                            <button
-                              className="icon-button icon-button-small"
-                              disabled={!!cardRun && GOING.has(cardRun.state)}
-                              onClick={() => actions.openBrief({ projectId, docId: doc!.id, section: card.id })}
-                              title={cardRun && GOING.has(cardRun.state) ? `${runLabel} · ${nameOf(cardRun.runtime)}` : 'Run with your agent'}
-                              aria-label="Run with your agent"
-                            >
-                              <PlayIcon width={18} height={18} />
-                            </button>
-                          )}
-                          <button
-                            className="icon-button icon-button-small"
-                            onClick={() => run(remove(card))}
-                            disabled={editing !== null || !!lock}
-                            title="Delete"
-                            aria-label="Delete card"
-                          >
-                            <TrashIcon width={18} height={18} />
-                          </button>
-                        </div>
-                        {cardRun && (
-                          <p className="board-card-run">
-                            <Tag tone={runTone}>{runLabel}</Tag>
-                            <span>
-                              {nameOf(cardRun.runtime)}
-                              {cardRun.repo && ` in ${cardRun.repo}`}
-                              {cardRun.harness && ` with ${cardRun.harness}`}
-                              {cardRun.note && ` · ${cardRun.note}`}
-                            </span>
-                            <button
-                              className="board-card-run-link"
-                              onClick={() => actions.setAgentsOpen(true, request?.clientId ?? null)}
-                            >
-                              Open the conversation
-                            </button>
-                          </p>
-                        )}
-                        {check && card.kind && !card.failed && (
-                          <p className="board-card-run">
-                            <span>Your agent checks it against the board, the code and the open pull requests.</span>
-                            <button className="board-card-run-link" onClick={() => run(check(card.cardId))}>
-                              Check again
-                            </button>
-                          </p>
-                        )}
-                        {card.body ? <Markdown text={card.body} /> : <p className="doc-note">Nothing more.</p>}
-                      </div>
-                    )}
-                  </article>
-                );
-              })}
+              {group.cards.map((card) => cardView(card))}
             </details>
           ))}
       </div>

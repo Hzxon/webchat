@@ -30,7 +30,10 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
   was made and what it costs, and its roadmap of ideas and issues. A card is Markdown in the same
   format as this repository's own decision log and roadmap, so "Copy as Markdown" gives a file a
   team drops into its repository for the coding agents it runs. Cards are edited like doc sections,
-  one person at a time, with the same history.
+  one person at a time, with the same history. The roadmap shows its cards in three lanes, Ready,
+  Running and In review, with open cards in a drawer under them. Each card shows the face of the
+  member who opened it, or a dashed mark when nobody owns it: a card from before owners, an
+  imported one, or one whose opener left.
 - **Replies and reactions.** Reply to a message to quote it above yours, and tap the quote to jump
   to the original. React with one of six emoji; tap a reaction again to take it back.
 - Sent, delivered, and read ticks.
@@ -472,8 +475,8 @@ the board has not changed for 10 minutes, the agent pushes its changes to the `a
 in one draft pull request that the owner merges. It pushes only that branch, and never forces a
 push. Nobody edits a copy by hand: a pull request in the repository proposes a change as a file
 under `docs/roadmap/` or `docs/decisions/`, and once that file is on the default branch, it reaches
-the owner as a draft. An open pull request whose body starts with `Claims K-12` marks that card In
-progress on the board. One repository holds the copy of one board.
+the owner as a draft. An open pull request whose body starts with `Claims K-12` marks that card
+`Running: repo#N` on the board. One repository holds the copy of one board.
 
 Cards and clones also need GitHub on that laptop: the GitHub CLI signed in with `gh auth login`, and
 git using it after `gh auth setup-git`. `/webchat:connect`, typed in any folder, says when they are
@@ -543,7 +546,7 @@ Claude Code. It finishes the cards and questions it runs, then takes no new ones
 ones included. Only `/webchat:wake` in Claude Code on the laptop wakes it.
 
 The request and the agent's reports show in the card's conversation under **Coding agents**, where
-you can stop a run. The card's status line tells your team: `In progress: Ann's agent` while it
+you can stop a run. The card's status line tells your team: `Running: Ann's agent` while it
 works, `Waiting for a decision` while it waits for one, `In review: repo#12` once its work is in the
 draft, `Done in repo#12` or `Fixed in repo#12` once that is merged, and what it was before if the
 run fails, the card no longer holds or the draft is closed without a merge. A merge also sets the decisions the work made true to

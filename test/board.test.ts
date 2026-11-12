@@ -5,7 +5,7 @@ import { describe, test } from 'node:test';
 // the client module. tsx still loads it.
 const clientBoard = '../client/src/board.ts';
 
-const { cardRuns, cardTemplate, cardText, statusMove, GOING, duplicates, idOf, groupOf, otherRun, parseCard, unchecked, withChecked, withStatus, workingStatus } = await import(clientBoard);
+const { cardOf, cardRuns, cardSections, cardTemplate, cardText, statusMove, GOING, duplicates, idOf, groupOf, otherRun, parseCard, runnerOf, unchecked, withChecked, withStatus, workingStatus } = await import(clientBoard);
 
 const section = (id: string, text: string) => ({ id, text, pos: 1, failed: false });
 
@@ -24,11 +24,51 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.equal(card.status, 'Accepted 2026-11-04');
     assert.equal(card.body, 'Why: it works.');
     assert.equal(groupOf('decisions', card.status), 1);
-    assert.equal(groupOf('roadmap', 'In progress on branch x'), 0);
-    assert.equal(groupOf('roadmap', 'In review: o/r#3'), 1);
+    assert.equal(groupOf('roadmap', 'Ready'), 0);
+    assert.equal(groupOf('roadmap', 'Running: Ann’s agent'), 1);
+    assert.equal(groupOf('roadmap', 'In review: o/r#3'), 2);
     assert.equal(groupOf('roadmap', 'Fixed in #12'), 4);
     assert.equal(groupOf('roadmap', 'Something else'), 3);
-    assert.equal(groupOf('roadmap', 'Waiting for a decision'), 0, 'a run that waits for a decision still holds its card (R-042)');
+    assert.equal(groupOf('roadmap', 'Waiting for a decision'), 1, 'a run that waits for a decision still holds its card (R-042)');
+  });
+
+  test('a running card names who runs it, and a card in review its pull request', () => {
+    assert.equal(workingStatus('Ann'), 'Running: Ann’s agent');
+    assert.equal(runnerOf('Running: Ann’s agent'), 'Ann’s agent');
+    assert.equal(runnerOf('Running: o/r#3'), 'o/r#3');
+    assert.equal(runnerOf('In review: o/r#3'), 'o/r#3');
+    assert.equal(runnerOf('In review'), '');
+    assert.equal(runnerOf('Done in o/r#3'), '');
+  });
+
+  test('a card belongs to the member who opened it, while they are a member (the board-lanes decision)', () => {
+    const opened = { ...section('a', '### K-1: Bug\n\nStatus: Open.'), openedBy: 4 };
+    assert.equal(cardOf(opened, [3, 4]).owner, 4);
+    assert.equal(cardOf(opened, [3]).owner, undefined, 'an owner who left owns nothing');
+    assert.equal(cardOf(section('a', '### K-1: Bug'), [3, 4]).owner, undefined, 'an imported card has no owner');
+    assert.equal(cardOf(opened, [4]).title, 'Bug');
+  });
+
+  test("a card's opener and words come from its oldest revision and each author's newest (the board-lanes decision)", () => {
+    // Rows as GET /docs/:id/words gives them, in id order, each with what it opened to or null.
+    const row = (id: number, section: string, authorId: number, content: object | null) => ({ revision: { id, section, authorId, createdAt: id }, content });
+    const cards = cardSections([
+      row(1, 'title', 1, { text: 'Roadmap', board: 'roadmap' }),
+      row(2, 'a', 1, { text: 'A1', pos: 1, opened: true }),
+      row(3, 'b', 2, { text: 'B1', pos: 2 }),
+      row(4, 'c', 1, { text: 'C1', pos: 3, opened: true }),
+      row(5, 'd', 3, { text: 'D1', pos: 4, opened: true }),
+      row(6, 'a', 2, { text: 'A2', pos: 1 }),
+      row(7, 'c', 1, { text: 'C2', pos: 3, removed: true }),
+      row(8, 'd', 3, null),
+      row(9, 'a', 1, { text: 'A3', pos: 1 }),
+    ]);
+    assert.deepEqual(cards.map((c: { id: string }) => c.id), ['a', 'b', 'd'], 'no title, and a removed card is gone');
+    const [a, b, d] = cards;
+    assert.deepEqual([a.text, a.authorId, a.openedBy], ['A3', 1, 1], 'the same author first and last owns it');
+    assert.deepEqual(a.words.map((w: { id: number }) => w.id), [9, 6], 'one word per author, newest first, not the oldest row');
+    assert.equal(b.openedBy, undefined, 'a first revision without the mark opens no card');
+    assert.deepEqual([d.failed, d.text, d.pos, d.openedBy, d.words], [true, '', 8, 3, []], 'a newest revision that does not open keeps its opener and no word');
   });
 
   test('a new status replaces the status line, or goes under the heading', () => {
@@ -46,11 +86,15 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
 
   test("a run's report moves its card only from where the run left it (D-118)", () => {
     const pull = { repo: 'o/r', number: 3 };
-    const move = (state: string) => statusMove({ request: 1, runtime: 9, state, pull }, 'K-1', 'Open', 'In progress: Ann’s agent');
-    assert.deepEqual(move('done'), [['Open', 'In progress: Ann’s agent', 'Waiting for a decision'], 'In review: o/r#3']);
+    const move = (state: string) => statusMove({ request: 1, runtime: 9, state, pull }, 'K-1', 'Open', workingStatus('Ann'));
+    assert.deepEqual(move('done'), [['Open', 'Running: Ann’s agent', 'Waiting for a decision'], 'In review: o/r#3']);
     assert.deepEqual(move('merged')[1], 'Fixed in o/r#3');
     assert.deepEqual(move('closed'), [['In review: o/r#3'], 'Open'], 'a draft closed unmerged gives the card its old status back');
     assert.deepEqual(move('ended'), [[], ''], 'watching that stops on an open draft leaves the card in review');
+    // A run claimed before Running was the word still moves its card, which reads in the new words (the board-lanes decision).
+    const old = parseCard(section('a', '### K-1: Bug\n\nStatus: In progress: Ann’s agent.')).status;
+    for (const state of ['decision', 'done', 'failed', 'stale', 'merged']) assert.ok(move(state)[0].includes(old), state);
+    assert.ok(!move('done')[0].includes(parseCard(section('a', '### K-1: Bug\n\nStatus: In progress: Bob’s agent.')).status), 'not a teammate’s run');
   });
 
   test('a card reads its Checked line, and has an empty check without one (R-041)', () => {
@@ -140,11 +184,12 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
   });
 
   test('a status that shows another run of the card refuses a second one (K-59)', () => {
-    assert.equal(otherRun('In progress: Ann’s agent', 'Bob'), true, 'a teammate’s agent runs it');
+    assert.equal(otherRun('Running: Ann’s agent', 'Bob'), true, 'a teammate’s agent runs it');
+    assert.equal(otherRun('Running: o/r#3', 'Ann'), true, 'a pull request claims it');
     assert.equal(otherRun(workingStatus('Ann'), 'Ann'), false, 'my own run, which the play button already holds');
     assert.equal(otherRun('In review: o/r#3', 'Ann'), true, 'a draft is open');
     assert.equal(otherRun('In review', 'Ann'), true);
-    assert.equal(otherRun('In progress', 'Ann'), false, 'set by hand, no run named');
+    assert.equal(otherRun('Running', 'Ann'), false, 'set by hand, no run named');
     assert.equal(otherRun('Open', 'Ann'), false);
     assert.equal(otherRun('Waiting for a decision', 'Ann'), true, 'a run waits for a decision (R-042)');
   });
