@@ -175,7 +175,7 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
     running.add(child);
     // Kept for the error text, and never forwarded.
     let stderr = '';
-    child.stderr.on('data', (data: Buffer) => (stderr = (stderr + data).slice(-2000)));
+    child.stderr.on('data', (data: Buffer) => (stderr = (stderr + data).slice(-2000))).on('error', () => undefined);
     const exited = new Promise<string>((resolve) => {
       child.on('error', (error) => resolve(`${name} did not start: ${error.message}`));
       child.on('close', (code) => {

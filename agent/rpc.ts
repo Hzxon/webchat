@@ -54,7 +54,11 @@ export class Peer {
         if (message.error) call?.reject(new RpcError(message.error.code, message.error.message));
         else call?.resolve(message.result);
       }
-    }).on('close', () => closed?.());
+    })
+      .on('close', () => closed?.())
+      // On Linux a child's pipes are socket pairs, so one that exits with output unread resets them,
+      // and readline passes the failed read on; the exit says why.
+      .on('error', () => undefined);
     // A peer that exits before it reads closes the pipe; its exit says why.
     this.output.on('error', () => undefined);
   }

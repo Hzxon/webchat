@@ -7,10 +7,12 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { afterEach, before, beforeEach, describe, test } from 'node:test';
+import { PassThrough } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { acpGap, acpHarness } from '../agent/acp.ts';
 import { ACP_AGENTS, type AcpAgent } from '../agent/acp-agents.ts';
 import { fits, listenForAnswers } from '../agent/answer.ts';
+import { Peer } from '../agent/rpc.ts';
 import { acpRow, harnessFinder, SUPPORTED, supported, supportedList } from '../agent/harnesses.ts';
 import type { Ask, Harness, Reply, Turn } from '../agent/harness.ts';
 import { LIMITS } from '../shared/types.ts';
@@ -203,6 +205,13 @@ describe('the ACP adapter', () => {
     for (let i = 0; i < 100 && (await alive()); i++) await sleep(50);
     return !(await alive());
   };
+
+  test('a peer whose input breaks throws nothing: on Linux a child that exits resets its pipe', async () => {
+    const input = new PassThrough();
+    new Peer({ input, output: new PassThrough() });
+    input.destroy(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }));
+    await sleep(10);
+  });
 
   test('fits reads the keywords the plugin\'s schemas use', () => {
     const schema = { type: 'object', properties: { outcome: { type: 'string', enum: ['done', 'failed'] }, drafts: { type: 'array', items: { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] } }, ok: { type: 'boolean' } }, required: ['outcome'] };

@@ -264,7 +264,8 @@ export function claudeHarness(program: string, hook: string, dataDir: string): H
     keep(child);
     // A process that exits before it reads closes the pipe; its exit says why.
     child.stdin.on('error', () => undefined);
-    readline.createInterface({ input: child.stdout }).on('line', (output) => live.turn?.line(output));
+    // On Linux a process that exits with output unread resets its pipe, which its exit already reports.
+    readline.createInterface({ input: child.stdout }).on('line', (output) => live.turn?.line(output)).on('error', () => undefined);
     child.on('error', (error) => live.turn?.fail(error));
     child.on('close', (code) => {
       live.turn?.fail(new Error(`the agent exited with code ${code} and no result.`));
