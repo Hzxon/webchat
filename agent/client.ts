@@ -117,6 +117,11 @@ export interface DocSection {
 
 /** How often the daemon checks in. It has no push, so this is its whole delay (D-004). */
 export const SYNC_INTERVAL_MS = 15_000;
+/** Once this long passes with no request, run or turn, an agent checks in every minute: a card then waits up to a minute to start. */
+const IDLE_AFTER_MS = 60 * 60_000;
+
+/** The wait before the next check-in, from how long the agent has had nothing to do. The page counts an agent online for twice the slow one (`AGENT_ONLINE_WINDOW_MS`). */
+export const checkInEvery = (idleMs: number) => (idleMs >= IDLE_AFTER_MS ? 60_000 : SYNC_INTERVAL_MS);
 
 /**
  * Splits a pasted pairing code. The page shows it after its own address, as `<address>#<code>`,
@@ -368,8 +373,8 @@ export class AgentClient {
     return true;
   }
 
-  /** Checks in every SYNC_INTERVAL_MS, for as long as the signal allows, and yields each new message. */
-  async *watch(signal: AbortSignal, intervalMs = SYNC_INTERVAL_MS): AsyncGenerator<OpenedMessage> {
+  /** Checks in, waiting `interval()` between rounds, for as long as the signal allows, and yields each new message. */
+  async *watch(signal: AbortSignal, interval: () => number = () => SYNC_INTERVAL_MS): AsyncGenerator<OpenedMessage> {
     let failures = 0;
     while (!signal.aborted) {
       try {
@@ -380,7 +385,8 @@ export class AgentClient {
         if (error instanceof ApiError && error.status !== 0 && error.status !== 429 && error.status < 500) throw error;
         failures++;
       }
-      const delay = failures ? Math.min(60_000, intervalMs * 2 ** failures) : intervalMs;
+      const every = interval();
+      const delay = failures ? Math.min(60_000, every * 2 ** failures) : every;
       await sleep(delay, undefined, { signal }).catch(() => undefined);
     }
   }
