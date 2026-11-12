@@ -177,6 +177,8 @@ What it does not protect against:
   what the laptop can do, such as answer questions, which tells newer plugins from older ones.
   It sees a run as messages like any other.
   Pairing shows it the agent's public keys and proofs made from the code, never the code.
+- **An ACP agent's own tools, shell and network are its own.** Only the requests it asks about meet
+  WebChat's rules, and only an agent that can skip your own settings and MCP servers is listed.
 - **People who leave keep the keys they had.** Someone who left or was removed could still read the
   messages from before, if they got them another way, for example from a copy of the database.
   Everything sent after they left uses a new key they never get.
@@ -446,6 +448,12 @@ and a laptop uses one of them:
 Either one checks in every 15 seconds. Once an hour passes with no request, run or question, it
 checks in every minute, so a card on an idle agent waits up to a minute to start. WebChat counts an
 agent online for 2 minutes after its last check-in.
+
+WebChat also runs coding agents that speak the Agent Client Protocol, from a list that ships with
+the agent and is empty for now. Each is linked like Claude Code and Codex, answers questions only,
+and takes no cards. Such an agent keeps its own sandbox, shell and network, which WebChat does not
+set: WebChat answers only what it asks about, and says no to shell commands until you can approve
+them from WebChat.
 
 ### With the Claude Code plugin
 

@@ -20,6 +20,7 @@ import path from 'node:path';
 import { isSea } from 'node:sea';
 import { fileURLToPath } from 'node:url';
 import pkg from '../package.json' with { type: 'json' };
+import { runAnswerServer } from './answer.ts';
 import { runGuard } from './claude.ts';
 import { harnessFinder, supported, supportedList } from './harnesses.ts';
 import { Plugin } from './plugin.ts';
@@ -89,6 +90,9 @@ async function main([command, ...args]: string[]) {
     }
     case 'guard':
       return runGuard(args[0] ?? '');
+    // The submit_answer MCP server an ACP agent starts for each session (agent/answer.ts).
+    case 'answer':
+      return runAnswerServer();
     case '--version':
       return console.log(pkg.version);
     case 'watch':
