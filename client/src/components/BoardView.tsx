@@ -4,7 +4,7 @@
 // editor docs have, and keep its locks and history. The board docs are created the first time
 // someone adds a card.
 import { useEffect, useMemo, useState } from 'react';
-import { cardsOf, copyOf, GROUPS, groupOf, laneOf, usernamesOf, WAITING, withReviews, withStatus, type Card, type DocSection } from '../../../shared/board';
+import { cardsOf, copyOf, GROUPS, groupOf, keepReviews, laneOf, usernamesOf, WAITING, withReviews, withStatus, type Card, type DocSection } from '../../../shared/board';
 import type { CardNoteDTO, ProjectDTO, RunRequest, UserDTO } from '../../../shared/types';
 import {
   boardDocs,
@@ -29,7 +29,7 @@ import {
 } from '../board';
 import { inOrder, ownAgents, ready, seatFor, useAgentChats } from '../agents';
 import { askAgent, askFix, askLink, cancelRun, sendCardNote, startDirectChat, syncNow } from '../chat';
-import { addCard, beginEditing, createBoard, loadCards, loadSections, markSeen, newSectionId, replaceSection, rewriteCard, takeCard, type Editing } from '../docs';
+import { addCard, beginEditing, boardCards, createBoard, loadCards, loadSections, markSeen, newSectionId, replaceSection, rewriteCard, stopEditing, takeCard, type Editing } from '../docs';
 import type { ChatDoc, ChatMessage } from '../e2ee/keyring';
 import { importEntries } from '../boardLink';
 import { useLinkedRepos } from '../linkedRepos';
@@ -45,6 +45,8 @@ export function BoardView({ project }: { project: ProjectDTO }) {
   const conversations = useAppState((s) => s.conversations);
   const boards = useMemo(() => boardDocs(docs, conversations, project.id), [docs, conversations, project.id]);
   const [shown, setShown] = useState<BoardColumn>('roadmap');
+  // The column that holds the open editor. A tab keeps one lock alive, so a second editor would let the first one's lapse unseen.
+  const [editingIn, setEditingIn] = useState<BoardColumn | null>(null);
   // Check again asks the user's own agent in the project, about its first linked repository, as the pane's Ask does (R-038, R-041).
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
@@ -94,7 +96,15 @@ export function BoardView({ project }: { project: ProjectDTO }) {
       {canLink && <BoardLink project={project} agentId={agent!.id} repos={free} />}
       <div className={`board-columns shows-${shown}`}>
         {COLUMNS.map((column) => (
-          <BoardColumnView key={column} column={column} projectId={project.id} doc={boards[column]} check={check} />
+          <BoardColumnView
+            key={column}
+            column={column}
+            projectId={project.id}
+            doc={boards[column]}
+            check={check}
+            elsewhere={editingIn && editingIn !== column ? COLUMN_TITLES[editingIn] : undefined}
+            onEditing={(on) => setEditingIn(on ? column : null)}
+          />
         ))}
       </div>
     </section>
@@ -186,7 +196,22 @@ const MOVES: Array<[keyof typeof MOVE_FROM, string]> = [
 ];
 type Filter = keyof typeof FILTERS;
 
-function BoardColumnView({ column, projectId, doc, check }: { column: BoardColumn; projectId: number; doc: ChatDoc | undefined; check?: (id: string) => Promise<void> }) {
+function BoardColumnView({
+  column,
+  projectId,
+  doc,
+  check,
+  elsewhere,
+  onEditing,
+}: {
+  column: BoardColumn;
+  projectId: number;
+  doc: ChatDoc | undefined;
+  check?: (id: string) => Promise<void>;
+  /** The other column's title while it holds the open editor. */
+  elsewhere?: string;
+  onEditing: (on: boolean) => void;
+}) {
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
   const me = useAppState((s) => s.me);
@@ -220,6 +245,8 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
   const [editing, setEditing] = useState<{
     doc: ChatDoc;
     section: Editing;
+    /** The card's review lines that stood when its lock was taken, which no save changes. */
+    lines: string[];
   } | null>(null);
   const [historyOf, setHistoryOf] = useState<Card | null>(null);
   // In the open card: the member picked to ask for a review, and the note of a requested change being written.
@@ -286,10 +313,27 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
   }
 
   async function edit(target: ChatDoc, id: string, saved: string, pos: number, isNew = false) {
-    setEditing({
-      doc: target,
-      section: await beginEditing(target.id, id, saved, pos, isNew),
-    });
+    // Told before the lock is asked for, so the other column cannot open an editor meanwhile.
+    onEditing(true);
+    try {
+      const section = await beginEditing(target.id, id, saved, pos, isNew);
+      // Read again under the lock: the card may have changed since it was shown, and a draft on the device may be older still.
+      const card =
+        column === 'roadmap'
+          ? await boardCards(target).then(
+              (all) => all.find((c) => c.id === id),
+              async (err) => {
+                await stopEditing(target.id, id).catch(() => undefined);
+                throw err;
+              },
+            )
+          : undefined;
+      const lines = card?.reviews.map((r) => r.line) ?? [];
+      setEditing({ doc: target, lines, section: card ? { ...section, saved: card.text, text: section.text === saved ? card.text : keepReviews(section.text, lines) } : section });
+    } catch (err) {
+      onEditing(false);
+      throw err;
+    }
   }
 
   async function add(kind: CardKind) {
@@ -438,8 +482,8 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
                 className="icon-button icon-button-small"
                 // From the text that stands, so a typo fix never signs a status someone could not set.
                 onClick={() => run(edit(doc!, card.id, card.text, card.pos))}
-                disabled={editing !== null || !!lock || card.failed}
-                title="Edit"
+                disabled={editing !== null || !!elsewhere || !!lock || card.failed}
+                title={elsewhere ? `Close the editor in ${elsewhere} first` : 'Edit'}
                 aria-label="Edit card"
               >
                 <PencilIcon width={18} height={18} />
@@ -660,7 +704,13 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
             </div>
           )}
           {kinds.map((kind) => (
-            <button key={kind} className="button-secondary board-new" onClick={() => run(add(kind))} disabled={editing !== null}>
+            <button
+              key={kind}
+              className="button-secondary board-new"
+              onClick={() => run(add(kind))}
+              disabled={editing !== null || !!elsewhere}
+              title={elsewhere ? `Close the editor in ${elsewhere} first` : undefined}
+            >
               <PlusIcon width={16} height={16} /> {KIND_NAMES[kind]}
             </button>
           ))}
@@ -679,8 +729,10 @@ function BoardColumnView({ column, projectId, doc, check }: { column: BoardColum
             doc={editing.doc}
             editing={editing.section}
             canDelete={!edited || canDelete(edited)}
+            toSave={column === 'roadmap' ? (text) => keepReviews(text, editing.lines) : undefined}
             onClose={(message) => {
               setEditing(null);
+              onEditing(false);
               setError(message ?? '');
             }}
           />

@@ -12,5 +12,5 @@ after an approval with no change open, runs it again once every change is answer
 accepted, which asks those reviewers again and drops other verdicts, or marks it ready, which drops
 all. Why: pages hold the gates (D-081). Cost: requests are not checked. A reviewer who left or whose
 keys are unchecked counts for nothing, nor does any verdict while the owner's revision does not
-open. A hand edit can drop a line (docs/roadmap/card-editor-drops-reviews.md). Run again restarts
+open. A hand edit keeps the review lines that stand; only the buttons change one. Run again restarts
 only the owner's draft the card names, else sets `Running: <owner>`; a waiting push resumes nothing.

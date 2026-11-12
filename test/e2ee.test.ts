@@ -383,7 +383,8 @@ describe('end-to-end encryption', () => {
     assert.equal(await decryptMessage(chatKey, aliceSign, meta, envelope), text);
     assert.ok(!JSON.stringify(envelope).includes('urgent'), 'no plain text in the envelope');
 
-    const flipped = { ...envelope, ct: envelope.ct.slice(0, -2) + (envelope.ct.endsWith('A') ? 'BA' : 'AA') };
+    // The first character always carries data; the last ones can hold padding bits, or be what they are set to.
+    const flipped = { ...envelope, ct: (envelope.ct.startsWith('A') ? 'B' : 'A') + envelope.ct.slice(1) };
     await assert.rejects(decryptMessage(chatKey, aliceSign, meta, flipped), /bad signature/);
     for (const changed of [
       { ...meta, urgent: false },

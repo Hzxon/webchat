@@ -7,7 +7,7 @@ const clientBoard = '../client/src/board.ts';
 const sharedBoard = '../shared/board.ts';
 
 const { cardRuns, cardTemplate, statusMove, GOING, duplicates, idOf, moved, otherRun, runnerOf, startable, takeable, unchecked, withChecked, workingStatus } = await import(clientBoard);
-const { cardOf, cardsOf, cardSections, cardText, groupOf, parseCard, standing, usernamesOf, withReviews, withStatus } = await import(sharedBoard);
+const { cardOf, cardsOf, cardSections, cardText, groupOf, keepReviews, parseCard, standing, usernamesOf, withReviews, withStatus } = await import(sharedBoard);
 
 const section = (id: string, text: string) => ({ id, text, pos: 1, failed: false });
 
@@ -380,6 +380,18 @@ describe('Reviews on a card in client/src/board.ts (the card-review decision)', 
   const today = new Date(2026, 10, 13);
   type Save = [number, string];
   const text = (status: string, reviews: string[] = []) => cardText('K-4', 'Fix it', status, withReviews('Seen: on a phone.', reviews));
+
+  test('a hand edit keeps the review lines that stood when it began', () => {
+    const asked = 'Review: @dan Changes requested 2026-11-13: The empty state is missing.';
+    const stood = text('In review', [asked]);
+    assert.equal(keepReviews(stood, [asked]), stood, 'typed as they stand, so nothing changes');
+    assert.equal(keepReviews(text('In review'), [asked]), stood, 'a change request deleted by hand comes back');
+    assert.equal(keepReviews(text('In review', ['Review: @dan Approved 2026-11-12.']), [asked]), stood, 'an old draft does not revive an approval');
+    assert.equal(keepReviews(text('In review', [`${asked} Accepted 2026-11-13.`]), [asked]), stood, 'an answer comes from its button');
+    assert.equal(keepReviews(stood, []), text('In review'), 'a typed line with no review behind it goes');
+    const typo = stood.replace('on a phone', 'on a tablet');
+    assert.equal(keepReviews(typo, [asked]), typo, 'the rest of the text is as typed');
+  });
   /** The card after these saves, oldest first, as every page reads it: the newest text and each member's newest save. */
   const after = (saves: Save[], members = [1, 2, 3, 4], openedBy = 1) => {
     const words = new Map(saves.map(([authorId, written], i) => [authorId, { id: i + 1, authorId, text: written }]));

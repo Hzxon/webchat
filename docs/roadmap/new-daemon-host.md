@@ -1,6 +1,6 @@
 ### R: Serve the agent from a daemon as well as from the plugin
 
-Status: In progress in #177. Proposed 2026-11-09 from the harness audit. Needs the harness adapter card.
+Status: Done in #177. Proposed 2026-11-09 from the harness audit.
 
 Order: second, once the harness card's seam has landed, and beside its second pull request.
 It touches `agent/index.ts` and `agent/mcp.ts`, which the other cards leave alone, so it

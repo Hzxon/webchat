@@ -173,7 +173,20 @@ export function DocView({ doc }: { doc: ChatDoc }) {
  * Edits one section, for a doc or a board card. Done shows it rendered, so there is no preview. A
  * card with an owner offers Delete only to its owner (the card-owner decision).
  */
-export function SectionEditor({ doc, editing, onClose, canDelete = true }: { doc: ChatDoc; editing: Editing; onClose: (message?: string) => void; canDelete?: boolean }) {
+export function SectionEditor({
+  doc,
+  editing,
+  onClose,
+  canDelete = true,
+  toSave,
+}: {
+  doc: ChatDoc;
+  editing: Editing;
+  onClose: (message?: string) => void;
+  canDelete?: boolean;
+  /** What a save writes for the text typed, as a board card keeps the review lines that stand. */
+  toSave?: (text: string) => string;
+}) {
   const [text, setText] = useState(editing.text);
   const [status, setStatus] = useState('');
   const latest = useRef(text);
@@ -193,7 +206,7 @@ export function SectionEditor({ doc, editing, onClose, canDelete = true }: { doc
       const content = latest.current;
       if (dropped.current || content === saved.current) return;
       setStatus('Saving…');
-      await saveSection(doc, editing.id, { text: content, pos: editing.pos });
+      await saveSection(doc, editing.id, { text: toSave ? toSave(content) : content, pos: editing.pos });
       stored.current = true;
       saved.current = content;
       if (latest.current === content) {
