@@ -36,6 +36,8 @@ docs/decisions.md that explains it. The process itself is in AGENTS.md.
 - Never edit the version or `CHANGELOG.md` by hand; Release Please owns them, and needs "Allow GitHub Actions to create and approve pull requests" on (D-055).
 - Only Release Please may title a commit `chore(main): Release `; the ignore script skips it (D-058).
 - The Claude Code plugin ships from the `plugin` branch, which the release job builds from the tag; Release Please sets `plugin/.claude-plugin/plugin.json`'s version (D-092).
+- The agent ships as one file per OS and processor, each built by the release job on that kind of runner and run with `--version` before it ships; `agent/install.sh` installs nothing that misses its `.sha256` in the release, and the job writes the release's address over every `@BASE@` (docs/decisions/agent-install.md).
+- `npm run build:agent` needs Node from nodejs.org, as setup-node gives: Homebrew's has single executables disabled. On macOS the file is signed ad hoc, or the system kills it (docs/decisions/agent-install.md).
 - A file under `docs/`, `test/`, `.github/`, `scripts/`, `agent/` or `plugin/`, or any Markdown, never ships; move a file the app reads at runtime out first (D-058).
 - Only main deploys from Git: keep `git.deploymentEnabled` and the Vercel Ignored Build Step (D-041).
 - The function runs in `sin1` (`vercel.json`), the same region as the database (D-003).

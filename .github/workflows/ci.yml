@@ -25,3 +25,5 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # The agent's single file must still build and run (docs/decisions/agent-install.md).
+      - run: npm run build:agent && dist/agent/webchat-agent --version

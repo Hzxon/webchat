@@ -18,7 +18,8 @@
     "icons": "tsx scripts/gen-icons.ts",
     "agent": "tsx agent/index.ts",
     "build:client": "vite build && vite build --config vite.sw.config.ts",
-    "build:plugin": "vite build --config vite.plugin.config.ts"
+    "build:plugin": "vite build --config vite.plugin.config.ts",
+    "build:agent": "vite build --config vite.agent.config.ts && node --build-sea agent/sea.json && if [ \"$(uname)\" = Darwin ]; then codesign --sign - dist/agent/webchat-agent; fi"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.14",

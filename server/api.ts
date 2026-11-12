@@ -1,5 +1,6 @@
 import { waitUntil } from '@vercel/functions';
 import express, { type NextFunction, type Request, type Response } from 'express';
+import pkg from '../package.json' with { type: 'json' };
 import {
   DEVICE_COOKIE,
   dummyPasswordHash,
@@ -407,7 +408,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
   }
 
   router.get('/config', (_req, res) => {
-    const body: ConfigDTO = { vapidPublicKey: push.publicKey, kdfSalt };
+    const body: ConfigDTO = { vapidPublicKey: push.publicKey, kdfSalt, release: pkg.version };
     res.json(body);
   });
 

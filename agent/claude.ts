@@ -5,7 +5,7 @@
 // message goes on stdin, since arguments show in `ps`, and the turn ends with a JSON answer. This
 // is the plugin's harness adapter for Claude Code (harness.ts).
 import { execFile } from 'node:child_process';
-import { constants, readlinkSync, realpathSync } from 'node:fs';
+import { constants, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -328,4 +328,10 @@ export function guard(use: ToolUse, secrets: string[]): string | undefined {
   const named = input.file_path ?? input.notebook_path ?? (use.tool_name === 'Glob' || use.tool_name === 'Grep' ? (input.path ?? use.cwd) : undefined);
   const target = FILE_TOOLS.has(use.tool_name) && typeof named === 'string' ? real(path.resolve(use.cwd, named)) : undefined;
   if (target && secrets.some((dir) => within(target, real(dir)))) return 'That folder holds secrets the WebChat plugin keeps from the model.';
+}
+
+/** The PreToolUse hook, for the plugin and the daemon alike: reads the tool call on stdin and prints a denial, or nothing. */
+export function runGuard(dataDir: string) {
+  const reason = guard(JSON.parse(readFileSync(0, 'utf8')) as ToolUse, claudeSecrets(dataDir));
+  if (reason) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
 }

@@ -3,12 +3,11 @@
 // one message per line. One window on a laptop serves every folder its owner connected or had
 // cloned, wherever it is open (R-036). With
 // "guard" it is the PreToolUse hook: it reads the tool call on stdin and prints a denial, or nothing.
-import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { ClaudePlugin, claudeProgram, claudeSecrets, guard, onPath, type ToolUse } from './claude.ts';
+import { ClaudePlugin, claudeProgram, onPath, runGuard } from './claude.ts';
 import { codexHarness } from './codex.ts';
 import { messageOf } from './runs.ts';
 
@@ -107,9 +106,5 @@ async function serve() {
   lines.on('close', quit);
 }
 
-if (process.argv[2] === 'guard') {
-  const reason = guard(JSON.parse(readFileSync(0, 'utf8')) as ToolUse, claudeSecrets(process.argv[3] ?? process.env.CLAUDE_PLUGIN_DATA ?? ''));
-  if (reason) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
-} else {
-  await serve();
-}
+if (process.argv[2] === 'guard') runGuard(process.argv[3] ?? process.env.CLAUDE_PLUGIN_DATA ?? '');
+else await serve();
