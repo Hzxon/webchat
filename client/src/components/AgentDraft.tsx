@@ -8,9 +8,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { textHash } from '../../../shared/e2ee';
 import { cardStatus, type CardDraftDTO } from '../../../shared/types';
 import { threadProject, type Thread } from '../agents';
-import { boardDocs, cardText, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, parseCard, withChecked, type Card } from '../board';
+import { boardDocs, cardText, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, withChecked, type Card } from '../board';
 import { noteAdded, syncNow, tellAgent } from '../chat';
-import { addCard, createBoard, loadSections, newSectionId, rewriteSection, sectionHistory } from '../docs';
+import { addCard, boardCards, createBoard, newSectionId, rewriteCard, sectionHistory } from '../docs';
 import type { ChatMessage } from '../e2ee/keyring';
 import { actions, senderName, useAppState } from '../store';
 import { formatSince } from './format';
@@ -72,11 +72,11 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
     if (added) return;
     let live = true;
     void (async () => {
-      const fresh = (await Promise.all(needed.map(async (c) => (columns[c] ? (await loadSections(columns[c]!)).map(parseCard) : [])))).flat();
+      const fresh = (await Promise.all(needed.map(async (c) => (columns[c] ? boardCards(columns[c]!) : [])))).flat();
       const card = change && fresh.find((c) => c.id === change.section);
       let gone: Stale | null = null;
       if (change && !card) gone = 'deleted';
-      else if (change && card && (await textHash(card.text.trim())) !== change.seen) {
+      else if (change && card && (await textHash(card.written.trim())) !== change.seen) {
         const [newest] = await sectionHistory(target!, card.id);
         const author = newest?.revision.authorId ?? null;
         gone = { by: author === meId ? 'You' : senderName(users, author, 'Someone'), at: newest?.revision.createdAt ?? Date.now() };
@@ -105,12 +105,12 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
       let id: string;
       if (change) {
         // Read and written under the card's lock, so nobody's save lands in between.
-        const written = await rewriteSection(doc, change.section, async (section) => {
-          const card = section && parseCard(section);
-          if (!card || (await textHash(card.text.trim())) !== change.seen) return null;
+        // The agent saw the text as written; the change starts from the text that stands.
+        const written = await rewriteCard(doc, change.section, async (card) => {
+          if ((await textHash(card.written.trim())) !== change.seen) return null;
           // A proposal's file may set a new status, as one that finishes its card does (R-040). Without one
           // the status stays as written: `card.status` reads an older word as the new one.
-          return { text: cardText(card.cardId, draft.title, draft.status ?? cardStatus(card.text), body), pos: card.pos };
+          return cardText(card.cardId, draft.title, draft.status ?? cardStatus(card.text), body);
         });
         // Changed since the page last looked: the next load says how.
         if (!written) return void syncNow();

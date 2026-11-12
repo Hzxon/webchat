@@ -33,7 +33,12 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
   one person at a time, with the same history. The roadmap shows its cards in three lanes, Ready,
   Running and In review, with open cards in a drawer under them. Each card shows the face of the
   member who opened it, or a dashed mark when nobody owns it: a card from before owners, an
-  imported one, or one whose opener left.
+  imported one, or one whose opener left. Cards move by buttons. Only a card's owner marks it
+  ready or closes it; any member asks them to mark it ready, which reaches them as a message in
+  your direct chat, picks a ready card or sends a picked one to review. Any member can take a
+  card with no owner in Open or Ready, and becomes its owner. Only the owner deletes a card that
+  has one. When someone edits a card to a status only its owner may set, the card keeps its status
+  and says who tried.
 - **Replies and reactions.** Reply to a message to quote it above yours, and tap the quote to jump
   to the original. React with one of six emoji; tap a reaction again to take it back.
 - Sent, delivered, and read ticks.
@@ -142,7 +147,10 @@ What it does not protect against:
 - **Who edits which doc section, and when.** The server sees which docs a project has, how many
   sections each has, who edited which section and when, who is editing one now, and which of the
   fixed sizes each section was padded to. It never sees a title or the text. It could hide the
-  newest edits of a section and show an older one, as it could hold back messages.
+  newest edits of a section and show an older one, as it could hold back messages. On the board
+  it could also hold back a member's edit of a card, or a card's first revision, so the card looks
+  as if nobody owns it, but it cannot make a move that is not that member's. Right after a card is
+  saved, it can guess that a direct message is a request about that card.
 - **Which GitHub repositories a project links, and the cards from GitHub in its channels.** The
   server writes those cards from what GitHub sends, so they are not end-to-end encrypted, and a
   server that was changed could write fake ones. Their links still lead only to github.com. A card
@@ -476,7 +484,7 @@ in one draft pull request that the owner merges. It pushes only that branch, and
 push. Nobody edits a copy by hand: a pull request in the repository proposes a change as a file
 under `docs/roadmap/` or `docs/decisions/`, and once that file is on the default branch, it reaches
 the owner as a draft. An open pull request whose body starts with `Claims K-12` marks that card
-`Running: repo#N` on the board. One repository holds the copy of one board.
+`Running: repo#N` on the board, unless it has an owner who has not marked it ready. One repository holds the copy of one board.
 
 Cards and clones also need GitHub on that laptop: the GitHub CLI signed in with `gh auth login`, and
 git using it after `gh auth setup-git`. `/webchat:connect`, typed in any folder, says when they are
@@ -549,7 +557,8 @@ The request and the agent's reports show in the card's conversation under **Codi
 you can stop a run. The card's status line tells your team: `Running: Ann's agent` while it
 works, `Waiting for a decision` while it waits for one, `In review: repo#12` once its work is in the
 draft, `Done in repo#12` or `Fixed in repo#12` once that is merged, and what it was before if the
-run fails, the card no longer holds or the draft is closed without a merge. A merge also sets the decisions the work made true to
+run fails, the card no longer holds or the draft is closed without a merge. A card with an owner
+runs only once its owner marked it ready. A merge also sets the decisions the work made true to
 Accepted. Your page writes these while it is open. The agent reads the card as it is on the board,
 whoever wrote it, and the board's decisions. It works with your git and GitHub credentials, so run
 only cards you would do yourself.

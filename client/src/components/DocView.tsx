@@ -169,8 +169,11 @@ export function DocView({ doc }: { doc: ChatDoc }) {
   );
 }
 
-/** Edits one section, for a doc or a board card. Done shows it rendered, so there is no preview. */
-export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing: Editing; onClose: (message?: string) => void }) {
+/**
+ * Edits one section, for a doc or a board card. Done shows it rendered, so there is no preview. A
+ * card with an owner offers Delete only to its owner (the card-owner decision).
+ */
+export function SectionEditor({ doc, editing, onClose, canDelete = true }: { doc: ChatDoc; editing: Editing; onClose: (message?: string) => void; canDelete?: boolean }) {
   const [text, setText] = useState(editing.text);
   const [status, setStatus] = useState('');
   const latest = useRef(text);
@@ -290,9 +293,11 @@ export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing
             Cancel
           </button>
         ) : (
-          <button className="button-danger" onClick={() => void remove()}>
-            Delete
-          </button>
+          canDelete && (
+            <button className="button-danger" onClick={() => void remove()}>
+              Delete
+            </button>
+          )
         )}
         <button className="button-primary" onClick={() => void done()}>
           Done

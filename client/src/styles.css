@@ -2066,6 +2066,17 @@ a {
   }
 }
 
+/* A request about a board card: one line, whose click opens the card. */
+.card-note {
+  display: block;
+  width: 100%;
+  border: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pull-card-head {
   display: inline-flex;
   flex-wrap: wrap;
@@ -2902,6 +2913,29 @@ a {
 /* A Roadmap card's face: its owner, its title and whose move it is. */
 .board-face {
   align-items: center;
+}
+
+/* Narrower than a row's title, so it stays beside the owner's face when Pick takes part of the lane. */
+.board-card-head.board-face strong {
+  flex-basis: 6em;
+}
+
+/* A Ready card's face, with Pick beside it rather than inside the button that opens the card. */
+.board-face-row {
+  display: flex;
+  align-items: center;
+}
+
+.board-face-row .board-card-head {
+  flex: 1;
+  min-width: 0;
+}
+
+.board-pick {
+  flex: none;
+  margin-right: 10px;
+  padding: 4px 10px;
+  font-size: 13px;
 }
 
 .board-no-owner {

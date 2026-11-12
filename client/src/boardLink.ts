@@ -5,8 +5,8 @@
 // (D-104), and only the project's owner links it.
 import { readCard } from '../../shared/board';
 import { api } from './api';
-import { boardDocs, COLUMN_TITLES, COLUMNS, idOf, parseCard, type BoardColumn, type Card } from './board';
-import { createBoard, loadSections, newSectionId, replaceSection, saveSection } from './docs';
+import { boardDocs, COLUMN_TITLES, COLUMNS, idOf, type BoardColumn, type Card } from './board';
+import { boardCards, createBoard, newSectionId, replaceSection, rewriteCard, saveSection } from './docs';
 import type { ChatDoc } from './e2ee/keyring';
 import { store } from './store';
 
@@ -29,7 +29,7 @@ export async function importEntries(projectId: number, repo: string, entries: st
   try {
     for (const column of COLUMNS) {
       const doc = docs[column];
-      const cards = (await loadSections(doc)).map(parseCard);
+      const cards = await boardCards(doc);
       const incoming = read.filter((e) => (e.kind === 'D' ? 'decisions' : 'roadmap') === column);
       const kept = new Set(cards.map((c) => c.text.trim()));
       const texts = new Set(incoming.map((e) => e.text));
@@ -39,7 +39,7 @@ export async function importEntries(projectId: number, repo: string, entries: st
       for (const card of cards.filter((c) => c.kind && taken.has(`${c.kind}-${c.number}`) && !texts.has(c.text.trim()))) {
         const id = idOf(ids, card.kind!);
         ids.push(id);
-        await replaceSection(doc, card.id, { text: renumbered(card, id, repo), pos: card.pos });
+        await rewriteCard(doc, card.id, (now) => renumbered(now, id, repo));
       }
       let pos = Math.max(0, ...cards.map((c) => c.pos));
       for (const entry of incoming) {

@@ -11,6 +11,7 @@ import {
   LIMITS,
   previewOf,
   showsEveryPush,
+  type CardNoteDTO,
   type ConversationDTO,
   type DocDTO,
   type PullCardDTO,
@@ -863,6 +864,14 @@ export function noteAdded(conversationId: number, to: string, draft: string, car
   return sendContent(conversationId, { text: `Added ${card} to the board.`, added: { to, draft, card } }, false);
 }
 
+/**
+ * Asks a member about a board card in the direct chat with them, so they alone get a push, an
+ * ordinary message's (the card-notes decision).
+ */
+export function sendCardNote(conversationId: number, card: CardNoteDTO, text: string) {
+  return sendContent(conversationId, { text, card }, false);
+}
+
 /** Stops a run the user handed to an agent (R-030). The agent heeds only the person who sent the request. */
 export function cancelRun(request: ChatMessage & { run: RunRequest }) {
   const text = `Cancel ${request.run.card} with ${senderName(store.get().users, request.run.runtime)}`;
@@ -947,6 +956,7 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     added: entry.content.added ?? null,
     setupState: null,
     board: entry.content.board ?? null,
+    card: entry.content.card ?? null,
     security: 'encrypted',
   };
 }

@@ -18,6 +18,7 @@ import {
   isRepoName,
   LIMITS,
   type BoardSyncDTO,
+  type CardNoteDTO,
   type CardDraftDTO,
   type EnvelopeDTO,
   type HarnessState,
@@ -387,6 +388,8 @@ export interface MessageContent {
   setupState?: SetupState;
   /** The board's copy in a linked repository, between the owner's page and their agent (R-040, D-117). */
   board?: BoardSyncDTO;
+  /** A request about a board card to the member asked (the card-notes decision). The text says the same in words. */
+  card?: CardNoteDTO;
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -655,6 +658,15 @@ function readBoardSync(raw: Record<string, unknown> | undefined): BoardSyncDTO |
   }
 }
 
+const NOTE_KINDS: ReadonlyArray<CardNoteDTO['kind']> = ['ready', 'review', 'waiting'];
+
+/** A request about a board card, if it has the right shape. */
+function readCardNote(raw: Record<string, unknown> | undefined): CardNoteDTO | undefined {
+  const [card, docId, section] = [short(raw?.card, 8), short(raw?.docId, 64), short(raw?.section, 64)];
+  const kind = NOTE_KINDS.find((k) => k === raw?.kind);
+  return kind && card && CARD_ID.test(card) && docId && section ? { kind, card, docId, section } : undefined;
+}
+
 /** Keeps the parts of decrypted content that have the right shape. The sender signed it, so it is not tampered. */
 function readContent(value: unknown): MessageContent {
   const raw = value as {
@@ -671,6 +683,7 @@ function readContent(value: unknown): MessageContent {
     setup?: { sentAt?: unknown; choice?: unknown };
     setupState?: Record<string, unknown>;
     board?: Record<string, unknown>;
+    card?: Record<string, unknown>;
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -705,6 +718,8 @@ function readContent(value: unknown): MessageContent {
   if (state) content.setupState = state;
   const board = readBoardSync(raw.board);
   if (board) content.board = board;
+  const note = readCardNote(raw.card);
+  if (note) content.card = note;
   return content;
 }
 

@@ -778,6 +778,33 @@ describe('chat server', () => {
     await bob.request('POST', '/push/unsubscribe', { endpoint: watch.json.endpoint });
   });
 
+  test('a request about a board card pushes only the person asked, as an ordinary message (the card-notes decision)', async () => {
+    const asked = makeSubscription(`http://${pushService.host}/bob-note`);
+    const elsewhere = makeSubscription(`http://${pushService.host}/carol-note`);
+    assert.equal((await bob.request('POST', '/push/subscribe', asked.json)).status, 204);
+    assert.equal((await carol.request('POST', '/push/subscribe', elsewhere.json)).status, 204);
+    await carol.sync(false);
+    await bob.sync(false);
+
+    pushService.received.length = 0;
+    const title = 'Fix the secret login bug';
+    const note = { text: `Asks you to mark K-4 ready: ${title}`, card: { kind: 'ready' as const, card: 'K-4', docId: 'doc-secret', section: 'section-secret' } };
+    assert.equal((await alice.send(directChat.id, note)).status, 201);
+    await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+    const pushes = await waitForPushes(pushService.received, 4);
+    await sleep(200);
+    const paths = pushService.received.map((p) => p.path);
+    assert.ok(paths.length > 0 && paths.every((p) => p.startsWith('/bob-')), `only Bob's devices: ${paths}`);
+    assert.equal(new Set(paths).size, paths.length, 'each device once');
+    const payload = asked.decrypt(pushes.find((p) => p.path === '/bob-note')!.body);
+    const serialized = JSON.stringify(payload);
+    assert.ok(Buffer.byteLength(serialized) <= 3000);
+    // The envelope is base64url, so a part as short as the card's id could show up in it by chance.
+    for (const part of [title, 'doc-secret', 'section-secret', 'ready']) assert.ok(!serialized.includes(part), `no "${part}" in the push`);
+    await bob.request('POST', '/push/unsubscribe', { endpoint: asked.json.endpoint });
+    await carol.request('POST', '/push/unsubscribe', { endpoint: elsewhere.json.endpoint });
+  });
+
   test('an unread urgent message rings again, like an alarm, until it is read (D-079)', async () => {
     const alarm = makeSubscription(`http://${pushService.host}/bob-alarm`);
     assert.equal((await bob.request('POST', '/push/subscribe', alarm.json)).status, 204);

@@ -31,9 +31,10 @@ import {
   type DocContent,
   type DocMeta,
   type IdentitySecrets,
+  type MessageContent,
   type MessageMeta,
 } from '../shared/e2ee.ts';
-import type { PullCardDTO, RunDTO } from '../shared/types.ts';
+import { previewOf, type PullCardDTO, type RunDTO } from '../shared/types.ts';
 
 // Fewer PBKDF2 rounds keep the suite fast; one test runs the real count.
 const FAST = 1000;
@@ -216,6 +217,23 @@ describe('end-to-end encryption', () => {
     const opened = await decryptContent(key, alice.identity.publicKeys.sign, meta, await encryptMessage(key, keyId, alice.identity.signPrivate, meta, elsewhere));
     assert.equal(opened.pull, undefined, 'the text stays, the card goes');
     assert.equal(opened.text, content.text);
+  });
+
+  test('a request about a board card travels inside the envelope, and a malformed one is dropped (the card-notes decision)', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const keyId = newKeyId();
+    // An ordinary message: the header has no field for the card, so the server learns nothing new.
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'n1' };
+    const open = async (content: object) => decryptContent(key, alice.identity.publicKeys.sign, meta, await encryptMessage(key, keyId, alice.identity.signPrivate, meta, content as MessageContent));
+    const content = { text: 'Asks you to mark K-4 ready: Fix it', card: { kind: 'ready' as const, card: 'K-4', docId: 'd1', section: 's1' } };
+    const opened = await open(content);
+    assert.deepEqual(opened, content);
+    assert.equal(previewOf(opened), content.text, 'the notification shows the text');
+    for (const card of [{ ...content.card, kind: 'merge' }, { ...content.card, card: 'K-4; drop' }, { ...content.card, docId: 'x'.repeat(65) }, { ...content.card, section: 3 }, 'K-4']) {
+      const dropped = await open({ ...content, card });
+      assert.deepEqual(dropped, { text: content.text }, 'the text stays, the card goes');
+    }
+    assert.deepEqual(await open({ text: 'Hi' }), { text: 'Hi' }, 'a message without it opens as before');
   });
 
   test('a run request and its reports travel inside the envelope, and a malformed one is dropped (R-027)', async () => {
