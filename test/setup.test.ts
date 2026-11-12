@@ -33,9 +33,9 @@ test('the service’s PATH ends with the installers’ folder, once', () => {
   assert.equal(servicePath('/home/ann/.local/bin:/usr/bin::', '/home/ann'), '/home/ann/.local/bin:/usr/bin');
 });
 
-test('a LaunchAgent runs `serve` at login and again after it exits, with the saved PATH, and escapes what XML reserves', async () => {
+test('a LaunchAgent runs the runner at login and again after it exits, with the saved PATH, and escapes what XML reserves', async () => {
   const plist = launchdPlist('/Users/ann/.local/bin/webchat-agent', '/a&b:/usr/bin', '/Users/ann/.webchat/agent.log');
-  assert.match(plist, /<string>\/Users\/ann\/\.local\/bin\/webchat-agent<\/string>\s*<string>serve<\/string>/);
+  assert.match(plist, /<string>\/Users\/ann\/\.local\/bin\/webchat-agent<\/string>\s*<string>runner<\/string>/);
   assert.match(plist, /<key>RunAtLoad<\/key>\s*<true\/>\s*<key>KeepAlive<\/key>\s*<true\/>/);
   assert.match(plist, /<key>PATH<\/key>\s*<string>\/a&amp;b:\/usr\/bin<\/string>/);
   assert.match(plist, /<key>StandardErrorPath<\/key>\s*<string>\/Users\/ann\/\.webchat\/agent\.log<\/string>/);
@@ -53,7 +53,7 @@ test('a LaunchAgent runs `serve` at login and again after it exits, with the sav
 
 test('a systemd unit quotes its program and PATH, escapes % everywhere and $ where a line expands variables', () => {
   const unit = systemdUnit('/home/a b/100%/we"ird$dir/webchat-agent', '/home/a b/bin:/100%:/q"uote:/$HOME');
-  assert.match(unit, /^ExecStart="\/home\/a b\/100%%\/we\\"ird\$\$dir\/webchat-agent" serve$/m);
+  assert.match(unit, /^ExecStart="\/home\/a b\/100%%\/we\\"ird\$\$dir\/webchat-agent" runner$/m);
   // Environment= expands nothing, so `$` stays as it is.
   assert.match(unit, /^Environment="PATH=\/home\/a b\/bin:\/100%%:\/q\\"uote:\/\$HOME"$/m);
   assert.match(unit, /^Restart=always$/m);

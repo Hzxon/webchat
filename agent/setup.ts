@@ -1,9 +1,11 @@
 // The daemon's setup commands (docs/roadmap/new-agent-setup.md, docs/decisions/agent-install.md).
-// `setup` checks the laptop read-only, asks once, then pairs, installs what is missing and a login
-// service that runs `serve`. `doctor` repeats the checks, `status` says what runs, and `uninstall`
-// takes the service and the account away. Nothing here changes a security setting: where one
-// blocks the agent, it prints the fix.
+// `setup` checks the laptop read-only, asks once, then builds the locked room (docs/decisions/locked-room.md,
+// agent/lockroom.ts): the role account, the root-owned program, the keyholder service that runs as it
+// and a login service for the runner. `doctor` repeats the checks, `status` says what runs, and
+// `uninstall` takes it all away. Nothing here changes a security setting: where one blocks the
+// agent, it prints the fix.
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -16,7 +18,15 @@ import { HARNESS_ROW_WORDS, harnessRow, type ConfigDTO, type HarnessState, type 
 import { Api } from './api.ts';
 import { onPath } from './claude.ts';
 import { AgentClient, readPairing, type AccountFile } from './client.ts';
+import { GH_VERSION, ghArchive, ghAsset } from './gh.ts';
 import { harnessFinder, SUPPORTED, supported } from './harnesses.ts';
+import { sha256 } from './keep.ts';
+import {
+  createPlan, foldersPlan, freeIds, ghOf, ghPlan, idsOf, inspectRoom, layoutFor, loginPlan, pairPlan, programOf, programPlan, quoted, realRoot, refusals, runAll, servicePlan, signedInPlan, socketOf, uninstallPlan, xml,
+  type Layout, type Read, type Root,
+} from './lockroom.ts';
+import { finishMove, moveAccount, newest, sources } from './move.ts';
+import { callRoom } from './room.ts';
 import { messageOf } from './runs.ts';
 
 const exec = promisify(execFile);
@@ -61,9 +71,7 @@ async function loginPath() {
   return pathFrom(printed) || process.env.PATH || '';
 }
 
-const xml = (text: string) => text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
-
-/** The LaunchAgent: it starts at login and again whenever `serve` exits. */
+/** The LaunchAgent: it starts at login and again whenever the runner exits. */
 export const launchdPlist = (program: string, pathEnv: string, log: string) => `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -73,7 +81,7 @@ export const launchdPlist = (program: string, pathEnv: string, log: string) => `
   <key>ProgramArguments</key>
   <array>
     <string>${xml(program)}</string>
-    <string>serve</string>
+    <string>runner</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -92,19 +100,13 @@ export const launchdPlist = (program: string, pathEnv: string, log: string) => `
 </plist>
 `;
 
-/** A value in double quotes for a unit file: `\`, `"` and the specifier `%` escaped, and `$` too on a line that expands variables. */
-const quoted = (value: string, variables = false) => {
-  const escaped = value.replace(/[\\"]/g, '\\$&').replaceAll('%', '%%');
-  return `"${variables ? escaped.replaceAll('$', () => '$$') : escaped}"`;
-};
-
-/** The `systemd --user` unit. RestartSec keeps a `serve` that fails at once from hitting systemd's start limit. */
+/** The `systemd --user` unit. RestartSec keeps a runner that fails at once from hitting systemd's start limit. */
 export const systemdUnit = (program: string, pathEnv: string) => `[Unit]
 Description=WebChat agent
 After=network-online.target
 
 [Service]
-ExecStart=${quoted(program, true)} serve
+ExecStart=${quoted(program, true)} runner
 Environment=${quoted(`PATH=${pathEnv}`)}
 Restart=always
 RestartSec=10
@@ -183,11 +185,10 @@ async function serviceRow(): Promise<Row> {
   };
 }
 
-async function gitRow(packager: string): Promise<Row> {
-  // On macOS /usr/bin/git is a stub that opens Apple's installer, so it counts only with the tools behind it.
-  const git = mac() ? (await works('xcode-select', ['-p'])) || !['', '/usr/bin/git'].includes(await onPath('git')) : !!(await onPath('git'));
-  if (git) return ok('git: installed');
-  return mac() || packager ? { level: 'todo', text: 'git: not installed.', needs: 'git' } : { level: 'fail', text: 'git: not installed, and there is neither apt-get nor dnf to install it. Install it yourself.' };
+/** The keyholder runs only git that root owns: Apple's command line tools, or /usr/bin/git. Homebrew's is the owner's to change. */
+async function gitRow(packager: string, layout: Layout): Promise<Row> {
+  if (await rootOwned(layout.git, layout)) return ok(`git: ${layout.git}`);
+  return mac() || packager ? { level: 'todo', text: `git: not installed at ${layout.git}, where the agent needs a root-owned one.`, needs: 'git' } : { level: 'fail', text: 'git: not installed, and there is neither apt-get nor dnf to install it. Install it yourself.' };
 }
 
 /** Claude Code's sandbox on Linux needs bubblewrap and socat, and Ubuntu may forbid the user namespaces bubblewrap uses. */
@@ -256,10 +257,12 @@ interface Found {
  * linked it, from the setup the agent keeps (docs/decisions/harness-linking.md). `Found` says what
  * the owner can pick; the rows are `harnessRow`'s four states.
  */
-async function harnessRows(home: string): Promise<{ rows: Row[]; found: Found[] }> {
+async function harnessRows(home: string, said?: Said): Promise<{ rows: Row[]; found: Found[] }> {
   const dataDir = path.join(home, 'laptop');
   const adapters = await harnessFinder({ hook: '', dataDir })();
-  const stored = (await fs.readFile(path.join(dataDir, 'laptop', 'setup.json'), 'utf8').then((t) => JSON.parse(t) as { choice?: SetupChoice }, () => null))?.choice;
+  // The keyholder holds what the owner linked; a laptop from before the room still has it in a file the owner reads.
+  const told = said && /^Linked: (.*)\.$/m.exec(said.text)?.[1];
+  const stored: Partial<SetupChoice> | undefined = told ? { linked: told === 'none' ? [] : told.split(', ') } : (await fs.readFile(path.join(dataDir, 'laptop', 'setup.json'), 'utf8').then((t) => JSON.parse(t) as { choice?: SetupChoice }, () => null))?.choice;
   const found: Found[] = await Promise.all(
     adapters.map(async (adapter, i) => {
       const { id, name, command } = SUPPORTED[i]!;
@@ -281,31 +284,68 @@ async function harnessRows(home: string): Promise<{ rows: Row[]; found: Found[] 
   return { rows, found };
 }
 
-/** Cards and clones push with the owner's `gh`; questions need neither. */
-async function githubRow(): Promise<Row> {
-  if (!(await onPath('gh'))) return { level: 'warn', text: 'GitHub CLI: not installed. Cards and clones need it.', fix: 'Install it from https://cli.github.com, then run `gh auth login` and `gh auth setup-git`.' };
-  if (await works('gh', ['auth', 'status', '--hostname', 'github.com'])) return ok('GitHub CLI: signed in');
-  return { level: 'warn', text: 'GitHub CLI: not signed in. Cards and clones need it.', fix: 'Run `gh auth login`, then `gh auth setup-git`.' };
+/** What the running keyholder says about itself, or undefined when it does not answer. */
+type Said = { text: string; runner: boolean };
+const askRoom = (layout: Layout) => callRoom<Said>(socketOf(layout), 'status', {}, pkg.version).catch(() => undefined);
+
+/** Whether root owns a file that nobody else writes, by `stat`. */
+async function rootOwned(file: string, layout: Layout) {
+  const stat = await fs.stat(file).catch(() => null);
+  return !!stat && stat.uid === layout.rootUid && !(stat.mode & 0o022);
+}
+
+/** Read-only commands, which need no sudo: `dscl` and `getent` list accounts to anyone. */
+export const read: Read = (argv) => run(argv[0]!, argv.slice(1)).then((out) => out, () => undefined);
+
+/** The keyholder's service as the system says it, without sudo. */
+async function keyholderState(layout: Layout): Promise<'running' | 'stopped' | 'missing'> {
+  if (!existsSync(layout.unit)) return 'missing';
+  const said = mac() ? await run('launchctl', ['print', `system/${layout.label}`]).catch(() => '') : await run('systemctl', ['is-active', layout.label]).catch(() => '');
+  return (mac() ? /state = running/.test(said) : said.trim() === 'active') ? 'running' : 'stopped';
+}
+
+/** The locked room: the account, what root owns, the service, the owner's group and the agent's own GitHub login. */
+async function roomRows(layout: Layout, home: string, said?: Said): Promise<Row[]> {
+  const owner = os.userInfo().username;
+  const found = await inspectRoom(layout, read);
+  const refused = refusals(layout, owner, found);
+  if (refused.length) return refused.map((text) => ({ level: 'fail', text: `Agent account: ${text}` }));
+  const rows: Row[] = [];
+  if (!ghAsset(process.platform, os.arch())) rows.push({ level: 'fail', text: `GitHub CLI: none ships for ${process.platform} on ${os.arch()}.` });
+  // A live Claude Code window holds the plugin's account, which setup moves; it must be closed first.
+  const moving = newest((await sources(path.join(home, 'laptop'))).filter((s) => s.plugin && s.holder));
+  if (moving) rows.push({ level: 'fail', text: `Agent account: a Claude Code window runs the plugin's agent (process ${moving.holder}).`, fix: 'Quit every Claude Code window, then run setup again: it moves that account into the agent’s own folder.' });
+  if (found.user === 'none') return [...rows, { level: 'todo', text: `Agent account: ${layout.user} is not made yet. Setup makes it, with your administrator password.` }];
+  rows.push(ok(`Agent account: ${layout.user}, made by setup`));
+  const installed = await Promise.all([programOf(layout), ghOf(layout)].map((file) => rootOwned(file, layout)));
+  rows.push(installed.every(Boolean) ? ok(`Agent program and GitHub CLI: root-owned in ${layout.programDir}`) : { level: 'todo', text: `Agent program and GitHub CLI: missing, or not owned by root alone, in ${layout.programDir}.` });
+  const state = await keyholderState(layout);
+  rows.push(state === 'running' ? ok(`Keyholder service: running${said ? (said.runner ? ', the runner is connected' : ', no runner connected') : ''}`) : { level: state === 'missing' ? 'todo' : 'warn', text: `Keyholder service: ${state === 'missing' ? 'not installed' : 'installed, but not running'}.`, ...(state === 'stopped' && { fix: mac() ? `macOS may have turned it off: look under System Settings > General > Login Items > Allow in the Background. Its log is ${layout.log}.` : `Its log is in \`journalctl -u ${layout.label}\`.` }) });
+  if (!found.members.includes(owner)) rows.push({ level: 'todo', text: `Group: you are not in ${layout.ipcGroup}, which opens the agent’s socket.` });
+  else if (!(await run('id', ['-Gn']).catch(() => '')).split(/\s+/).includes(layout.ipcGroup)) rows.push({ level: 'warn', text: `Group: you are in ${layout.ipcGroup}, but this session started before that.`, fix: 'Log out and log in again, so the commands and the runner can reach the keyholder.' });
+  if (said && state === 'running' && !/GitHub: the agent is signed in/.test(said.text) && /^Taking the cards/.test(said.text)) rows.push({ level: 'warn', text: 'GitHub: the agent is not signed in. Cards and clones need it.', fix: 'Run `webchat-agent setup` and answer yes to its GitHub sign-in. A second GitHub account is best: whatever the agent’s login reaches, the agent reaches.' });
+  return rows;
 }
 
 /** The packager that installs software here, when there is one: macOS has none to offer, since Apple's installer brings git. */
 const packagerOf = async () => (mac() ? '' : ((await onPath('apt-get')) && 'apt-get') || ((await onPath('dnf')) && 'dnf') || '');
 
 /** The read-only checks. The caller's PATH is already the login shell's. */
-async function checks(home: string, server?: string) {
+async function checks(home: string, layout: Layout, server?: string) {
   const packager = await packagerOf();
-  const [system, admin, service, git, sandbox, disk, network, { rows: harnessRowsList, found }, github] = await Promise.all([
+  const said = await askRoom(layout);
+  const [system, admin, service, git, sandbox, disk, network, { rows: harnessRowsList, found }, room] = await Promise.all([
     systemRow(),
     adminRow(),
     serviceRow(),
-    gitRow(packager),
+    gitRow(packager, layout),
     mac() ? [] : sandboxRows(packager),
     diskRow(),
-    networkRow(server),
-    harnessRows(home),
-    githubRow(),
+    networkRow(server ?? serverIn(said?.text)),
+    harnessRows(home, said),
+    roomRows(layout, home, said),
   ]);
-  return { packager, admin, found, rows: [system, admin, service, git, ...sandbox, disk, network, ...harnessRowsList, github] as Row[] };
+  return { packager, admin, found, said, rows: [system, admin, service, git, ...sandbox, disk, network, ...harnessRowsList, ...room] as Row[] };
 }
 
 function show(rows: Row[]) {
@@ -394,19 +434,66 @@ export async function pairInto(file: string, pasted: string, picks?: PairingPick
 
 interface Options {
   home: string;
-  /** The installed webchat-agent, which the service runs. Empty when this is not the single file. */
+  /** The webchat-agent file this runs from, which setup installs root-owned. Empty when this is not the single file. */
   program: string;
   /** Asks the one question and returns what was typed. */
   ask?: (question: string) => Promise<string>;
+  /** The room's names and places. Tests give one of their own. */
+  layout?: Layout;
+  /** Runs what needs root. Left out, setup asks for the administrator password once and runs `sudo`. */
+  root?: Root;
+  /** The GitHub CLI's archive, checked against its pinned sum. Tests give one of their own. */
+  ghArchive?: () => Promise<Buffer>;
+  /** What setup reads of the accounts and groups, which tests answer for a layout that is not on this system. */
+  read?: Read;
 }
 
-export async function setup(pasted: string | undefined, { home, program, ask = askLine }: Options) {
+const defaultLayout = () => layoutFor(mac() ? 'darwin' : 'linux');
+
+/** The address `status` names, which is where a laptop whose account only the keyholder reads pairs. */
+const serverIn = (text = '') => /, on (\S+)\.$/m.exec(text)?.[1];
+
+/** Asks for the administrator password once, and keeps sudo's cache warm while setup runs. Returns what stops that. */
+async function openSudo() {
+  await inherit('sudo', ['-v']);
+  const keep = setInterval(() => void run('sudo', ['-n', '-v']).catch(() => undefined), 60_000);
+  return () => clearInterval(keep);
+}
+
+/** The program's bytes, read again now and checked against the hash taken when setup started, so a swap in between is caught. */
+export async function verifiedProgram(program: string, hash: string) {
+  const bytes = await fs.readFile(program);
+  if (createHash('sha256').update(bytes).digest('hex') !== hash) throw new Error(`${program} changed while setup ran, so setup did not install it. Run setup again.`);
+  return bytes;
+}
+
+/** Where `~/.local/bin/webchat-agent` is, the name the installer gives the program. */
+const linkFile = () => path.join(os.homedir(), '.local', 'bin', 'webchat-agent');
+
+/**
+ * Makes the account and groups, the folders, and the root-owned program and `gh`: all of the room but
+ * its service, which waits for the account the owner pairs or moves in. `look` reads the system's lists.
+ */
+export async function buildRoom(root: Root, layout: Layout, { owner, program, hash, look = read, gh = () => ghArchive(ghAsset(process.platform, os.arch())!) }: { owner: string; program: string; hash: string; look?: Read; gh?: () => Promise<Buffer> }) {
+  const ids = layout.platform === 'darwin' ? freeIds([...idsOf((await look(['dscl', '.', '-list', '/Users', 'UniqueID'])) ?? ''), ...idsOf((await look(['dscl', '.', '-list', '/Groups', 'PrimaryGroupID'])) ?? '')], 2) : [];
+  await runAll(root, [...createPlan(layout, owner, await inspectRoom(layout, look), ids), ...foldersPlan(layout), ...programPlan(layout, await verifiedProgram(program, hash))]);
+  if ((await sha256(programOf(layout))) !== hash) throw new Error(`${programOf(layout)} is not the program you ran. Run setup again.`);
+  await root(ghPlan(layout, await gh()));
+}
+
+export async function setup(pasted: string | undefined, { home, program, ask = askLine, layout = defaultLayout(), root: given, ghArchive: fetchGh, read: look = read }: Options) {
   if (!program) throw new Error('Setup installs the webchat-agent file that a release ships. Run the line in WebChat’s Connect dialog.');
+  const owner = os.userInfo().username;
+  const daemon = path.join(home, 'laptop');
   const account = await readAccount(home);
-  const server = pasted ? readPairing(pasted, '').server : account?.server;
-  if (!server) throw new Error('Paste the whole code that WebChat shows: webchat-agent setup <code>.');
+  const source = newest(await sources(daemon));
+  const said = await askRoom(layout);
+  const server = pasted ? readPairing(pasted, '').server : (account ?? source)?.server ?? serverIn(said?.text);
+  const built = (await inspectRoom(layout, look)).user === 'ours';
+  if (!server && !built) throw new Error('Paste the whole code that WebChat shows: webchat-agent setup <code>.');
+  const hash = await sha256(program);
   const pathEnv = (process.env.PATH = servicePath(await loginPath(), os.homedir()));
-  const { packager, admin, rows, found } = await checks(home, server);
+  const { packager, admin, rows, found } = await checks(home, layout, server);
   // Before anything else, and alone: the rest of the summary would only bury it.
   if (admin.level === 'fail') {
     show([admin]);
@@ -420,10 +507,14 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
   const ticked = found.filter((f) => f.program && f.signedIn);
   const describe = (f: Found) => (f.program ? `${f.name}${f.version ? ` ${f.version}` : ''}, ${f.signedIn === undefined ? 'sign-in unknown' : f.signedIn ? 'signed in' : 'not signed in'}` : `${f.name}, not installed${f.id === 'codex' ? ': linking it installs it' : ''}`);
   const stepsFor = (picks: Found[]) => installSteps([...rows.flatMap((row) => row.needs ?? []), ...(picks.some((f) => f.id === 'codex' && !f.program) ? ['codex' as const] : [])], process.platform, packager);
+  const moves = !pasted && !!source && !/^Taking the cards/.test(said?.text ?? '');
   const plan = [
     ...(pasted ? [`pair with ${server}: you approve the agent in WebChat`] : []),
+    ...(built ? [] : [`make the hidden account ${layout.user}, which holds the agent’s keys where no program of yours can read them, and the group ${layout.ipcGroup} with only you in it: this needs your administrator password`]),
+    `install the agent and GitHub’s CLI ${GH_VERSION}, owned by root, in ${layout.programDir}, and run the keyholder from there as ${layout.user}: ${mac() ? 'a LaunchDaemon' : 'a systemd service'} in ${path.dirname(layout.unit)}`,
+    ...(moves ? [`move the agent’s account from ${source.dir} into its own folder, without pairing again`] : []),
     ...stepsFor(ticked).map((step) => step.say),
-    `install a login service that runs the agent, a ${mac() ? 'LaunchAgent' : 'systemd user unit'} in ${path.dirname(mac() ? plistFile() : unitFile())}`,
+    `install a login service that runs the agent’s runner as you, a ${mac() ? 'LaunchAgent' : 'systemd user unit'} in ${path.dirname(mac() ? plistFile() : unitFile())}`,
   ];
   const offer = pasted ? `\nCoding agents to link, which WebChat shows you before you approve:\n${found.map((f) => `  [${ticked.includes(f) ? 'x' : ' '}] ${describe(f)}`).join('\n')}\n` : '';
   const answer = await ask(`${offer}\nSetup will:\n${plan.map((line) => `  - ${line}`).join('\n')}\nIt changes no security setting. Continue? [y/N]${pasted ? ', or type the coding agents to link, such as "claude codex", or "none"' : ''} `);
@@ -431,18 +522,53 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
   if (!picks) throw new Error('Nothing was changed.');
   const steps = stepsFor(picks);
 
-  await fs.mkdir(home, { recursive: true, mode: 0o700 });
-  // First, while the owner is at WebChat: the code lapses after 10 minutes, and Apple's installer can take longer.
-  if (pasted) await pairInto(accountFile(home), pasted, picks.map((f) => ({ name: f.name, ...(f.version && { version: f.version }), ...(f.signedIn !== undefined && { signedIn: f.signedIn }) })));
-  for (const step of steps) for (const [cmd, ...args] of step.commands) await inherit(cmd, args);
-  if (rows.some((row) => row.needs === 'git') && mac()) await waitForTools();
-  await installService(program, pathEnv, home);
-  for (let tries = 0; (await serviceState()) !== 'running'; tries++) {
-    if (tries === 10) throw new Error(`The login service is installed but does not run. ${logHint(home)}`);
-    await sleep(1000);
+  const stopSudo = given ? () => undefined : await openSudo();
+  const root = given ?? realRoot;
+  try {
+    await fs.mkdir(home, { recursive: true, mode: 0o700 });
+    await buildRoom(root, layout, { owner, program, hash, look, gh: fetchGh });
+    // First, while the owner is at WebChat: the code lapses after 10 minutes, and Apple's installer can take longer.
+    if (pasted) await root(pairPlan(layout, { code: pasted, picks: picks.map((f) => ({ name: f.name, ...(f.version && { version: f.version }), ...(f.signedIn !== undefined && { signedIn: f.signedIn }) })) }));
+    for (const step of steps) for (const [cmd, ...args] of step.commands) await inherit(cmd, args);
+    if (rows.some((row) => row.needs === 'git') && mac()) await waitForTools();
+
+    // The old login service holds the daemon's account, so it stops before the account moves; a plugin's window must be closed.
+    let moved: string[] = [];
+    if (moves && (await root({ argv: ['test', '-e', path.join(layout.data, 'laptop', 'account.json')] }).then(() => false, () => true))) {
+      await removeService();
+      const busy = (await sources(daemon)).find((s) => s.holder);
+      if (busy) throw new Error(`The agent’s account is in use by process ${busy.holder}. Quit every Claude Code window, then run setup again.`);
+      moved = await moveAccount(root, layout, source, path.join(home, 'runner'));
+    }
+    await runAll(root, servicePlan(layout, programOf(layout)));
+    if (await root(signedInPlan(layout)).then(() => false, () => true)) {
+      const reply = await ask('\nThe agent needs its own GitHub login for cards and clones. A second GitHub account is best: whatever its login reaches, the agent reaches. Sign it in now? GitHub shows a code to enter at github.com/login/device. [y/N] ');
+      if (yes(reply)) await root(loginPlan(layout));
+      else console.log('Skipped. `webchat-agent doctor` reminds you; `webchat-agent setup` signs it in later.');
+    }
+
+    await fs.mkdir(path.join(home, 'runner'), { recursive: true, mode: 0o700 });
+    await installService(programOf(layout), pathEnv, home);
+    await fs.mkdir(path.dirname(linkFile()), { recursive: true });
+    await fs.rm(linkFile(), { force: true });
+    await fs.symlink(programOf(layout), linkFile());
+    for (let tries = 0; (await serviceState()) !== 'running'; tries++) {
+      if (tries === 10) throw new Error(`The login service is installed but does not run. ${logHint(home)}`);
+      await sleep(1000);
+    }
+    // Asked as the owner, in the ipc group, since a session that began before setup is not in it yet.
+    const paired = { argv: ['env', `WEBCHAT_SOCKET=${socketOf(layout)}`, programOf(layout), 'status'], as: owner, group: layout.ipcGroup };
+    for (let tries = 0; !/Taking the cards/.test(await root(paired).catch(() => '')); tries++) {
+      if (tries === 20) throw new Error(`The keyholder does not take the agent’s account. ${keyholderLog(layout)}`);
+      await sleep(2000);
+    }
+    await finishMove(moved);
+    if (moved.length) console.log('The agent’s account is in its own folder now, and your copy is deleted.');
+  } finally {
+    stopSudo();
   }
-  console.log('The agent runs as a login service, and shows as online in WebChat within a minute.');
-  const left = (await checks(home, server)).rows.filter((row) => row.level !== 'ok');
+  console.log('The agent runs as a system service and a login service, and shows as online in WebChat within a minute.');
+  const left = (await checks(home, layout, server)).rows.filter((row) => row.level !== 'ok');
   if (left.length) {
     console.log('\nStill to do:');
     show(left);
@@ -450,28 +576,39 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
 }
 
 const logHint = (home: string) => (mac() ? `Its log is ${path.join(home, 'agent.log')}.` : `Its log is in \`journalctl --user -u ${NAME}\`.`);
+const keyholderLog = (layout: Layout) => (mac() ? `Its log is ${layout.log}.` : `Its log is in \`journalctl -u ${layout.label}\`.`);
 
-export async function doctor(home: string) {
+export async function doctor(home: string, layout = defaultLayout()) {
   process.env.PATH = servicePath(await loginPath(), os.homedir());
-  const { rows } = await checks(home, (await readAccount(home))?.server);
+  const { rows } = await checks(home, layout, (await readAccount(home))?.server);
   show(rows);
   if (rows.some((row) => row.level === 'todo')) console.log('\nRun `webchat-agent setup` to install what is missing.');
   if (rows.some((row) => row.level !== 'ok')) process.exitCode = 1;
 }
 
-export async function status(home: string) {
-  const account = await readAccount(home);
-  const state = await serviceState();
-  console.log(`Service: ${{ running: 'running', stopped: `installed, but not running. ${logHint(home)}`, missing: 'not installed. Run `webchat-agent setup <code>`.' }[state]}`);
-  console.log(account ? `Paired: yes, as ${account.username} on ${account.server}` : 'Paired: no. Run `webchat-agent setup <code>` with a code from WebChat.');
-  console.log(`Asleep: ${existsSync(path.join(home, 'laptop', 'asleep')) ? 'yes. Run `webchat-agent wake` to wake it.' : 'no'}`);
+export async function status(home: string, layout = defaultLayout()) {
+  const [keyholder, login, account] = [await keyholderState(layout), await serviceState(), await readAccount(home)];
+  console.log(`Keyholder service: ${{ running: 'running', stopped: `installed, but not running. ${keyholderLog(layout)}`, missing: 'not installed. Run `webchat-agent setup <code>`.' }[keyholder]}`);
+  console.log(`Runner service: ${{ running: 'running', stopped: `installed, but not running. ${logHint(home)}`, missing: 'not installed. Run `webchat-agent setup`.' }[login]}`);
+  if (account) console.log(`Account from before the room, still in ${accountFile(home)}: ${account.username} on ${account.server}. Run \`webchat-agent setup\` to move it.`);
 }
 
-export async function uninstall(home: string, ask = confirm) {
-  if (!(await ask(`This stops the agent on this laptop and deletes its keys in ${path.join(home, 'laptop')}. Continue? [y/N] `))) throw new Error('Nothing was removed.');
+export async function uninstall(home: string, ask = confirm, { layout = defaultLayout(), root: given, read: look = read }: { layout?: Layout; root?: Root; read?: Read } = {}) {
+  const found = await inspectRoom(layout, look);
+  if ([found.user, found.group, found.ipc].includes('foreign')) throw new Error(`${layout.user} or ${layout.ipcGroup} is not an account setup made, so setup leaves it alone. Nothing was removed.`);
+  if (!(await ask(`This stops the agent on this laptop and deletes its keys, the account ${layout.user} and the agent’s copies of your repositories. Continue? [y/N] `))) throw new Error('Nothing was removed.');
+  const built = found.user !== 'none' || found.ipc !== 'none' || [layout.unit, layout.data, layout.ipc, layout.programDir].some((file) => existsSync(file));
+  const stopSudo = given || !built ? () => undefined : await openSudo();
+  try {
+    if (built) await runAll(given ?? realRoot, uninstallPlan(layout, found.user === 'ours'));
+  } finally {
+    stopSudo();
+  }
   await removeService();
-  await fs.rm(path.join(home, 'laptop'), { recursive: true, force: true });
-  await fs.rm(path.join(home, 'agent.log'), { force: true });
-  console.log('Removed the login service and the agent’s account on this laptop.');
-  console.log('The agent stays in WebChat until you remove it under Coding agents. Its program, and the repositories it cloned in ~/WebChat, stay on this laptop.');
+  // The account and the agent.log that a laptop from before the room kept in the owner's folders.
+  await Promise.all([path.join(home, 'runner'), path.join(home, 'laptop'), path.join(home, 'agent.log'), linkFile()].map((file) => fs.rm(file, { recursive: true, force: true })));
+  console.log('Removed both services and the agent’s account on this laptop.');
+  console.log('The agent stays in WebChat until you remove it under Coding agents. The repositories it cloned in ~/WebChat stay on this laptop.');
+  console.log('The agent’s GitHub login is signed out here, but it stays valid on GitHub until you revoke it: github.com/settings/applications, under Authorized OAuth Apps.');
+  console.log('Revoking “GitHub CLI” there revokes every `gh` login of that GitHub account, including your own on your laptop. If the agent used your own account, run `gh auth login` again afterwards.');
 }
