@@ -887,11 +887,16 @@ describe('agent client (R-027)', () => {
         // The runs before loaded nothing of it, as nothing was chosen.
         const { harnesses, ...shown } = (await setup(alice, direct))[0]!;
         assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false, linked: ['Claude Code', 'Codex'], noPlan: true }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
-        const claudeCode = { name: 'Claude Code', path: path.join(bin, 'claude'), linked: true, attention: undefined, version: '2.1.300', signedIn: true, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution', 'noPlan'] };
-        const codexState = { name: 'Codex', path: path.join(bin, 'codex'), linked: true, attention: undefined, version: '0.58.0', signedIn: true, refusal: CODEX_GAP, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: [] };
+        const claudeCode = { name: 'Claude Code', path: path.join(bin, 'claude'), linked: true, attention: undefined, version: '2.1.300', signedIn: true, answers: undefined, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution', 'noPlan'] };
+        const codexState = { name: 'Codex', path: path.join(bin, 'codex'), linked: true, attention: undefined, version: '0.58.0', signedIn: true, answers: undefined, refusal: CODEX_GAP, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: [] };
         assert.deepEqual(harnesses, [claudeCode, codexState], 'the pane learns each harness the laptop has, the knobs it honors, and why Codex takes no cards');
         // Turned off, Claude Code leaves the linked harnesses, and only Codex is left, which takes no cards; a page from before the list keeps it off.
-        await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false, off: ['Claude Code'] });
+        const [{ harnesses: offHarnesses }] = await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false, off: ['Claude Code'] });
+        assert.deepEqual(
+          offHarnesses!.map((h) => [h.name, h.answers]),
+          [['Claude Code', 'You turned Claude Code off, so I start nothing with it. Link it in my settings under Coding agents.'], ['Codex', undefined]],
+          'a question may still pick Codex, which answers though it takes no cards',
+        );
         await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false });
         assert.match(await plugin.call('status'), /Every card fails at once: Codex’s sandbox[\s\S]*Linked: Codex\./);
         // Carol's word changes nothing and hears nothing; Alice's is kept, a skill she chose that is gone too.

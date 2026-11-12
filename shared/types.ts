@@ -89,6 +89,8 @@ export interface HarnessState {
   linked?: boolean;
   /** Why a linked harness needs attention: it cannot run turns, is too old, or is signed out. */
   attention?: string;
+  /** Why it answers no questions: not linked, turned off, missing or too old. Undefined from an agent before linking, whose `refusal` stands for both. */
+  answers?: string;
   /** Why it takes no cards on this laptop, or nothing when it does. */
   refusal?: string;
   /** The instructions file and the skills folder it reads, such as `~/.claude/CLAUDE.md`. */

@@ -1007,7 +1007,7 @@ export class Plugin {
     const linked = this.isLinked(harness);
     const [{ path: where, ...found }, own, cards, refused] = await Promise.all([harness.found(), harness.refusal(), harness.refusal(this.options.cloneRoot), this.harnessRefusal(harness)]);
     const attention = linked ? own ?? (found.signedIn === false ? `${harness.name} is not signed in.` : undefined) : undefined;
-    return { name: harness.name, ...found, ...(where && { path: shown(where) }), linked, ...(attention && { attention }), refusal: refused ?? cards, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
+    return { name: harness.name, ...found, ...(where && { path: shown(where) }), linked, ...(attention && { attention }), answers: refused, refusal: refused ?? cards, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
   }
 
   /** Keeps the setup on disk, and hands each harness its choice. */

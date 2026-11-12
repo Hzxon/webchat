@@ -1484,7 +1484,9 @@ a {
   flex-wrap: wrap;
 }
 
+/* The name and path take a line of their own on a phone, so a long path does not wrap letter by letter. */
 .harness-row > span {
+  flex: 1 1 12rem;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -3173,11 +3175,14 @@ a {
 
 /* The harness picker beside the repository, on the same line. */
 .agents-repo .agents-repo {
+  max-width: 100%;
   margin: 0;
 }
 
+/* A long reason on a greyed option would widen the select past its card. */
 .agents-repo select {
   min-width: 0;
+  max-width: 100%;
   padding: 4px 6px;
   border: 1px solid var(--line);
   border-radius: var(--radius);

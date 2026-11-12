@@ -624,7 +624,7 @@ function readHarnesses(raw: unknown): HarnessState[] | undefined {
     const knobs = Array.isArray(h.knobs) ? h.knobs.filter((k): k is string => typeof k === 'string' && /^\w{1,32}$/.test(k)) : [];
     const signedIn = typeof h.signedIn === 'boolean' ? h.signedIn : undefined;
     const linked = typeof h.linked === 'boolean' ? h.linked : undefined;
-    return [{ name, path: field(h.path), linked, attention: field(h.attention), version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs }];
+    return [{ name, path: field(h.path), linked, attention: field(h.attention), answers: field(h.answers), version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs }];
   });
 }
 
