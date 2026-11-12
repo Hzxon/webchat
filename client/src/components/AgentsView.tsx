@@ -15,6 +15,7 @@ import { AlertIcon, BackIcon, PlusIcon, SendIcon, SlidersIcon, TerminalIcon } fr
 import { AgentBrief } from './AgentBrief';
 import { AgentDialog } from './AgentDialog';
 import { AgentDraft } from './AgentDraft';
+import { AgentLinkAsks } from './AgentLinkAsk';
 import { AgentSetup } from './AgentSetup';
 import { HarnessPicker, useHarnessPick } from './HarnessPicker';
 import { Markdown } from './Markdown';
@@ -127,7 +128,10 @@ export function AgentsView() {
           </button>
         </div>
       ) : (
-        <ProjectList threads={threads} chats={chats} />
+        <>
+          <AgentLinkAsks />
+          <ProjectList threads={threads} chats={chats} />
+        </>
       )}
       {connecting && <AgentDialog onClose={() => setConnecting(false)} />}
       {setting && <AgentSetup onClose={() => setSetting(false)} />}

@@ -12,20 +12,22 @@ import { promisify } from 'node:util';
 import { after, before, describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Api } from '../agent/api.ts';
-import { claudeArgs, claudeResult, claudeSettings, ClaudePlugin as Plugin, guard, restrictedSettings, sandboxProblem } from '../agent/claude.ts';
+import { claudeArgs, claudeHarness, claudeResult, claudeSettings, pathDirs, guard, restrictedSettings, sandboxProblem } from '../agent/claude.ts';
 import { AgentClient, type OpenedMessage } from '../agent/client.ts';
 import { CODEX_GAP, codexHarness } from '../agent/codex.ts';
 import type { Harness } from '../agent/harness.ts';
 import { Conversations, parts, type Answerer } from '../agent/conversations.ts';
-import { worktreeGit } from '../agent/plugin.ts';
-import { setup, uninstall } from '../agent/setup.ts';
+import { Plugin, worktreeGit } from '../agent/plugin.ts';
+import { doctor, linksFrom, setup, uninstall } from '../agent/setup.ts';
+import { harnessFinder, supported, supportedList } from '../agent/harnesses.ts';
+import { versionAtLeast } from '../agent/harness.ts';
 import { addWorktree, start, type Final } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { openDb, toUserDTO } from '../server/db.ts';
-import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, textHash, wrapChatKey } from '../shared/e2ee.ts';
-import { briefText, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
+import { createIdentity, keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, openPicks, sealPicks, textHash, wrapChatKey, type MessageContent } from '../shared/e2ee.ts';
+import { briefText, harnessRow, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
 import { copyOf, readCard } from '../shared/board.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
@@ -87,7 +89,7 @@ import fs from 'node:fs';
 const args = process.argv.slice(2);
 // What the adapter asks of the laptop's Claude Code for Settings (D-115).
 if (args[0] === '--version' || args.join(' ') === 'auth status') {
-  console.log(args[0] === '--version' ? '2.1.0 (Claude Code)' : '{"loggedIn": true}');
+  console.log(args[0] === '--version' ? (process.env.FAKE_CLAUDE_VERSION ?? '2.1.300') + ' (Claude Code)' : '{"loggedIn": true}');
   process.exit(0);
 }
 const input = fs.readFileSync(0, 'utf8');
@@ -131,7 +133,7 @@ import fs from 'node:fs';
 const args = process.argv.slice(2);
 if (args[0] === '--version' || args.join(' ') === 'login status') {
   console.log(args[0] === '--version' ? 'codex-cli 0.58.0' : 'Logged in using ChatGPT');
-  process.exit(0);
+  process.exit(process.env.FAKE_CODEX_SIGNED_OUT && args[0] === 'login' ? 1 : 0);
 }
 const input = fs.readFileSync(0, 'utf8');
 const schema = JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema') + 1], 'utf8'));
@@ -284,6 +286,27 @@ describe('agent client (R-027)', () => {
     assert.throws(() => new Api('http://chat.example.com'), /https/);
     assert.throws(() => new Api('http://localhost.example.com'), /https/);
     for (const local of ['http://localhost:5173', 'http://alice.localhost:5173', 'http://127.0.0.1:3000', 'http://[::1]:3000']) new Api(local);
+  });
+
+  test('a pairing carries the sealed picks, within the limits, and the page reads them back', async () => {
+    await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'pair:%'");
+    const code = newPairingCode();
+    const { publicKeys: keys } = await createIdentity();
+    const picks = await sealPicks(code, keys, [{ name: 'Codex', signedIn: false }]);
+    const half = async (extra: object) => ({ id: await pairingId(newPairingCode()), keys, proof: await pairingProof(code, keys), authKey: 'x'.repeat(43), ...extra });
+    for (const bad of ['', 'not base64!', 'a'.repeat(4097), 'short']) {
+      await assert.rejects(new Api(baseUrl).request('POST', '/pairings', await half({ picks: bad })), { status: 400 }, `picks ${bad.slice(0, 12)}`);
+    }
+    const input = { ...(await half({ picks })), id: await pairingId(code) };
+    await new Api(baseUrl).request('POST', '/pairings', input);
+    const read = await new Api(baseUrl).request<PairingDTO>('GET', `/pairings/${input.id}`);
+    assert.deepEqual(await openPicks(code, read.keys, read.picks!), [{ name: 'Codex', signedIn: false }]);
+    // A pairing with none, as an agent from before linking files it, reads as before.
+    const plain = await half({});
+    await new Api(baseUrl).request('POST', '/pairings', plain);
+    assert.equal((await new Api(baseUrl).request<PairingDTO>('GET', `/pairings/${plain.id}`)).picks, undefined);
+    // The tests after this one pair too, and the limit is per address.
+    await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'pair:%'");
   });
 
   test('reads and answers in a project it was added to', async () => {
@@ -647,7 +670,7 @@ describe('agent client (R-027)', () => {
       await fs.mkdir(path.join(project, '.claude'));
       await fs.writeFile(path.join(project, '.claude', 'settings.local.json'), JSON.stringify({ sandbox: { enabled: false } }));
       const cloneRoot = path.join(home, 'WebChat');
-      const options = { claude: path.join(bin, 'claude'), guard: 'true', cloneRoot, others: [codexHarness(path.join(bin, 'codex'), dataDir)] };
+      const options = { harnesses: [claudeHarness(path.join(bin, 'claude'), 'true', dataDir), codexHarness(path.join(bin, 'codex'), dataDir)], cloneRoot };
       // A window open in a folder that is no repository serves the agent all the same (R-036).
       const anywhere = path.join(home, 'anywhere');
       await fs.mkdir(anywhere);
@@ -661,8 +684,15 @@ describe('agent client (R-027)', () => {
         // The page shows its address with the code, so the address setting stays empty (R-031).
         const plugin = new Plugin({ ...options, code: `${baseUrl}#${code}`, dataDir, projectDir: anywhere });
         const starting = plugin.start();
+        const pairingRows = async () => instance.sql.query<{ picks: string | null }>('SELECT picks FROM webchat.pairings WHERE id = $1', [await pairingId(code)]);
+        await waitFor('the pairing is filed', async () => (await pairingRows()).length > 0);
+        const [filed] = await pairingRows();
+        assert.ok(filed!.picks && !/Claude|Codex/.test(Buffer.from(filed!.picks, 'base64url').toString('latin1')), 'the server holds the picks sealed');
+        assert.equal(JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'setup.json'), 'utf8')).choice.linked, undefined, 'nothing links before the owner approves');
         const agent = await approve(alice, code, 'Claude Code');
         assert.equal(await starting, true);
+        assert.deepEqual(await openPicks(code, agent.keys!, filed!.picks), [{ name: 'Claude Code', version: '2.1.300', signedIn: true }, { name: 'Codex', version: '0.58.0', signedIn: true }]);
+        assert.deepEqual(JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'setup.json'), 'utf8')).choice.linked, ['Claude Code', 'Codex'], 'the approved picks link');
         // The agent is online with no folder yet, and says what its laptop can do (R-036, D-103).
         await plugin.client!.sync();
         await alice.sync();
@@ -856,18 +886,18 @@ describe('agent client (R-027)', () => {
         const offer = { claudeMd: true, skills: [{ name: 'commit-style', description: 'Writes commit messages.' }, { name: 'other', description: 'Does other things.' }] };
         // The runs before loaded nothing of it, as nothing was chosen.
         const { harnesses, ...shown } = (await setup(alice, direct))[0]!;
-        assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false, noPlan: true }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
-        const claudeCode = { name: 'Claude Code', version: '2.1.0', signedIn: true, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution', 'noPlan'] };
-        const codexState = { name: 'Codex', version: '0.58.0', signedIn: true, refusal: CODEX_GAP, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: [] };
+        assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false, linked: ['Claude Code', 'Codex'], noPlan: true }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
+        const claudeCode = { name: 'Claude Code', path: path.join(bin, 'claude'), linked: true, attention: undefined, version: '2.1.300', signedIn: true, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution', 'noPlan'] };
+        const codexState = { name: 'Codex', path: path.join(bin, 'codex'), linked: true, attention: undefined, version: '0.58.0', signedIn: true, refusal: CODEX_GAP, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: [] };
         assert.deepEqual(harnesses, [claudeCode, codexState], 'the pane learns each harness the laptop has, the knobs it honors, and why Codex takes no cards');
-        // Turned off, the only harness starts nothing; a page from before the list keeps it off.
+        // Turned off, Claude Code leaves the linked harnesses, and only Codex is left, which takes no cards; a page from before the list keeps it off.
         await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false, off: ['Claude Code'] });
         await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false });
-        assert.match(await plugin.call('status'), /You turned Claude Code off, so I start nothing/);
+        assert.match(await plugin.call('status'), /Every card fails at once: Codex’s sandbox[\s\S]*Linked: Codex\./);
         // Carol's word changes nothing and hears nothing; Alice's is kept, a skill she chose that is gone too.
         const chosen = { claudeMd: true, skills: ['commit-style', 'gone'], noAttribution: true, noPlan: true };
         assert.deepEqual(await setup(carol, general, chosen), []);
-        assert.deepEqual((await setup(alice, direct, { ...chosen, off: [] })).map((s) => s.choice), [{ ...chosen, off: [] }]);
+        assert.deepEqual((await setup(alice, direct, { ...chosen, off: [] })).map((s) => s.choice), [{ ...chosen, off: [], linked: ['Claude Code', 'Codex'] }]);
         assert.deepEqual(JSON.parse(await fs.readFile(settings, 'utf8')).attribution, { commit: '', pr: '' }, 'the settings hide the attribution lines');
         // A prompt naming a coding agent the laptop does not have fails with the reason, and no turn runs.
         const turnsBeforePrompts = (await turns()).length;
@@ -880,6 +910,88 @@ describe('agent client (R-027)', () => {
         const codexAnswer = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'answer').map((m) => m.content?.text);
         assert.deepEqual(codexAnswer.slice(-1), ['It adds.']);
         assert.equal((await turns()).length, turnsBeforePrompts, 'no Claude ran for it either');
+        // The owner links each harness (docs/decisions/harness-linking.md): only linked ones run, and a prompt that names none runs on the first she linked.
+        const lkLink = (...linked: string[]) => setup(alice, direct, { ...chosen, linked, off: [] });
+        const lkFailures = async () => (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'failed').map((m) => m.content?.text);
+        const lkHarnessOf = async (root: string) => (JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'conversations.json'), 'utf8')) as Array<{ root: string; harness?: string }>).find((c) => c.root === root)?.harness;
+        const lkCodexPrompt = () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Codex' }, 'What does sum.js do?');
+        const lkPlain = () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id }, 'What does sum.js do?');
+        const lkNotLinked = (name: string) => [`I could not answer. You have not linked ${name}, so I start nothing with it. Link it in my settings under Coding agents.`];
+        const [lkOnlyClaude] = await lkLink('Claude Code');
+        assert.deepEqual(lkOnlyClaude!.harnesses!.map((h) => [h.name, harnessRow(h)]), [['Claude Code', 'linked'], ['Codex', 'found']]);
+        assert.equal(plugin.client!.protocol, 7, 'Claude Code linked, and gh signed in: cards');
+        await lkCodexPrompt();
+        assert.deepEqual(await lkFailures(), lkNotLinked('Codex'));
+        assert.equal(await lkHarnessOf(await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, lkPlain)), 'Claude Code', 'Claude Code still runs');
+        await lkLink('Codex', 'Claude Code');
+        assert.equal(plugin.client!.protocol, 7);
+        assert.equal(await lkHarnessOf(await lkPlain()), 'Codex', 'a prompt that names none runs on the first she linked');
+        const [lkOnlyCodex] = await lkLink('Codex');
+        assert.equal(plugin.client!.protocol, 5, 'Codex takes no cards, so the union has none');
+        assert.deepEqual(lkOnlyCodex!.harnesses!.map((h) => harnessRow(h)), ['found', 'linked']);
+        await lkLink();
+        assert.equal(plugin.client!.protocol, 5, 'with none linked the agent still answers settings');
+        assert.match(await plugin.call('status'), /Every card fails at once: You have linked no coding agent[\s\S]*Linked: none\./);
+        await lkPlain();
+        assert.deepEqual(await lkFailures(), ['I could not answer. You have linked no coding agent on this laptop, so I start nothing. Link one in my settings under Coding agents.']);
+
+        // `webchat-agent link`: the laptop asks in the owner's direct chat, and only her signed word links it, once (D-089, K-47).
+        const lkAsks = async () => (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.ask).map((m) => m.content!);
+        const lkAnswer = async (from: AgentClient, chat: number, step: 'approve' | 'decline', to: string, extra: object = {}) => {
+          await from.send(chat, { text: 'Answer', ask: { kind: 'link', step, to, sentAt: Date.now(), ...extra } as MessageContent['ask'] });
+          const lkHeard = await plugin.client!.sync();
+          await Promise.all(lkHeard.map((m) => plugin.handle(m)));
+          return lkHeard;
+        };
+        const lkLinked = async () => (JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'setup.json'), 'utf8')) as { choice: SetupChoice }).choice.linked;
+        // What the laptop remembers it asked, by the request message's client id.
+        const lkPending = () => (plugin as unknown as { setup: { links?: Record<string, { harness: string; at: number }> } }).setup.links ?? {};
+        await lkLink('Claude Code');
+        const lkDir = path.join(dataDir, 'links');
+        const lkFile = (name: string, body: object) => fs.writeFile(path.join(lkDir, name), JSON.stringify(body));
+        assert.match(await plugin.requestLink('Codex'), /Approve it in WebChat/);
+        // A file naming no supported harness, or filed more than 10 minutes ago, sends nothing.
+        await lkFile('hermes.json', { harness: 'Hermes', at: Date.now() });
+        await lkFile('old.json', { harness: 'Codex', at: Date.now() - REQUEST_TTL_MS - 1000 });
+        await plugin.sendLinkRequests();
+        assert.deepEqual((await lkAsks()).map((c) => c.ask), [{ kind: 'link', step: 'request', harness: 'Codex' }]);
+        assert.equal((await fs.readdir(lkDir)).length, 0, 'every file was taken');
+        // One request waits for each harness.
+        await plugin.requestLink('Codex');
+        await plugin.sendLinkRequests();
+        assert.deepEqual(await lkAsks(), []);
+        const [lkAsked] = Object.keys(lkPending());
+        // Not the owner's word: Carol's, one outside the direct chat, a request nobody made, and one signed too long ago.
+        await lkAnswer(carol, general, 'approve', lkAsked!);
+        await lkAnswer(alice, general, 'approve', lkAsked!);
+        await lkAnswer(alice, direct, 'approve', 'nobody');
+        await lkAnswer(alice, direct, 'approve', lkAsked!, { sentAt: Date.now() - REQUEST_TTL_MS - 1000 });
+        assert.deepEqual(await lkLinked(), ['Claude Code']);
+        // Her approve links the harness the laptop recorded, whatever name the message adds, and says so.
+        const lkHeard = await lkAnswer(alice, direct, 'approve', lkAsked!, { harness: 'Claude Code' });
+        assert.deepEqual(await lkLinked(), ['Claude Code', 'Codex']);
+        assert.equal(plugin.client!.protocol, 7);
+        assert.ok((await lkAsks()).some((c) => c.ask?.step === 'done'), 'the laptop says it linked it');
+        // The same message again, or another that names the same request, changes nothing.
+        await lkLink('Claude Code');
+        await plugin.handle(lkHeard.find((m) => m.content?.ask)!);
+        await lkAnswer(alice, direct, 'approve', lkAsked!);
+        assert.deepEqual(await lkLinked(), ['Claude Code']);
+        // A decline links nothing; a request left past 10 minutes fails with a note.
+        await plugin.requestLink('Codex');
+        await plugin.sendLinkRequests();
+        const lkDeclined = Object.keys(lkPending()).find((id) => id !== lkAsked)!;
+        await lkAnswer(alice, direct, 'decline', lkDeclined);
+        assert.deepEqual(await lkLinked(), ['Claude Code']);
+        await plugin.requestLink('Codex');
+        await plugin.sendLinkRequests();
+        const lkLapsed = Object.keys(lkPending()).find((id) => id !== lkAsked && id !== lkDeclined)!;
+        lkPending()[lkLapsed]!.at -= REQUEST_TTL_MS + 1000;
+        await lkAsks();
+        await lkAnswer(alice, direct, 'approve', lkLapsed);
+        assert.deepEqual(await lkLinked(), ['Claude Code']);
+        assert.match((await lkAsks()).find((c) => c.ask?.step === 'failed')?.text ?? '', /older than 10 minutes/);
+        await lkLink('Claude Code', 'Codex');
         // The board Alice's page picked goes in the brief, and no other (D-104).
         const prompted = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id }, 'What does sum.js do?'));
         const kept = JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'conversations.json'), 'utf8')) as Array<{ root: string; harness?: string }>;
@@ -1388,7 +1500,7 @@ describe('agent client (R-027)', () => {
     const dataDir = path.join(home, 'sleepy');
     const projectDir = path.join(home, 'sleepy-folder');
     await fs.mkdir(projectDir);
-    const options = { claude: '', guard: 'true', cloneRoot: path.join(home, 'WebChat'), dataDir, projectDir };
+    const options = { harnesses: [claudeHarness('', 'true', dataDir)], cloneRoot: path.join(home, 'WebChat'), dataDir, projectDir };
     const code = newPairingCode();
     const first = new Plugin({ ...options, code: `${baseUrl}#${code}` });
     const second = new Plugin({ ...options, code: '' });
@@ -1655,7 +1767,7 @@ describe('agent client (R-027)', () => {
 
   test('tells its owner to wake it in the words of its host', async () => {
     const dataDir = path.join(home, 'wake-words');
-    const options = { claude: '', guard: 'true', cloneRoot: path.join(home, 'WebChat'), dataDir, projectDir: home, code: '' };
+    const options = { harnesses: [claudeHarness('', 'true', dataDir)], cloneRoot: path.join(home, 'WebChat'), dataDir, projectDir: home, code: '' };
     assert.match(await new Plugin({ ...options, wake: 'run webchat-agent wake in a terminal' }).call('sleep'), /To wake it, run webchat-agent wake in a terminal\.$/);
     assert.match(await new Plugin(options).call('sleep'), /To wake it, type \/webchat:wake in Claude Code on your laptop\.$/);
   });
@@ -1689,7 +1801,7 @@ describe('agent client (R-027)', () => {
     const print = console.log;
     console.log = (...words: unknown[]) => void said.push(words.join(' '));
     const asked: string[] = [];
-    const options = { home: agentHome, program: '/opt/webchat-agent', ask: async (question: string) => (asked.push(question), true) };
+    const options = { home: agentHome, program: '/opt/webchat-agent', ask: async (question: string) => (asked.push(question), 'y') };
     const unitFile = process.platform === 'darwin' ? path.join(laptopHome, 'Library/LaunchAgents/webchat-agent.plist') : path.join(laptopHome, '.config/systemd/user/webchat-agent.service');
     const commands = async () => (await fs.readFile(log, 'utf8')).trim().split('\n');
     try {
@@ -1704,11 +1816,12 @@ describe('agent client (R-027)', () => {
       const code = newPairingCode();
       const [agent] = await Promise.all([approve(alice, code, 'Laptop'), setup(`${baseUrl}#${code}`, options)]);
       assert.match(asked[0]!, /pair with .* you approve the agent in WebChat[\s\S]*login service[\s\S]*changes no security setting/);
-      assert.ok(said.some((line) => /^ {2}ok {2,}Claude Code 2\.1\.0, signed in$/.test(line)), said.join('\n'));
+      assert.match(asked[0]!, /\[x\] Claude Code 2\.1\.300, signed in\n {2}\[x\] Codex 0\.58\.0, signed in/, 'both are ticked: found and signed in');
+      assert.ok(said.some((line) => /^ {2}ok {2,}Claude Code 2\.1\.300, signed in: found, not linked\.$/.test(line)), said.join('\n'));
       assert.ok(said.includes('Paired with Alice.'));
       // The account is where `serve` reads it, and the service runs the installed program, with the login shell's PATH.
-      const account = JSON.parse(await fs.readFile(path.join(agentHome, 'laptop', 'account.json'), 'utf8')) as { userId: number; owner: number };
-      assert.deepEqual([account.userId, account.owner], [agent.id, alice.id]);
+      const account = JSON.parse(await fs.readFile(path.join(agentHome, 'laptop', 'account.json'), 'utf8')) as { userId: number; owner: number; picked: string[] };
+      assert.deepEqual([account.userId, account.owner, account.picked], [agent.id, alice.id, ['Claude Code', 'Codex']]);
       const unit = await fs.readFile(unitFile, 'utf8');
       assert.ok(unit.includes('/opt/webchat-agent') && unit.includes(bin), unit);
       const first = await commands();
@@ -1718,7 +1831,7 @@ describe('agent client (R-027)', () => {
       said.length = 0;
       await setup(undefined, options);
       assert.equal(asked.length, 2);
-      assert.doesNotMatch(asked[1]!, /pair with/);
+      assert.doesNotMatch(asked[1]!, /pair with|to link/);
       assert.ok(!said.includes('Approve the agent in WebChat, in the window that shows the code.'));
       assert.ok((await commands()).length > first.length);
 
@@ -1732,6 +1845,79 @@ describe('agent client (R-027)', () => {
       console.log = print;
       restore();
     }
+  });
+
+  test('finds the supported harnesses on the PATH and in the usual folders, and names each row for doctor', { timeout: 30_000 }, async () => {
+    const dir = await fs.mkdtemp(path.join(home, 'finder-'));
+    const [bin, userHome, agentHome] = ['bin', 'home', 'home/.webchat'].map((name) => path.join(dir, name));
+    await fs.mkdir(bin);
+    await fs.mkdir(path.join(userHome, '.local', 'bin'), { recursive: true });
+    const fake = (where: string, name: string, body: string) => fs.writeFile(path.join(where, name), body, { mode: 0o755 });
+    await fake(bin, 'claude', FAKE_CLAUDE);
+    await fake(bin, 'shell', `#!/bin/sh\nprintf '%s%s%s' __webchat_path__ "$PATH" __webchat_path__\n`);
+    await fake(bin, 'id', '#!/bin/sh\necho admin sudo\n');
+    await fake(bin, 'gh', FAKE_GH);
+    await fs.writeFile(path.join(dir, 'gh.json'), JSON.stringify({ pulls: [] }));
+    // A PATH of its own, with node for the shims and none of the real harnesses this machine may have.
+    await fs.mkdir(path.join(dir, 'tools'));
+    await fs.symlink(process.execPath, path.join(dir, 'tools', 'node'));
+    const restore = setEnv({ HOME: userHome, SHELL: path.join(bin, 'shell'), PATH: ['relative-bin', bin, path.join(dir, 'tools'), '/usr/bin', '/bin'].join(path.delimiter), FAKE_GH_STATE: path.join(dir, 'gh.json') });
+    const print = console.log;
+    const said: string[] = [];
+    try {
+      assert.deepEqual(pathDirs().slice(0, 1), [bin], 'a relative PATH entry is no place to look: the model writes the worktree');
+      const find = harnessFinder({ hook: 'true', dataDir: agentHome });
+      const where = async () => Promise.all((await find()).map(async (h) => (await h.found()).path));
+      const [claude, codex] = await find();
+      assert.deepEqual(await where(), [path.join(bin, 'claude'), undefined], 'Codex is not found, and still listed');
+      assert.equal(await codex!.refusal(), 'I cannot find Codex on this laptop.');
+      // Installed later, in a folder the installers use, it shows at the next look, and the adapter before it stays.
+      await fake(path.join(userHome, '.local', 'bin'), 'codex', FAKE_CODEX);
+      assert.deepEqual(await where(), [path.join(bin, 'claude'), path.join(userHome, '.local', 'bin', 'codex')]);
+      assert.equal((await find())[0], claude, 'an unchanged program keeps its adapter');
+      await fs.utimes(path.join(bin, 'claude'), new Date(), new Date(Date.now() + 5000));
+      assert.notEqual((await find())[0], claude, 'an updated one gets a new adapter');
+      assert.deepEqual([supported('Claude Code')?.id, supported('CODEX')?.id, supported('hermes')], ['claude', 'codex', undefined]);
+      assert.equal(supportedList(), 'claude (Claude Code), codex (Codex)');
+      await assert.rejects(sh(process.execPath, ['--import', 'tsx', 'agent/index.ts', 'link', 'hermes']), (error: { code: number; stderr: string }) => error.code === 1 && /^'hermes' is not a harness WebChat supports\. Supported: claude \(Claude Code\), codex \(Codex\)\./.test(error.stderr));
+
+      assert.equal(await claudeHarness(path.join(bin, 'claude'), '', agentHome).refusal(), undefined);
+      await withEnv({ FAKE_CLAUDE_VERSION: '2.1.258' }, async () => assert.equal(await claudeHarness(path.join(bin, 'claude'), '', agentHome).refusal(), 'Claude Code 2.1.258 is older than 2.1.259, which I need. Update it.'));
+      for (const [found, min, ok] of [['2.1.259', '2.1.259', true], ['2.1.260', '2.1.259', true], ['2.2.0', '2.1.259', true], ['3', '2.1.259', true], ['2.1.258', '2.1.259', false], ['2.0.999', '2.1.259', false], ['2.1.259-beta', '2.1.259', true], ['dev', '2.1.259', true], [undefined, '2.1.259', true]] as const) {
+        assert.equal(versionAtLeast(found, min), ok, `${found} against ${min}`);
+      }
+
+      // One doctor line per supported harness, for each state a row can be in (docs/decisions/harness-linking.md).
+      console.log = (...words: unknown[]) => void said.push(words.join(' '));
+      const doctorSays = async (linked: string[], env: Record<string, string> = {}) => {
+        await fs.mkdir(path.join(agentHome, 'laptop', 'laptop'), { recursive: true });
+        await fs.writeFile(path.join(agentHome, 'laptop', 'laptop', 'setup.json'), JSON.stringify({ choice: { claudeMd: false, skills: [], noAttribution: false, linked } }));
+        said.length = 0;
+        await withEnv(env, () => doctor(agentHome));
+        process.exitCode = 0;
+        return said.filter((line) => /^ {2}\w+ {2,}(Claude Code|Codex)/.test(line)).map((line) => line.replace(/^ {2}\w+ {2,}/, ''));
+      };
+      assert.deepEqual(await doctorSays(['Claude Code', 'Codex']), ['Claude Code 2.1.300, signed in: linked.', 'Codex 0.58.0, signed in: linked.']);
+      assert.deepEqual(await doctorSays(['Claude Code']), ['Claude Code 2.1.300, signed in: linked.', 'Codex 0.58.0, signed in: found, not linked.']);
+      assert.deepEqual((await doctorSays(['Codex'], { FAKE_CODEX_SIGNED_OUT: '1' }))[1], 'Codex 0.58.0: linked, needs attention.');
+      assert.deepEqual((await doctorSays(['Claude Code'], { FAKE_CLAUDE_VERSION: '2.1.0' }))[0], 'Claude Code 2.1.0, signed in: linked, needs attention.');
+      await fs.rm(path.join(userHome, '.local', 'bin', 'codex'));
+      assert.deepEqual(await doctorSays(['Codex']), ['Claude Code 2.1.300, signed in: found, not linked.', 'Codex: linked, needs attention.']);
+      assert.deepEqual(await doctorSays([]), ['Claude Code 2.1.300, signed in: found, not linked.', 'Codex: not installed.']);
+    } finally {
+      console.log = print;
+      restore();
+    }
+  });
+
+  test('reads setup\'s answer: yes takes the ticked harnesses, names take exactly those, and anything else stops it', () => {
+    const found = [
+      { id: 'claude', name: 'Claude Code', command: 'claude', program: '/bin/claude', signedIn: true },
+      { id: 'codex', name: 'Codex', command: 'codex', program: '/bin/codex' },
+    ];
+    const names = (answer: string) => linksFrom(answer, found)?.map((f) => f.name);
+    assert.deepEqual([names('y'), names('Yes'), names('none'), names('codex'), names('claude-code, codex'), names('codex codex')], [['Claude Code'], ['Claude Code'], [], ['Codex'], ['Claude Code', 'Codex'], ['Codex']]);
+    assert.deepEqual([names(''), names('n'), names('hermes'), names('claude hermes')], [undefined, undefined, undefined, undefined]);
   });
 
   test('keeps the file tools away from the secrets, even through a link (R-030)', async () => {

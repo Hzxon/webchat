@@ -20,6 +20,7 @@ import {
   keyFingerprint,
   pairingId,
   pairingProof,
+  sealPicks,
   randomBytes,
   sealIdentity,
   toBase64Url,
@@ -41,6 +42,7 @@ import {
   type MessageDTO,
   type MessageKind,
   type PairingDTO,
+  type PairingPick,
   type PairingInput,
   type ProjectDTO,
   type PublicKeysDTO,
@@ -76,6 +78,8 @@ export interface AccountFile {
   owner: number | null;
   /** The pairing that made the account, by its id, so a new code pairs again (R-030). */
   pairing?: string;
+  /** The harnesses the owner approved linking with that pairing, by name; the plugin links them when it first serves the account. */
+  picked?: string[];
   /** Client ids of the run requests seen, with their send times, while a copy could still run (K-47). */
   handled?: Record<string, number>;
   /**
@@ -180,6 +184,11 @@ export class AgentClient {
     return this.file.owner ?? null;
   }
 
+  /** The harnesses the owner approved at pairing, or none for an account that pairing did not ask for any. */
+  get picked() {
+    return this.file.picked;
+  }
+
   /** The pairing that made this account, by id. Accounts from before R-030 have none. */
   get pairing() {
     return this.file.pairing;
@@ -205,16 +214,17 @@ export class AgentClient {
    * Makes an agent's account by pairing with its owner (R-030, D-093). Files this half, with keys
    * made here, then waits for the owner to approve on their page. The approval holds the owner's
    * keys, proved with the code, so they are pinned before the first check-in. The code never leaves
-   * this machine. Overwrites the file, so a new code pairs again.
+   * this machine. Overwrites the file, so a new code pairs again. `picks` are the harnesses it asks
+   * to link: sealed under the code for the owner's approval dialog, and kept in the file once approved.
    */
-  static async pair(filePath: string, server: string, code: string, pollMs = 2000) {
+  static async pair(filePath: string, server: string, code: string, pollMs = 2000, picks?: PairingPick[]) {
     const api = new Api(server);
     const secrets = await createIdentity();
     const keys = secrets.publicKeys;
     // Random: an agent has no password to derive it from.
     const authKey = toBase64Url(randomBytes(32));
     const id = await pairingId(code);
-    const half: PairingInput = { id, keys, proof: await pairingProof(code, keys), authKey };
+    const half: PairingInput = { id, keys, proof: await pairingProof(code, keys), authKey, ...(picks && { picks: await sealPicks(code, keys, picks) }) };
     await api.request('POST', '/pairings', half);
     const until = Date.now() + PAIRING_TTL_MS;
     let approved: PairingDTO['approved'] | undefined;
@@ -229,7 +239,7 @@ export class AgentClient {
     if (user.keys?.dh !== keys.dh || user.keys.sign !== keys.sign) throw new Error('The server made the account with other keys.');
     await api.request('POST', '/auth/login', { username: user.username, authKey });
     const pins = { [owner.id]: await keyFingerprint(owner.keys) };
-    return AgentClient.create(filePath, { server, username: user.username, userId: user.id, authKey, secrets, cookie: api.cookie, owner: owner.id, pins, pairing: id });
+    return AgentClient.create(filePath, { server, username: user.username, userId: user.id, authKey, secrets, cookie: api.cookie, owner: owner.id, pins, pairing: id, ...(picks && { picked: picks.map((p) => p.name) }) });
   }
 
   /**

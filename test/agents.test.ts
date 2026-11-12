@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { harnessRow, type HarnessState } from '../shared/types.ts';
 
 // In a variable, so the tools tsconfig, which has no DOM types, does not typecheck the client module.
 const clientAgents = '../client/src/agents.ts';
@@ -154,5 +155,16 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.equal(agentOf(state, direct(3)), undefined, "someone else's agent");
     assert.equal(agentOf(state, direct(5)), undefined, 'a removed agent');
     assert.equal(agentOf(state, { type: 'group', members: [{ userId: 1 }, { userId: 2 }] }), undefined);
+  });
+});
+
+describe('A harness row in shared/types.ts (docs/decisions/harness-linking.md)', () => {
+  test('each harness is linked, linked and needing attention, found and not linked, or not found', () => {
+    const h = (rest: Partial<HarnessState>): HarnessState => ({ name: 'Codex', knobs: [], ...rest });
+    assert.equal(harnessRow(h({ linked: true, path: '/bin/codex' })), 'linked');
+    assert.equal(harnessRow(h({ linked: true, path: '/bin/codex', attention: 'Not signed in.' })), 'attention');
+    assert.equal(harnessRow(h({ linked: true, attention: 'I cannot find Codex on this laptop.' })), 'attention', 'linked, then uninstalled');
+    assert.equal(harnessRow(h({ linked: false, path: '/bin/codex', attention: 'ignored' })), 'found');
+    assert.equal(harnessRow(h({ linked: false })), 'missing');
   });
 });

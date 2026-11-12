@@ -18,10 +18,13 @@ import {
   openChatKeyBytes,
   openIdentity,
   openKeyLink,
+  openPicks,
   padContent,
   PAD_MIN_BYTES,
+  newPairingCode,
   safetyCode,
   sealIdentity,
+  sealPicks,
   toBase64Url,
   unpadContent,
   unwrapChatKey,
@@ -234,6 +237,45 @@ describe('end-to-end encryption', () => {
       assert.deepEqual(dropped, { text: content.text }, 'the text stays, the card goes');
     }
     assert.deepEqual(await open({ text: 'Hi' }), { text: 'Hi' }, 'a message without it opens as before');
+  });
+
+  test('a link request and its answer travel inside the envelope, and a malformed one is dropped (docs/decisions/harness-linking.md)', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'l1' };
+    const open = async (content: object) => decryptContent(key, alice.identity.publicKeys.sign, meta, await encryptMessage(key, newKeyId(), alice.identity.signPrivate, meta, content as MessageContent));
+    for (const ask of [
+      { kind: 'link', step: 'request', harness: 'Codex' },
+      { kind: 'link', step: 'approve', to: 'c1', sentAt: 5 },
+      { kind: 'link', step: 'decline', to: 'c1', sentAt: 5 },
+      { kind: 'link', step: 'done', to: 'c1' },
+      { kind: 'link', step: 'failed', to: 'c1', note: 'Too old.' },
+    ]) assert.deepEqual((await open({ text: 'x', ask })).ask, ask);
+    for (const ask of [{ kind: 'link', step: 'request' }, { kind: 'link', step: 'approve', to: 'c1' }, { kind: 'link', step: 'approve', to: 'c1', sentAt: 0 }, { kind: 'link', step: 'remove', to: 'c1' }, { kind: 'connect', step: 'request', harness: 'Codex' }, 'link']) {
+      assert.deepEqual(await open({ text: 'x', ask }), { text: 'x' });
+    }
+  });
+
+  test('a setup choice keeps the harnesses it links, and drops names of the wrong shape', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 's1' };
+    const choice = { claudeMd: false, skills: [], noAttribution: false };
+    const open = async (setup: object) => (await decryptContent(key, alice.identity.publicKeys.sign, meta, await encryptMessage(key, newKeyId(), alice.identity.signPrivate, meta, { text: 'x', setup } as MessageContent))).setup;
+    assert.deepEqual(await open({ sentAt: 5, choice: { ...choice, linked: ['Claude Code', 3, 'Codex'], off: [] } }), { sentAt: 5, choice: { ...choice, linked: ['Claude Code', 'Codex'], off: [] } });
+    assert.deepEqual(await open({ sentAt: 5, choice }), { sentAt: 5, choice }, 'a page from before linking sends none');
+  });
+
+  test('the harnesses a pairing asks to link open only with its code, for its agent, and whole', async () => {
+    const code = newPairingCode();
+    const { publicKeys } = alice.identity;
+    const picks = [{ name: 'Claude Code', version: '2.1.300', signedIn: true }, { name: 'Codex' }];
+    const sealed = await sealPicks(code, publicKeys, picks);
+    assert.ok(!atob(sealed.replace(/-/g, '+').replace(/_/g, '/')).includes('Claude'), 'nothing reads in the blob');
+    assert.deepEqual(await openPicks(code, publicKeys, sealed), picks);
+    assert.deepEqual(await openPicks(newPairingCode(), publicKeys, sealed), [], 'another code');
+    assert.deepEqual(await openPicks(code, bob.identity.publicKeys, sealed), [], 'another agent');
+    const bytes = fromBase64Url(sealed);
+    bytes[bytes.length - 1]! ^= 1;
+    assert.deepEqual(await openPicks(code, publicKeys, toBase64Url(bytes)), [], 'one flipped byte');
   });
 
   test('a run request and its reports travel inside the envelope, and a malformed one is dropped (R-027)', async () => {

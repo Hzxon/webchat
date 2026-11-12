@@ -2,10 +2,11 @@
 // same Plugin as agent/mcp.ts, in the folder `laptop` of the agent home. `setup` installs a login
 // service that keeps `serve` running (agent/setup.ts), and `doctor`, `status` and `uninstall` go with it.
 // `connect`, `sleep` and `wake` do what the /webchat: skills do, and `connect` marks the folder you run
-// it in. `pair` makes an account of its own, which `serve` does not use unless its name is `laptop`.
+// it in. `link` asks the owner to link a harness, which they approve in WebChat. `pair` makes an account of its own, which `serve` does not use unless its name is `laptop`.
 //
 //   npm run agent -- serve [code]
 //   npm run agent -- connect|sleep|wake
+//   npm run agent -- link claude|codex
 //   npm run agent -- pair <code> <name>
 //
 // Each release also ships it as one file per OS, webchat-agent, with Node inside (agent/sea.json),
@@ -19,7 +20,9 @@ import path from 'node:path';
 import { isSea } from 'node:sea';
 import { fileURLToPath } from 'node:url';
 import pkg from '../package.json' with { type: 'json' };
-import { ClaudePlugin, claudeProgram, runGuard } from './claude.ts';
+import { runGuard } from './claude.ts';
+import { harnessFinder, supported, supportedList } from './harnesses.ts';
+import { Plugin } from './plugin.ts';
 import { doctor, pairInto, setup, status, uninstall } from './setup.ts';
 
 const home = process.env.WEBCHAT_AGENT_HOME ?? path.join(os.homedir(), '.webchat');
@@ -31,15 +34,16 @@ const self = isSea() ? `"${process.execPath}"` : `"${process.execPath}" --import
 /** The Plugin as this daemon hosts it, with the Claude adapter, in the folder only it uses (D-085). */
 async function laptop(code = '') {
   const dataDir = path.join(home, 'laptop');
-  return new ClaudePlugin({
+  const find = harnessFinder({ hook: `${self} guard "${dataDir}"`, dataDir });
+  return new Plugin({
     code,
     dataDir,
     // npm runs the script in its own folder and leaves the folder you typed it in as INIT_CWD.
     projectDir: process.env.INIT_CWD ?? process.cwd(),
     cloneRoot: path.join(os.homedir(), 'WebChat'),
-    claude: await claudeProgram(),
+    harnesses: await find(),
+    find,
     wake: `run ${cli} wake in a terminal on your laptop`,
-    guard: `${self} guard "${dataDir}"`,
   });
 }
 
@@ -75,6 +79,12 @@ async function main([command, ...args]: string[]) {
       console.log(await (await laptop()).call(command));
       return;
     }
+    case 'link': {
+      const harness = supported(args[0] ?? '');
+      if (!harness) throw new Error(`${args[0] ? `'${args[0]}' is not a harness WebChat supports` : 'Name the harness to link'}. Supported: ${supportedList()}.`);
+      console.log(await (await laptop()).requestLink(harness.name));
+      return;
+    }
     case 'guard':
       return runGuard(args[0] ?? '');
     case '--version':
@@ -82,7 +92,7 @@ async function main([command, ...args]: string[]) {
     case 'watch':
       throw new Error('Cards run from the Coding agents pane, which `serve` answers in its sandbox (D-105). See the README.');
     default:
-      throw new Error(`usage: ${cli} setup|doctor|status|uninstall|serve|connect|sleep|wake|pair ...`);
+      throw new Error(`usage: ${cli} setup|doctor|status|uninstall|serve|connect|sleep|wake|link|pair ...`);
   }
 }
 

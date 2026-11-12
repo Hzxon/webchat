@@ -6,7 +6,7 @@
 //
 // Everything the server sends is decrypted on the way in, and every message is encrypted on the
 // way out (see e2ee/keyring.ts). The store only ever holds readable text.
-import { keyFingerprint, pairingId, pairingProof, type MessageContent, type QuotedMessage } from '../../shared/e2ee';
+import { keyFingerprint, openPicks, pairingId, pairingProof, type MessageContent, type QuotedMessage } from '../../shared/e2ee';
 import {
   LIMITS,
   previewOf,
@@ -17,6 +17,7 @@ import {
   type PullCardDTO,
   type PullRequestDTO,
   type MessageDTO,
+  type PairingPick,
   type PublicKeysDTO,
   type RunDTO,
   type RunRequest,
@@ -841,6 +842,11 @@ export async function askSetup(agentId: number, choice?: SetupChoice) {
   return clientId;
 }
 
+/** Answers an agent's request to link a harness, which names the request by its client id (docs/decisions/harness-linking.md). */
+export function answerLink(conversationId: number, to: string, step: 'approve' | 'decline') {
+  return sendContent(conversationId, { text: step === 'approve' ? 'Link it' : 'Do not link it', ask: { kind: 'link', step, to, sentAt: Date.now() } }, false);
+}
+
 /** Asks the user's agent for a repository's entries, to link the board to it (R-040). Returns the ask's client id, which its answers name. */
 export async function askLink(agentId: number, project: number, repo: string) {
   const conversationId = await startDirectChat(agentId);
@@ -886,13 +892,14 @@ export async function removeAgent(agent: UserDTO) {
 
 /**
  * The coding agent's half of a pairing, once it sent one: its keys, which the code proves (R-030,
- * D-093). Null while it has not. The code stays in this page: the server sees only a hash of it.
+ * D-093), and the harnesses it asks to link, which the code opens. Null while it has sent none. The
+ * code stays in this page: the server sees only a hash of it.
  */
-export async function pairingKeys(code: string): Promise<PublicKeysDTO | null> {
+export async function pairingKeys(code: string): Promise<{ keys: PublicKeysDTO; picks: PairingPick[] } | null> {
   const pairing = await api.pairing(await pairingId(code));
   if (!pairing) return null;
   if (pairing.proof !== (await pairingProof(code, pairing.keys))) throw new Error('These keys did not come with the code. Close this window and make a new code.');
-  return pairing.keys;
+  return { keys: pairing.keys, picks: pairing.picks ? await openPicks(code, pairing.keys, pairing.picks) : [] };
 }
 
 /**
@@ -956,6 +963,7 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     added: entry.content.added ?? null,
     setupState: null,
     board: entry.content.board ?? null,
+    ask: entry.content.ask ?? null,
     card: entry.content.card ?? null,
     security: 'encrypted',
   };

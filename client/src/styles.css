@@ -1480,6 +1480,36 @@ a {
   accent-color: var(--accent);
 }
 
+.harness-row {
+  flex-wrap: wrap;
+}
+
+.harness-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agents-link-asks {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.agents-link-ask {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.agents-link-ask p {
+  margin: 0 0 8px;
+}
+
+.agents-link-buttons {
+  display: flex;
+  gap: 8px;
+}
+
 .people-list {
   display: grid;
   max-height: 340px;

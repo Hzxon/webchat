@@ -12,11 +12,11 @@ import readline from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import pkg from '../package.json' with { type: 'json' };
-import type { ConfigDTO } from '../shared/types.ts';
+import { HARNESS_ROW_WORDS, harnessRow, type ConfigDTO, type HarnessState, type PairingPick, type SetupChoice } from '../shared/types.ts';
 import { Api } from './api.ts';
-import { claudeHarness, onPath } from './claude.ts';
+import { onPath } from './claude.ts';
 import { AgentClient, readPairing, type AccountFile } from './client.ts';
-import { codexHarness } from './codex.ts';
+import { harnessFinder, SUPPORTED, supported } from './harnesses.ts';
 import { messageOf } from './runs.ts';
 
 const exec = promisify(execFile);
@@ -24,6 +24,8 @@ const exec = promisify(execFile);
 const NAME = 'webchat-agent';
 /** Claude Code's own installer, which puts `claude` in ~/.local/bin. */
 const CLAUDE_INSTALL = 'curl -fsSL https://claude.ai/install.sh | bash';
+/** Codex's own installer, from https://learn.chatgpt.com/docs/codex/cli. */
+const CODEX_INSTALL = 'curl -fsSL https://chatgpt.com/codex/install.sh | sh';
 const GIB = 2 ** 30;
 
 /** One line of the summary. `needs` names what setup would install for a `todo`. */
@@ -31,7 +33,7 @@ interface Row {
   level: 'ok' | 'warn' | 'todo' | 'fail';
   text: string;
   fix?: string;
-  needs?: 'git' | 'bubblewrap' | 'socat' | 'claude';
+  needs?: 'git' | 'bubblewrap' | 'socat' | 'claude' | 'codex';
 }
 const ok = (text: string): Row => ({ level: 'ok', text });
 const run = (cmd: string, args: string[]) => exec(cmd, args, { timeout: 30_000 }).then((r) => r.stdout);
@@ -239,18 +241,44 @@ async function networkRow(server: string | undefined): Promise<Row> {
   }
 }
 
-/** Where a harness is, with its version and whether it is signed in, from its adapter. */
-async function harnessRows(home: string): Promise<Row[]> {
-  const [claude, codex] = await Promise.all([onPath('claude'), onPath('codex')]);
-  const [c, x] = await Promise.all([claude ? claudeHarness(claude, '', home).found() : {}, codex ? codexHarness(codex, home).found() : {}]);
-  const seen = (name: string, found: { version?: string; signedIn?: boolean }, fix: string): Row => {
-    const text = `${name}${found.version ? ` ${found.version}` : ''}`;
-    return found.signedIn === false ? { level: 'warn', text: `${text} is not signed in.`, fix } : ok(`${text}${found.signedIn ? ', signed in' : ''}`);
-  };
-  return [
-    claude ? seen('Claude Code', c, 'Run `claude` once and sign in.') : { level: 'todo', text: 'Claude Code: not installed. The agent runs its cards and answers with it.', needs: 'claude' },
-    codex ? seen('Codex', x, 'Run `codex` once and sign in.') : ok('Codex: not installed. The agent does not run it yet.'),
-  ];
+/** A supported harness as this laptop has it, for the summary and for the owner's picks. */
+interface Found {
+  id: string;
+  name: string;
+  command: string;
+  program?: string;
+  version?: string;
+  signedIn?: boolean;
+}
+
+/**
+ * Each supported harness: where it is, its version, whether it is signed in, and whether the owner
+ * linked it, from the setup the agent keeps (docs/decisions/harness-linking.md). `Found` says what
+ * the owner can pick; the rows are `harnessRow`'s four states.
+ */
+async function harnessRows(home: string): Promise<{ rows: Row[]; found: Found[] }> {
+  const dataDir = path.join(home, 'laptop');
+  const adapters = await harnessFinder({ hook: '', dataDir })();
+  const stored = (await fs.readFile(path.join(dataDir, 'laptop', 'setup.json'), 'utf8').then((t) => JSON.parse(t) as { choice?: SetupChoice }, () => null))?.choice;
+  const found: Found[] = await Promise.all(
+    adapters.map(async (adapter, i) => {
+      const { id, name, command } = SUPPORTED[i]!;
+      const { path: program, version, signedIn } = await adapter.found();
+      return { id, name, command, program, version, signedIn };
+    }),
+  );
+  const rows = await Promise.all(
+    found.map(async ({ id, name, command, program, version, signedIn }, i): Promise<Row> => {
+      const linked = !!stored?.linked?.includes(name) && !stored.off?.includes(name);
+      const problem = await adapters[i]!.refusal();
+      const state: HarnessState = { name, path: program, linked, ...(linked && (problem || signedIn === false) && { attention: problem ?? 'Not signed in.' }), knobs: [] };
+      const kind = harnessRow(state);
+      if (kind === 'missing') return id === 'claude' ? { level: 'todo', text: `${name}: not installed. The agent can run its cards and answers with it.`, needs: 'claude' } : ok(`${name}: not installed.`);
+      const text = `${name}${version ? ` ${version}` : ''}${signedIn ? ', signed in' : ''}: ${HARNESS_ROW_WORDS[kind].toLowerCase()}.`;
+      return problem || signedIn === false ? { level: 'warn', text, fix: problem ?? `Run \`${command}\` once and sign in.` } : ok(text);
+    }),
+  );
+  return { rows, found };
 }
 
 /** Cards and clones push with the owner's `gh`; questions need neither. */
@@ -266,7 +294,7 @@ const packagerOf = async () => (mac() ? '' : ((await onPath('apt-get')) && 'apt-
 /** The read-only checks. The caller's PATH is already the login shell's. */
 async function checks(home: string, server?: string) {
   const packager = await packagerOf();
-  const [system, admin, service, git, sandbox, disk, network, harnesses, github] = await Promise.all([
+  const [system, admin, service, git, sandbox, disk, network, { rows: harnessRowsList, found }, github] = await Promise.all([
     systemRow(),
     adminRow(),
     serviceRow(),
@@ -277,7 +305,7 @@ async function checks(home: string, server?: string) {
     harnessRows(home),
     githubRow(),
   ]);
-  return { packager, admin, rows: [system, admin, service, git, ...sandbox, disk, network, ...harnesses, github] as Row[] };
+  return { packager, admin, found, rows: [system, admin, service, git, ...sandbox, disk, network, ...harnessRowsList, github] as Row[] };
 }
 
 function show(rows: Row[]) {
@@ -295,13 +323,14 @@ interface Step {
 
 export function installSteps(needs: Array<NonNullable<Row['needs']>>, platform: NodeJS.Platform, packager: string): Step[] {
   const steps: Step[] = [];
-  const packages = needs.filter((n) => n !== 'claude' && !(platform === 'darwin' && n === 'git'));
+  const packages = needs.filter((n) => n !== 'claude' && n !== 'codex' && !(platform === 'darwin' && n === 'git'));
   if (platform === 'darwin' && needs.includes('git')) steps.push({ say: 'install git with Apple’s command line tools: their installer opens a window', commands: [['xcode-select', '--install']] });
   if (packages.length) {
     const commands = packager === 'apt-get' ? [['sudo', 'apt-get', 'update']] : [];
     steps.push({ say: `install ${new Intl.ListFormat('en').format(packages)} with ${packager}: it asks for your password`, commands: [...commands, ['sudo', packager, 'install', '-y', ...packages]] });
   }
   if (needs.includes('claude')) steps.push({ say: `install Claude Code with its own installer: ${CLAUDE_INSTALL}`, commands: [['sh', '-c', CLAUDE_INSTALL]] });
+  if (needs.includes('codex')) steps.push({ say: `install Codex with its own installer: ${CODEX_INSTALL}`, commands: [['sh', '-c', CODEX_INSTALL]] });
   return steps;
 }
 
@@ -325,9 +354,9 @@ async function waitForTools() {
 
 /**
  * Asks on the terminal, not on stdin: the line runs under `curl … | sh`, where stdin is the script.
- * Only a yes counts.
+ * Returns the line typed.
  */
-async function askTerminal(question: string) {
+async function askLine(question: string) {
   const input = createReadStream('/dev/tty');
   await new Promise((resolve, reject) => input.once('open', resolve).once('error', reject)).catch(() => {
     throw new Error('Setup asks a question, so run it in a terminal.');
@@ -336,14 +365,29 @@ async function askTerminal(question: string) {
   const answer = await lines.question(question);
   lines.close();
   input.destroy();
-  return /^y(es)?$/i.test(answer.trim());
+  return answer;
+}
+
+const yes = (answer: string) => /^y(es)?$/i.test(answer.trim());
+const confirm = async (question: string) => yes(await askLine(question));
+
+/**
+ * The harnesses an answer to setup's question links: yes takes the ticked ones, those found and
+ * signed in; names take exactly those; `none` takes none; anything else stops setup.
+ */
+export function linksFrom(answer: string, found: Found[]) {
+  const text = answer.trim().toLowerCase();
+  if (yes(text)) return found.filter((f) => f.program && f.signedIn);
+  if (text === 'none') return [];
+  const named = text.split(/[\s,]+/).map((word) => found.find((f) => f.id === supported(word)?.id));
+  return text && named.every(Boolean) ? [...new Set(named as Found[])] : undefined;
 }
 
 /** Pairs this laptop's account with the owner who made the code, once they approve in WebChat. */
-export async function pairInto(file: string, pasted: string) {
+export async function pairInto(file: string, pasted: string, picks?: PairingPick[]) {
   const { server, code } = readPairing(pasted, '');
   console.log('Approve the agent in WebChat, in the window that shows the code.');
-  const client = await AgentClient.pair(file, server, code);
+  const client = await AgentClient.pair(file, server, code, undefined, picks);
   await client.sync();
   console.log(`Paired with ${client.users.get(client.owner!)?.displayName}.`);
 }
@@ -352,16 +396,17 @@ interface Options {
   home: string;
   /** The installed webchat-agent, which the service runs. Empty when this is not the single file. */
   program: string;
-  ask?: (question: string) => Promise<boolean>;
+  /** Asks the one question and returns what was typed. */
+  ask?: (question: string) => Promise<string>;
 }
 
-export async function setup(pasted: string | undefined, { home, program, ask = askTerminal }: Options) {
+export async function setup(pasted: string | undefined, { home, program, ask = askLine }: Options) {
   if (!program) throw new Error('Setup installs the webchat-agent file that a release ships. Run the line in WebChat’s Connect dialog.');
   const account = await readAccount(home);
   const server = pasted ? readPairing(pasted, '').server : account?.server;
   if (!server) throw new Error('Paste the whole code that WebChat shows: webchat-agent setup <code>.');
   const pathEnv = (process.env.PATH = servicePath(await loginPath(), os.homedir()));
-  const { packager, admin, rows } = await checks(home, server);
+  const { packager, admin, rows, found } = await checks(home, server);
   // Before anything else, and alone: the rest of the summary would only bury it.
   if (admin.level === 'fail') {
     show([admin]);
@@ -371,17 +416,24 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
   show(rows);
   if (rows.some((row) => row.level === 'fail')) throw new Error('Fix what failed above, then run setup again. Nothing was changed.');
 
-  const steps = installSteps(rows.flatMap((row) => row.needs ?? []), process.platform, packager);
+  // The owner picks what to link only with a new pairing, since the picks ride it (docs/decisions/harness-linking.md).
+  const ticked = found.filter((f) => f.program && f.signedIn);
+  const describe = (f: Found) => (f.program ? `${f.name}${f.version ? ` ${f.version}` : ''}, ${f.signedIn === undefined ? 'sign-in unknown' : f.signedIn ? 'signed in' : 'not signed in'}` : `${f.name}, not installed${f.id === 'codex' ? ': linking it installs it' : ''}`);
+  const stepsFor = (picks: Found[]) => installSteps([...rows.flatMap((row) => row.needs ?? []), ...(picks.some((f) => f.id === 'codex' && !f.program) ? ['codex' as const] : [])], process.platform, packager);
   const plan = [
     ...(pasted ? [`pair with ${server}: you approve the agent in WebChat`] : []),
-    ...steps.map((step) => step.say),
+    ...stepsFor(ticked).map((step) => step.say),
     `install a login service that runs the agent, a ${mac() ? 'LaunchAgent' : 'systemd user unit'} in ${path.dirname(mac() ? plistFile() : unitFile())}`,
   ];
-  if (!(await ask(`\nSetup will:\n${plan.map((line) => `  - ${line}`).join('\n')}\nIt changes no security setting. Continue? [y/N] `))) throw new Error('Nothing was changed.');
+  const offer = pasted ? `\nCoding agents to link, which WebChat shows you before you approve:\n${found.map((f) => `  [${ticked.includes(f) ? 'x' : ' '}] ${describe(f)}`).join('\n')}\n` : '';
+  const answer = await ask(`${offer}\nSetup will:\n${plan.map((line) => `  - ${line}`).join('\n')}\nIt changes no security setting. Continue? [y/N]${pasted ? ', or type the coding agents to link, such as "claude codex", or "none"' : ''} `);
+  const picks = pasted ? linksFrom(answer, found) : yes(answer) ? [] : undefined;
+  if (!picks) throw new Error('Nothing was changed.');
+  const steps = stepsFor(picks);
 
   await fs.mkdir(home, { recursive: true, mode: 0o700 });
   // First, while the owner is at WebChat: the code lapses after 10 minutes, and Apple's installer can take longer.
-  if (pasted) await pairInto(accountFile(home), pasted);
+  if (pasted) await pairInto(accountFile(home), pasted, picks.map((f) => ({ name: f.name, ...(f.version && { version: f.version }), ...(f.signedIn !== undefined && { signedIn: f.signedIn }) })));
   for (const step of steps) for (const [cmd, ...args] of step.commands) await inherit(cmd, args);
   if (rows.some((row) => row.needs === 'git') && mac()) await waitForTools();
   await installService(program, pathEnv, home);
@@ -415,7 +467,7 @@ export async function status(home: string) {
   console.log(`Asleep: ${existsSync(path.join(home, 'laptop', 'asleep')) ? 'yes. Run `webchat-agent wake` to wake it.' : 'no'}`);
 }
 
-export async function uninstall(home: string, ask = askTerminal) {
+export async function uninstall(home: string, ask = confirm) {
   if (!(await ask(`This stops the agent on this laptop and deletes its keys in ${path.join(home, 'laptop')}. Continue? [y/N] `))) throw new Error('Nothing was removed.');
   await removeService();
   await fs.rm(path.join(home, 'laptop'), { recursive: true, force: true });

@@ -104,7 +104,7 @@ export function codexHarness(program: string, dataDir: string): Harness {
         // It exits 0 when credentials are present.
         exec(program, ['login', 'status'], { timeout: 10_000 }).then(() => true, () => false),
       ]);
-      return { version, signedIn };
+      return { path: program, version, signedIn };
     },
     async apply() {},
     async turn({ cwd, session, resume, message, schema, signal }) {
