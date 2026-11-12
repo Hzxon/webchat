@@ -1,6 +1,6 @@
 ### R: Keep the agent's secrets in a locked room
 
-Status: Idea. Proposed 2026-11-12 from the agent host design.
+Status: Done in #206, #207, #208 and #209. Proposed 2026-11-12 from the agent host design.
 
 Order: after setup, linking and the connect approval. A spike first, with nothing to merge: a
 hidden user run by a launchd LaunchDaemon, `gh` keeping its login in a file for a user with no
