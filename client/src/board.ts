@@ -198,6 +198,18 @@ function reviewLines(text: string) {
   return found;
 }
 
+/**
+ * A card's text as typed, with these review lines under its status line in place of the typed ones:
+ * only the buttons change a review, so a hand edit or an old draft neither drops nor revives one.
+ */
+export function keepReviews(text: string, lines: string[]) {
+  const typed = text.split('\n');
+  if (typed.filter((l) => REVIEW.test(l.trim())).map((l) => l.trim()).join('\n') === lines.join('\n')) return text;
+  const rest = typed.filter((l) => !REVIEW.test(l.trim()));
+  const at = rest.findIndex((l) => STATUS.test(l)) + 1;
+  return (lines.length ? [...rest.slice(0, at), '', ...lines, '', ...rest.slice(at)] : rest).join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
 /** A card body with these review lines on top, in place of the ones it had. */
 export const withReviews = (body: string, lines: string[]) =>
   [lines.join('\n'), body.split('\n').filter((l) => !REVIEW.test(l.trim())).join('\n').trim()].filter(Boolean).join('\n\n');

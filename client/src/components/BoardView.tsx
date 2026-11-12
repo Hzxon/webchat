@@ -26,6 +26,7 @@ import {
   unchecked,
   usernamesOf,
   WAITING,
+  keepReviews,
   withReviews,
   withStatus,
   workingStatus,
@@ -38,7 +39,7 @@ import {
 import { inOrder, ownAgents, ready, seatFor, useAgentChats } from '../agents';
 import { copyOf } from '../../../shared/board';
 import { askAgent, askFix, askLink, cancelRun, sendCardNote, startDirectChat, syncNow } from '../chat';
-import { addCard, beginEditing, createBoard, loadCards, loadSections, markSeen, newSectionId, replaceSection, rewriteCard, takeCard, type DocSection, type Editing } from '../docs';
+import { addCard, beginEditing, boardCards, createBoard, loadCards, loadSections, markSeen, newSectionId, replaceSection, rewriteCard, stopEditing, takeCard, type DocSection, type Editing } from '../docs';
 import type { ChatDoc, ChatMessage } from '../e2ee/keyring';
 import { importEntries } from '../boardLink';
 import { useLinkedRepos } from '../linkedRepos';
@@ -254,6 +255,8 @@ function BoardColumnView({
   const [editing, setEditing] = useState<{
     doc: ChatDoc;
     section: Editing;
+    /** The card's review lines that stood when its lock was taken, which no save changes. */
+    lines: string[];
   } | null>(null);
   const [historyOf, setHistoryOf] = useState<Card | null>(null);
   // In the open card: the member picked to ask for a review, and the note of a requested change being written.
@@ -323,10 +326,20 @@ function BoardColumnView({
     // Told before the lock is asked for, so the other column cannot open an editor meanwhile.
     onEditing(true);
     try {
-      setEditing({
-        doc: target,
-        section: await beginEditing(target.id, id, saved, pos, isNew),
-      });
+      const section = await beginEditing(target.id, id, saved, pos, isNew);
+      // Read again under the lock: the card may have changed since it was shown, and a draft on the device may be older still.
+      const card =
+        column === 'roadmap'
+          ? await boardCards(target).then(
+              (all) => all.find((c) => c.id === id),
+              async (err) => {
+                await stopEditing(target.id, id).catch(() => undefined);
+                throw err;
+              },
+            )
+          : undefined;
+      const lines = card?.reviews.map((r) => r.line) ?? [];
+      setEditing({ doc: target, lines, section: card ? { ...section, saved: card.text, text: section.text === saved ? card.text : keepReviews(section.text, lines) } : section });
     } catch (err) {
       onEditing(false);
       throw err;
@@ -726,6 +739,7 @@ function BoardColumnView({
             doc={editing.doc}
             editing={editing.section}
             canDelete={!edited || canDelete(edited)}
+            toSave={column === 'roadmap' ? (text) => keepReviews(text, editing.lines) : undefined}
             onClose={(message) => {
               setEditing(null);
               onEditing(false);
