@@ -30,7 +30,7 @@ const CHECKS: Record<NonNullable<PullChecks>, [Tone, string]> = {
   pending: ['warn', 'Checks running'],
 };
 
-const REVIEWS: Record<NonNullable<PullReview>, [Tone, string]> = {
+export const REVIEWS: Record<NonNullable<PullReview>, [Tone, string]> = {
   approved: ['ok', 'Approved'],
   changes_requested: ['danger', 'Changes requested'],
   review_required: ['muted', 'Review required'],

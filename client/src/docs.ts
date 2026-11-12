@@ -4,7 +4,7 @@
 import { newKeyId, randomBytes, toBase64Url, type DocContent } from '../../shared/e2ee';
 import type { DocRevisionDTO } from '../../shared/types';
 import { api, ApiError } from './api';
-import { cardsOf, cardSections, COLUMN_TITLES, idOf, parseCard, sectionOf, takeable, type BoardColumn, type Card, type CardKind } from './board';
+import { cardsOf, cardSections, COLUMN_TITLES, idOf, parseCard, sectionOf, takeable, usernamesOf, type BoardColumn, type Card, type CardKind } from './board';
 import { currentLookup, loadDraft, openDocs, setEditing, syncNow, withChatKey } from './chat';
 import { keystore } from './e2ee/keystore';
 import { keyring, type ChatDoc } from './e2ee/keyring';
@@ -89,8 +89,9 @@ export const loadCards = async (doc: ChatDoc) => cardSections(await openRevision
  */
 export async function boardCards(doc: ChatDoc): Promise<Card[]> {
   if (doc.board !== 'roadmap') return (await loadSections(doc)).map(parseCard);
-  const { projects, conversations } = store.get();
-  return cardsOf(await loadCards(doc), projects[conversations[doc.conversationId]?.projectId ?? 0]?.memberIds ?? []);
+  const { projects, conversations, users, me } = store.get();
+  const members = projects[conversations[doc.conversationId]?.projectId ?? 0]?.memberIds ?? [];
+  return cardsOf(await loadCards(doc), members, usernamesOf(members, users, me));
 }
 
 /** A section's revisions, newest first, each with what it held. */
