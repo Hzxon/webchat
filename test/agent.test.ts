@@ -1696,7 +1696,9 @@ describe('agent client (R-027)', () => {
       // Not an administrator: it says so alone, asks nothing and changes nothing.
       process.env.FAKE_GROUPS = 'staff';
       await assert.rejects(setup(`${baseUrl}#${newPairingCode()}`, options), /Nothing was changed/);
-      assert.deepEqual([asked.length, existsSync(unitFile), existsSync(log), said.filter((line) => /Administrator/.test(line)).length], [0, false, false, 1]);
+      // Only the read-only check that `systemctl --user` runs, on Linux, reaches the services.
+      const ran = existsSync(log) ? (await commands()).filter((line) => line !== 'systemctl --user show-environment') : [];
+      assert.deepEqual([asked.length, existsSync(unitFile), ran, said.filter((line) => /Administrator/.test(line)).length], [0, false, [], 1]);
       process.env.FAKE_GROUPS = 'staff admin sudo';
 
       const code = newPairingCode();
