@@ -60,6 +60,9 @@ export const codexArgs = (servers: string[]) => [
 ];
 
 /** One Codex process, which takes the turns of one session. */
+/** The parts of turn/completed a turn reads. */
+type Completed = { turn?: { id?: string; status?: string; error?: { message?: string } } };
+
 interface Live {
   child: ChildProcess;
   peer: Peer;
@@ -156,6 +159,8 @@ export function codexHarness(program: string, dataDir: string): Harness {
     return new Promise<unknown>((resolve, reject) => {
       let done = false;
       let text = '';
+      // A turn's end that came before turn/start's answer named the turn.
+      let early: Completed | undefined;
       const dog = watchdog(IDLE_MS, t.quiet ?? new Quiet(), () => finish(new Error(`the agent printed nothing for ${IDLE_MS / 60_000} minutes.`)));
       const onAbort = () => finish(new Error(CANCELLED));
       function finish(error?: Error, answer?: unknown) {
@@ -178,27 +183,35 @@ export function codexHarness(program: string, dataDir: string): Harness {
         cwd: t.cwd,
         ask: t.ask,
         fail: finish,
-        note(method, params: { turn?: { id?: string; status?: string; error?: { message?: string } }; item?: { type?: string; text?: string; phase?: string } }) {
+        note(method, params: Completed & { item?: { type?: string; text?: string; phase?: string } }) {
           dog.arm();
           // The last message of the turn is its answer, the final one if Codex marks it.
           if (method === 'item/completed' && params.item?.type === 'agentMessage' && (params.item.phase === 'final_answer' || !text)) text = params.item.text ?? '';
-          if (method !== 'turn/completed' || params.turn?.id !== turn.id) return;
-          if (params.turn?.status === 'failed') return finish(new Error(params.turn.error?.message || 'Codex stopped without an answer.'));
-          if (params.turn?.status === 'interrupted') return finish(new Error(CANCELLED));
-          try {
-            const answer = JSON.parse(text, (_key, value: unknown) => (value === null ? undefined : value)) as unknown;
-            const problem = fits(t.schema, answer);
-            if (problem) finish(new Error(`Codex’s answer did not fit: ${problem}.`));
-            else finish(undefined, answer);
-          } catch {
-            finish(new Error(text.trim().slice(0, 500) || 'Codex stopped without an answer.'));
-          }
+          if (method !== 'turn/completed') return;
+          // The end can come in the same read as turn/start's answer, before that answer names the turn.
+          if (turn.id === undefined) return void (early = params);
+          if (params.turn?.id === turn.id) complete(params);
         },
       });
+      function complete(params: Completed) {
+        if (params.turn?.status === 'failed') return finish(new Error(params.turn.error?.message || 'Codex stopped without an answer.'));
+        if (params.turn?.status === 'interrupted') return finish(new Error(CANCELLED));
+        try {
+          const answer = JSON.parse(text, (_key, value: unknown) => (value === null ? undefined : value)) as unknown;
+          const problem = fits(t.schema, answer);
+          if (problem) finish(new Error(`Codex’s answer did not fit: ${problem}.`));
+          else finish(undefined, answer);
+        } catch {
+          finish(new Error(text.trim().slice(0, 500) || 'Codex stopped without an answer.'));
+        }
+      }
       hold(live.child, true);
       live.peer
         .request<{ turn: { id: string } }>('turn/start', { threadId: live.thread, input: [{ type: 'text', text: t.message }], outputSchema: strictSchema(t.schema as Schema) })
-        .then((started) => (turn.id = started.turn.id), finish);
+        .then((started) => {
+          turn.id = started.turn.id;
+          if (early?.turn?.id === turn.id) complete(early);
+        }, finish);
     });
   }
 

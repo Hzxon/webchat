@@ -119,7 +119,16 @@ for await (const text of readline.createInterface({ input: process.stdin })) {
   } else if (message.method === 'turn/start') {
     const turn = 'turn-' + ++turns;
     log({ method: message.method, input: message.params.input[0].text, schema: message.params.outputSchema, thread: message.params.threadId, pid: process.pid });
-    send({ id: message.id, result: { turn: { id: turn } } });
+    const started = { id: message.id, result: { turn: { id: turn } } };
+    // With nothing to ask, the turn's answer, its message and its end go in one write, as Linux delivers
+    // them in one read: the client must not drop an end that comes before it knows the turn's id.
+    if (!env('FAKE_CODEX_ASK')) {
+      const answer = { method: 'item/completed', params: { threadId: thread, turnId: turn, item: { type: 'agentMessage', id: 'm1', phase: 'final_answer', text: env('FAKE_CODEX_ANSWER') ?? '{"reply":"It adds.","drafts":null}' } } };
+      const end = { method: 'turn/completed', params: { threadId: thread, turn: { id: turn, status: env('FAKE_CODEX_FAIL') ? 'failed' : 'completed', ...(env('FAKE_CODEX_FAIL') && { error: { message: env('FAKE_CODEX_FAIL') } }) } } };
+      process.stdout.write([started, answer, end].map((m) => JSON.stringify(m)).join('\\n') + '\\n');
+      continue;
+    }
+    send(started);
     // Not awaited: the client's answer is the next line, which this loop must go on to read.
     void (async () => {
     for (const request of env('FAKE_CODEX_ASK') ? JSON.parse(env('FAKE_CODEX_ASK')) : []) {
