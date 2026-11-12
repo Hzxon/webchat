@@ -1,14 +1,6 @@
-// What the plugin's runs and conversations share (R-035, D-097): a worktree of the project's
-// repository on a branch named after the card, the fetch of origin, and the silence timer of a
-// background agent's turn.
-import { execFile, type ChildProcess } from 'node:child_process';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
-import { promisify } from 'node:util';
-import type { RunRequest } from '../shared/types.ts';
-
-const run = promisify(execFile);
+// What the harness adapters share (R-035, D-097): the silence timer of a background agent's turn,
+// and the processes kept for a session.
+import type { ChildProcess } from 'node:child_process';
 
 /** An agent's final word: its text, its session, and the answer its schema asked for. */
 export interface Final {
@@ -76,38 +68,4 @@ export function watchdog(ms: number, quiet: Quiet, stalled: () => void) {
       quiet.release = undefined;
     },
   };
-}
-
-const slugOf = (text: string) =>
-  text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 40);
-
-/**
- * Adds a git worktree of `repo` for a run, under `runsDir`, on a new branch named after the card
- * from origin's default branch, fetched first. Returns the branch, the folder and that base.
- */
-export async function addWorktree(repo: string, request: RunRequest, runsDir: string) {
-  const git = (...args: string[]) => run('git', ['-C', repo, ...args]);
-  const base = await fetchOrigin(repo);
-  const slug = slugOf(`${request.card}-${request.title}`);
-  // A card run again gets a branch of its own, next to the one its earlier run left, here or on origin.
-  let branch = `agent/${slug}`;
-  for (let n = 2; await git('show-ref', '--quiet', `refs/heads/${branch}`, `refs/remotes/origin/${branch}`).then(() => true, () => false); n++) branch = `agent/${slug}-${n}`;
-  const dir = path.join(runsDir, `${slug}-${Date.now().toString(36)}`);
-  await fs.mkdir(runsDir, { recursive: true });
-  await git('worktree', 'add', '-q', '-b', branch, dir, base);
-  return { branch, dir, base };
-}
-
-/** Fetches origin, and returns its default branch, such as `origin/main`. */
-export async function fetchOrigin(repo: string) {
-  // Two fetches at once in one repository fail one of them on a ref lock; a second try gets through.
-  await run('git', ['-C', repo, 'fetch', '-q', 'origin']).catch(async () => {
-    await sleep(1_000);
-    await run('git', ['-C', repo, 'fetch', '-q', 'origin']);
-  });
-  return run('git', ['-C', repo, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).then((r) => r.stdout.trim(), () => 'origin/main');
 }

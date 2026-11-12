@@ -63,6 +63,8 @@ export class Conversations {
     private readonly answer: Answerer,
     /** Called when a conversation ends, so its harness can end what it keeps for the session. */
     private readonly onEnd: (conversation: Conversation) => void = () => undefined,
+    /** Removes an ended conversation's scratch copy, wherever it is kept. */
+    private readonly drop: (scratch: string) => Promise<void> = (scratch) => fs.rm(scratch, { recursive: true, force: true }),
   ) {}
 
   /** Whether a turn runs or waits for one, which keeps an agent that goes to sleep awake (K-66). */
@@ -184,7 +186,7 @@ export class Conversations {
         this.turns.delete(conversation.root);
       }
       if (conversation.ended && conversation.scratch) {
-        await fs.rm(conversation.scratch, { recursive: true, force: true });
+        await this.drop(conversation.scratch);
         delete conversation.scratch;
         changed = true;
       }

@@ -18,11 +18,12 @@ import { AgentClient, type OpenedMessage } from '../agent/client.ts';
 import { CODEX_GAP, codexHarness } from '../agent/codex.ts';
 import type { Ask, Harness, Reply, Turn } from '../agent/harness.ts';
 import { Conversations, parts, type Answerer } from '../agent/conversations.ts';
-import { Plugin, worktreeGit } from '../agent/plugin.ts';
+import { LocalBench, worktreeGit } from '../agent/bench.ts';
+import { Plugin } from '../agent/plugin.ts';
 import { doctor, linksFrom, setup, uninstall } from '../agent/setup.ts';
 import { harnessFinder, supported, supportedList } from '../agent/harnesses.ts';
 import { versionAtLeast } from '../agent/harness.ts';
-import { addWorktree, type Final } from '../agent/runner.ts';
+import type { Final } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
@@ -69,15 +70,6 @@ if (args[0] === 'pr' && args[1] === 'create') {
   console.log('FAIL test/sum.test.js: expected 3, got 4');
 } else if (args[0] === 'api') {
   console.log(args[1].endsWith('/permission') ? '{"permission":"write"}' : '[]');
-} else if (args[0] === 'repo' && args[1] === 'clone') {
-  // From the bare repository the test names, with origin set to GitHub as a real clone has it.
-  const [repo, dir] = [args[2], args[3]];
-  const url = 'https://github.com/' + repo + '.git';
-  execFileSync('git', ['clone', '-q', state.clones[repo], dir]);
-  execFileSync('git', ['-C', dir, 'remote', 'set-url', 'origin', url]);
-  execFileSync('git', ['-C', dir, 'config', 'url.' + state.clones[repo] + '.insteadOf', url]);
-  state.cloned = args.slice(2);
-  fs.writeFileSync(process.env.FAKE_GH_STATE, JSON.stringify(state));
 }
 `;
 const PASSWORD = 'correct horse battery';
@@ -546,12 +538,12 @@ describe('agent client (R-027)', () => {
     await git('add', 'README.md');
     await git('commit', '-q', '-m', 'Start');
     await git('push', '-q', '-u', 'origin', 'main');
-    const runsDir = path.join(home, 'runs');
-    const request = (await runOf()) as RunRequest;
-    const branches = [(await addWorktree(repo, request, runsDir)).branch, (await addWorktree(repo, request, runsDir)).branch];
-    // A branch pushed from another machine is taken too.
-    await git('push', '-q', 'origin', 'main:refs/heads/agent/k-1-pushes-with-bad-keys-3');
-    branches.push((await addWorktree(repo, request, runsDir)).branch);
+    const bench = new LocalBench([]);
+    const tip = (await git('rev-parse', 'HEAD')).stdout.trim();
+    const branchOf = async (taken: string[] = []) => (await bench.prepare({ dir: repo, slug: 'k-1-pushes-with-bad-keys', taken, tip })).branch;
+    const branches = [await branchOf(), await branchOf()];
+    // A branch pushed from another machine is taken too, which the agent's own clone says.
+    branches.push(await branchOf(['agent/k-1-pushes-with-bad-keys-3']));
     assert.deepEqual(branches, ['agent/k-1-pushes-with-bad-keys', 'agent/k-1-pushes-with-bad-keys-2', 'agent/k-1-pushes-with-bad-keys-4']);
   });
 
@@ -601,7 +593,8 @@ describe('agent client (R-027)', () => {
       await fs.writeFile(ghState, JSON.stringify({ origin, pulls: [] }));
       const claudeLog = path.join(home, 'claude.log');
       const gitConfig = path.join(home, 'gitconfig');
-      await fs.writeFile(gitConfig, '[user]\n\tname = Alice\n\temail = alice@example.com\n');
+      // The agent's own clone fetches from GitHub's address, which the test points at its bare repository.
+      await fs.writeFile(gitConfig, `[user]\n\tname = Alice\n\temail = alice@example.com\n[url "${origin}"]\n\tinsteadOf = https://github.com/acme/app.git\n`);
       const restore = setEnv({
         GIT_CONFIG_GLOBAL: gitConfig,
         PATH: `${bin}${path.delimiter}${process.env.PATH}`,
@@ -1072,7 +1065,7 @@ describe('agent client (R-027)', () => {
           'INSERT INTO webchat.project_repos (project_id, repo, repo_id, installation_id, conversation_id, added_by, added_at) VALUES ($1, $2, 7, 8, $3, $4, $5)',
           [app.project.id, 'acme/web', general, alice.id, Date.now()],
         );
-        await fs.writeFile(ghState, JSON.stringify({ ...JSON.parse(await fs.readFile(ghState, 'utf8')), clones: { 'acme/web': webOrigin } }));
+        await fs.appendFile(gitConfig, `[url "${webOrigin}"]\n\tinsteadOf = https://github.com/acme/web.git\n`);
         const inDirect = async (repo: string) => (await alice.send(direct, { text: 'Run K-7 with Claude Code', run: { ...request, repo, sentAt: Date.now() } })).id;
         const offered = async (id: number, repo: string) => {
           // Each look reads only what came since, so a seen offer stays seen.
@@ -1099,7 +1092,8 @@ describe('agent client (R-027)', () => {
         await (await checkIn()).handled;
         await webWaits;
         assert.deepEqual(await reportsOn(webRun), [`Cloning acme/web into ${cloneDir}. This can take a while.`, `I finished K-7 on ${branch} (acme/web#4). Sums add up now.`]);
-        assert.deepEqual(JSON.parse(await fs.readFile(ghState, 'utf8')).cloned, ['acme/web', cloneDir, '--', '--filter=blob:none']);
+        assert.equal((await git(cloneDir, 'config', '--get', 'remote.origin.url')).stdout.trim(), 'https://github.com/acme/web.git', 'the clone pushes where GitHub has the repository');
+        assert.equal((await git(cloneDir, 'rev-parse', 'HEAD')).stdout.trim(), (await git(cloneDir, 'rev-parse', 'origin/main')).stdout.trim(), 'it is on the default branch');
         assert.ok((await turns()).at(-1)!.cwd.startsWith(path.join(await fs.realpath(cloneDir), '.claude', 'worktrees')), 'the run went on in the clone');
         assert.deepEqual(plugin.client!.repos, ['acme/app', 'acme/web']);
 

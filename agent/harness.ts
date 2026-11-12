@@ -47,6 +47,8 @@ export interface Harness {
   readonly name: string;
   /** Whether it calls `Turn.ask`, which the level an agent names says (AGENT_LEVEL.asks). */
   readonly asks: boolean;
+  /** False for one whose sandbox keeps `.git` read-only, so it cannot commit; its leftovers are committed for it. Left out means it commits. */
+  readonly commits?: boolean;
   /**
    * Why this laptop cannot run its turns, or undefined. With `dir`, why its shell could read a
    * secret folder while it works there, or undefined when the adapter proves it cannot. A turn for
