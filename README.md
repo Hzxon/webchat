@@ -519,6 +519,16 @@ and no AI attribution lines in its commits and pull requests. Each run gets a co
 it never edits yours. Your settings, hooks, MCP servers, plugins and permission rules stay off,
 since a run follows cards your teammates wrote. Settings shows what the last run loaded.
 
+Settings also lists the coding agents WebChat supports, Claude Code and Codex, one row each with its
+path and version: linked, linked and needing attention (not signed in, too old or missing), found
+but not linked, or not found. **Link** and **Unlink** apply at once. Only a linked coding agent runs
+anything, and a question or card that names none runs on the first one you linked. Codex answers
+questions and takes no cards, so a laptop with only Codex linked takes none. In a terminal on the
+laptop, `webchat-agent link codex` asks you to approve the link under **Coding agents**, within 10
+minutes; any other name fails with the supported list. An agent paired before you could link
+anything keeps running the coding agents it found then, and one installed later stays unlinked until
+you link it. The plugin asks to link Claude Code when you pair it, and you link Codex here.
+
 The background Claude runs in a sandbox that fails closed: if the sandbox cannot start, the run
 does not. Its shell reaches only the npm registry. It cannot read the plugin's keys, the folder of
 `gh`, the macOS keychain, Claude Code's `session-env` folder or the rest of your home folder. The
@@ -575,8 +585,8 @@ only cards you would do yourself.
 ### With the daemon
 
 The daemon serves the same agent as the plugin, with the same sandbox and the same checks, from a
-program that starts when you log in, so no Claude Code window has to stay open. Today its only coding
-agent is Claude Code. The plugin and the daemon keep separate accounts: never run both on one laptop
+program that starts when you log in, so no Claude Code window has to stay open. It runs Claude Code
+and Codex, whichever you link. The plugin and the daemon keep separate accounts: never run both on one laptop
 for the same agent, and pair each with its own code.
 
 It works on a Mac or on Linux, and on Windows only in Ubuntu on WSL2. The account you run it in must
@@ -592,7 +602,10 @@ account it says so and changes nothing.
 3. Setup checks the laptop and changes nothing yet: the system, your administrator rights, the login
    service (launchd on a Mac, `systemd --user` on Linux), git, whether your WebChat answers and runs
    the same release, disk space, Claude Code and Codex with their sign-in, and the GitHub CLI. Then
-   it shows one summary and asks once. The question lists what setup would do: install git, and on
+   it shows one summary and asks once. The question lists the coding agents it found, with the
+   signed-in ones ticked, to link: answer `y` for the ticked ones, or type the ones to link, such as
+   `claude codex`, or `none`. WebChat shows your picks before you approve the agent, and Codex, when
+   you pick it and it is missing, installs with its own installer. The question also lists what setup would do: install git, and on
    Linux `bubblewrap` and `socat`, which Claude Code's sandbox needs, with `apt-get` or `dnf` through
    `sudo`; on a Mac, Apple's command line tools for git; Claude Code, with its own installer, when it
    is missing; pair; and install the login service. Setup never changes a security setting. Where one
