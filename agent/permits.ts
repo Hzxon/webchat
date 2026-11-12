@@ -1,5 +1,5 @@
 // What the plugin does when a harness asks before an action (docs/decisions/harness-approvals.md):
-// the rulebook answers what it can alone, a grant for this run answers an action it allowed before,
+// the runner's rulebook answers what it can alone, a grant for this run answers an action it allowed before,
 // and anything else is a sealed question in the owner's direct chat. Only the owner's signed answer
 // counts, once, within 10 minutes of its signing, as a `fix` does (D-105). Everything here lives in
 // memory, so no rule outlives a run or a restart.
@@ -7,7 +7,6 @@ import { permitHash } from '../shared/e2ee.ts';
 import { ASK_WAIT_MS, type PermitDTO } from '../shared/types.ts';
 import type { AgentClient, OpenedMessage } from './client.ts';
 import type { Ask, Reply } from './harness.ts';
-import { judge } from './rulebook.ts';
 import { REQUEST_TTL_MS } from './runs.ts';
 import { Quiet } from './runner.ts';
 
@@ -50,7 +49,6 @@ export class Permits {
     private readonly client: AgentClient,
     /** Whether a message is the owner's, in their direct chat. */
     private readonly owns: (message: OpenedMessage) => boolean,
-    private readonly secrets: () => string[],
   ) {}
 
   /** Tells the pane how a question ended. */
@@ -63,14 +61,11 @@ export class Permits {
    * What one turn of `session` gets: `ask`, which the harness calls, `quiet`, which holds the turn's
    * silence timer while a question waits, and `done`, which settles what the turn leaves open.
    */
-  forTurn({ session, chat, thread, roots }: { session: string; chat: number; thread: { request: number } | { to: string }; roots: string[] }) {
+  forTurn({ session, chat, thread }: { session: string; chat: number; thread: { request: number } | { to: string } }) {
     const quiet = new Quiet();
     const mine = new Set<string>();
     this.active.add(session);
     const ask = async (action: Ask): Promise<Reply> => {
-      // The rulebook only refuses or asks; it never allows (docs/decisions/harness-rulebook.md).
-      const verdict = judge(action, { folders: roots, secrets: this.secrets(), tools: [] });
-      if (!verdict.allow && !verdict.ask) return { allow: false, message: verdict.why };
       if (action.detail.length > DETAIL) return { allow: false, message: NO.long };
       const key = [action.tool, action.kind, action.detail].join('\n');
       if (this.grants.get(session)?.has(key)) return { allow: true };

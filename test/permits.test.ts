@@ -33,10 +33,10 @@ describe('questions to the owner', () => {
       },
       remember: (id: string) => !seenIds.has(id) && !!seenIds.add(id),
     } as unknown as AgentClient;
-    permits = new Permits(client, (m) => m.senderId === 1 && m.conversationId === CHAT && m.security === 'encrypted', () => ['/data']);
+    permits = new Permits(client, (m) => m.senderId === 1 && m.conversationId === CHAT && m.security === 'encrypted');
   });
 
-  const turn = (session = 's-1') => permits.forTurn({ session, chat: CHAT, thread: { to: 'root-1' }, roots: [folder] });
+  const turn = (session = 's-1') => permits.forTurn({ session, chat: CHAT, thread: { to: 'root-1' } });
   const questions = () => sent.filter((m) => m.permit.kind === 'question');
   const settled = () => sent.filter((m) => m.permit.kind === 'settled').map((m) => (m.permit as { outcome: string }).outcome);
   /** What the owner's page sends: it signs the time and a hash of the question it showed. */
@@ -124,22 +124,10 @@ describe('questions to the owner', () => {
     assert.equal(questions().length, 8, 'a session nobody holds loses them');
   });
 
-  test('the rulebook refuses what it can alone, posts nothing, and never allows', async () => {
-    const t = turn();
-    const refused = [
-      await t.ask({ tool: 'Read', kind: 'read', paths: ['/elsewhere/notes.txt'], detail: 'Read /elsewhere/notes.txt' }),
-      await t.ask({ tool: 'Bash', kind: 'execute', paths: ['/data/account.json'], detail: 'cat /data/account.json' }),
-      await t.ask({ tool: 'Bash', kind: 'execute', paths: [], detail: 'x'.repeat(1501) }),
-    ];
-    assert.deepEqual(refused.map((r) => r.allow), [false, false, false]);
-    assert.match((refused[0] as { message: string }).message, /outside the working folder/);
-    assert.match((refused[1] as { message: string }).message, /secrets/);
-    assert.match((refused[2] as { message: string }).message, /too long/);
+  test('refuses a detail too long to read whole, and posts nothing', async () => {
+    const refused = await turn().ask(shell('x'.repeat(1501)));
+    assert.deepEqual(refused, { allow: false, message: 'That is too long for your owner to read whole. Do it in smaller steps.' });
     assert.deepEqual(sent, [], 'a refusal posts nothing');
-    // A read inside the folder is one it would allow, and it still asks the owner.
-    void t.ask({ tool: 'Read', kind: 'read', paths: [`${folder}/a.js`], detail: 'Read a.js' });
-    await sleep(20);
-    assert.equal(questions().length, 1);
   });
 
   test('asks at most 3 at once and 25 for a run, then says no', async () => {

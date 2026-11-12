@@ -11,8 +11,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { isRepoName, LIMITS, SKILL_NAME, type SetupChoice } from '../shared/types.ts';
-import type { Ask, Harness, Reply } from './harness.ts';
+import { secretDirs, type Ask, type Harness, type Reply } from './harness.ts';
 import { sha256 } from './keep.ts';
+import { judge } from './rulebook.ts';
 import type { Quiet } from './runner.ts';
 
 const exec = promisify(execFile);
@@ -42,12 +43,15 @@ export interface Folder {
   origin: string;
 }
 
-/** What one turn gets for its questions: the answer to each action asked, the silence timer's hold, and the end of it all. */
+/** What one turn gets for its questions: the answer to each action the rulebook leaves to the owner, the silence timer's hold, and the end of it all. */
 export interface Permit {
   ask: (ask: Ask) => Promise<Reply>;
   quiet: Quiet;
   done: () => void;
 }
+
+/** What the keyholder says while no runner is connected: the agent shows offline. */
+export const NO_RUNNER = 'Your laptop has not started the part of this agent that works in your folders, so the agent shows offline. It comes back when you log in.';
 
 /** The base a bundle was cut from is missing in the folder it was sent to, so it must be sent whole. */
 export class PrerequisitesMissing extends Error {
@@ -86,7 +90,7 @@ export interface Bench {
   /** Removes a scratch copy. */
   drop(scratch: string): Promise<void>;
   /** Runs one turn, and returns its answer for the schema with what it loaded of the owner's setup (D-097). */
-  turn(turn: TurnJob, options: { signal: AbortSignal; progress?: (sentence: string) => void; permit?: (roots: string[]) => Permit | undefined }): Promise<{ answer: unknown; applied: { claudeMd: boolean; skills: string[]; noAttribution: boolean } }>;
+  turn(turn: TurnJob, options: { signal: AbortSignal; progress?: (sentence: string) => void; permit?: () => Permit | undefined }): Promise<{ answer: unknown; applied: { claudeMd: boolean; skills: string[]; noAttribution: boolean } }>;
   /** Ends what a harness keeps running for a session, or for all. */
   end(session?: string): Promise<void>;
 }
@@ -145,7 +149,7 @@ export class LocalBench implements Bench {
   private choice?: SetupChoice;
 
   /** `find` finds the harnesses again, so one installed later shows (docs/decisions/harness-linking.md). */
-  constructor(harnesses: Harness[], private readonly find?: () => Promise<Harness[]>) {
+  constructor(harnesses: Harness[], private readonly find?: () => Promise<Harness[]>, private readonly dataDir = '') {
     this.list = harnesses;
   }
 
@@ -312,9 +316,15 @@ export class LocalBench implements Bench {
   async turn({ harness: name, cwd, session, resume, message, schema, schemas, setup: choice }: TurnJob, { signal, progress, permit }: Parameters<Bench['turn']>[1]) {
     const harness = this.harness(name);
     const { instructions, skills, applied } = await this.loadSetup(session, harness, choice);
-    const asked = permit?.([cwd, ...(skills ? [skills] : [])]);
+    const asked = permit?.();
+    // The rulebook runs here, where the owner's paths are, and only refuses or asks; the owner's folders never reach the keyholder (docs/decisions/harness-rulebook.md).
+    const roots = [cwd, ...(skills ? [skills] : [])];
+    const ask = asked && (async (action: Ask): Promise<Reply> => {
+      const verdict = judge(action, { folders: roots, secrets: secretDirs(this.dataDir), tools: [] });
+      return !verdict.allow && !verdict.ask ? { allow: false, message: verdict.why } : asked.ask(action);
+    });
     try {
-      const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: { instructions, skills }, signal, progress, ask: asked?.ask, quiet: asked?.quiet });
+      const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: { instructions, skills }, signal, progress, ask, quiet: asked?.quiet });
       return { answer, applied };
     } finally {
       asked?.done();

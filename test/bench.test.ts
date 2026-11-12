@@ -7,6 +7,8 @@ import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { promisify } from 'node:util';
 import { LocalBench, PrerequisitesMissing } from '../agent/bench.ts';
+import type { Harness } from '../agent/harness.ts';
+import { Quiet } from '../agent/runner.ts';
 
 const sh = promisify(execFile);
 
@@ -96,5 +98,37 @@ describe('the bench', () => {
     assert.equal((await git(dir, 'bundle', 'list-heads', file)).split('\n').map((l) => l.split(' ')[1]).join(), `refs/heads/${branch}`);
     await assert.rejects(bench.bundle({ worktree, branch: 'agent/other', since: tip, file }), /not on agent\/other/);
     assert.equal(await bench.prepare({ dir, slug: 'k-7-sums', taken: ['agent/k-7-sums-2'], tip }).then((p) => p.branch), 'agent/k-7-sums-3', 'a name here or taken elsewhere is skipped');
+  });
+
+  test('the rulebook refuses what it can alone, here where the owner\'s paths are, and leaves the rest to the permit', async () => {
+    const work = path.join(root, 'rules-work');
+    const keys = path.join(root, 'rules-keys');
+    await fs.mkdir(work);
+    await fs.mkdir(keys);
+    const asked: string[] = [];
+    // A harness that puts each action to the turn's ask, as an adapter does, and answers with what it was told.
+    const harness = {
+      name: 'Fake',
+      turn: async (turn: Parameters<Harness['turn']>[0]) => {
+        const actions = [
+          { tool: 'Read', kind: 'read' as const, paths: ['/elsewhere/notes.txt'], detail: 'Read /elsewhere/notes.txt' },
+          { tool: 'Bash', kind: 'execute' as const, paths: [path.join(keys, 'account.json')], detail: 'cat account.json' },
+          { tool: 'Read', kind: 'read' as const, paths: [path.join(work, 'a.js')], detail: 'Read a.js' },
+        ];
+        return Promise.all(actions.map((action) => turn.ask!(action)));
+      },
+      offers: () => ({ knobs: [] }),
+      apply: async () => undefined,
+    } as unknown as Harness;
+    const bench = new LocalBench([harness], undefined, keys);
+    const { answer } = await bench.turn(
+      { harness: 'Fake', cwd: work, session: 's', resume: false, message: '', schema: {}, schemas: [], setup: { claudeMd: false, skills: [], noAttribution: false } },
+      { signal: new AbortController().signal, permit: () => ({ ask: async (action) => (asked.push(action.detail), { allow: true }), quiet: new Quiet(), done: () => undefined }) },
+    );
+    const replies = answer as Array<{ allow: boolean; message?: string }>;
+    assert.deepEqual(replies.map((r) => r.allow), [false, false, true]);
+    assert.match(replies[0]!.message!, /outside the working folder/);
+    assert.match(replies[1]!.message!, /secrets/);
+    assert.deepEqual(asked, ['Read a.js'], 'only what the rulebook would allow reaches the permit');
   });
 });
