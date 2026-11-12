@@ -42,13 +42,19 @@ export interface AgentRepoDTO {
  * What a plugin session can do, by the level its check-ins name (D-103): 1 answers the owner's
  * questions; 2 also runs cards from the pane, which it names only while `gh` is signed in (D-105).
  * Since R-039 the level is a set of these bits, with 4 for a plugin that heeds its owner's `setup`:
- * 5, or 7 with cards (D-115). Every level from 1 up answers, older ones included.
+ * 5, or 7 with cards (D-115). 8 says it asks its owner before an action its harness would ask about
+ * (docs/decisions/harness-approvals.md). Every level from 1 up answers, older ones included. The
+ * server takes any level under 100, so only 16 and 32 are left.
  */
-export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4 } as const;
+export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4, asks: 8 } as const;
 
-/** Whether a session at this level runs cards, or heeds `setup` (D-105, D-115). */
+/** Whether a session at this level runs cards, heeds `setup`, or asks (D-105, D-115). */
 export const runsCards = (level: number) => (level & AGENT_LEVEL.cards) !== 0;
 export const takesSetup = (level: number) => (level & AGENT_LEVEL.setup) !== 0;
+export const takesAsks = (level: number) => (level & AGENT_LEVEL.asks) !== 0;
+
+/** How long a question of an agent waits for its owner: the plan gate's 7 days. */
+export const ASK_WAIT_MS = 7 * 24 * 60 * 60_000;
 
 /** What a choice loads, in words, for the agent's answer and the pane alike (R-039). */
 export const setupWords = (c: SetupChoice) => [c.claudeMd && 'your CLAUDE.md', ...c.skills, c.noAttribution && 'no AI attribution', c.noPlan && 'no plan first'].filter(Boolean).join(', ') || 'nothing of your Claude setup';
@@ -629,6 +635,8 @@ export interface RunRequest {
    * none, and the run goes to the laptop's host harness; one the laptop has not enabled fails.
    */
   harness?: string;
+  /** The owner's page can show a question of the agent, so the agent may ask before an action (docs/decisions/harness-approvals.md). An older page never sets it. */
+  asks?: true;
 }
 
 export interface RunReport {
@@ -717,7 +725,7 @@ export const heldDecisions = (decisions: string[]) => decisions.filter(isHeld).m
 export type PromptDTO =
   // A prompt names its project's board and, unless the project links none, one of its repositories
   // (R-038), and the harness that answers, which every reply then resumes; none for the host harness.
-  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string }
+  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true }
   | { kind: 'reply'; to: string; sentAt: number }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }
@@ -785,6 +793,18 @@ export type AskDTO =
   | { kind: 'connect'; step: 'approve'; to: string; sentAt: number; repo: string; folder: string }
   | { kind: 'link' | 'connect'; step: 'decline'; to: string; sentAt: number }
   | { kind: 'link' | 'connect'; step: 'done' | 'failed'; to: string; note?: string };
+
+/**
+ * What an agent asks its owner before an action its harness would ask about, and the owner's answer,
+ * in their direct chat, sealed (docs/decisions/harness-approvals.md). A question names its thread as
+ * run reports and prompts do: `request` (the run request's message) for a card, `to` (the prompt's
+ * client id) for a conversation. An answer and a `settled` name the question by its client id, which
+ * its sender signs. The answer signs the time, and `seen`, a hash of what the owner saw.
+ */
+export type PermitDTO =
+  | { kind: 'question'; request?: number; to?: string; what: 'run' | 'edit' | 'read' | 'fetch' | 'other'; detail: string; expires: number }
+  | { kind: 'answer'; to: string; decision: 'once' | 'run' | 'deny'; seen: string; sentAt: number }
+  | { kind: 'settled'; to: string; outcome: 'allowed' | 'allowedForRun' | 'denied' | 'expired' | 'stopped' | 'stale' };
 
 /**
  * A pull request shared into a chat: a snapshot of how it stood when it was shared. It travels
@@ -946,7 +966,9 @@ export function showsEveryPush(endpoint: string | null): boolean {
 }
 
 /** What a message's content says in a chat list, a toast or a notification. An agent's answer is Markdown, shown as plain words (D-103). */
-export function previewOf(content: { text: string; pull?: { title: string } | null; prompt?: PromptDTO | null }) {
+export function previewOf(content: { text: string; pull?: { title: string } | null; prompt?: PromptDTO | null; permit?: PermitDTO | null }) {
+  // Never the command: a lock screen shows it to whoever looks.
+  if (content.permit?.kind === 'question') return 'Your agent asks your permission';
   if (content.pull) return `Pull request: ${content.pull.title}`;
   if (content.prompt?.kind === 'answer') return content.text.replace(/^\s*(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '').replace(/```\w*|\*\*|__|`/g, '');
   return content.text;

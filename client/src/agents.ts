@@ -2,7 +2,7 @@
 // D-102, D-103). A conversation is a prompt and the messages whose `prompt` field names the
 // prompt's client id, all in the user's direct chat with the agent.
 import { useMemo } from 'react';
-import { AGENT_LEVEL, takesSetup, type AgentRepoDTO, type RunDTO, type UserDTO } from '../../shared/types';
+import { AGENT_LEVEL, ASK_WAIT_MS, takesSetup, type AgentRepoDTO, type PermitDTO, type RunDTO, type UserDTO } from '../../shared/types';
 import { formatSince } from './components/format';
 import type { Tone } from './components/PullTags';
 import type { ChatConversation, ChatMessage } from './e2ee/keyring';
@@ -27,11 +27,13 @@ export interface Thread {
   project?: number;
   /** The prompt first, then the messages that name it, in the chat's order, one per answer. */
   messages: ChatMessage[];
-  state: 'working' | 'answered' | 'failed' | 'unsent' | 'ended' | 'draft' | 'waiting' | 'unfinished' | 'done' | 'stale' | 'paused' | 'planned';
+  state: 'working' | 'answered' | 'failed' | 'unsent' | 'ended' | 'draft' | 'waiting' | 'unfinished' | 'done' | 'stale' | 'paused' | 'planned' | 'asking';
   /** When its newest message was sent. */
   last: number;
   /** For a card that is being worked on: what the run does now, from its newest progress report (docs/decisions/stop-pauses-run.md). */
   progress?: string;
+  /** While `asking`: the agent's question, and whether the owner's answer is sent, which waits for the agent's word (docs/decisions/harness-approvals.md). */
+  ask?: { message: ChatMessage & { permit: Extract<PermitDTO, { kind: 'question' }> }; answered: boolean };
   /** The cards its drafts became on the board, by the draft's client id (D-104). */
   added: Record<string, string>;
 }
@@ -50,6 +52,7 @@ export const THREAD_STATE: Record<Thread['state'], { label: string; tone: Tone }
   stale: { label: 'No longer holds', tone: 'warn' },
   paused: { label: 'Stopped', tone: 'warn' },
   planned: { label: 'Plan ready', tone: 'warn' },
+  asking: { label: 'Asking you', tone: 'warn' },
 };
 
 /** What each run message makes of its card's conversation; a cancel changes nothing until the agent says it stopped. */
@@ -134,9 +137,35 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
   // A card's thread by its request's message id, which the reports name, and those with a draft.
   const requests = new Map<number, Thread>();
   const drafted = new Set<Thread>();
+  // The threads that asked, by the question's client id, which the owner's answer and the agent's `settled` name.
+  const asked = new Map<string, Thread>();
   for (const message of messages) {
     const prompt = message.prompt;
     if (message.security !== 'encrypted') continue;
+    const permit = message.permit;
+    if (permit) {
+      if (permit.kind === 'question') {
+        const thread = permit.request !== undefined ? requests.get(permit.request) : threads.get(permit.to ?? '');
+        // Only the thread's own agent asks, and the id is what the answer names.
+        if (!thread || message.senderId !== agentId || !message.clientId) continue;
+        asked.set(message.clientId, thread);
+        thread.messages.push(message);
+        thread.ask = { message: message as ChatMessage & { permit: typeof permit }, answered: false };
+        thread.state = 'asking';
+        thread.last = Math.max(thread.last, message.createdAt);
+        delete thread.progress;
+        continue;
+      }
+      const thread = asked.get(permit.to);
+      if (!thread?.ask || thread.ask.message.clientId !== permit.to) continue;
+      if (permit.kind === 'answer' && message.senderId === meId) thread.ask.answered = pending[message.clientId ?? ''] !== 'failed';
+      // A stale answer leaves the question open, and the buttons show again.
+      else if (permit.kind === 'settled' && message.senderId === agentId) {
+        if (permit.outcome === 'stale') thread.ask.answered = false;
+        else if (thread.state === 'asking') thread.state = 'working';
+      }
+      continue;
+    }
     if (message.added && message.senderId === meId) {
       const thread = threads.get(message.added.to);
       if (thread) thread.added[message.added.draft] = message.added.card;
@@ -205,8 +234,9 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     // The laptop has no copy of the repository, and the turn waits for the owner (R-036).
     else if (prompt.kind === 'nocopy') thread.state = 'waiting';
   }
-  // A card's conversation lasts as long as its draft is watched, so only a question ends.
-  return [...threads.values()].map((t) => (t.kind === 'question' && now - t.last > THREAD_TTL_MS ? { ...t, state: 'ended' as const } : t)).sort((a, b) => b.last - a.last);
+  // A card's conversation lasts as long as its draft is watched, so only a question ends, and one that asks waits as long as the agent does.
+  for (const t of threads.values()) if (t.state !== 'asking') delete t.ask;
+  return [...threads.values()].map((t) => (t.kind === 'question' && now - t.last > (t.state === 'asking' ? ASK_WAIT_MS : THREAD_TTL_MS) ? { ...t, state: 'ended' as const } : t)).sort((a, b) => b.last - a.last);
 }
 
 /** Where a conversation belongs: the project its prompt names, a proposal's board's, or a card's board's. */

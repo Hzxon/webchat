@@ -6,7 +6,7 @@
 //
 // Everything the server sends is decrypted on the way in, and every message is encrypted on the
 // way out (see e2ee/keyring.ts). The store only ever holds readable text.
-import { keyFingerprint, openPicks, pairingId, pairingProof, type MessageContent, type QuotedMessage } from '../../shared/e2ee';
+import { keyFingerprint, openPicks, pairingId, pairingProof, permitHash, type MessageContent, type QuotedMessage } from '../../shared/e2ee';
 import {
   LIMITS,
   previewOf,
@@ -18,6 +18,7 @@ import {
   type PullRequestDTO,
   type MessageDTO,
   type AskDTO,
+  type PermitDTO,
   type PairingPick,
   type PublicKeysDTO,
   type RunDTO,
@@ -786,7 +787,7 @@ export function sendMessage(conversationId: number, body: string, urgent: boolea
 export async function requestRun(docId: string, card: Card, runtime: UserDTO, repo: string, hash: string, harness?: string) {
   const conversationId = await startDirectChat(runtime.id);
   const id = `${card.kind}-${card.number}`;
-  const run: RunRequest = { kind: 'request', card: id, title: card.title.slice(0, LIMITS.runNoteLength), docId, section: card.id, runtime: runtime.id, sentAt: Date.now(), repo, hash, was: card.status, ...(harness && { harness }) };
+  const run: RunRequest = { kind: 'request', card: id, title: card.title.slice(0, LIMITS.runNoteLength), docId, section: card.id, runtime: runtime.id, sentAt: Date.now(), repo, hash, was: card.status, asks: true, ...(harness && { harness }) };
   const clientId = newClientId();
   void sendContent(conversationId, { text: `Run ${id}: ${card.title}`, run }, false, clientId);
   return clientId;
@@ -823,8 +824,18 @@ export async function askAgent(agentId: number, project: number, repo: string | 
   const conversationId = await startDirectChat(agentId);
   const clientId = newClientId();
   // The message shows as sending at once, so the pane can open its conversation.
-  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, ...(repo && { repo }), ...(harness && { harness }) } }, false, clientId);
+  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, asks: true, ...(repo && { repo }), ...(harness && { harness }) } }, false, clientId);
   return clientId;
+}
+
+/**
+ * Answers an agent's question before an action (docs/decisions/harness-approvals.md): the question
+ * is named by its client id, and the answer signs the time and a hash of what the owner saw.
+ */
+export async function answerPermit(conversationId: number, question: ChatMessage & { permit: Extract<PermitDTO, { kind: 'question' }> }, decision: 'once' | 'run' | 'deny') {
+  const permit: PermitDTO = { kind: 'answer', to: question.clientId!, decision, seen: await permitHash(question.permit), sentAt: Date.now() };
+  const text = { once: 'Allow it', run: 'Allow it for this run', deny: 'Deny it' }[decision];
+  return sendContent(conversationId, { text, permit }, false);
 }
 
 /** Puts the user's agent to sleep after what it runs; only `/webchat:wake` on the laptop wakes it (K-66, D-113). */
@@ -970,6 +981,7 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     setupState: null,
     board: entry.content.board ?? null,
     ask: entry.content.ask ?? null,
+    permit: entry.content.permit ?? null,
     card: entry.content.card ?? null,
     security: 'encrypted',
   };

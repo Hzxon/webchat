@@ -64,6 +64,7 @@ interface Opened {
   board: MessageContent['board'] | null;
   /** A request from the owner's laptop and the owner's answer to it (docs/decisions/harness-linking.md). */
   ask: MessageContent['ask'] | null;
+  permit: MessageContent['permit'] | null;
   /** A request about a board card to the member asked (the card-notes decision). */
   card: MessageContent['card'] | null;
   /**
@@ -129,6 +130,7 @@ const openedFrom = (content: MessageContent): Opened => ({
   setupState: content.setupState ?? null,
   board: content.board ?? null,
   ask: content.ask ?? null,
+  permit: content.permit ?? null,
   card: content.card ?? null,
   security: 'encrypted',
 });
@@ -316,7 +318,7 @@ export const keyring = {
 
   /** Decrypts a message and checks its signature. Never throws: failures come back as "failed". */
   async open(message: MessageDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup): Promise<ChatMessage> {
-    const none = { replyTo: null, reaction: null, pull: null, github: null, run: null, prompt: null, added: null, setupState: null, board: null, ask: null, card: null };
+    const none = { replyTo: null, reaction: null, pull: null, github: null, run: null, prompt: null, added: null, setupState: null, board: null, ask: null, permit: null, card: null };
     if (message.kind === 'github') {
       // Shown as GitHub's, never as a person's, whatever sender the server names.
       const card = readGithubCard(message.body);

@@ -3364,6 +3364,12 @@ a {
   margin-top: 4px;
 }
 
+.agents-draft-actions .agents-note {
+  flex-basis: 100%;
+  margin: 0;
+  text-align: left;
+}
+
 .agents-draft-actions select {
   padding: 6px;
   border: 1px solid var(--line);
