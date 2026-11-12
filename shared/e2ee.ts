@@ -771,6 +771,8 @@ export interface DocContent {
   board?: 'decisions' | 'roadmap';
   /** On the Roadmap's title: the repository whose docs copy the board, which only the project's owner sets (R-040). */
   repo?: string;
+  /** On a card's first revision: `addCard` opened it, so its author owns the card (the board-lanes decision). */
+  opened?: true;
 }
 
 const docHeader = (meta: DocMeta, keyId: string) =>
@@ -788,6 +790,7 @@ export async function decryptDoc(chatKey: CryptoKey, authorSignPublic: string, m
   if (raw.removed === true) content.removed = true;
   if (raw.board === 'decisions' || raw.board === 'roadmap') content.board = raw.board;
   if (typeof raw.repo === 'string' && isRepoName(raw.repo)) content.repo = raw.repo;
+  if (raw.opened === true) content.opened = true;
   return content;
 }
 

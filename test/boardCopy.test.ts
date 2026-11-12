@@ -9,13 +9,23 @@ const card = (id: string, title: string, status: string, body = '') => `### ${id
 const decisionsHeader = `# Decisions\n\n${COPY_MARK} Decisions column of the project's board in WebChat, which its owner's agent writes. Do not edit it by hand: a pull request proposes a new decision as a file under \`docs/decisions/\`, or a change to one as \`docs/decisions/D-12.md\`. Find an entry by its number, such as D-021.`;
 const roadmapHeader = `# Roadmap\n\n${COPY_MARK} Roadmap column of the project's board in WebChat, which its owner's agent writes. Do not edit it by hand: a pull request proposes a new entry as a file under \`docs/roadmap/\`, named by a short name such as \`new-bark-banner.md\`, or a change to one as \`docs/roadmap/K-12.md\`.`;
 
+test('a status in the old words reads in the new ones, with the rest of its line kept (the board-lanes decision)', () => {
+  const status = (line: string) => readCard(`### K-1: Bug\n\nStatus: ${line}.`)!.status;
+  assert.equal(status('In progress: Ann’s agent'), 'Running: Ann’s agent');
+  assert.equal(status('IN PROGRESS on branch x'), 'Running on branch x');
+  assert.equal(status('Next'), 'Ready');
+  assert.equal(status('Planned for June'), 'Ready for June');
+  assert.equal(status('Nextcloud is done'), 'Nextcloud is done', 'only a whole word');
+  assert.equal(status('Open'), 'Open');
+});
+
 test('a card reads as its id, number, title, status and body, and keeps its zero padding (R-040)', () => {
-  assert.deepEqual(readCard('\n### R-005: Photos and files\n\nStatus: Planned. Set aside.\n\nWhy: x.\n\nScope: y.\n'), {
+  assert.deepEqual(readCard('\n### R-005: Photos and files\n\nStatus: Ready. Set aside.\n\nWhy: x.\n\nScope: y.\n'), {
     kind: 'R',
     number: 5,
     id: 'R-005',
     title: 'Photos and files',
-    status: 'Planned. Set aside',
+    status: 'Ready. Set aside',
     body: 'Why: x.\n\nScope: y.',
   });
   assert.deepEqual(readCard('### Q-1: Does it?\n\nIt might.'), { kind: 'Q', number: 1, id: 'Q-1', title: 'Does it?', status: '', body: 'It might.' });
@@ -55,6 +65,8 @@ test('the roadmap copy files each card by its status, or by its kind, in the ord
     card('K-3', 'Reviewed', 'In review: o/r#3'),
     card('K-2', 'Held', 'Waiting for a decision'),
     card('R-5', 'Working', 'IN PROGRESS on branch x'),
+    card('R-6', 'Picked', 'Running: Ann’s agent'),
+    card('R-7', 'Waiting to be picked', 'Ready'),
     card('Q-7', 'Held up', 'Planned'),
     card('K-8', 'Next up', 'next'),
     card('K-1', 'Gone', 'Dropped on 2026-11-04'),
@@ -65,11 +77,13 @@ test('the roadmap copy files each card by its status, or by its kind, in the ord
   const outline = copy.split('\n').filter((l) => /^#{1,3} /.test(l));
   assert.deepEqual(outline, [
     '# Roadmap',
-    '## In progress',
+    '## Running',
     '### R-5: Working',
+    '### R-6: Picked',
     '### K-2: Held',
     '### K-3: Reviewed',
-    '## Next',
+    '## Ready',
+    '### R-7: Waiting to be picked',
     '### K-8: Next up',
     '### Q-7: Held up',
     '## Ideas',
@@ -84,7 +98,7 @@ test('the roadmap copy files each card by its status, or by its kind, in the ord
     '### K-1: Gone',
     '## Done',
   ]);
-  assert.ok(copy.startsWith(`${roadmapHeader}\n\n## In progress\n\n### R-5: Working\n\nStatus: IN PROGRESS on branch x.\n\n### K-2`));
+  assert.ok(copy.startsWith(`${roadmapHeader}\n\n## Running\n\n### R-5: Working\n\nStatus: IN PROGRESS on branch x.\n\n### R-6`));
   assert.ok(copy.endsWith('\n') && !copy.endsWith('\n\n'));
   assert.ok(!copy.includes('Left out'), 'a Done card is only its row');
 });
@@ -286,6 +300,8 @@ test('the copy of a column imports back as the same cards (R-040)', () => {
     card('K-2', 'Issue', 'Open', 'Seen: y.'),
     card('Q-3', 'Question', 'Open'),
     card('R-004', 'Working', 'In progress: Ann’s agent', 'Body.'),
+    card('R-006', 'Picked', 'Running: Ann’s agent', 'Body.'),
+    card('K-7', 'Waiting', 'Ready', 'Seen: z.'),
     card('K-5', 'Gone', 'Dropped on 2026-11-04', 'Why.'),
     card('R-021', 'Project board of decisions and roadmap cards', 'Done in #75'),
     card('K-36', 'Pipes | in a Done title', 'Done in #66'),

@@ -1584,6 +1584,20 @@ describe('chat server', () => {
       assert.equal((await lock(alice, 'DELETE')).status, 204);
     });
 
+    test("a doc's words are each section's first revision and each author's newest, for members only", async () => {
+      const history = (await alice.request<DocRevisionDTO[]>('GET', `/docs/${id}/sections/${goals}`)).data;
+      assert.deepEqual(history.map((r) => r.authorId), [alice.id, bob.id, alice.id, alice.id]);
+      const words = await bob.request<DocRevisionDTO[]>('GET', `/docs/${id}/words`);
+      assert.equal(words.status, 200);
+      assert.deepEqual(
+        words.data.filter((r) => r.section === goals).map((r) => r.id),
+        [history[3]!.id, history[1]!.id, history[0]!.id],
+        'the first, then Bob’s and Alice’s newest, in id order, and not Alice’s revision between',
+      );
+      assert.equal(words.data.filter((r) => r.section === 'title').length, 1);
+      assert.equal((await carol.request('GET', `/docs/${id}/words`)).status, 404);
+    });
+
     test('only whoever made a doc, or the project owner, deletes it', async () => {
       assert.equal((await bob.request('DELETE', `/docs/${id}`)).status, 403);
       assert.equal((await carol.request('DELETE', `/docs/${id}`)).status, 404);

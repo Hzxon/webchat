@@ -151,6 +151,7 @@ export const api = {
   createDoc: (input: CreateDocInput) => request<DocDTO>('POST', '/docs', input),
   deleteDoc: (docId: string) => request<void>('DELETE', `/docs/${docId}`),
   docSections: (docId: string) => request<DocRevisionDTO[]>('GET', `/docs/${docId}`),
+  docWords: (docId: string) => request<DocRevisionDTO[]>('GET', `/docs/${docId}/words`),
   sectionHistory: (docId: string, section: string) => request<DocRevisionDTO[]>('GET', `/docs/${docId}/sections/${section}`),
   lockSection: (docId: string, section: string) => request<void>('POST', `/docs/${docId}/sections/${section}/lock`),
   unlockSection: (docId: string, section: string) => request<void>('DELETE', `/docs/${docId}/sections/${section}/lock`),

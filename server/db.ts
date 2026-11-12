@@ -1819,6 +1819,17 @@ export async function openDb(sql: Sql) {
         )
       ).map(toDocRevisionDTO),
 
+    /** Each section's oldest revision and each author's newest of it, in id order: a card's opener and its members' words. */
+    docWords: async (docId: string) =>
+      (
+        await sql.query<DocRevisionRow>(
+          `SELECT * FROM webchat.doc_revisions WHERE doc_id = $1 AND id IN (
+             SELECT MAX(id) FROM webchat.doc_revisions WHERE doc_id = $1 GROUP BY section, author_id
+             UNION SELECT MIN(id) FROM webchat.doc_revisions WHERE doc_id = $1 GROUP BY section) ORDER BY id`,
+          [docId],
+        )
+      ).map(toDocRevisionDTO),
+
     /** A section's revisions, newest first. */
     sectionHistory: async (docId: string, section: string) =>
       (

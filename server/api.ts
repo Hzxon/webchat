@@ -952,6 +952,13 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     res.json(await db.docSections(doc.id));
   });
 
+  /** Each section's oldest revision and each author's newest, which the board reads for owners and words. */
+  router.get('/docs/:id/words', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const doc = await requireDoc(docId(req.params.id), me.id);
+    res.json(await db.docWords(doc.id));
+  });
+
   /** One person deletes a doc for everyone: whoever made it, or the project's owner. */
   router.delete('/docs/:id', requireAuth, async (req, res) => {
     const me = currentUser(res);

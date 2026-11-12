@@ -2740,14 +2740,14 @@ a {
   }
 }
 
-/* Project board (R-021): two columns of cards, which become tabs at phone width. */
+/* Project board (R-021): two columns of cards, one at a time behind tabs. The Roadmap's lanes stack at phone width. */
 
 .board-view {
   background: var(--panel);
 }
 
 .board-tabs {
-  display: none;
+  display: flex;
   margin-left: auto;
 }
 
@@ -2772,7 +2772,6 @@ a {
 .board-columns {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 1fr;
   min-height: 0;
 }
 
@@ -2783,11 +2782,12 @@ a {
   min-height: 0;
 }
 
-.board-column + .board-column {
-  border-left: 1px solid var(--line);
+/* Both columns stay mounted, so a card being edited in one keeps its editor and its lock. */
+.board-columns.shows-decisions .board-roadmap,
+.board-columns.shows-roadmap .board-decisions {
+  display: none;
 }
 
-/* Both heads hold only the title and the copy button, so their bottom lines meet. */
 .board-column-head {
   display: flex;
   align-items: center;
@@ -2844,6 +2844,16 @@ a {
   margin-bottom: 12px;
 }
 
+/* Ready, Running and In review side by side, above the Open drawer and the Done fold. */
+.board-lanes {
+  display: grid;
+  /* Lanes stack when the board is too narrow for three, as beside a wide sidebar. */
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 12px;
+  margin-bottom: 8px;
+}
+
+.board-lane h3,
 .board-group summary {
   margin: 10px 0 6px;
   color: var(--muted);
@@ -2851,9 +2861,13 @@ a {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.board-group summary {
   cursor: pointer;
 }
 
+.board-lane small,
 .board-group small {
   font-weight: 400;
 }
@@ -2883,6 +2897,19 @@ a {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+/* A Roadmap card's face: its owner, its title and whose move it is. */
+.board-face {
+  align-items: center;
+}
+
+.board-no-owner {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 1px dashed var(--muted);
+  border-radius: var(--radius);
 }
 
 /* The title keeps a few words' width, so a long status wraps to its own line instead of squeezing it. */
@@ -2959,23 +2986,6 @@ a {
 }
 
 @media (max-width: 760px) {
-  .board-tabs {
-    display: flex;
-  }
-
-  .board-columns {
-    grid-template-columns: 1fr;
-  }
-
-  .board-column + .board-column {
-    border-left: 0;
-  }
-
-  .board-columns.shows-decisions .board-roadmap,
-  .board-columns.shows-roadmap .board-decisions {
-    display: none;
-  }
-
   .board-column-head,
   .board-cards {
     padding-inline: 10px;

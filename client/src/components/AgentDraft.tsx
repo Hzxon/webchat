@@ -6,7 +6,7 @@
 // against, and the card it writes carries the check's line (R-041).
 import { useEffect, useMemo, useState } from 'react';
 import { textHash } from '../../../shared/e2ee';
-import type { CardDraftDTO } from '../../../shared/types';
+import { cardStatus, type CardDraftDTO } from '../../../shared/types';
 import { threadProject, type Thread } from '../agents';
 import { boardDocs, cardText, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, parseCard, withChecked, type Card } from '../board';
 import { noteAdded, syncNow, tellAgent } from '../chat';
@@ -108,8 +108,9 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
         const written = await rewriteSection(doc, change.section, async (section) => {
           const card = section && parseCard(section);
           if (!card || (await textHash(card.text.trim())) !== change.seen) return null;
-          // A proposal's file may set a new status, as one that finishes its card does (R-040).
-          return { text: cardText(card.cardId, draft.title, draft.status ?? card.status, body), pos: card.pos };
+          // A proposal's file may set a new status, as one that finishes its card does (R-040). Without one
+          // the status stays as written: `card.status` reads an older word as the new one.
+          return { text: cardText(card.cardId, draft.title, draft.status ?? cardStatus(card.text), body), pos: card.pos };
         });
         // Changed since the page last looked: the next load says how.
         if (!written) return void syncNow();

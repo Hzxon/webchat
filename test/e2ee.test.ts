@@ -403,6 +403,11 @@ describe('end-to-end encryption', () => {
     // A board doc's title carries which column it is (R-021), and nothing else slips through.
     const title = await encryptDoc(key, keyId, alice.identity.signPrivate, meta, { text: 'Decisions', board: 'decisions', extra: 1 } as DocContent);
     assert.deepEqual(await decryptDoc(key, aliceSign, meta, title), { text: 'Decisions', board: 'decisions' });
+    // A card's first revision says addCard opened it; only true counts, and a revision without it opens.
+    const opened = await encryptDoc(key, keyId, alice.identity.signPrivate, meta, { text: '### K-1: Bug', pos: 1, opened: true });
+    assert.deepEqual(await decryptDoc(key, aliceSign, meta, opened), { text: '### K-1: Bug', pos: 1, opened: true });
+    const loose = await encryptDoc(key, keyId, alice.identity.signPrivate, meta, { text: '### K-1: Bug', opened: 'yes' } as unknown as DocContent);
+    assert.deepEqual(await decryptDoc(key, aliceSign, meta, loose), { text: '### K-1: Bug' });
   });
 
   test('safety codes match on both sides and change when a key changes', async () => {

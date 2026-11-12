@@ -126,7 +126,7 @@ if [ -n "$others" ]; then
   echo "$others" >&2
 fi
 
-# WebChat's agent reads open pull requests for this start, "Claims K-12", and sets the card In progress (R-040).
+# WebChat's agent reads open pull requests for this start, "Claims K-12", and sets the card Running (R-040).
 body="Claims $item. Checked $(date +%Y-%m-%d): $checked"
 [ -n "$decision" ] && body="$body Reserves $decision."
 git commit -q --allow-empty -m "chore: Claim $item"
