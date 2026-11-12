@@ -474,7 +474,7 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
                   <button className="button-secondary" disabled={!!blocked || thread.ask.answered} onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'deny')}>
                     Deny
                   </button>
-                  <p className="agents-note">Your agent waits for you. It ends in {Math.max(1, Math.ceil((thread.ask.message.permit.expires - now) / 86_400_000))} days if you do not answer.</p>
+                  <p className="agents-note">Your agent waits for you. It ends in {Math.max(1, Math.round((thread.ask.message.permit.expires - now) / 86_400_000))} days if you do not answer.</p>
                 </div>
               )}
               {message === nocopy && (
