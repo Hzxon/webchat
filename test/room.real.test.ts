@@ -83,7 +83,11 @@ test('builds the room for real: a harness cannot read the agent’s account, nob
     // The keyholder runs as the account and answers the owner on the socket.
     const status = async () => (await sh(...asOwner('status'), { timeout: 20_000 }).catch(() => ({ stdout: '' }))).stdout;
     for (let tries = 0; !/^Runner: /m.test(await status()); tries++) {
-      assert.ok(tries < 30, 'the keyholder never answered on its socket');
+      if (tries >= 30) {
+        // What the service said, for the log of a failed run.
+        const said = platform === 'darwin' ? await fs.readFile(layout.log, 'utf8').catch(() => '') : (await sh('journalctl', ['-u', layout.label, '--no-pager', '-n', '30']).catch(() => ({ stdout: '' }))).stdout;
+        assert.fail(`the keyholder never answered on its socket. ${said}`);
+      }
       await sleep(1000);
     }
     await sh('pgrep', ['-u', layout.user, '-f', 'keyholder']);
