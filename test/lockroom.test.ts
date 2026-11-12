@@ -14,7 +14,7 @@ import {
   createPlan, foldersPlan, freeIds, ghPlan, idsOf, inspectRoom, keyholderPlist, keyholderUnit, layoutFor, loginPlan, MARK, pairPlan, programOf, put, putAs, refusals, runAll, servicePlan, signedInPlan, uninstallPlan,
   type Cmd, type Found,
 } from '../agent/lockroom.ts';
-import { verifiedProgram } from '../agent/setup.ts';
+import { uninstall, verifiedProgram } from '../agent/setup.ts';
 import { fakeRoom, testLayout } from './fakeRoom.ts';
 
 const mac = layoutFor('darwin');
@@ -232,4 +232,18 @@ test('a failing command stops a run of them, unless it is one that may fail', as
   await runAll(root, [{ argv: ['a'] }, { argv: ['bad'], soft: true }, { argv: ['b'] }]);
   await assert.rejects(runAll(root, [{ argv: ['bad'] }, { argv: ['never'] }]), /failed/);
   assert.deepEqual(seen, ['a', 'bad', 'b', 'bad']);
+});
+
+test('uninstall refuses an account setup did not make and removes nothing', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-foreign-'));
+  try {
+    const layout = testLayout(dir);
+    const room = fakeRoom(layout);
+    room.system = { made: true, members: [], foreign: true };
+    await fs.mkdir(layout.data);
+    await assert.rejects(uninstall(path.join(dir, 'agent'), async () => true, { layout, root: room.root, read: room.read }), /is not an account setup made, so setup leaves it alone\. Nothing was removed/);
+    assert.deepEqual([room.log.length, await fs.stat(layout.data).then(() => true, () => false)], [0, true]);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
