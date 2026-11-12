@@ -805,6 +805,34 @@ describe('chat server', () => {
     await carol.request('POST', '/push/unsubscribe', { endpoint: elsewhere.json.endpoint });
   });
 
+  test("an agent's board traffic is a sync message: no push, never unread, no new preview (K-69)", async () => {
+    const phone = makeSubscription(`http://${pushService.host}/bob-board`);
+    assert.equal((await bob.request('POST', '/push/subscribe', phone.json)).status, 204);
+    await bob.sync(false);
+    const before = (await bob.bootstrap()).conversations.find((c) => c.id === directChat.id)!;
+
+    pushService.received.length = 0;
+    const claims = { text: 'Claims in acme/app', board: { kind: 'claims' as const, project: 1, repo: 'acme/app', claims: [{ card: 'K-4', pull: 7 }] } };
+    assert.equal((await alice.send(directChat.id, claims, true, 'sync')).status, 400, 'a sync message is never urgent');
+    const sent = await alice.send(directChat.id, claims, false, 'sync');
+    await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+    assert.equal(sent.status, 201);
+    assert.equal(sent.data.kind, 'sync');
+    await sleep(300);
+    assert.equal(pushService.received.length, 0, 'nobody is looking, so nothing is pushed');
+
+    const res = await bob.sync(false);
+    assert.ok(res.changed);
+    const chat = res.conversations.find((c) => c.id === directChat.id)!;
+    assert.equal(chat.unread, before.unread, 'a sync message does not count as unread');
+    assert.equal(chat.lastMessage?.id, before.lastMessage?.id, 'a sync message does not replace the chat preview');
+    const event = res.messages.find((m) => m.id === sent.data.id)!;
+    assert.deepEqual((await bob.readContent(event, keysOf(alice))).board, claims.board);
+    await bob.request('POST', '/push/unsubscribe', { endpoint: phone.json.endpoint });
+    // The migration tests below run migration 8 again, whose kind check knows no sync.
+    await instance.sql.query('DELETE FROM webchat.messages WHERE id = $1', [sent.data.id]);
+  });
+
   test('an unread urgent message rings again, like an alarm, until it is read (D-079)', async () => {
     const alarm = makeSubscription(`http://${pushService.host}/bob-alarm`);
     assert.equal((await bob.request('POST', '/push/subscribe', alarm.json)).status, 204);

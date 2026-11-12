@@ -1039,7 +1039,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const sealed = envelope(req.body?.envelope);
     // Signed into the envelope, so it must stay exactly as the client sent it.
     const clientId = base64url(req.body?.clientId, 'clientId', 1, 64);
-    const kind: Exclude<MessageKind, 'github'> = req.body?.kind === 'reaction' ? 'reaction' : 'message';
+    const kind: Exclude<MessageKind, 'github'> = req.body?.kind === 'reaction' || req.body?.kind === 'sync' ? req.body.kind : 'message';
     if (req.body?.kind !== undefined && req.body.kind !== kind) throw new HttpError(400, 'Unknown message kind.');
     await requireMember(conversationId, me.id);
     await requireCurrentKey(conversationId, sealed.kid);
@@ -1047,7 +1047,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
 
     const urgent = req.body?.urgent === true;
     // The urgent flag is signed into the envelope, so it is refused rather than quietly dropped.
-    if (urgent && kind === 'reaction') throw new HttpError(400, 'A reaction cannot be urgent.');
+    if (urgent && kind !== 'message') throw new HttpError(400, 'Only a message can be urgent.');
     const { message, repeated } = await db.insertMessage(conversationId, me.id, kind, sealed, urgent, clientId);
     // Answer the sender first; pushes go out after, while the function stays alive.
     if (!repeated) inBackground(notifyNewMessage(db, push, config, message, me), config.logger);

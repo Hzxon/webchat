@@ -115,9 +115,10 @@ export interface EnvelopeDTO {
 /**
  * "message" is a chat message. "reaction" puts an emoji on an earlier message, or takes it back;
  * which message and which emoji are inside the envelope, so only members can see them. "github" is
- * a card the server writes from GitHub's webhook, in plain text, with no sender (D-050).
+ * a card the server writes from GitHub's webhook, in plain text, with no sender (D-050). "sync" is an
+ * agent's board traffic with its owner's page: it is pushed and counted like a reaction (K-69).
  */
-export type MessageKind = 'message' | 'reaction' | 'github';
+export type MessageKind = 'message' | 'reaction' | 'github' | 'sync';
 
 export interface MessageDTO {
   id: number;
@@ -500,8 +501,8 @@ export interface NewOwnerInput {
 
 /** JSON body of every Web Push message. The service worker turns it into a notification. */
 export interface PushPayload {
-  /** "reaction" only wakes a tab the user is looking at; "project" and "group" say someone added them to one. */
-  kind: 'message' | 'reaction' | 'project' | 'group' | 'github' | 'test';
+  /** "reaction" and "sync" only wake a tab the user is looking at; "project" and "group" say someone added them to one. */
+  kind: 'message' | 'reaction' | 'sync' | 'project' | 'group' | 'github' | 'test';
   title: string;
   /** Text for messages the server can read (tests, old plain messages). Empty for encrypted ones. */
   body: string;

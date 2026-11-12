@@ -426,13 +426,20 @@ export class AgentClient {
   }
 
   /** Sends a sealed message. Throws an ApiError with code stale_key or needs_new_key when the chat's key moved on. */
-  async send(conversationId: number, content: MessageContent, options: { urgent?: boolean; kind?: Exclude<MessageKind, 'github'> } = {}) {
+  async send(conversationId: number, content: MessageContent, options: { urgent?: boolean; kind?: Exclude<MessageKind, 'github'> } = {}): Promise<MessageDTO> {
     const { keyId, key } = await this.currentKey(conversationId);
-    const { urgent = false, kind = 'message' } = options;
+    // Board traffic with the owner's page is quiet; only a proposal is news to them (K-69).
+    const { urgent = false, kind = content.board && content.board.kind !== 'proposal' ? 'sync' : 'message' } = options;
     const clientId = crypto.randomUUID();
     const meta = { conversationId, senderId: this.id, urgent, clientId, kind };
     const envelope = await encryptMessage(key, keyId, this.identity.signPrivate, meta, content);
-    return this.request<MessageDTO>('POST', `/conversations/${conversationId}/messages`, { envelope, urgent, clientId, kind });
+    try {
+      return await this.request<MessageDTO>('POST', `/conversations/${conversationId}/messages`, { envelope, urgent, clientId, kind });
+    } catch (error) {
+      // A server from before K-69 knows no sync kind; there the message goes as it used to.
+      if (kind === 'sync' && error instanceof ApiError && error.message === 'Unknown message kind.') return this.send(conversationId, content, { urgent, kind: 'message' });
+      throw error;
+    }
   }
 
   /** Decrypts a doc revision and checks its author's signature. Null when either fails. */

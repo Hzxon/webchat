@@ -105,7 +105,7 @@ export function createBark(db: Db, config: Config) {
    */
   async function sendToUser(userId: number, payload: PushPayload): Promise<{ sent: number; failed: number }> {
     const none = { sent: 0, failed: 0 };
-    if (!apns || payload.kind === 'reaction') return none;
+    if (!apns || payload.kind === 'reaction' || payload.kind === 'sync') return none;
     const link = await db.barkLinkFor(userId);
     if (!link) return none;
     const devices = await db.barkDevicesFor(userId);

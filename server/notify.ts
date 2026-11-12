@@ -36,17 +36,17 @@ async function payloadFor(
 ) {
   const isGroup = conversation.type !== 'direct';
   const name = await chatName(db, conversation, sender);
-  if (message.kind === 'reaction') {
-    // Only wakes the tab the recipient is looking at. No message id: a reaction is never "delivered".
+  if (message.kind === 'reaction' || message.kind === 'sync') {
+    // Only wakes the tab the recipient is looking at. No message id: neither is ever "delivered".
     const payload: PushPayload = {
-      kind: 'reaction',
+      kind: message.kind,
       title: name,
-      body: `${sender?.display_name ?? 'Someone'} reacted to a message`,
+      body: message.kind === 'reaction' ? `${sender?.display_name ?? 'Someone'} reacted to a message` : '',
       bodyPrefix: '',
       urgent: false,
-      // The service worker shows no reaction (D-070); this tag only keeps one from replacing the
+      // The service worker shows neither kind (D-070); this tag only keeps one from replacing the
       // chat's message notification if a browser ever shows it anyway.
-      tag: `reaction-${conversation.id}`,
+      tag: `${message.kind}-${conversation.id}`,
       conversationId: conversation.id,
       messageId: null,
       senderId: sender?.id ?? null,
@@ -114,7 +114,7 @@ export async function notifyNewMessage(db: Db, push: Push, config: Config, messa
           if (endpoint && (message.urgent || !showsEveryPush(endpoint))) await push.sendToUser(recipientId, payload, endpoint);
           return;
         }
-        if (message.kind !== 'reaction') await push.sendToUser(recipientId, payload);
+        if (payload.kind !== 'reaction' && payload.kind !== 'sync') await push.sendToUser(recipientId, payload);
       }),
   ).catch((error: unknown) => config.logger.error('Push delivery failed', error));
 }
