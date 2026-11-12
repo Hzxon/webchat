@@ -9,9 +9,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { gzipSync } from 'node:zlib';
 import { beforeEach, test } from 'node:test';
 
-const name = `webchat-agent-${process.platform}-${process.arch}`;
+const name = `webchat-agent-${process.platform}-${process.arch}.gz`;
 const program = '#!/bin/sh\nif [ "$1" = --version ]; then echo 9.9.9; else echo "handed over: $*"; fi\n';
 let release: string;
 let home: string;
@@ -27,8 +28,9 @@ beforeEach(async () => {
   release = path.join(root, 'release');
   home = path.join(root, 'home');
   await fs.mkdir(release);
-  await fs.writeFile(path.join(release, name), program);
-  await fs.writeFile(path.join(release, `${name}.sha256`), `${createHash('sha256').update(program).digest('hex')}  ${name}\n`);
+  const packed = gzipSync(program);
+  await fs.writeFile(path.join(release, name), packed);
+  await fs.writeFile(path.join(release, `${name}.sha256`), `${createHash('sha256').update(packed).digest('hex')}  ${name}\n`);
 });
 
 test('the installer puts the checked file on the laptop and hands over to setup', async () => {
@@ -39,7 +41,7 @@ test('the installer puts the checked file on the laptop and hands over to setup'
 });
 
 test('the installer installs nothing when a byte changed', async () => {
-  await fs.writeFile(path.join(release, name), program.replace('9.9.9', '9.9.8'));
+  await fs.writeFile(path.join(release, name), gzipSync(program.replace('9.9.9', '9.9.8')));
   await assert.rejects(install(), /does not match the release's checksum/);
   assert.equal(existsSync(path.join(home, '.local/bin/webchat-agent')), false);
 });

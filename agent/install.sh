@@ -18,9 +18,12 @@ case "$(uname -m)" in
   x86_64 | amd64) cpu=x64 ;;
   *) echo "The WebChat agent has no build for $(uname -m) processors." >&2; exit 1 ;;
 esac
-file=webchat-agent-$os-$cpu
+file=webchat-agent-$os-$cpu.gz
 
-tmp=$(mktemp -d)
+# The download lands next to the program, so a small /tmp never fills and the last step is a rename.
+dir=$HOME/.local/bin
+mkdir -p "$dir"
+tmp=$(mktemp -d "$dir/.webchat-agent.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 curl -fsSL -o "$tmp/$file" "$base/$file"
 curl -fsSL -o "$tmp/$file.sha256" "$base/$file.sha256"
@@ -29,11 +32,9 @@ if ! (cd "$tmp" && $sum -c "$file.sha256") > /dev/null 2>&1; then
   echo "$file does not match the release's checksum, so nothing was installed." >&2
   exit 1
 fi
-
-dir=$HOME/.local/bin
-mkdir -p "$dir"
-chmod 755 "$tmp/$file"
-mv "$tmp/$file" "$dir/webchat-agent"
+gunzip -c "$tmp/$file" > "$tmp/webchat-agent"
+chmod 755 "$tmp/webchat-agent"
+mv "$tmp/webchat-agent" "$dir/webchat-agent"
 echo "Installed webchat-agent $("$dir/webchat-agent" --version) in $dir."
 case ":$PATH:" in
   *":$dir:"*) ;;

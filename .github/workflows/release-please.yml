@@ -81,9 +81,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           test "$(dist/agent/webchat-agent --version)" = "${TAG#v}"
-          mv dist/agent/webchat-agent ${{ matrix.file }}
-          shasum -a 256 ${{ matrix.file }} > ${{ matrix.file }}.sha256
-          gh release upload "$TAG" ${{ matrix.file }} ${{ matrix.file }}.sha256
+          gzip -c dist/agent/webchat-agent > ${{ matrix.file }}.gz
+          shasum -a 256 ${{ matrix.file }}.gz > ${{ matrix.file }}.gz.sha256
+          gh release upload "$TAG" ${{ matrix.file }}.gz ${{ matrix.file }}.gz.sha256
       - if: matrix.runner == 'ubuntu-24.04'
         env:
           TAG: ${{ needs.release-please.outputs.tag }}
