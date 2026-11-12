@@ -28,7 +28,8 @@ Constraints: answers only is the floor for a harness without an isolation proof,
 answer only the owner reads. `srt` wraps the whole process, so the harness and its shell share
 one policy: the shell reaches the model's API domain, which the Claude adapter's shell does
 not. Whether `--output-schema` works with `codex exec resume` is to be checked against the
-installed version. ACP waits for a third harness.
+installed version. ACP agents have their own adapter (docs/roadmap/new-acp-adapter.md), which
+needs no third harness.
 
 Done when: a Codex agent answers a question about a repository; Settings says why it takes no
 cards; the spike's decision is on the board; and, if the spike held, a Codex run opens a draft

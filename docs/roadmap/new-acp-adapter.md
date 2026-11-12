@@ -1,6 +1,7 @@
 ### R: Run ACP agents from a shipped list through one adapter
 
-Status: Idea. Proposed 2026-11-12 from the agent host design.
+Status: Done in #203. Proposed 2026-11-12 from the agent host design. The shipped list is empty until
+an agent has been run for real (docs/decisions/acp-adapter.md).
 
 Order: after docs/roadmap/new-harness-linking.md. It replaces "ACP waits for a third harness" in
 docs/roadmap/new-codex-adapter.md.
