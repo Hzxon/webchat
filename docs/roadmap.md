@@ -233,49 +233,6 @@ Decision: the quiet-sync decision, Proposed in #198 as `docs/decisions/quiet-syn
 
 Tests: `test/chat.test.ts` (no push, never unread, no new preview, never urgent) and `test/agent.test.ts` (entries and claims go as `sync`).
 
-### K-73: K: The owner is asked about shell commands the sandbox already holds
-
-Status: Open.
-
-Checked: 2026-11-14. Read the board's cards and decisions, agent/rulebook.ts, permits.ts, claude.ts (sandboxProblem, claudeSettings), codex.ts, test/agent.test.ts and docs/decisions/harness-rulebook.md, harness-approvals.md and new-sandbox-owned.md on main at bb44370; open pull request #229 by title only; tests not run.
-
-Status: Open. Found by the owner on 2026-11-13, whose Claude Code runs asked command by command.
-
-The rulebook sends every shell command a harness asks about to the owner: `judge` in
-`agent/rulebook.ts` answers `execute` with "WebChat cannot check a shell command." Claude Code
-approves most sandboxed commands itself, but some forms still go to its permission prompt tool,
-though they run in the sandbox too: a command with a variable in front, such as `PORT=3001 npm test`,
-`make CC=clang`, `eval`, and an `rm` it takes for a critical path (code.claude.com/docs/en/sandboxing,
-read 2026-11-13). "Allow for this run" covers the same string exactly (`agent/permits.ts`), so
-`npm test` and `npm test -- chat` are two questions, and after 25 the model is told to stop asking.
-
-These questions protect nothing. WebChat's settings file keeps the shell in the sandbox
-(`allowUnsandboxedCommands: false`, `failIfUnavailable: true`), which writes only the working
-folder and reaches only the npm registry, and the locked room keeps the secrets under another
-account. The owner answers from a phone, cannot judge the command better than the sandbox, and the
-run waits meanwhile.
-
-Measured on 2026-11-13 with Claude Code 2.1.323, one real turn under the plugin's settings:
-`PORT=3001 npm test` and `eval "ls"` asked; `echo plain`, `npm test -- chat` and an `rm -rf` in the
-folder did not.
-
-Fix: an adapter says when its harness's shell cannot leave the sandbox, and the runner then lets a
-command pass. `judge` still runs first, so a command that names a secret folder or a path outside
-the working folders is refused. The Claude adapter says so only while `sandboxProblem` finds
-nothing, which now also names a managed setting that lets a command run unsandboxed. Codex and ACP
-agents do not say so, and keep asking. This changes docs/decisions/harness-rulebook.md.
-
-Cost: WebChat trusts Claude Code's sandbox for the shell without the owner's eye on each command,
-as docs/decisions/harness-rulebook.md already does for what Claude Code never asks about. A settings
-value Claude Code stops accepting drops the sandbox without a word (D-097), and `sandboxProblem` does
-not see that, so a run in that state would let every command through where it used to ask. `judge`
-sees only the paths written in a command, so a secret reached through a variable or a glob is kept
-out by the locked room alone.
-
-Done when: a test shows `judge` allowing `execute` for a sandboxed harness, still refusing a command
-that names a secret folder, and still asking for a harness that does not vouch; a Claude Code run
-that runs `PORT=3001 npm test` sends the owner no question; a Codex run still asks.
-
 ## Open questions
 
 ### Q-1: Should updates move to WebSockets?
@@ -431,3 +388,4 @@ Status: Dropped on 2026-11-13. The owner no longer wants a teammate to run a car
 | K-71: A backlog of proposal files hits the send limit, and a new install sends them all again | #224 |
 | R-044: Make and number a card from the terminal | #225 |
 | K-1: The iOS 16.4 banner stays after Bark is linked | #228 |
+| K-73: The owner is asked about shell commands the sandbox already holds | #233 |
