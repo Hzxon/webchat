@@ -62,9 +62,12 @@ export function judge({ tool, kind, paths }: Action, { folders, secrets, tools }
   if (files.some((file) => !folders.some((dir) => within(file, real(dir))))) return deny('That path is outside the working folder.');
   // Permission mode is never a knob (D-115).
   if (kind === 'switch_mode') return deny('A harness does not change its own permission mode.');
-  // Named by its last part, since a harness may prefix it with its server's name.
-  if (tool && tools.includes(tool.split(/__|\W+/).at(-1) ?? '')) return { allow: true };
-  if (kind === 'read' || kind === 'search' || kind === 'think' || kind === 'fetch') return { allow: true };
+  // A harness may prefix the name with its server's. An ACP agent writes the name itself, so only the whole name of a tool call counts.
+  const own = tool ? /^(?:mcp__[\w-]+__|[\w-]+: )?(\w+)$/.exec(tool)?.[1] : undefined;
+  if (own && tools.includes(own) && (kind === 'other' || kind === 'think')) return { allow: true };
+  // A read or a search that names no path could be of anything.
+  if (kind === 'read' || kind === 'search') return paths.length ? { allow: true } : ask('I cannot tell what it reads.');
+  if (kind === 'think' || kind === 'fetch') return { allow: true };
   if (kind === 'edit' || kind === 'delete' || kind === 'move') return paths.length ? { allow: true } : ask('I cannot tell which file it changes.');
   return ask(kind === 'execute' ? 'WebChat cannot check a shell command.' : 'WebChat knows no rule for this.');
 }

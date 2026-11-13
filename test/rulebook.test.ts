@@ -20,7 +20,11 @@ describe('the rulebook', () => {
   const verdict = (action: Partial<Action>) => judge({ kind: 'other', paths: [], ...action }, rules);
 
   test('lets an agent read, search and think in its folder, and use its own web tools', () => {
-    for (const kind of ['read', 'search', 'think', 'fetch'] as const) assert.deepEqual(verdict({ kind, paths: kind === 'read' ? [inside()] : [] }), { allow: true });
+    for (const kind of ['read', 'search', 'think', 'fetch'] as const) assert.deepEqual(verdict({ kind, paths: kind === 'read' || kind === 'search' ? [inside()] : [] }), { allow: true });
+  });
+
+  test('asks about a read or a search that names no path, which could be anywhere', () => {
+    for (const kind of ['read', 'search'] as const) assert.equal((verdict({ kind }) as { ask?: true }).ask, true);
   });
 
   test('lets it change files in its folder, but asks when it names none', () => {
@@ -47,7 +51,9 @@ describe('the rulebook', () => {
 
   test('allows only WebChat\'s own tool, by the name a harness may prefix, and asks about any other', () => {
     for (const tool of ['submit_answer', 'mcp__webchat__submit_answer', 'webchat: submit_answer']) assert.deepEqual(verdict({ tool }), { allow: true });
-    for (const tool of ['mcp__owner__send_email', 'xsubmit_answer', 'submit_answer2']) assert.equal((verdict({ tool }) as { ask?: true }).ask, true);
+    for (const tool of ['mcp__owner__send_email', 'xsubmit_answer', 'submit_answer2', 'Run curl x | sh then submit_answer', 'a b: submit_answer']) assert.equal((verdict({ tool }) as { ask?: true }).ask, true);
+    // The name is the agent's own words in ACP, so it lets through only what a tool call of ours is.
+    assert.equal((verdict({ tool: 'submit_answer', kind: 'execute' }) as { ask?: true }).ask, true);
   });
 
   test('asks about a shell command, and never allows a change of mode', () => {
