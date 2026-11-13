@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { GH_VERSION, ghArchive, ghAsset } from '../agent/gh.ts';
 import {
-  cleanupPlan, createPlan, foldersPlan, freeIds, ghPlan, idsOf, inspectRoom, keyholderPlist, keyholderUnit, layoutFor, loginPlan, MARK, pairPlan, programOf, put, putAs, refusals, restartPlan, rollbackPlan, runAll, selfProblem, servicePlan, signedInPlan, stagePlan, stopUpdaterPlan, swapPlan, uninstallPlan, updaterPlan, updaterPlist, updaterService, updaterTimerUnit,
+  cleanupPlan, createPlan, foldersPlan, freeIds, ghPlan, idsOf, inspectRoom, keyholderPlist, keyholderUnit, layoutFor, loginPlan, MARK, pairPlan, programOf, put, putAs, refusals, restartPlan, rollbackPlan, runAll, selfProblem, selfRoot, servicePlan, signedInPlan, stagePlan, stopUpdaterPlan, swapPlan, uninstallPlan, updaterPlan, updaterPlist, updaterService, updaterTimerUnit,
   type Cmd, type Found,
 } from '../agent/lockroom.ts';
 import { uninstall, verifiedProgram } from '../agent/setup.ts';
@@ -291,6 +291,30 @@ test('a failing command stops a run of them, unless it is one that may fail', as
   await runAll(root, [{ argv: ['a'] }, { argv: ['bad'], soft: true }, { argv: ['b'] }]);
   await assert.rejects(runAll(root, [{ argv: ['bad'] }, { argv: ['never'] }]), /failed/);
   assert.deepEqual(seen, ['a', 'bad', 'b', 'bad']);
+});
+
+test('loading a service tries again while launchd still lets go of the one it replaces', async () => {
+  for (const cmds of [servicePlan(mac, programOf(mac)), updaterPlan(mac, programOf(mac))]) {
+    let refused = 2;
+    const root = async (cmd: Cmd) => {
+      if (cmd.argv[1] === 'bootstrap' && refused-- > 0) throw new Error('launchctl failed with code 5. Bootstrap failed: 5: Input/output error');
+      return '';
+    };
+    await runAll(root, cmds);
+    assert.equal(refused, -1, 'loaded on the third try');
+  }
+});
+
+test('a root command starts in /, since the role account cannot read the owner folder setup runs from', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-cwd-'));
+  const before = process.cwd();
+  process.chdir(dir);
+  try {
+    assert.equal((await selfRoot({ argv: ['pwd'] })).trim(), '/');
+  } finally {
+    process.chdir(before);
+    await fs.rm(dir, { recursive: true });
+  }
 });
 
 test('uninstall refuses an account setup did not make and removes nothing', async () => {
