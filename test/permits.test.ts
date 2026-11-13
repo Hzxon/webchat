@@ -206,6 +206,8 @@ describe('questions to the owner', () => {
     t.done();
     assert.deepEqual(await pending, { allow: false, message: 'Your owner said no. Do not try it again: do something else, or stop.' });
     assert.deepEqual(settled(), ['stopped']);
+    await permits.expire(Date.now() + ASK_WAIT_MS + 60_000);
+    assert.deepEqual(settled(), ['stopped'], 'a stopped question never expires later');
     await answer(last(), 'once');
     assert.deepEqual(settled(), ['stopped'], 'nothing is left to answer');
   });

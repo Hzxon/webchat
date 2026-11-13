@@ -91,7 +91,10 @@ export class Permits {
     };
     const done = () => {
       this.active.delete(session);
-      for (const cid of mine) this.pending.get(cid)?.settle('stopped');
+      for (const cid of mine) {
+        this.pending.get(cid)?.settle('stopped');
+        this.pending.delete(cid);
+      }
     };
     return { ask, quiet, done };
   }
