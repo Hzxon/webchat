@@ -168,9 +168,11 @@ What it does not protect against:
   list. The same goes for the new key a chat gets after someone leaves.
 - **An agent's keys live in a file on its owner's machine.** A coding agent that a project runs
   (the roadmap's R-027) has an account of its own. The Claude Code plugin keeps that account's
-  private keys and session in its data folder, `~/.claude/plugins/data/`, and the daemon in
-  `~/.webchat/laptop/`. Both files are readable only by their owner, but not
-  encrypted. Anyone who can read one can read what the agent's projects write. The server knows
+  private keys and session in its data folder, `~/.claude/plugins/data/`. The daemon keeps them in
+  the folder of an account of its own, `_webchat`, which `webchat-agent setup` makes and which only
+  that account reads: a coding agent that runs as you cannot. A plugin's file is readable only by
+  its owner, and neither is encrypted. Anyone who can read one, and so an administrator's password,
+  can read what the agent's projects write. The server knows
   which accounts are agents, whose agent each one is, and the names of the GitHub repositories its
   laptop has a folder for, the ones you connected or had it clone, never where they are. It learns
   that the agent is online whenever a Claude Code window is open on that laptop, in any folder, or the daemon runs, and
@@ -605,15 +607,17 @@ only cards you would do yourself.
 
 ### With the daemon
 
-The daemon serves the same agent as the plugin, with the same sandbox and the same checks, from a
-program that starts when you log in, so no Claude Code window has to stay open. It runs Claude Code
-and Codex, whichever you link. The plugin and the daemon keep separate accounts: never run both on one laptop
-for the same agent, and pair each with its own code.
+The daemon serves the same agent as the plugin, with the same sandbox and the same checks, from
+programs that start with the laptop and when you log in, so no Claude Code window has to stay open.
+It runs Claude Code and Codex, whichever you link. Setup keeps the agent's keys in a locked room:
+an account of its own that no program of yours can read. Never run the plugin and the daemon for
+the same agent: setup moves a plugin's account into the room, and the plugin then retires.
 
 It works on a Mac or on Linux, and on Windows only in Ubuntu on WSL2. The account you run it in must
-be an administrator: in the `admin` group on a Mac, in `sudo`, `wheel` or `admin` on Linux. Setup
-installs software and, later, keeps the agent's keys under an account of its own. For any other
-account it says so and changes nothing.
+be an administrator: in the `admin` group on a Mac, in `sudo`, `wheel` or `admin` on Linux, since
+setup makes an account and installs a system service with your password. For any other account it
+says so and changes nothing. A laptop without an administrator cannot run the agent. One laptop has
+one owner: only you can be in the group that opens the agent's socket.
 
 1. In WebChat, choose **Connect coding agent**. Under the plugin steps, copy the line for laptops
    without Claude Code. It names your WebChat's release and holds the pairing code, which works once,
@@ -622,40 +626,62 @@ account it says so and changes nothing.
    checks it against the release's checksum, puts it in `~/.local/bin` and runs `webchat-agent setup`.
 3. Setup checks the laptop and changes nothing yet: the system, your administrator rights, the login
    service (launchd on a Mac, `systemd --user` on Linux), git, whether your WebChat answers and runs
-   the same release, disk space, Claude Code and Codex with their sign-in, and the GitHub CLI. Then
+   the same release, disk space, Claude Code and Codex with their sign-in, an account called
+   `_webchat` that someone else made, and a plugin account to move. Then
    it shows one summary and asks once. The question lists the coding agents it found, with the
    signed-in ones ticked, to link: answer `y` for the ticked ones, or type the ones to link, such as
    `claude codex`, or `none`. WebChat shows your picks before you approve the agent, and Codex, when
-   you pick it and it is missing, installs with its own installer. The question also lists what setup would do: install git, and on
+   you pick it and it is missing, installs with its own installer. The question also lists what setup would do, with your
+   administrator's password: make the hidden account `_webchat` and the group `_webchatipc`, which only you are in;
+   install the agent and a GitHub CLI whose SHA-256 WebChat pins, both owned by root, in `/Library/WebChat`
+   on a Mac or `/opt/webchat` on Linux; run the keyholder from there as `_webchat`, as a LaunchDaemon or a
+   systemd service; install git, and on
    Linux `bubblewrap` and `socat`, which Claude Code's sandbox needs, with `apt-get` or `dnf` through
    `sudo`; on a Mac, Apple's command line tools for git; Claude Code, with its own installer, when it
-   is missing; pair; and install the login service. Setup never changes a security setting. Where one
+   is missing; pair; and install the login service for the runner, which works in your folders. Setup never
+   changes a security setting. Where one
    stops the agent, it prints the fix: WSL2 without systemd, and Ubuntu's AppArmor rule on user
    namespaces, which Claude Code's sandbox needs.
-4. Approve the agent in WebChat. Setup then installs the service, which runs
-   `webchat-agent serve` with the PATH your login shell has. A LaunchAgent in
-   `~/Library/LaunchAgents` or a unit in `~/.config/systemd/user` starts it at login and again after
-   a failure. The agent keeps its account in `~/.webchat/laptop`, readable only by you, and the
-   service logs to `~/.webchat/agent.log` on a Mac and to the user journal on Linux. Run the line
-   again, or `webchat-agent setup` with no code, to replace the service.
+4. Approve the agent in WebChat. The agent's account is made as `_webchat`, never in your folder. Setup
+   then starts the keyholder, which holds the keys and talks to GitHub, and a login service for the runner,
+   which starts your coding agents. They talk over a socket in `/var/webchat-ipc` that carries no secret, and
+   only you can open. A LaunchAgent in `~/Library/LaunchAgents` or a unit in `~/.config/systemd/user` starts the
+   runner at login. On Linux, log out and in again once: your session joins the socket's group only then,
+   and `webchat-agent doctor` says so until it has. On a Mac, if System Settings shows the agent
+   under General, Login Items, Allow in the Background, keep it on.
+5. Setup offers to sign the agent in to GitHub, by GitHub's device sign-in as `_webchat`, with no
+   `workflow` scope. Use a second GitHub account if you have one: whatever the agent's login reaches, the agent
+   reaches. A pull request the agent opens is then the agent's, so your own reviews wait for your go, as a
+   teammate's do. Press Enter to skip, and `webchat-agent doctor` reminds you. Cards, clones and private
+   repositories need it.
+
+A laptop that already has a plugin's or the daemon's account does not pair again: with no code,
+`webchat-agent setup` moves the account into the agent's folder, the one that saw more if both are
+there, and deletes your copy once the keyholder runs it. It refuses while a Claude Code window runs
+the plugin: quit every one first.
 
 Then:
 
 - `webchat-agent doctor` repeats the checks. It names what is missing, such as a harness that is not
   signed in: "Claude Code is not signed in. Run `claude` once and sign in."
-- `webchat-agent status` says whether the service runs, whether the agent is paired and whether it is
-  asleep.
-- `webchat-agent uninstall` asks, then removes the service and `~/.webchat/laptop`. The agent stays in
-  WebChat until you remove it under **Coding agents**. The program and the clones in `~/WebChat` stay.
+- `webchat-agent status` says whether both services run, whether the runner is connected, whether the agent is
+  paired and signed in to GitHub, and whether it is asleep. `doctor` and `status` need no password.
+- `webchat-agent uninstall` asks, then stops and removes both services, signs the agent out of GitHub, and removes
+  the account `_webchat` and its folders, only if setup made them. The agent stays in
+  WebChat until you remove it under **Coding agents**. The clones in `~/WebChat` stay. The agent's GitHub
+  login stays valid on GitHub until you revoke it. Revoking "GitHub CLI" under Authorized OAuth Apps
+  at github.com/settings/applications revokes every `gh` login of that GitHub account, including your own on
+  your laptop: if the agent used your own account, run `gh auth login` again afterwards.
 - In a folder you already have, run `webchat-agent connect` to ask to point the agent at it instead of
   cloning. It returns at once and changes nothing: the request shows under **Coding agents** with the
   repository and the folder, and the folder is connected only when you approve it there, within 10
   minutes. The agent must be paired and running. `webchat-agent sleep` and `webchat-agent wake` do
   what `/webchat:sleep` and `/webchat:wake` do.
 
-The service runs while you are logged in. Cards and clones need the GitHub CLI signed in, as for the
-plugin: setup warns when it is not. The keys stay in `~/.webchat/laptop` and the agent pushes with
-your own `gh`, as the plugin does.
+The keyholder runs from boot, and the runner while you are logged in; the agent shows offline while
+the runner is down. Cards and clones need the agent's own GitHub login: `doctor` warns when it is
+not signed in. The keys stay in `/var/webchat` on a Mac or `/var/lib/webchat` on Linux, and the agent pushes
+with its own `gh`, never yours.
 
 From a copy of this repository, `npm run agent -- serve '<code>'` runs the daemon with Node 26. It
 is for working on WebChat: `setup` installs only the single file a release ships.

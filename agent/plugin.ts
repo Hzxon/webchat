@@ -1550,6 +1550,8 @@ export class Plugin {
       ...(this.runs!.running.length ? [`Working on ${this.runs!.running.map((r) => r.card).join(', ')}.`] : []),
       `Watching ${this.watched.length} draft pull requests.`,
       `Linked: ${this.linkedHarnesses().map((h) => h.name).join(', ') || 'none'}.`,
+      // `doctor` reads this: the owner cannot read the agent's login, so only the keyholder can say.
+      (await signedIn()) ? 'GitHub: the agent is signed in.' : 'GitHub: the agent is not signed in.',
     ].join('\n');
   }
 

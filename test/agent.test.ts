@@ -22,7 +22,8 @@ import { Conversations, parts, type Answerer } from '../agent/conversations.ts';
 import { LocalBench, worktreeGit } from '../agent/bench.ts';
 import { Plugin } from '../agent/plugin.ts';
 import { callRoom, connectRunner, Room } from '../agent/room.ts';
-import { doctor, linksFrom, setup, uninstall } from '../agent/setup.ts';
+import { programOf } from '../agent/lockroom.ts';
+import { doctor, linksFrom, pairInto, setup, uninstall } from '../agent/setup.ts';
 import { harnessFinder, supported, supportedList } from '../agent/harnesses.ts';
 import { versionAtLeast } from '../agent/harness.ts';
 import type { Final } from '../agent/runner.ts';
@@ -33,6 +34,7 @@ import { openDb, toUserDTO } from '../server/db.ts';
 import { createIdentity, keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, openPicks, sealPicks, textHash, permitHash, wrapChatKey, type MessageContent } from '../shared/e2ee.ts';
 import { briefText, harnessRow, type AskDTO, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type PermitDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
 import { copyOf, readCard } from '../shared/board.ts';
+import { fakeRoom, testLayout } from './fakeRoom.ts';
 import { FAKE_CLAUDE, FAKE_CODEX } from './fakes.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
@@ -146,6 +148,41 @@ async function approve(owner: AgentClient, code: string, displayName: string, pr
   assert.equal(pairing.proof, await pairingProof(code, pairing.keys), 'the keys came with the code');
   proof ??= await pairingProof(code, pairing.keys, { id: owner.id, keys: owner.identity.publicKeys });
   return owner.request<UserDTO>('POST', `/pairings/${id}/approve`, { displayName, proof });
+}
+
+/**
+ * A laptop for setup to run on: fakes for the service tools and the harnesses it asks of, a room that
+ * touches nothing real, and an environment that points at them. `restore` puts the environment back.
+ */
+async function fakeLaptop(dir: string) {
+  const [bin, laptopHome, agentHome, log, ghState] = ['bin', 'home', 'home/.webchat', 'services.log', 'gh.json'].map((name) => path.join(dir, name));
+  await fs.mkdir(bin);
+  await fs.mkdir(laptopHome);
+  await fs.writeFile(ghState, JSON.stringify({ pulls: [] }));
+  const fake = (name: string, body: string) => fs.writeFile(path.join(bin, name), body, { mode: 0o755 });
+  // One script stands in for launchctl and systemctl: it logs what it was asked and says the service runs.
+  const service = `#!/bin/sh\necho "$(basename "$0") $*" >> "${log}"\ncase "$*" in *"print "*) echo "state = running";; *is-active*) echo active;; esac\n`;
+  for (const name of ['launchctl', 'systemctl']) await fake(name, service);
+  // Everything the laptop would need is there, so setup installs nothing and runs no sudo.
+  for (const name of ['git', 'xcode-select', 'bwrap', 'socat']) await fake(name, '#!/bin/sh\n');
+  await fake('id', '#!/bin/sh\necho "$FAKE_GROUPS"\n');
+  await fake('gh', FAKE_GH);
+  await fake('claude', FAKE_CLAUDE);
+  await fake('codex', FAKE_CODEX);
+  await fake('shell', `#!/bin/sh\nprintf '%s%s%s' __webchat_path__ "$PATH" __webchat_path__\n`);
+  const restore = setEnv({
+    HOME: laptopHome,
+    XDG_CONFIG_HOME: path.join(laptopHome, '.config'),
+    SHELL: path.join(bin, 'shell'),
+    PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+    FAKE_GH_STATE: ghState,
+    FAKE_GROUPS: 'staff admin sudo',
+  });
+  const program = path.join(dir, 'webchat-agent');
+  await fs.writeFile(program, 'the program', { mode: 0o755 });
+  const layout = testLayout(dir, path.join(bin, 'git'));
+  const unitFile = process.platform === 'darwin' ? path.join(laptopHome, 'Library/LaunchAgents/webchat-agent.plist') : path.join(laptopHome, '.config/systemd/user/webchat-agent.service');
+  return { bin, laptopHome, agentHome, log, restore, program, layout, room: fakeRoom(layout), unitFile };
 }
 
 describe('agent client (R-027)', () => {
@@ -2072,37 +2109,17 @@ describe('agent client (R-027)', () => {
     assert.match(await new Plugin(options).call('sleep'), /To wake it, type \/webchat:wake in Claude Code on your laptop\.$/);
   });
 
-  test('sets an agent up with one command: pairs it, installs its login service, replaces it on a second run, and removes it (docs/roadmap/new-agent-setup.md)', { timeout: 30_000 }, async () => {
+  test('sets an agent up with one command: builds its room, pairs it as the role account, installs the runner’s login service, replaces it on a second run, and removes it (docs/roadmap/new-agent-setup.md)', { timeout: 30_000 }, async () => {
     const dir = await fs.mkdtemp(path.join(home, 'setup-'));
-    const [bin, laptopHome, agentHome, log, ghState] = ['bin', 'home', 'home/.webchat', 'services.log', 'gh.json'].map((name) => path.join(dir, name));
-    await fs.mkdir(bin);
-    await fs.mkdir(laptopHome);
-    await fs.writeFile(ghState, JSON.stringify({ pulls: [] }));
-    const fake = (name: string, body: string) => fs.writeFile(path.join(bin, name), body, { mode: 0o755 });
-    // One script stands in for launchctl and systemctl: it logs what it was asked and says the service runs.
-    const service = `#!/bin/sh\necho "$(basename "$0") $*" >> "${log}"\ncase "$*" in *"print "*) echo "state = running";; *is-active*) echo active;; esac\n`;
-    for (const name of ['launchctl', 'systemctl']) await fake(name, service);
-    // Everything the laptop would need is there, so setup installs nothing and runs no sudo.
-    for (const name of ['git', 'xcode-select', 'bwrap', 'socat']) await fake(name, '#!/bin/sh\n');
-    await fake('id', '#!/bin/sh\necho "$FAKE_GROUPS"\n');
-    await fake('gh', FAKE_GH);
-    await fake('claude', FAKE_CLAUDE);
-    await fake('codex', FAKE_CODEX);
-    await fake('shell', `#!/bin/sh\nprintf '%s%s%s' __webchat_path__ "$PATH" __webchat_path__\n`);
-    const restore = setEnv({
-      HOME: laptopHome,
-      XDG_CONFIG_HOME: path.join(laptopHome, '.config'),
-      SHELL: path.join(bin, 'shell'),
-      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-      FAKE_GH_STATE: ghState,
-      FAKE_GROUPS: 'staff admin sudo',
-    });
+    const { bin, laptopHome, agentHome, log, restore, program, layout, room, unitFile } = await fakeLaptop(dir);
     const said: string[] = [];
     const print = console.log;
     console.log = (...words: unknown[]) => void said.push(words.join(' '));
     const asked: string[] = [];
-    const options = { home: agentHome, program: '/opt/webchat-agent', ask: async (question: string) => (asked.push(question), 'y') };
-    const unitFile = process.platform === 'darwin' ? path.join(laptopHome, 'Library/LaunchAgents/webchat-agent.plist') : path.join(laptopHome, '.config/systemd/user/webchat-agent.service');
+    const account = path.join(layout.data, 'laptop', 'account.json');
+    // The role account's `pair` is setup's own function, with the code from stdin.
+    room.onPair = ({ code, picks }) => pairInto(account, code, picks as Parameters<typeof pairInto>[2]);
+    const options = { home: agentHome, program, layout, root: room.root, read: room.read, ghArchive: async () => Buffer.from('archive'), ask: async (question: string) => (asked.push(question), 'y') };
     const commands = async () => (await fs.readFile(log, 'utf8')).trim().split('\n');
     try {
       // Not an administrator: it says so alone, asks nothing and changes nothing.
@@ -2110,7 +2127,7 @@ describe('agent client (R-027)', () => {
       await assert.rejects(setup(`${baseUrl}#${newPairingCode()}`, options), /Nothing was changed/);
       // Only the read-only check that `systemctl --user` runs, on Linux, reaches the services.
       const ran = existsSync(log) ? (await commands()).filter((line) => line !== 'systemctl --user show-environment') : [];
-      assert.deepEqual([asked.length, existsSync(unitFile), ran, said.filter((line) => /Administrator/.test(line)).length], [0, false, [], 1]);
+      assert.deepEqual([asked.length, existsSync(unitFile), ran, said.filter((line) => /Administrator/.test(line)).length, room.log.length, existsSync(layout.data), existsSync(layout.programDir)], [0, false, [], 1, 0, false, false]);
       process.env.FAKE_GROUPS = 'staff admin sudo';
 
       const code = newPairingCode();
@@ -2119,15 +2136,20 @@ describe('agent client (R-027)', () => {
       assert.match(asked[0]!, /\[x\] Claude Code 2\.1\.300, signed in\n {2}\[x\] Codex 0\.58\.0, signed in/, 'both are ticked: found and signed in');
       assert.ok(said.some((line) => /^ {2}ok {2,}Claude Code 2\.1\.300, signed in: found, not linked\.$/.test(line)), said.join('\n'));
       assert.ok(said.includes('Paired with Alice.'));
-      // The account is where `serve` reads it, and the service runs the installed program, with the login shell's PATH.
-      const account = JSON.parse(await fs.readFile(path.join(agentHome, 'laptop', 'account.json'), 'utf8')) as { userId: number; owner: number; picked: string[] };
-      assert.deepEqual([account.userId, account.owner, account.picked], [agent.id, alice.id, ['Claude Code', 'Codex']]);
+      // The account is in the role account's folder, paired with the code on stdin and never in an argument; the runner's service runs the installed program, with the login shell's PATH.
+      const saved = JSON.parse(await fs.readFile(account, 'utf8')) as { userId: number; owner: number; picked: string[] };
+      assert.deepEqual([saved.userId, saved.owner, saved.picked], [agent.id, alice.id, ['Claude Code', 'Codex']]);
+      assert.deepEqual(room.log.filter((cmd) => cmd.argv.at(-1) === 'pair').map((cmd) => [cmd.as, cmd.argv.some((word) => word.includes(code))]), [[layout.user, false]]);
+      assert.equal(await fs.readFile(programOf(layout), 'utf8'), 'the program');
+      assert.equal(await fs.readFile(path.join(layout.programDir, 'bin', 'gh'), 'utf8'), 'archive');
       const unit = await fs.readFile(unitFile, 'utf8');
-      assert.ok(unit.includes('/opt/webchat-agent') && unit.includes(bin), unit);
+      assert.ok(unit.includes(`${programOf(layout)}`) && unit.includes(bin) && /runner/.test(unit), unit);
+      assert.equal(await fs.readlink(path.join(laptopHome, '.local', 'bin', 'webchat-agent')), programOf(layout));
       const first = await commands();
       assert.ok(first.some((line) => (process.platform === 'darwin' ? line.startsWith(`launchctl bootstrap gui/${process.getuid!()} ${unitFile}`) : line === 'systemctl --user restart webchat-agent')), first.join('\n'));
 
       // A second run, with no code, pairs nothing again and replaces the service.
+      room.system.made = true;
       said.length = 0;
       await setup(undefined, options);
       assert.equal(asked.length, 2);
@@ -2135,14 +2157,67 @@ describe('agent client (R-027)', () => {
       assert.ok(!said.includes('Approve the agent in WebChat, in the window that shows the code.'));
       assert.ok((await commands()).length > first.length);
 
-      // Declined, uninstall removes nothing; agreed, it leaves no service and no account.
-      await assert.rejects(uninstall(agentHome, async () => false), /Nothing was removed/);
+      // Declined, uninstall removes nothing; agreed, it leaves no service, no folder and no account.
+      const gone = { layout, root: room.root, read: room.read };
+      await assert.rejects(uninstall(agentHome, async () => false, gone), /Nothing was removed/);
       assert.equal(existsSync(unitFile), true);
-      await uninstall(agentHome, async () => true);
-      assert.deepEqual([existsSync(unitFile), existsSync(path.join(agentHome, 'laptop'))], [false, false]);
+      await uninstall(agentHome, async () => true, gone);
+      assert.deepEqual([unitFile, layout.data, layout.ipc, layout.programDir, layout.unit, path.join(laptopHome, '.local', 'bin', 'webchat-agent')].map((file) => existsSync(file)), [false, false, false, false, false, false]);
+      assert.equal(room.system.made, false);
       assert.match((await commands()).at(-1) ?? '', process.platform === 'darwin' ? /^launchctl bootout|^launchctl bootstrap/ : /^systemctl --user daemon-reload/);
     } finally {
       console.log = print;
+      restore();
+    }
+  });
+
+  test('moves a plugin’s or the daemon’s account into the keyholder’s folder without pairing again: the newer cursor wins, and a live Claude Code window stops it (docs/decisions/locked-room.md)', { timeout: 30_000 }, async () => {
+    const dir = await fs.mkdtemp(path.join(home, 'move-'));
+    const { laptopHome, agentHome, restore, program, layout, room } = await fakeLaptop(dir);
+    const [plugin, daemon] = [path.join(laptopHome, '.claude', 'plugins', 'data', 'webchat-webchat'), path.join(agentHome, 'laptop')];
+    const restoreClaude = setEnv({ CLAUDE_CONFIG_DIR: path.join(laptopHome, '.claude') });
+    const print = console.log;
+    console.log = () => undefined;
+    const pairings = async () => (await instance.sql.query<{ n: string }>('SELECT count(*) AS n FROM webchat.pairings'))[0]!.n;
+    const options = { home: agentHome, program, layout, root: room.root, read: room.read, ghArchive: async () => Buffer.from('archive'), ask: async () => 'y' };
+    const setupOf = (from: string) => JSON.stringify({ choice: { claudeMd: false, skills: [], noAttribution: false, linked: [] }, from });
+    const kept = (...parts: string[]) => fs.readFile(path.join(layout.data, 'laptop', ...parts), 'utf8').catch(() => undefined);
+    try {
+      // A plugin's account, paired for real, and an older copy of it as the daemon kept it.
+      await fs.mkdir(path.join(plugin, 'laptop'), { recursive: true });
+      const code = newPairingCode();
+      await Promise.all([approve(alice, code, 'Laptop'), AgentClient.pair(path.join(plugin, 'account.json'), baseUrl, code)]);
+      const file = JSON.parse(await fs.readFile(path.join(plugin, 'account.json'), 'utf8')) as { cursor: number; userId: number };
+      await fs.mkdir(path.join(daemon, 'laptop'), { recursive: true });
+      await fs.writeFile(path.join(daemon, 'account.json'), JSON.stringify({ ...file, cursor: file.cursor - 1 }));
+      await fs.writeFile(path.join(daemon, 'laptop', 'setup.json'), setupOf('daemon'));
+      await fs.writeFile(path.join(plugin, 'laptop', 'setup.json'), setupOf('plugin'));
+      await fs.writeFile(path.join(plugin, 'codex-threads.json'), 'threads');
+      await fs.mkdir(path.join(plugin, 'repos', 'acme__app'), { recursive: true });
+      await fs.writeFile(path.join(plugin, 'repos', 'acme__app', 'connected'), '/work/app');
+      await fs.writeFile(path.join(plugin, 'laptop', 'claude.json'), 'settings');
+      const before = await pairings();
+
+      // A Claude Code window that holds the plugin's lock stops setup before it changes anything.
+      await fs.writeFile(path.join(plugin, 'watch.lock'), String(process.pid));
+      await assert.rejects(setup(undefined, options), /Nothing was changed/);
+      assert.deepEqual([room.log.length, existsSync(layout.data)], [0, false]);
+      await fs.rm(path.join(plugin, 'watch.lock'));
+
+      await setup(undefined, options);
+      // The plugin's account, the one that saw more, is in the keyholder's folder as it was: the same agent and cursor, with no new pairing.
+      const moved = JSON.parse((await kept('account.json'))!) as { cursor: number; userId: number };
+      assert.deepEqual([moved.cursor, moved.userId, await pairings()], [file.cursor, file.userId, before]);
+      assert.deepEqual([await kept('laptop', 'setup.json'), await kept('repos', 'acme__app', 'connected'), await kept('laptop', 'claude.json')], [setupOf('plugin'), '/work/app', undefined]);
+      assert.equal(await fs.readFile(path.join(agentHome, 'runner', 'codex-threads.json'), 'utf8'), 'threads', 'the runner keeps its own files');
+      // Once the keyholder took it, the plugin's copy is gone and the daemon's older one is left, which the owner can delete.
+      assert.deepEqual([existsSync(path.join(plugin, 'account.json')), existsSync(path.join(plugin, 'repos', 'acme__app', 'connected')), existsSync(path.join(daemon, 'account.json'))], [false, false, true]);
+      // The account went in as the role account, through stdin, in a folder only it reads.
+      const writes = room.log.filter((cmd) => cmd.as === layout.user && cmd.stdin);
+      assert.ok(writes.length >= 3 && writes.every((cmd) => cmd.argv[2]!.includes('umask 077')));
+    } finally {
+      console.log = print;
+      restoreClaude();
       restore();
     }
   });
