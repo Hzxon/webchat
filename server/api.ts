@@ -1,5 +1,6 @@
 import { waitUntil } from '@vercel/functions';
 import express, { type NextFunction, type Request, type Response } from 'express';
+import pkg from '../package.json' with { type: 'json' };
 import {
   DEVICE_COOKIE,
   dummyPasswordHash,
@@ -407,7 +408,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
   }
 
   router.get('/config', (_req, res) => {
-    const body: ConfigDTO = { vapidPublicKey: push.publicKey, kdfSalt };
+    const body: ConfigDTO = { vapidPublicKey: push.publicKey, kdfSalt, release: pkg.version };
     res.json(body);
   });
 
@@ -524,6 +525,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
       keys: { dh: base64url(body?.keys?.dh, 'Encryption key', 87), sign: base64url(body?.keys?.sign, 'Signing key', 87) },
       proof: base64url(body?.proof, 'Pairing proof', 43),
       authKey: loginKey(body),
+      ...(body?.picks !== undefined && { picks: base64url(body.picks, 'Picks', 40, LIMITS.pairingPicks) }),
     };
     if (!(await db.createPairing(input, await hashPassword(input.authKey)))) {
       throw new HttpError(409, 'This pairing code was used already. Make a new one in WebChat.');

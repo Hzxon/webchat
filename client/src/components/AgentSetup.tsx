@@ -4,19 +4,23 @@
 // last run loaded. Save sends a new choice, and the agent's answer to it confirms it. Nothing of it
 // reaches the server unsealed.
 import { useEffect, useMemo, useState } from 'react';
-import { setupWords, type HarnessState, type SetupChoice, type UserDTO } from '../../../shared/types';
+import { HARNESS_ROW_WORDS, harnessRow, setupWords, takesAsks, type HarnessRow, type HarnessState, type SetupChoice, type UserDTO } from '../../../shared/types';
 import { blockedBy, ownAgents, useAgentChat, WAKE } from '../agents';
 import { askSetup } from '../chat';
 import { useAppState } from '../store';
+import { AgentAsks } from './AgentAsks';
 import { Dialog } from './Dialog';
 import { formatAgo } from './format';
+import { Tag, type Tone } from './PullTags';
 
 /** How long the dialog waits for the agent's answer before it says none came. */
 const ANSWER_MS = 60_000;
 
 const sorted = (list: string[] = []) => [...list].sort().join();
 const flip = (list: string[], item: string) => (list.includes(item) ? list.filter((i) => i !== item) : [...list, item]);
-const same = (a: SetupChoice, b: SetupChoice) => a.claudeMd === b.claudeMd && a.noAttribution === b.noAttribution && !a.noPlan === !b.noPlan && sorted(a.skills) === sorted(b.skills) && sorted(a.off) === sorted(b.off);
+const same = (a: SetupChoice, b: SetupChoice) => a.claudeMd === b.claudeMd && a.noAttribution === b.noAttribution && !a.noPlan === !b.noPlan && sorted(a.skills) === sorted(b.skills) && sorted(a.off) === sorted(b.off) && (a.linked ?? []).join() === (b.linked ?? []).join();
+
+const ROW_TONE: Record<HarnessRow, Tone> = { linked: 'ok', attention: 'warn', found: 'info', missing: 'muted' };
 
 /** What a plugin from before the harness list runs: Claude Code alone, with no toggle, since it ignores `off`. */
 const OLD_PLUGIN: HarnessState = { name: 'Claude Code', instructions: '~/.claude/CLAUDE.md', skills: '~/.claude/skills', knobs: ['noAttribution'] };
@@ -74,12 +78,19 @@ function SetupForm({ agent }: { agent: UserDTO }) {
 
   if (blocked) return <p className="dialog-intro">{blocked}</p>;
   if (!answer) return <p className="dialog-intro">{late ? `Your agent did not answer. ${WAKE}` : 'Asking your agent what it can load…'}</p>;
-  const choice = edit ?? answer.choice;
+  // An agent that knows linking keeps the list and the off list itself: Link and Unlink send them at once, so an unsaved edit never carries stale ones.
+  const links = answer.harnesses?.some((h) => h.linked !== undefined);
+  const choice = edit ? { ...edit, ...(links && { linked: answer.choice.linked, off: answer.choice.off }) } : answer.choice;
   const offered = new Set(answer.skills.map((s) => s.name));
   // A chosen skill that left the laptop stays listed, so it can be turned off.
   const skills = [...answer.skills, ...choice.skills.filter((name) => !offered.has(name)).map((name) => ({ name, description: 'Not on the laptop' }))];
   const off = choice.off ?? [];
   const busy = saving && waiting && !late;
+  // Link and Unlink are signed setup choices of their own, sent from the answer's choice, not from unsaved edits.
+  const relink = (h: HarnessState) => {
+    const linked = (answer.choice.linked ?? []).filter((n) => n !== h.name);
+    void ask({ ...answer.choice, linked: h.linked ? linked : [...linked, h.name], off: (answer.choice.off ?? []).filter((n) => n !== h.name) });
+  };
 
   return (
     <form
@@ -91,17 +102,33 @@ function SetupForm({ agent }: { agent: UserDTO }) {
     >
       <p className="dialog-intro">
         Each coding agent on your agent’s laptop, and what its runs and answers load from your setup there. Your settings, hooks,
-        MCP servers and plugins stay off, since a run follows cards your teammates wrote.
+        MCP servers and plugins stay off, since a run follows cards your teammates wrote.{' '}
+        {takesAsks(agent.protocol) ? 'It asks you in the Coding agents pane before an action its coding agent would ask about.' : 'Update your agent to be asked before such an action; until then it refuses it.'}
       </p>
+      <AgentAsks />
       {(answer.harnesses ?? [OLD_PLUGIN]).map((h) => (
         <section key={h.name} className="dialog-form">
-          <label className="toggle-row">
-            {answer.harnesses && <input type="checkbox" checked={!off.includes(h.name)} onChange={() => setEdit({ ...choice, off: flip(off, h.name) })} />}
-            <span>
-              <strong>{[h.name, h.version].filter(Boolean).join(' ')}</strong>
-              <small>{[h.signedIn !== undefined && (h.signedIn ? 'Signed in' : 'Not signed in'), h.refusal ?? (answer.harnesses && 'Takes cards')].filter(Boolean).join('. ')}</small>
-            </span>
-          </label>
+          {h.linked !== undefined ? (
+            <div className="toggle-row harness-row">
+              <span>
+                <strong>{[h.name, h.version].filter(Boolean).join(' ')}</strong>
+                {h.path && <small>{h.path}</small>}
+                <small>{h.attention ?? (h.linked ? h.refusal ?? 'Takes cards' : !h.path && h.refusal)}</small>
+              </span>
+              <Tag tone={ROW_TONE[harnessRow(h)]}>{HARNESS_ROW_WORDS[harnessRow(h)]}</Tag>
+              <button type="button" className="button-secondary" disabled={busy || (!h.linked && !h.path)} onClick={() => relink(h)}>
+                {h.linked ? 'Unlink' : 'Link'}
+              </button>
+            </div>
+          ) : (
+            <label className="toggle-row">
+              {answer.harnesses && <input type="checkbox" checked={!off.includes(h.name)} onChange={() => setEdit({ ...choice, off: flip(off, h.name) })} />}
+              <span>
+                <strong>{[h.name, h.version].filter(Boolean).join(' ')}</strong>
+                <small>{[h.signedIn !== undefined && (h.signedIn ? 'Signed in' : 'Not signed in'), h.refusal ?? (answer.harnesses && 'Takes cards')].filter(Boolean).join('. ')}</small>
+              </span>
+            </label>
+          )}
           <ul className="people-list">
             {h.instructions && (
               <li>

@@ -1,18 +1,24 @@
-// The plugin's background Claude (R-035, D-097): a `claude -p` the plugin starts for each turn of a
-// conversation, apart from the owner's own sessions. It runs restricted, so it reads only managed
-// settings and the plugin's settings file: none of the owner's settings, and none of the
-// repository's settings, hooks or .mcp.json, which a -p run otherwise loads without asking. The
-// message goes on stdin, since arguments show in `ps`, and the turn ends with a JSON answer. This
-// is the plugin's harness adapter for Claude Code (harness.ts).
-import { execFile } from 'node:child_process';
-import { constants, readlinkSync, realpathSync } from 'node:fs';
+// The plugin's background Claude (R-035, D-097): a `claude -p` the plugin keeps for each session of
+// a run or conversation, apart from the owner's own sessions, with each turn written to its stdin
+// as one stream-json line and ended by a `result` line with a JSON answer. It runs restricted, so it
+// reads only managed settings and the plugin's settings file: none of the owner's settings, and none
+// of the repository's settings, hooks or .mcp.json, which a -p run otherwise loads without asking.
+// It never reads the message from arguments, which show in `ps`. Where the owner's page can show a
+// question, it asks before an action through its permission prompt tool (approve.ts). This is the
+// plugin's harness adapter for Claude Code (harness.ts).
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import readline from 'node:readline';
 import { promisify } from 'node:util';
-import { secretDirs, type Harness } from './harness.ts';
-import { line, Plugin, type PluginOptions } from './plugin.ts';
-import { start, type Final } from './runner.ts';
+import { fits } from './answer.ts';
+import { APPROVE_TOOL, openApprover, TOOL_TIMEOUT_MS, type Call } from './approve.ts';
+import { isCredential, olderThan, secretDirs, type Ask, type Harness, type Turn } from './harness.ts';
+import { line } from './plugin.ts';
+import { shellPaths, within } from './rulebook.ts';
+import { hold, IDLE_MS, keep, Quiet, watchdog, type Final } from './runner.ts';
 
 const exec = promisify(execFile);
 
@@ -22,11 +28,6 @@ const REGISTRY = 'registry.npmjs.org';
 /** Its tools. A restricted run has only those it names, and keeps its file tools in its folder. */
 const TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
 
-/** Whether a variable holds a credential: by its name, by a known token's prefix, or by a password in a URL. */
-const isCredential = ([name, value = '']: [string, string | undefined]) =>
-  /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL|AUTH/i.test(name) ||
-  /^(gh[opsur]_|github_pat_|npm_|sk-|xox[abprs]-|glpat-|AKIA)|:\/\/[^/\s:@]+:[^/\s@]+@/.test(value);
-
 /**
  * The plugin's settings file for it. The shell never runs outside the sandbox, not even where the
  * sandbox cannot start. It reads nothing outside its working directories but what toolchains need:
@@ -35,11 +36,10 @@ const isCredential = ([name, value = '']: [string, string | undefined]) =>
  * sandbox cannot write the owner's, and a shared one would let it poison the owner's installs. Web
  * search and reading run outside the sandbox, as Claude Code's own tools. The shell gets no variable
  * of `env`, the environment it starts with, that holds a credential, while Claude Code keeps them for
- * its own login. The guard hook keeps the file tools from the secrets, and Claude Code refuses a
- * write through a link out of the folder. When the owner chose no AI attribution, empty lines hide
+ * its own login. Claude Code refuses a write through a link out of the folder. When the owner chose no AI attribution, empty lines hide
  * the ones Claude Code adds to commits and pull requests (R-039).
  */
-export function claudeSettings({ secrets, npmCache, guard, env, noAttribution }: { secrets: string[]; npmCache: string; guard: string; env: NodeJS.ProcessEnv; noAttribution?: boolean }) {
+export function claudeSettings({ secrets, npmCache, env, noAttribution }: { secrets: string[]; npmCache: string; env: NodeJS.ProcessEnv; noAttribution?: boolean }) {
   return {
     // Only the object form: older Claude Code rejects `false` here, and a -p run drops a whole
     // settings file that fails validation, the sandbox with it (D-097).
@@ -56,20 +56,23 @@ export function claudeSettings({ secrets, npmCache, guard, env, noAttribution }:
     },
     permissions: { allow: ['WebSearch', 'WebFetch'], blockReadsOutsideWorkingDirectories: true },
     env: { npm_config_cache: npmCache, npm_config_userconfig: '/dev/null' },
-    hooks: { PreToolUse: [{ matcher: '^(Read|Edit|Write|Glob|Grep)$', hooks: [{ type: 'command', command: guard }] }] },
   };
 }
 
 /**
- * One turn's arguments: the first starts the session under its id, a later one resumes it. With
- * the owner's choice (R-039), their CLAUDE.md goes in as a system prompt, and `skills` is a plugin
- * folder made for the turn, which holds only copies of their skills. It is also a working
- * directory, so a skill's scripts and references can be read there.
+ * A process's arguments: the first starts the session under its id, one that follows an ended
+ * process resumes it. The turns come on stdin. With the owner's choice (R-039), their CLAUDE.md
+ * goes in as a system prompt, and `skills` is a plugin folder made for the session, which holds only
+ * copies of their skills. It is also a working directory, so a skill's scripts and references can be
+ * read there. `schema` is fixed for the process, so it fits every turn of the session. With `mcp`,
+ * the config file of the approval endpoint, an action Claude Code would ask about is asked of the
+ * owner; without it, it is refused.
  */
-export function claudeArgs({ settings, session, resume, answer, claudeMd, skills }: { settings: string; session: string; resume: boolean; answer: object; claudeMd?: string; skills?: string }) {
+export function claudeArgs({ settings, session, resume, schema, claudeMd, skills, mcp }: { settings: string; session: string; resume: boolean; schema: object; claudeMd?: string; skills?: string; mcp?: string }) {
   return [
     '-p',
-    'Do what the message on stdin asks.',
+    '--input-format',
+    'stream-json',
     '--restricted',
     '--tools',
     [...TOOLS, ...(skills ? ['Skill'] : [])].join(','),
@@ -77,19 +80,19 @@ export function claudeArgs({ settings, session, resume, answer, claudeMd, skills
     settings,
     ...(claudeMd ? ['--append-system-prompt-file', claudeMd] : []),
     ...(skills ? ['--plugin-dir', skills, '--add-dir', skills] : []),
-    // No MCP server at all, not even those of the owner's plugins.
+    // No MCP server but WebChat's own approval endpoint, not even those of the owner's plugins.
     '--strict-mcp-config',
     // Edits in its folder pass, but not to Claude Code's own files there, such as .claude/settings.json:
-    // those ask, and anything that would ask is refused, since nobody is there to answer.
+    // those ask the owner, or are refused when the owner's page cannot show a question.
     '--permission-mode',
     'acceptEdits',
-    '--permission-prompts',
-    'none',
+    // The tool is hidden from the model, which must not call it for itself.
+    ...(mcp ? ['--mcp-config', mcp, '--permission-prompt-tool', APPROVE_TOOL, '--disallowedTools', APPROVE_TOOL] : ['--permission-prompts', 'none']),
     '--output-format',
     'stream-json',
     '--verbose',
     '--json-schema',
-    JSON.stringify(answer),
+    JSON.stringify(schema),
     resume ? '--resume' : '--session-id',
     session,
   ];
@@ -150,6 +153,58 @@ export function claudeProgress(output: string, cwd: string): string | undefined 
   return line(said, 200) || undefined;
 }
 
+const ASK_KINDS: Record<string, Ask['kind']> = { Bash: 'execute', Edit: 'edit', MultiEdit: 'edit', Write: 'edit', NotebookEdit: 'edit', Read: 'read', Glob: 'read', Grep: 'read', WebFetch: 'fetch', WebSearch: 'fetch' };
+
+/**
+ * What the permission prompt tool's call asks, for the rulebook and the owner: the tool's own
+ * fields, never the model's description.
+ */
+export function claudeAsk({ tool_name: tool, input }: Call, cwd: string): Ask {
+  const kind = ASK_KINDS[tool] ?? 'other';
+  const text = (name: string) => (typeof input[name] === 'string' ? (input[name] as string) : undefined);
+  const named = [text('file_path'), text('notebook_path'), text('path')].filter((p): p is string => !!p);
+  const paths = [...named.map((p) => path.resolve(cwd, p)), ...shellPaths(text('command') ?? '', cwd)];
+  const target = text('command') ?? named[0] ?? text('url') ?? text('query') ?? text('pattern') ?? '';
+  return { tool, kind, paths, detail: kind === 'execute' ? target : kind === 'other' ? `${tool} ${JSON.stringify(input)}` : `${tool} ${target}` };
+}
+
+type Schema = { type?: string; properties?: Record<string, Schema>; required?: string[]; enum?: unknown[] };
+
+/**
+ * The one schema a process is started with, for every schema its session's turns use: all their
+ * properties, with the values of one that several name joined, and required only what all require.
+ * Each turn's own schema is checked on its answer.
+ */
+export function mergeSchemas(schemas: Schema[]): Schema {
+  if (schemas.length === 1) return schemas[0]!;
+  const properties: Record<string, Schema> = {};
+  for (const { properties: own = {} } of schemas) {
+    for (const [name, property] of Object.entries(own)) {
+      const seen = properties[name];
+      properties[name] = seen?.enum && property.enum ? { ...seen, enum: [...new Set([...seen.enum, ...property.enum])] } : (seen ?? property);
+    }
+  }
+  const required = (schemas[0]!.required ?? []).filter((name) => schemas.every((s) => s.required?.includes(name)));
+  return { type: 'object', properties, ...(required.length && { required }) };
+}
+
+/** An idle Claude is ended after this long without a turn; the next turn starts it again and resumes the session. */
+export const CLAUDE_KEEP_MS = 10 * 60_000;
+
+const CANCELLED = 'the owner cancelled the run.';
+
+/** One Claude process, which takes the turns of one session. */
+interface Live {
+  child: ChildProcess;
+  /** What it was started for: another folder, setup, schema or question mode starts a new one. */
+  key: string;
+  session: string;
+  turn?: { ask?: Turn['ask']; cwd: string; line: (line: string) => void; fail: (error: Error) => void };
+  /** Ends the process after `CLAUDE_KEEP_MS` without a turn. */
+  timer?: NodeJS.Timeout;
+  approver?: Awaited<ReturnType<typeof openApprover>>;
+}
+
 /** The owner's Claude Code folder, `~/.claude` unless they moved it. */
 const claudeHome = () => process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
 
@@ -159,106 +214,178 @@ const claudeHome = () => process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir()
  */
 export const claudeSecrets = (dataDir: string) => [...secretDirs(dataDir), path.join(claudeHome(), 'session-env')];
 
-/** The adapter: turns in `program`, restricted, under the plugin's settings file, which the guard hook `hook` completes. */
-export function claudeHarness(program: string, hook: string, dataDir: string): Harness {
+/** The first release with `--permission-prompts`, which a turn with no way to ask passes (claude.ts `claudeArgs`; Claude Code's changelog, 2.1.259). */
+export const CLAUDE_MIN_VERSION = '2.1.259';
+
+/** The adapter: turns in `program`, restricted, under the plugin's settings file. */
+export function claudeHarness(program: string, dataDir: string): Harness {
   const secrets = claudeSecrets(dataDir);
   // Beside the laptop's copy of the account, where it always was.
   const settings = path.join(dataDir, 'laptop', 'claude.json');
   const npmCache = path.join(os.tmpdir(), 'webchat-npm', 'laptop');
+  // The version is read once: `refusal()` runs on every request, and the finder builds a new adapter when the program changes.
+  let version: Promise<string | undefined> | undefined;
+  const versionOf = () => (version ??= exec(program, ['--version'], { timeout: 10_000 }).then((r) => /^\d[\w.-]*/.exec(r.stdout.trim())?.[0], () => undefined));
+  const lives = new Map<string, Live>();
+  let attribution = false;
+  const writeSettings = async () => {
+    await fs.mkdir(path.dirname(settings), { recursive: true });
+    await fs.writeFile(settings, JSON.stringify(claudeSettings({ secrets, npmCache, env: process.env, noAttribution: attribution })));
+  };
+  // The config files of the approval endpoint, which only the plugin reads (approve.ts).
+  const approveDir = path.join(dataDir, 'laptop', 'approve');
+
+  // Closes still removing their token files, which `end` waits for: a failed turn closes its process without waiting.
+  const closing = new Set<Promise<void>>();
+
+  function close(live: Live) {
+    clearTimeout(live.timer);
+    if (lives.get(live.session) === live) lives.delete(live.session);
+    live.child.kill();
+    const done = Promise.resolve(live.approver?.close()).finally(() => closing.delete(done));
+    closing.add(done);
+    return done;
+  }
+
+  /** Starts the process for a session's first turn here: a new session, or the one a process that ended kept. */
+  async function open(t: Turn, schema: Schema, key: string): Promise<Live> {
+    const live = { key, session: t.session } as Live;
+    // The call names no turn, so it goes to the one that runs now.
+    live.approver = t.ask
+      ? await openApprover(approveDir, async (call) => {
+          const turn = live.turn;
+          if (!turn?.ask) return { allow: false, message: 'No question is open.' };
+          return turn.ask(claudeAsk(call, turn.cwd)).catch((error: unknown) => {
+            turn.fail(error as Error);
+            throw error;
+          });
+        })
+      : undefined;
+    // The skills' copies load as a plugin, which holds only `skills/`.
+    const args = claudeArgs({ settings, session: t.session, resume: t.resume, schema, claudeMd: t.setup.instructions, skills: t.setup.skills && path.dirname(t.setup.skills), mcp: live.approver?.file });
+    const child = (live.child = spawn(program, args, { cwd: t.cwd, stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, ...(live.approver && { MCP_TOOL_TIMEOUT: String(TOOL_TIMEOUT_MS) }) } }));
+    keep(child);
+    // A process that exits before it reads closes the pipe; its exit says why.
+    child.stdin.on('error', () => undefined);
+    // On Linux a process that exits with output unread resets its pipe, which its exit already reports.
+    readline.createInterface({ input: child.stdout }).on('line', (output) => live.turn?.line(output)).on('error', () => undefined);
+    child.on('error', (error) => live.turn?.fail(error));
+    child.on('close', (code) => {
+      live.turn?.fail(new Error(`the agent exited with code ${code} and no result.`));
+      void close(live);
+    });
+    return live;
+  }
+
+  /** Writes one turn to the process, and waits for the `result` line that ends it. */
+  function converse(live: Live, t: Turn) {
+    return new Promise<unknown>((resolve, reject) => {
+      let done = false;
+      const dog = watchdog(IDLE_MS, t.quiet ?? new Quiet(), () => finish(new Error(`the agent printed nothing for ${IDLE_MS / 60_000} minutes.`)));
+      const onAbort = () => finish(new Error(CANCELLED));
+      function finish(error?: Error, answer?: unknown) {
+        if (done) return;
+        done = true;
+        dog.stop();
+        t.signal.removeEventListener('abort', onAbort);
+        live.turn = undefined;
+        // A process that failed a turn is ended: the next turn starts it again and resumes.
+        if (error) void close(live);
+        else {
+          hold(live.child, false);
+          live.timer = setTimeout(() => void close(live), CLAUDE_KEEP_MS).unref();
+        }
+        if (error) reject(error);
+        else resolve(answer);
+      }
+      t.signal.addEventListener('abort', onAbort, { once: true });
+      live.turn = {
+        ask: t.ask,
+        cwd: t.cwd,
+        fail: finish,
+        line(output) {
+          dog.arm();
+          const result = claudeResult(output);
+          if (!result) {
+            const said = t.progress && claudeProgress(output, t.cwd);
+            if (said) t.progress!(said);
+            return;
+          }
+          const problem = result.error || !result.answer ? undefined : fits(t.schema, result.answer);
+          if (result.error || !result.answer) finish(new Error(result.text.trim().slice(0, 500) || 'Claude stopped without an answer.'));
+          else if (problem) finish(new Error(`Claude’s answer did not fit: ${problem}.`));
+          else finish(undefined, result.answer);
+        },
+      };
+      hold(live.child, true);
+      // Claude Code keeps its last structured answer when a turn gives none, so each turn says to write it afresh.
+      const fresh = `\n\nAnswer this message only: write the structured answer afresh, and keep nothing of an earlier answer.${(t.schemas?.length ?? 1) > 1 ? ` It must fit this schema: ${JSON.stringify(t.schema)}` : ''}`;
+      live.child.stdin!.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: t.message + fresh } })}\n`);
+    });
+  }
+
   return {
     name: 'Claude Code',
-    async refusal(dir) {
-      if (dir) return sandboxProblem(dir, secrets, restrictedSettings(settings));
+    asks: true,
+    async refusal() {
       if (process.platform === 'win32') return 'Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.';
       if (!program) return 'I cannot find Claude Code on this laptop.';
+      return olderThan('Claude Code', await versionOf(), CLAUDE_MIN_VERSION);
     },
+    // The settings are the plugin's own, so a managed setting is all that can undo them: a warning only, since the room keeps the secrets from the shell (docs/decisions/locked-room.md).
+    // Nothing to check before the first `apply` writes the file.
+    warning: async () => ((await fs.access(settings).then(() => true, () => false)) ? sandboxProblem(path.join(os.homedir(), 'WebChat'), secrets, restrictedSettings(settings)) : undefined),
     offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution', 'noPlan'] }),
     async found() {
       if (!program) return {};
       // `auth status` prints its JSON and exits 1 when signed out.
-      const stdout = (args: string[]) => exec(program, args, { timeout: 10_000 }).then((r) => r.stdout, (e: { stdout?: string }) => e.stdout ?? '');
-      const [version, status] = await Promise.all([stdout(['--version']), stdout(['auth', 'status'])]);
+      const status = await exec(program, ['auth', 'status'], { timeout: 10_000 }).then((r) => r.stdout, (e: { stdout?: string }) => e.stdout ?? '');
       const loggedIn = /"loggedIn":\s*(true|false)/.exec(status)?.[1];
-      return { version: /^\d[\w.-]*/.exec(version.trim())?.[0], ...(loggedIn && { signedIn: loggedIn === 'true' }) };
+      return { path: program, version: await versionOf(), ...(loggedIn && { signedIn: loggedIn === 'true' }) };
     },
     // The turn runs under the plugin's settings alone, so the owner's do not count (D-097).
     async apply({ noAttribution }) {
+      attribution = !!noAttribution;
       await fs.mkdir(npmCache, { recursive: true });
-      await fs.writeFile(settings, JSON.stringify(claudeSettings({ secrets, npmCache, guard: hook, env: process.env, noAttribution })));
+      // A crash leaves config files, each with a token that names nothing now.
+      if (!lives.size) await fs.rm(approveDir, { recursive: true, force: true });
+      await writeSettings();
     },
-    async turn({ cwd, session, resume, message, schema, setup, signal, progress }) {
-      // The skills' copies load as a plugin, which holds only `skills/`.
-      const args = claudeArgs({ settings, session, resume, answer: schema, claudeMd: setup.instructions, skills: setup.skills && path.dirname(setup.skills) });
-      const seen = progress && ((line: string) => {
-        const said = claudeProgress(line, cwd);
-        if (said) progress(said);
-      });
-      const turn = await start(program, args, cwd, signal, claudeResult, message, seen);
-      if (turn.error || !turn.answer) throw new Error(turn.text.trim().slice(0, 500) || 'Claude stopped without an answer.');
-      return turn.answer;
+    async turn(t) {
+      if (t.signal.aborted) throw new Error(CANCELLED);
+      const schema = mergeSchemas((t.schemas ?? [t.schema]) as Schema[]);
+      const key = JSON.stringify([t.cwd, !!t.ask, t.setup, schema]);
+      let live = lives.get(t.session);
+      if (live?.turn) throw new Error('a turn of this session is running already.');
+      // A session that starts over, or needs other arguments, cannot keep its process.
+      if (live && (!t.resume || live.key !== key)) {
+        await close(live);
+        live = undefined;
+      }
+      if (live) clearTimeout(live.timer);
+      else {
+        // The file sits in the owner's folder now, which the model's shell may reach: write it again before each process starts.
+        await writeSettings();
+        lives.set(t.session, (live = await open(t, schema, key)));
+      }
+      return converse(live, t);
+    },
+    async end(session) {
+      await Promise.all([...[...lives].filter(([id]) => !session || id === session).map(([, live]) => close(live)), ...closing]);
     },
   };
 }
 
-/**
- * The session's own `claude`, by its absolute path: this server's parent, which the desktop app keeps
- * outside the PATH. Else the first on the PATH, from absolute folders only, since the background
- * Claude starts in a worktree whose files the model writes. Empty when there is none (D-097).
- */
-export async function claudeProgram() {
-  const parent =
-    process.platform === 'linux'
-      ? await fs.readlink(`/proc/${process.ppid}/exe`).catch(() => '')
-      : await promisify(execFile)('ps', ['-o', 'comm=', '-p', String(process.ppid)]).then((r) => r.stdout.trim(), () => '');
-  if (path.isAbsolute(parent) && path.basename(parent) === 'claude') return parent;
-  return onPath('claude');
-}
+/** The absolute folders of the PATH only, since the background Claude starts in a worktree whose files the model writes. */
+export const pathDirs = () => (process.env.PATH ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d));
 
-/** A program's absolute path, from the absolute folders of the PATH only, or empty when there is none. */
-export async function onPath(name: string) {
-  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d))) {
+/** A program's absolute path, from `dirs`, or empty when there is none. */
+export async function onPath(name: string, dirs = pathDirs()) {
+  for (const dir of dirs) {
     const file = path.join(dir, name);
     if (await fs.access(file, constants.X_OK).then(() => true, () => false)) return file;
   }
   return '';
-}
-
-/** The plugin as Claude Code hosts it: its turns run in the session's own `claude`, with the guard hook `guard`. */
-export class ClaudePlugin extends Plugin {
-  constructor({ claude, guard: hook, others = [], ...options }: Omit<PluginOptions, 'harnesses'> & { claude: string; guard: string; others?: Harness[] }) {
-    super({ ...options, harnesses: [claudeHarness(claude, hook, options.dataDir), ...others] });
-  }
-}
-
-const within = (file: string, dir: string) => {
-  const rel = path.relative(dir, file);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-};
-
-/**
- * The real path of a file that may not exist yet: its nearest existing folder's, then the rest. A
- * link to a file not made yet counts as its target, where a write through it lands (K-55).
- */
-function real(file: string, hops = 0): string {
-  try {
-    // Unlike Node's own, the native call resolves as the kernel does: `..` after a link goes up from
-    // the link's target, and on macOS a name in other letter case is the same folder.
-    return realpathSync.native(file);
-  } catch {
-    const parent = path.dirname(file);
-    if (parent === file) return file;
-    const dir = real(parent, hops);
-    const here = path.join(dir, path.basename(file));
-    let target: string;
-    try {
-      target = readlinkSync(here);
-    } catch {
-      return here;
-    }
-    // Not path.resolve, which applies `..` before the links. A kernel follows at most 40 links, so
-    // this stops there too, which also ends a loop.
-    return hops < 40 ? real(path.isAbsolute(target) ? target : `${dir}${path.sep}${target}`, hops + 1) : here;
-  }
 }
 
 interface Settings {
@@ -308,24 +435,4 @@ export async function sandboxProblem(projectDir: string, secrets: string[], sour
   }
   // Where the sandbox cannot start, Claude Code would run the shell without it (K-53).
   if (first((s) => s.sandbox?.failIfUnavailable) !== true) return 'Claude Code’s managed settings would let my shell run unsandboxed if its sandbox failed to start.';
-}
-
-/** A tool call, as Claude Code hands it to a PreToolUse hook. */
-export interface ToolUse {
-  tool_name: string;
-  tool_input: Record<string, unknown>;
-  cwd: string;
-}
-
-const FILE_TOOLS = new Set(['Read', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Glob', 'Grep']);
-
-/**
- * Why the guard hook denies a tool call, or undefined. File tools never touch the secret folders,
- * since they run outside the sandbox (D-092), in the background Claude and in every other session.
- */
-export function guard(use: ToolUse, secrets: string[]): string | undefined {
-  const input = use.tool_input;
-  const named = input.file_path ?? input.notebook_path ?? (use.tool_name === 'Glob' || use.tool_name === 'Grep' ? (input.path ?? use.cwd) : undefined);
-  const target = FILE_TOOLS.has(use.tool_name) && typeof named === 'string' ? real(path.resolve(use.cwd, named)) : undefined;
-  if (target && secrets.some((dir) => within(target, real(dir)))) return 'That folder holds secrets the WebChat plugin keeps from the model.';
 }

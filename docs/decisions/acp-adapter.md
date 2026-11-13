@@ -1,0 +1,17 @@
+### D: ACP agents run from a shipped list, one process for each session
+
+Status: Proposed 2026-11-13 in #203 (docs/roadmap/new-acp-adapter.md).
+
+One adapter runs any agent on `agent/acp-agents.ts`, the only source of an ACP command, so one not
+on it is never linked or run. An entry must name the args or environment that make the agent skip
+the owner's settings and MCP servers, with a dated check; the list-shape test refuses one without.
+The list is empty: a real agent joins in its own pull request, after someone runs it. The agent
+starts at a session's first turn and keeps running for its later turns, each a `session/prompt`,
+never in arguments. It ends 10 minutes after a turn, with its session and with the daemon; a later
+turn resumes it. It ends a turn through `submit_answer`, a tool of this program's `answer`
+subcommand, and WebChat checks the answer against that turn's schema. Its permission requests get
+the rulebook's answer once (`agent/rulebook.ts`), never `*_always`, and a question is a no. ACP
+agents answer questions only, as Codex does.
+
+Cost: an idle agent lives up to 10 minutes for each session. Its sandbox, shell and network are its
+own, and the rulebook reaches only what it asks about. Nothing here was run against a real agent.

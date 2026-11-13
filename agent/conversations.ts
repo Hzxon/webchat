@@ -37,6 +37,8 @@ export interface Conversation {
   /** When it last moved. */
   last: number;
   ended?: boolean;
+  /** The owner's page can show a question of the agent, so a turn may ask before an action (docs/decisions/harness-approvals.md). */
+  asks?: true;
   /** The board its owner's page picked for the prompt, the only one its briefs hold (D-104). */
   project?: number;
   /** Each card and held decision in the brief, by its id, with its place and hash, so a draft names only what it saw (D-104, D-116). */
@@ -59,6 +61,10 @@ export class Conversations {
     private readonly client: AgentClient,
     private readonly file: string,
     private readonly answer: Answerer,
+    /** Called when a conversation ends, so its harness can end what it keeps for the session. */
+    private readonly onEnd: (conversation: Conversation) => void = () => undefined,
+    /** Removes an ended conversation's scratch copy, wherever it is kept. */
+    private readonly drop: (scratch: string) => Promise<void> = (scratch) => fs.rm(scratch, { recursive: true, force: true }),
   ) {}
 
   /** Whether a turn runs or waits for one, which keeps an agent that goes to sleep awake (K-66). */
@@ -96,7 +102,7 @@ export class Conversations {
     const conversation =
       prompt.kind === 'prompt'
         ? message.clientId
-          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, harness: prompt.harness, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project }
+          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, harness: prompt.harness, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project, asks: prompt.asks }
           : undefined
         : this.list.find((c) => c.root === prompt.to && c.chat === message.conversationId);
     // A copy the server posted again under a new id does nothing (K-47).
@@ -176,10 +182,11 @@ export class Conversations {
     for (const conversation of this.list) {
       if (!conversation.ended && !this.turns.get(conversation.root)?.stops.size && now - conversation.last > CONVERSATION_TTL_MS) {
         conversation.ended = changed = true;
+        this.onEnd(conversation);
         this.turns.delete(conversation.root);
       }
       if (conversation.ended && conversation.scratch) {
-        await fs.rm(conversation.scratch, { recursive: true, force: true });
+        await this.drop(conversation.scratch);
         delete conversation.scratch;
         changed = true;
       }

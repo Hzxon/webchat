@@ -20,6 +20,7 @@ import {
   keyFingerprint,
   pairingId,
   pairingProof,
+  sealPicks,
   randomBytes,
   sealIdentity,
   toBase64Url,
@@ -41,6 +42,7 @@ import {
   type MessageDTO,
   type MessageKind,
   type PairingDTO,
+  type PairingPick,
   type PairingInput,
   type ProjectDTO,
   type PublicKeysDTO,
@@ -76,6 +78,8 @@ export interface AccountFile {
   owner: number | null;
   /** The pairing that made the account, by its id, so a new code pairs again (R-030). */
   pairing?: string;
+  /** The harnesses the owner approved linking with that pairing, by name; the plugin links them when it first serves the account. */
+  picked?: string[];
   /** Client ids of the run requests seen, with their send times, while a copy could still run (K-47). */
   handled?: Record<string, number>;
   /**
@@ -117,6 +121,11 @@ export interface DocSection {
 
 /** How often the daemon checks in. It has no push, so this is its whole delay (D-004). */
 export const SYNC_INTERVAL_MS = 15_000;
+/** Once this long passes with no request, run or turn, an agent checks in every minute: a card then waits up to a minute to start. */
+const IDLE_AFTER_MS = 60 * 60_000;
+
+/** The wait before the next check-in, from how long the agent has had nothing to do. The page counts an agent online for twice the slow one (`AGENT_ONLINE_WINDOW_MS`). */
+export const checkInEvery = (idleMs: number) => (idleMs >= IDLE_AFTER_MS ? 60_000 : SYNC_INTERVAL_MS);
 
 /**
  * Splits a pasted pairing code. The page shows it after its own address, as `<address>#<code>`,
@@ -175,6 +184,11 @@ export class AgentClient {
     return this.file.owner ?? null;
   }
 
+  /** The harnesses the owner approved at pairing, or none for an account that pairing did not ask for any. */
+  get picked() {
+    return this.file.picked;
+  }
+
   /** The pairing that made this account, by id. Accounts from before R-030 have none. */
   get pairing() {
     return this.file.pairing;
@@ -200,16 +214,17 @@ export class AgentClient {
    * Makes an agent's account by pairing with its owner (R-030, D-093). Files this half, with keys
    * made here, then waits for the owner to approve on their page. The approval holds the owner's
    * keys, proved with the code, so they are pinned before the first check-in. The code never leaves
-   * this machine. Overwrites the file, so a new code pairs again.
+   * this machine. Overwrites the file, so a new code pairs again. `picks` are the harnesses it asks
+   * to link: sealed under the code for the owner's approval dialog, and kept in the file once approved.
    */
-  static async pair(filePath: string, server: string, code: string, pollMs = 2000) {
+  static async pair(filePath: string, server: string, code: string, pollMs = 2000, picks?: PairingPick[]) {
     const api = new Api(server);
     const secrets = await createIdentity();
     const keys = secrets.publicKeys;
     // Random: an agent has no password to derive it from.
     const authKey = toBase64Url(randomBytes(32));
     const id = await pairingId(code);
-    const half: PairingInput = { id, keys, proof: await pairingProof(code, keys), authKey };
+    const half: PairingInput = { id, keys, proof: await pairingProof(code, keys), authKey, ...(picks && { picks: await sealPicks(code, keys, picks) }) };
     await api.request('POST', '/pairings', half);
     const until = Date.now() + PAIRING_TTL_MS;
     let approved: PairingDTO['approved'] | undefined;
@@ -224,7 +239,7 @@ export class AgentClient {
     if (user.keys?.dh !== keys.dh || user.keys.sign !== keys.sign) throw new Error('The server made the account with other keys.');
     await api.request('POST', '/auth/login', { username: user.username, authKey });
     const pins = { [owner.id]: await keyFingerprint(owner.keys) };
-    return AgentClient.create(filePath, { server, username: user.username, userId: user.id, authKey, secrets, cookie: api.cookie, owner: owner.id, pins, pairing: id });
+    return AgentClient.create(filePath, { server, username: user.username, userId: user.id, authKey, secrets, cookie: api.cookie, owner: owner.id, pins, pairing: id, ...(picks && { picked: picks.map((p) => p.name) }) });
   }
 
   /**
@@ -368,8 +383,8 @@ export class AgentClient {
     return true;
   }
 
-  /** Checks in every SYNC_INTERVAL_MS, for as long as the signal allows, and yields each new message. */
-  async *watch(signal: AbortSignal, intervalMs = SYNC_INTERVAL_MS): AsyncGenerator<OpenedMessage> {
+  /** Checks in, waiting `interval()` between rounds, for as long as the signal allows, and yields each new message. */
+  async *watch(signal: AbortSignal, interval: () => number = () => SYNC_INTERVAL_MS): AsyncGenerator<OpenedMessage> {
     let failures = 0;
     while (!signal.aborted) {
       try {
@@ -380,7 +395,8 @@ export class AgentClient {
         if (error instanceof ApiError && error.status !== 0 && error.status !== 429 && error.status < 500) throw error;
         failures++;
       }
-      const delay = failures ? Math.min(60_000, intervalMs * 2 ** failures) : intervalMs;
+      const every = interval();
+      const delay = failures ? Math.min(60_000, every * 2 ** failures) : every;
       await sleep(delay, undefined, { signal }).catch(() => undefined);
     }
   }

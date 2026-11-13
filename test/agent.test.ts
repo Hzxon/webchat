@@ -1,35 +1,54 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import pkg from '../package.json' with { type: 'json' };
 import { after, before, describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Api } from '../agent/api.ts';
-import { claudeArgs, claudeResult, claudeSettings, ClaudePlugin as Plugin, guard, restrictedSettings, sandboxProblem } from '../agent/claude.ts';
+import { claudeArgs, claudeHarness, claudeResult, claudeSettings, pathDirs, restrictedSettings, sandboxProblem } from '../agent/claude.ts';
 import { AgentClient, type OpenedMessage } from '../agent/client.ts';
-import { CODEX_GAP, codexHarness } from '../agent/codex.ts';
-import type { Harness } from '../agent/harness.ts';
+import { codexHarness } from '../agent/codex.ts';
+import type { Ask, Harness, Reply, Turn } from '../agent/harness.ts';
 import { Conversations, parts, type Answerer } from '../agent/conversations.ts';
-import { worktreeGit } from '../agent/plugin.ts';
-import { addWorktree, start, type Final } from '../agent/runner.ts';
+import { LocalBench, worktreeGit } from '../agent/bench.ts';
+import { repoHome } from '../agent/keep.ts';
+import { Plugin } from '../agent/plugin.ts';
+import { callRoom, connectRunner, Room, type RoomStatus } from '../agent/room.ts';
+import { programOf, updateConfigOf, type Cmd } from '../agent/lockroom.ts';
+import { doctor, linksFrom, pairInto, setup, uninstall } from '../agent/setup.ts';
+import { harnessFinder, supported, supportedList } from '../agent/harnesses.ts';
+import { versionAtLeast } from '../agent/harness.ts';
+import type { Final } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
-import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, textHash, wrapChatKey } from '../shared/e2ee.ts';
-import { briefText, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
+import { openDb, toUserDTO } from '../server/db.ts';
+import { createIdentity, keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, openPicks, sealPicks, textHash, permitHash, wrapChatKey, type MessageContent } from '../shared/e2ee.ts';
+import { briefText, harnessRow, type AskDTO, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type PermitDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
 import { copyOf, readCard } from '../shared/board.ts';
+import { fakeRoom, testLayout } from './fakeRoom.ts';
+import { FAKE_CLAUDE, FAKE_CODEX } from './fakes.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
 const KDF_ROUNDS = 1000;
 const sh = promisify(execFile);
 const git = (dir: string, ...args: string[]) => sh('git', ['-C', dir, '-c', 'user.name=Claude', '-c', 'user.email=claude@example.com', ...args]);
+/** The mark that the owner's approval writes when they connect a folder (docs/decisions/connect-approval.md). */
+const markFile = (dataDir: string, repo: string) => path.join(repoHome(dataDir, repo), 'connected');
+const connect = async (dataDir: string, repo: string, dir: string) => {
+  await fs.mkdir(path.dirname(markFile(dataDir, repo)), { recursive: true });
+  await fs.writeFile(markFile(dataDir, repo), dir);
+};
+const disconnect = (dataDir: string, repo: string) => fs.rm(markFile(dataDir, repo), { force: true });
 
 /**
  * Stands in for GitHub's command line: opens pull requests into a JSON file, and answers for them
@@ -63,88 +82,7 @@ if (args[0] === 'pr' && args[1] === 'create') {
   console.log('FAIL test/sum.test.js: expected 3, got 4');
 } else if (args[0] === 'api') {
   console.log(args[1].endsWith('/permission') ? '{"permission":"write"}' : '[]');
-} else if (args[0] === 'repo' && args[1] === 'clone') {
-  // From the bare repository the test names, with origin set to GitHub as a real clone has it.
-  const [repo, dir] = [args[2], args[3]];
-  const url = 'https://github.com/' + repo + '.git';
-  execFileSync('git', ['clone', '-q', state.clones[repo], dir]);
-  execFileSync('git', ['-C', dir, 'remote', 'set-url', 'origin', url]);
-  execFileSync('git', ['-C', dir, 'config', 'url.' + state.clones[repo] + '.insteadOf', url]);
-  state.cloned = args.slice(2);
-  fs.writeFileSync(process.env.FAKE_GH_STATE, JSON.stringify(state));
 }
-`;
-/**
- * Stands in for the background Claude: logs how it was run, waits at a gate when told to, commits
- * a file like the work of a turn, and prints the lines a -p run ends with. A run's first turn only
- * checks that its card holds, and commits nothing (R-042).
- */
-const FAKE_CLAUDE = `#!/usr/bin/env node
-import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
-const args = process.argv.slice(2);
-// What the adapter asks of the laptop's Claude Code for Settings (D-115).
-if (args[0] === '--version' || args.join(' ') === 'auth status') {
-  console.log(args[0] === '--version' ? '2.1.0 (Claude Code)' : '{"loggedIn": true}');
-  process.exit(0);
-}
-const input = fs.readFileSync(0, 'utf8');
-// The owner's skills it got, as a plugin folder made for the turn (R-039).
-const plugin = args.includes('--plugin-dir') ? fs.readdirSync(args[args.indexOf('--plugin-dir') + 1], { recursive: true }).sort() : undefined;
-fs.appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ args, input, cwd: process.cwd(), plugin }) + '\\n');
-const resume = args.includes('--resume');
-const id = args[args.indexOf(resume ? '--resume' : '--session-id') + 1];
-while (process.env.FAKE_CLAUDE_GATE && !fs.existsSync(process.env.FAKE_CLAUDE_GATE)) await new Promise((resolve) => setTimeout(resolve, 20));
-const check = input.includes('Change and commit nothing in this turn');
-if (process.env.FAKE_CLAUDE_COMMIT !== '0' && !check) {
-  const file = resume ? 'sum.test.js' : 'sum.js';
-  // A change of its own each turn, so a later round has something to commit.
-  fs.writeFileSync(file, file + ' ' + Date.now() + '\\n');
-  execFileSync('git', ['add', file]);
-  execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-q', '-m', 'Change ' + file]);
-}
-// A work turn its owner will stop: it says what it does, twice within a second, then holds.
-if (process.env.FAKE_CLAUDE_HOLD && !check) {
-  const use = (name, input) => console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name, input }] } }));
-  use('Bash', { command: 'npm test', description: 'Run the tests' });
-  use('Edit', { file_path: process.cwd() + '/sum.js' });
-  // A minute at most, so a test that fails before the stop leaves no process behind.
-  for (const until = Date.now() + 60_000; !fs.existsSync(process.env.FAKE_CLAUDE_HOLD) && Date.now() < until; ) await new Promise((resolve) => setTimeout(resolve, 20));
-}
-const answer = check
-  ? JSON.parse(process.env.FAKE_CLAUDE_CHECK ?? '{"outcome":"holds","note":"","checked":"Read K-7 and sum.js on main."}')
-  : process.env.FAKE_CLAUDE_ANSWER
-    ? JSON.parse(process.env.FAKE_CLAUDE_ANSWER)
-    : { outcome: 'done', note: 'Sums add up now.', title: 'Fix sums', body: 'Sums were off by one.' };
-console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: id }));
-console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: id, structured_output: answer }));
-`;
-/**
- * Stands in for `codex exec`, as FAKE_CLAUDE does for Claude Code: logs how it was run and prints
- * the JSONL events of a turn, as Codex's documentation shows them, with the answer as its last
- * message. A resume names its thread after `resume`.
- */
-const FAKE_CODEX = `#!/usr/bin/env node
-import fs from 'node:fs';
-const args = process.argv.slice(2);
-if (args[0] === '--version' || args.join(' ') === 'login status') {
-  console.log(args[0] === '--version' ? 'codex-cli 0.58.0' : 'Logged in using ChatGPT');
-  process.exit(0);
-}
-const input = fs.readFileSync(0, 'utf8');
-const schema = JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema') + 1], 'utf8'));
-fs.appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ args, input, cwd: process.cwd(), schema }) + '\\n');
-const thread = args.includes('resume') ? args[args.indexOf('resume') + 1] : '0199a213-81c0-7800-8aa1-bbab2a035a53';
-const events = [
-  { type: 'thread.started', thread_id: thread },
-  { type: 'turn.started' },
-  { type: 'item.completed', item: { id: 'item_0', type: 'command_execution', command: 'bash -lc ls', status: 'completed' } },
-  { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: process.env.FAKE_CODEX_ANSWER ?? '{"reply":"It adds.","drafts":null}' } },
-  process.env.FAKE_CODEX_FAIL
-    ? { type: 'turn.failed', error: { message: process.env.FAKE_CODEX_FAIL } }
-    : { type: 'turn.completed', usage: { input_tokens: 24763, cached_input_tokens: 24448, output_tokens: 122, reasoning_output_tokens: 0 } },
-];
-for (const event of events) console.log(JSON.stringify(event));
 `;
 const PASSWORD = 'correct horse battery';
 
@@ -160,6 +98,19 @@ async function newChatKey(client: AgentClient, memberIds: number[]): Promise<Fir
   return { conversationId, keyId, wrappedKeys };
 }
 
+/** One turn of the real `claude` with the adapter's arguments: its stream-json line on stdin, then the end of stdin, which ends the process. */
+async function runClaude(args: string[], cwd: string, input: string, seen: (line: string) => void = () => undefined) {
+  const child = spawn('claude', args, { cwd, stdio: ['pipe', 'pipe', 'inherit'], signal: AbortSignal.timeout(5 * 60_000) });
+  child.stdin.end(`${JSON.stringify({ type: 'user', message: { role: 'user', content: input } })}\n`);
+  let last: Final | undefined;
+  for await (const line of readline.createInterface({ input: child.stdout })) {
+    seen(line);
+    last = claudeResult(line) ?? last;
+  }
+  assert.ok(last, 'the turn ends with a result');
+  return last;
+}
+
 /** Does `work` with these environment variables set, then puts back what was there. */
 async function withEnv<T>(vars: Record<string, string>, work: () => Promise<T>) {
   const restore = setEnv(vars);
@@ -170,15 +121,21 @@ async function withEnv<T>(vars: Record<string, string>, work: () => Promise<T>) 
   }
 }
 
+// The fake harnesses are processes the plugin keeps for a session, so they read what a test sets per turn from this file.
+process.env.FAKE_ENV_FILE = path.join(os.tmpdir(), `webchat-fake-env-${process.pid}.json`);
+const syncFakes = () => writeFileSync(process.env.FAKE_ENV_FILE!, JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([name]) => name.startsWith('FAKE_')))));
+
 /** Sets environment variables, and returns how to put back what was there. */
 function setEnv(vars: Record<string, string>) {
   const saved = Object.entries(vars).map(([name]) => [name, process.env[name]] as const);
   Object.assign(process.env, vars);
+  syncFakes();
   return () => {
     for (const [name, value] of saved) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
+    syncFakes();
   };
 }
 
@@ -199,6 +156,41 @@ async function approve(owner: AgentClient, code: string, displayName: string, pr
   assert.equal(pairing.proof, await pairingProof(code, pairing.keys), 'the keys came with the code');
   proof ??= await pairingProof(code, pairing.keys, { id: owner.id, keys: owner.identity.publicKeys });
   return owner.request<UserDTO>('POST', `/pairings/${id}/approve`, { displayName, proof });
+}
+
+/**
+ * A laptop for setup to run on: fakes for the service tools and the harnesses it asks of, a room that
+ * touches nothing real, and an environment that points at them. `restore` puts the environment back.
+ */
+async function fakeLaptop(dir: string) {
+  const [bin, laptopHome, agentHome, log, ghState] = ['bin', 'home', 'home/.webchat', 'services.log', 'gh.json'].map((name) => path.join(dir, name));
+  await fs.mkdir(bin);
+  await fs.mkdir(laptopHome);
+  await fs.writeFile(ghState, JSON.stringify({ pulls: [] }));
+  const fake = (name: string, body: string) => fs.writeFile(path.join(bin, name), body, { mode: 0o755 });
+  // One script stands in for launchctl and systemctl: it logs what it was asked and says the service runs.
+  const service = `#!/bin/sh\necho "$(basename "$0") $*" >> "${log}"\ncase "$*" in *"print "*) echo "state = running";; *is-active*) echo active;; esac\n`;
+  for (const name of ['launchctl', 'systemctl']) await fake(name, service);
+  // Everything the laptop would need is there, so setup installs nothing and runs no sudo.
+  for (const name of ['git', 'xcode-select', 'bwrap', 'socat']) await fake(name, '#!/bin/sh\n');
+  await fake('id', '#!/bin/sh\necho "$FAKE_GROUPS"\n');
+  await fake('gh', FAKE_GH);
+  await fake('claude', FAKE_CLAUDE);
+  await fake('codex', FAKE_CODEX);
+  await fake('shell', `#!/bin/sh\nprintf '%s%s%s' __webchat_path__ "$PATH" __webchat_path__\n`);
+  const restore = setEnv({
+    HOME: laptopHome,
+    XDG_CONFIG_HOME: path.join(laptopHome, '.config'),
+    SHELL: path.join(bin, 'shell'),
+    PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+    FAKE_GH_STATE: ghState,
+    FAKE_GROUPS: 'staff admin sudo',
+  });
+  const program = path.join(dir, 'webchat-agent');
+  await fs.writeFile(program, 'the program', { mode: 0o755 });
+  const layout = testLayout(dir, path.join(bin, 'git'));
+  const unitFile = process.platform === 'darwin' ? path.join(laptopHome, 'Library/LaunchAgents/webchat-agent.plist') : path.join(laptopHome, '.config/systemd/user/webchat-agent.service');
+  return { bin, laptopHome, agentHome, log, restore, program, layout, room: fakeRoom(layout), unitFile };
 }
 
 describe('agent client (R-027)', () => {
@@ -282,6 +274,27 @@ describe('agent client (R-027)', () => {
     assert.throws(() => new Api('http://chat.example.com'), /https/);
     assert.throws(() => new Api('http://localhost.example.com'), /https/);
     for (const local of ['http://localhost:5173', 'http://alice.localhost:5173', 'http://127.0.0.1:3000', 'http://[::1]:3000']) new Api(local);
+  });
+
+  test('a pairing carries the sealed picks, within the limits, and the page reads them back', async () => {
+    await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'pair:%'");
+    const code = newPairingCode();
+    const { publicKeys: keys } = await createIdentity();
+    const picks = await sealPicks(code, keys, [{ name: 'Codex', signedIn: false }]);
+    const half = async (extra: object) => ({ id: await pairingId(newPairingCode()), keys, proof: await pairingProof(code, keys), authKey: 'x'.repeat(43), ...extra });
+    for (const bad of ['', 'not base64!', 'a'.repeat(4097), 'short']) {
+      await assert.rejects(new Api(baseUrl).request('POST', '/pairings', await half({ picks: bad })), { status: 400 }, `picks ${bad.slice(0, 12)}`);
+    }
+    const input = { ...(await half({ picks })), id: await pairingId(code) };
+    await new Api(baseUrl).request('POST', '/pairings', input);
+    const read = await new Api(baseUrl).request<PairingDTO>('GET', `/pairings/${input.id}`);
+    assert.deepEqual(await openPicks(code, read.keys, read.picks!), [{ name: 'Codex', signedIn: false }]);
+    // A pairing with none, as an agent from before linking files it, reads as before.
+    const plain = await half({});
+    await new Api(baseUrl).request('POST', '/pairings', plain);
+    assert.equal((await new Api(baseUrl).request<PairingDTO>('GET', `/pairings/${plain.id}`)).picks, undefined);
+    // The tests after this one pair too, and the limit is per address.
+    await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'pair:%'");
   });
 
   test('reads and answers in a project it was added to', async () => {
@@ -572,12 +585,12 @@ describe('agent client (R-027)', () => {
     await git('add', 'README.md');
     await git('commit', '-q', '-m', 'Start');
     await git('push', '-q', '-u', 'origin', 'main');
-    const runsDir = path.join(home, 'runs');
-    const request = (await runOf()) as RunRequest;
-    const branches = [(await addWorktree(repo, request, runsDir)).branch, (await addWorktree(repo, request, runsDir)).branch];
-    // A branch pushed from another machine is taken too.
-    await git('push', '-q', 'origin', 'main:refs/heads/agent/k-1-pushes-with-bad-keys-3');
-    branches.push((await addWorktree(repo, request, runsDir)).branch);
+    const bench = new LocalBench([]);
+    const tip = (await git('rev-parse', 'HEAD')).stdout.trim();
+    const branchOf = async (taken: string[] = []) => (await bench.prepare({ dir: repo, slug: 'k-1-pushes-with-bad-keys', taken, tip })).branch;
+    const branches = [await branchOf(), await branchOf()];
+    // A branch pushed from another machine is taken too, which the agent's own clone says.
+    branches.push(await branchOf(['agent/k-1-pushes-with-bad-keys-3']));
     assert.deepEqual(branches, ['agent/k-1-pushes-with-bad-keys', 'agent/k-1-pushes-with-bad-keys-2', 'agent/k-1-pushes-with-bad-keys-4']);
   });
 
@@ -627,7 +640,8 @@ describe('agent client (R-027)', () => {
       await fs.writeFile(ghState, JSON.stringify({ origin, pulls: [] }));
       const claudeLog = path.join(home, 'claude.log');
       const gitConfig = path.join(home, 'gitconfig');
-      await fs.writeFile(gitConfig, '[user]\n\tname = Alice\n\temail = alice@example.com\n');
+      // The agent's own clone fetches from GitHub's address, which the test points at its bare repository.
+      await fs.writeFile(gitConfig, `[user]\n\tname = Alice\n\temail = alice@example.com\n[url "${origin}"]\n\tinsteadOf = https://github.com/acme/app.git\n`);
       const restore = setEnv({
         GIT_CONFIG_GLOBAL: gitConfig,
         PATH: `${bin}${path.delimiter}${process.env.PATH}`,
@@ -645,35 +659,38 @@ describe('agent client (R-027)', () => {
       await fs.mkdir(path.join(project, '.claude'));
       await fs.writeFile(path.join(project, '.claude', 'settings.local.json'), JSON.stringify({ sandbox: { enabled: false } }));
       const cloneRoot = path.join(home, 'WebChat');
-      const options = { claude: path.join(bin, 'claude'), guard: 'true', cloneRoot, others: [codexHarness(path.join(bin, 'codex'), dataDir)] };
-      // A window open in a folder that is no repository serves the agent all the same (R-036).
-      const anywhere = path.join(home, 'anywhere');
-      await fs.mkdir(anywhere);
+      const options = { harnesses: [claudeHarness(path.join(bin, 'claude'), dataDir), codexHarness(path.join(bin, 'codex'), dataDir)], cloneRoot };
       const turns = async () =>
         (await fs.readFile(claudeLog, 'utf8').catch(() => ''))
           .split('\n')
           .filter(Boolean)
-          .map((line) => JSON.parse(line) as { args: string[]; input: string; cwd: string; plugin?: string[] });
+          .map((line) => JSON.parse(line) as { args: string[]; input: string; cwd: string; plugin?: string[]; session: string; resumed: boolean; turn: number; pid: number; mcp?: { mcpServers: { webchat: { url: string; headers: { Authorization: string } } } } });
       try {
         const code = newPairingCode();
         // The page shows its address with the code, so the address setting stays empty (R-031).
-        const plugin = new Plugin({ ...options, code: `${baseUrl}#${code}`, dataDir, projectDir: anywhere });
+        const plugin = new Plugin({ ...options, code: `${baseUrl}#${code}`, dataDir });
         const starting = plugin.start();
+        const pairingRows = async () => instance.sql.query<{ picks: string | null }>('SELECT picks FROM webchat.pairings WHERE id = $1', [await pairingId(code)]);
+        await waitFor('the pairing is filed', async () => (await pairingRows()).length > 0);
+        const [filed] = await pairingRows();
+        assert.ok(filed!.picks && !/Claude|Codex/.test(Buffer.from(filed!.picks, 'base64url').toString('latin1')), 'the server holds the picks sealed');
+        assert.equal(JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'setup.json'), 'utf8')).choice.linked, undefined, 'nothing links before the owner approves');
         const agent = await approve(alice, code, 'Claude Code');
         assert.equal(await starting, true);
+        assert.deepEqual(await openPicks(code, agent.keys!, filed!.picks), [{ name: 'Claude Code', version: '2.1.300', signedIn: true }, { name: 'Codex', version: '0.58.0', signedIn: true }]);
+        assert.deepEqual(JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'setup.json'), 'utf8')).choice.linked, ['Claude Code', 'Codex'], 'the approved picks link');
         // The agent is online with no folder yet, and says what its laptop can do (R-036, D-103).
         await plugin.client!.sync();
         await alice.sync();
         assert.deepEqual([alice.users.get(agent.id)?.online, alice.users.get(agent.id)?.protocol, alice.users.get(agent.id)?.agentRepos], [true, 5, []]);
-        assert.match(await plugin.call('connect'), /This folder is no GitHub repository/);
-        // A window in a checkout the owner has connects it, and the serving window works there.
-        assert.match(await new Plugin({ ...options, code: '', dataDir, projectDir: project }).call('connect'), /Connected acme\/app: your agent works in this folder/);
+        // The owner's approval writes the mark of a folder they connect (docs/decisions/connect-approval.md).
+        await connect(dataDir, 'acme/app', project);
         await plugin.scan();
         await plugin.client!.sync();
         await alice.sync();
         assert.deepEqual(alice.users.get(agent.id)?.agentRepos.map((seat) => [seat.repo, seat.online, seat.protocol]), [['acme/app', true, 5]]);
         // The status names the address that came with the code, whatever the owner's settings say.
-        assert.deepEqual((await plugin.call('status')).split('\n').slice(0, 2), [`Taking the cards that Alice hands to this agent, on ${baseUrl}.`, `Working in acme/app in ${project}.`]);
+        assert.deepEqual(((await plugin.status()).text).split('\n').slice(0, 2), [`Taking the cards that Alice hands to this agent, on ${baseUrl}.`, `Working in acme/app in ${project}.`]);
 
         const key = await newChatKey(alice, [alice.id, agent.id, carol.id]);
         const app = await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'App', memberIds: [agent.id, carol.id], key });
@@ -732,10 +749,10 @@ describe('agent client (R-027)', () => {
           assert.deepEqual(await reportsOn(twice, carol), ['I could not run K-7: K-7 is already running.']);
           assert.equal((await turns()).length, 1, 'only the run started Claude');
           // Put to sleep, the agent finishes the card it runs and starts nothing new until a wake (K-66).
-          assert.match(await plugin.call('sleep'), /goes to sleep once it finishes K-7\./);
-          assert.match(await plugin.call('status'), /Every card fails at once: I am going to sleep, so I start nothing new/);
-          assert.match(await plugin.call('wake'), /waking up/);
-          assert.match(await plugin.call('wake'), /not asleep/);
+          assert.match(await plugin.goToSleep(), /goes to sleep once it finishes K-7\./);
+          assert.match((await plugin.status()).text, /Every card fails at once: I am going to sleep, so I start nothing new/);
+          assert.match(await plugin.wake(), /waking up/);
+          assert.match(await plugin.wake(), /not asleep/);
           await fs.writeFile(gate, '');
           await handled;
           return id;
@@ -753,10 +770,10 @@ describe('agent client (R-027)', () => {
         const settings = path.join(dataDir, 'laptop', 'claude.json');
         assert.ok(first!.args.includes('--restricted'));
         assert.equal(first!.args[first!.args.indexOf('--settings') + 1], settings);
-        assert.ok(first!.args.includes('--session-id'));
+        assert.ok(!first!.resumed);
         assert.ok(first!.input.includes('### K-7: Sums are off by one'), 'the brief holds the card');
         assert.ok(first!.input.includes('check that the card still holds'), 'the first turn checks the card');
-        assert.equal(work!.args[work!.args.indexOf('--resume') + 1], first!.args[first!.args.indexOf('--session-id') + 1], 'the work resumes the check');
+        assert.equal(work!.session, first!.session, 'the work resumes the check');
         assert.ok(work!.input.includes('acme/app#1 claims it'), 'the draft claims the card before the work');
         const denied = JSON.parse(await fs.readFile(settings, 'utf8')).sandbox.filesystem.denyRead;
         assert.ok(denied.includes(dataDir) && denied.includes(process.env.GH_CONFIG_DIR), 'the shell cannot read the plugin or gh');
@@ -775,7 +792,7 @@ describe('agent client (R-027)', () => {
         await fs.writeFile(ghState, JSON.stringify({ ...gh, pulls: [{ ...gh.pulls[0], view: failing }] }));
         await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'done', note: 'The test passes.' }) }, () => plugin.pollPulls());
         const [, , fix] = await turns();
-        assert.equal(fix!.args[fix!.args.indexOf('--resume') + 1], first!.args[first!.args.indexOf('--session-id') + 1], 'the fix resumes the first turn');
+        assert.equal(fix!.session, first!.session, 'the fix resumes the first turn');
         assert.equal(fix!.cwd, worktree);
         assert.ok(fix!.input.includes('CI failed: test') && fix!.input.includes('expected 3, got 4'), 'the brief says what failed, with the end of its log');
         assert.deepEqual(await reportsOn(asked), ['I am back on K-7: CI failed: test', `I finished K-7 on ${branch} (acme/app#1). The test passes.`]);
@@ -854,18 +871,23 @@ describe('agent client (R-027)', () => {
         const offer = { claudeMd: true, skills: [{ name: 'commit-style', description: 'Writes commit messages.' }, { name: 'other', description: 'Does other things.' }] };
         // The runs before loaded nothing of it, as nothing was chosen.
         const { harnesses, ...shown } = (await setup(alice, direct))[0]!;
-        assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false, noPlan: true }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
-        const claudeCode = { name: 'Claude Code', version: '2.1.0', signedIn: true, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution', 'noPlan'] };
-        const codexState = { name: 'Codex', version: '0.58.0', signedIn: true, refusal: CODEX_GAP, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: [] };
-        assert.deepEqual(harnesses, [claudeCode, codexState], 'the pane learns each harness the laptop has, the knobs it honors, and why Codex takes no cards');
-        // Turned off, the only harness starts nothing; a page from before the list keeps it off.
-        await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false, off: ['Claude Code'] });
+        assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false, linked: ['Claude Code', 'Codex'], noPlan: true }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
+        const claudeCode = { name: 'Claude Code', path: path.join(bin, 'claude'), linked: true, attention: undefined, version: '2.1.300', signedIn: true, answers: undefined, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution', 'noPlan'] };
+        const codexState = { name: 'Codex', path: path.join(bin, 'codex'), linked: true, attention: undefined, version: '0.58.0', signedIn: true, answers: undefined, refusal: undefined, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: [] };
+        assert.deepEqual(harnesses, [claudeCode, codexState], 'the pane learns each harness the laptop has, the knobs it honors');
+        // Turned off, Claude Code leaves the linked harnesses, and only Codex is left; a page from before the list keeps it off.
+        const [{ harnesses: offHarnesses }] = await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false, off: ['Claude Code'] });
+        assert.deepEqual(
+          offHarnesses!.map((h) => [h.name, h.answers]),
+          [['Claude Code', 'You turned Claude Code off, so I start nothing with it. Link it in my settings under Coding agents.'], ['Codex', undefined]],
+          'a question may still pick Codex',
+        );
         await setup(alice, direct, { claudeMd: false, skills: [], noAttribution: false });
-        assert.match(await plugin.call('status'), /You turned Claude Code off, so I start nothing/);
+        assert.match((await plugin.status()).text, /^Taking the cards[\s\S]*Linked: Codex\./);
         // Carol's word changes nothing and hears nothing; Alice's is kept, a skill she chose that is gone too.
         const chosen = { claudeMd: true, skills: ['commit-style', 'gone'], noAttribution: true, noPlan: true };
         assert.deepEqual(await setup(carol, general, chosen), []);
-        assert.deepEqual((await setup(alice, direct, { ...chosen, off: [] })).map((s) => s.choice), [{ ...chosen, off: [] }]);
+        assert.deepEqual((await setup(alice, direct, { ...chosen, off: [] })).map((s) => s.choice), [{ ...chosen, off: [], linked: ['Claude Code', 'Codex'] }]);
         assert.deepEqual(JSON.parse(await fs.readFile(settings, 'utf8')).attribution, { commit: '', pr: '' }, 'the settings hide the attribution lines');
         // A prompt naming a coding agent the laptop does not have fails with the reason, and no turn runs.
         const turnsBeforePrompts = (await turns()).length;
@@ -873,11 +895,93 @@ describe('agent client (R-027)', () => {
         const refusedPrompt = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'failed').map((m) => m.content?.text);
         assert.deepEqual(refusedPrompt, ['I could not answer. I have no Hermes on this laptop. Pick another coding agent.']);
         assert.equal((await turns()).length, turnsBeforePrompts, 'no Claude ran for it');
-        // One naming Codex is answered by it, in a scratch copy: it takes no cards, but answers only is the floor.
+        // One naming Codex is answered by it, in a scratch copy.
         await tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Codex' }, 'What does sum.js do?');
         const codexAnswer = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'answer').map((m) => m.content?.text);
         assert.deepEqual(codexAnswer.slice(-1), ['It adds.']);
         assert.equal((await turns()).length, turnsBeforePrompts, 'no Claude ran for it either');
+        // The owner links each harness (docs/decisions/harness-linking.md): only linked ones run, and a prompt that names none runs on the first she linked.
+        const lkLink = (...linked: string[]) => setup(alice, direct, { ...chosen, linked, off: [] });
+        const lkFailures = async () => (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'failed').map((m) => m.content?.text);
+        const lkHarnessOf = async (root: string) => (JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'conversations.json'), 'utf8')) as Array<{ root: string; harness?: string }>).find((c) => c.root === root)?.harness;
+        const lkCodexPrompt = () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Codex' }, 'What does sum.js do?');
+        const lkPlain = () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id }, 'What does sum.js do?');
+        const lkNotLinked = (name: string) => [`I could not answer. You have not linked ${name}, so I start nothing with it. Link it in my settings under Coding agents.`];
+        const [lkOnlyClaude] = await lkLink('Claude Code');
+        assert.deepEqual(lkOnlyClaude!.harnesses!.map((h) => [h.name, harnessRow(h)]), [['Claude Code', 'linked'], ['Codex', 'found']]);
+        assert.equal(plugin.client!.protocol, 15, 'Claude Code linked, and gh signed in: cards, and it asks');
+        await lkCodexPrompt();
+        assert.deepEqual(await lkFailures(), lkNotLinked('Codex'));
+        assert.equal(await lkHarnessOf(await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, lkPlain)), 'Claude Code', 'Claude Code still runs');
+        await lkLink('Codex', 'Claude Code');
+        assert.equal(plugin.client!.protocol, 15);
+        assert.equal(await lkHarnessOf(await lkPlain()), 'Codex', 'a prompt that names none runs on the first she linked');
+        const [lkOnlyCodex] = await lkLink('Codex');
+        assert.equal(plugin.client!.protocol, 15, 'Codex takes cards now, and it asks');
+        assert.deepEqual(lkOnlyCodex!.harnesses!.map((h) => harnessRow(h)), ['found', 'linked']);
+        await lkLink();
+        assert.equal(plugin.client!.protocol, 5, 'with none linked the agent still answers settings');
+        assert.match((await plugin.status()).text, /Every card fails at once: You have linked no coding agent[\s\S]*Linked: none\./);
+        await lkPlain();
+        assert.deepEqual(await lkFailures(), ['I could not answer. You have linked no coding agent on this laptop, so I start nothing. Link one in my settings under Coding agents.']);
+
+        // `webchat-agent link`: the laptop asks in the owner's direct chat, and only her signed word links it, once (D-089, K-47).
+        const lkAsks = async () => (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.ask).map((m) => m.content!);
+        const lkAnswer = async (from: AgentClient, chat: number, step: 'approve' | 'decline', to: string, extra: object = {}) => {
+          await from.send(chat, { text: 'Answer', ask: { kind: 'link', step, to, sentAt: Date.now(), ...extra } as MessageContent['ask'] });
+          const lkHeard = await plugin.client!.sync();
+          await Promise.all(lkHeard.map((m) => plugin.handle(m)));
+          return lkHeard;
+        };
+        const lkLinked = async () => (JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'setup.json'), 'utf8')) as { choice: SetupChoice }).choice.linked;
+        // What the laptop remembers it asked, by the request message's client id.
+        const lkPending = () => (plugin as unknown as { setup: { asks?: Record<string, { what: string; at: number }> } }).setup.asks ?? {};
+        await lkLink('Claude Code');
+        const lkDir = path.join(dataDir, 'asks');
+        const lkFile = (name: string, body: object) => fs.writeFile(path.join(lkDir, name), JSON.stringify(body));
+        assert.match(await plugin.requestLink('Codex'), /Approve it in WebChat/);
+        // A file naming no supported harness, or filed more than 10 minutes ago, sends nothing.
+        await lkFile('hermes.json', { kind: 'link', harness: 'Hermes', at: Date.now() });
+        await lkFile('old.json', { kind: 'link', harness: 'Codex', at: Date.now() - REQUEST_TTL_MS - 1000 });
+        await plugin.sendAsks();
+        assert.deepEqual((await lkAsks()).map((c) => c.ask), [{ kind: 'link', step: 'request', harness: 'Codex' }]);
+        assert.equal((await fs.readdir(lkDir)).length, 0, 'every file was taken');
+        // One request waits for each harness.
+        await plugin.requestLink('Codex');
+        await plugin.sendAsks();
+        assert.deepEqual(await lkAsks(), []);
+        const [lkAsked] = Object.keys(lkPending());
+        // Not the owner's word: Carol's, one outside the direct chat, a request nobody made, and one signed too long ago.
+        await lkAnswer(carol, general, 'approve', lkAsked!);
+        await lkAnswer(alice, general, 'approve', lkAsked!);
+        await lkAnswer(alice, direct, 'approve', 'nobody');
+        await lkAnswer(alice, direct, 'approve', lkAsked!, { sentAt: Date.now() - REQUEST_TTL_MS - 1000 });
+        assert.deepEqual(await lkLinked(), ['Claude Code']);
+        // Her approve links the harness the laptop recorded, whatever name the message adds, and says so.
+        const lkHeard = await lkAnswer(alice, direct, 'approve', lkAsked!, { harness: 'Claude Code' });
+        assert.deepEqual(await lkLinked(), ['Claude Code', 'Codex']);
+        assert.equal(plugin.client!.protocol, 15);
+        assert.ok((await lkAsks()).some((c) => c.ask?.step === 'done'), 'the laptop says it linked it');
+        // The same message again, or another that names the same request, changes nothing.
+        await lkLink('Claude Code');
+        await plugin.handle(lkHeard.find((m) => m.content?.ask)!);
+        await lkAnswer(alice, direct, 'approve', lkAsked!);
+        assert.deepEqual(await lkLinked(), ['Claude Code']);
+        // A decline links nothing; a request left past 10 minutes fails with a note.
+        await plugin.requestLink('Codex');
+        await plugin.sendAsks();
+        const lkDeclined = Object.keys(lkPending()).find((id) => id !== lkAsked)!;
+        await lkAnswer(alice, direct, 'decline', lkDeclined);
+        assert.deepEqual(await lkLinked(), ['Claude Code']);
+        await plugin.requestLink('Codex');
+        await plugin.sendAsks();
+        const lkLapsed = Object.keys(lkPending()).find((id) => id !== lkAsked && id !== lkDeclined)!;
+        lkPending()[lkLapsed]!.at -= REQUEST_TTL_MS + 1000;
+        await lkAsks();
+        await lkAnswer(alice, direct, 'approve', lkLapsed);
+        assert.deepEqual(await lkLinked(), ['Claude Code']);
+        assert.match((await lkAsks()).find((c) => c.ask?.step === 'failed')?.text ?? '', /older than 10 minutes/);
+        await lkLink('Claude Code', 'Codex');
         // The board Alice's page picked goes in the brief, and no other (D-104).
         const prompted = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id }, 'What does sum.js do?'));
         const kept = JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'conversations.json'), 'utf8')) as Array<{ root: string; harness?: string }>;
@@ -889,7 +993,7 @@ describe('agent client (R-027)', () => {
         const scratch = chat!.cwd;
         assert.ok(scratch.startsWith(path.join(await fs.realpath(os.tmpdir()), 'webchat-scratch')), 'the prompt runs in a scratch repository, not in the project');
         assert.equal((await git(scratch, 'remote')).stdout.trim(), '', 'the scratch copy has no remote');
-        assert.ok(chat!.args.includes('--session-id'), 'the first turn starts a session');
+        assert.ok(!chat!.resumed, 'the first turn starts a session');
         assert.ok(chat!.input.includes('What does sum.js do?') && chat!.input.includes('scratch copy'), 'the brief holds the prompt');
         assert.ok(chat!.input.includes('opens a draft pull request'), 'the brief says a card run, unlike a question, ends in a draft');
         assert.deepEqual(await answers(), ['It adds.']);
@@ -923,7 +1027,7 @@ describe('agent client (R-027)', () => {
         const [again] = (await turns()).slice(-1);
         assert.ok(again!.input.includes('Why: money.') && !again!.input.includes('### K-7'), 'the reply holds the decision that changed, and no card that did not');
         assert.ok(again!.input.includes('#6: Add a test'), 'the reply holds the open pull requests');
-        assert.equal(again!.args[again!.args.indexOf('--resume') + 1], chat!.args[chat!.args.indexOf('--session-id') + 1], 'the reply resumes the session');
+        assert.equal(again!.session, chat!.session, 'the reply resumes the session');
         assert.equal(again!.cwd, scratch);
         assert.ok(again!.input.includes('Your owner replies:') && again!.input.includes('And sum.test.js?'));
         assert.ok(again!.input.includes(`main moved from ${was.slice(0, 7)} to ${now.slice(0, 7)}`), 'the reply says what moved');
@@ -986,11 +1090,12 @@ describe('agent client (R-027)', () => {
         assert.equal((await reportsOn(old)).at(-1), 'I stopped watching acme/app#2: its request is not in your direct chat with me, so the pane cannot show you its reviews.');
         assert.ok(!(await reportsOn(current)).some((text) => text?.startsWith('I stopped')), 'the other draft says nothing');
 
-        // A second window on the laptop waits until this one closes (D-094).
-        const second = new Plugin({ ...options, code: '', dataDir, projectDir: project });
-        void second.start();
+        // A second process on the laptop waits until this one closes (D-094).
+        const second = new Plugin({ ...options, code: '', dataDir });
+        // Caught: after 60 seconds it takes the lock again, in a folder the suite has removed by then.
+        void second.start().catch(() => undefined);
         await waitFor('the second window waits', () => second.problem.startsWith('Another'));
-        assert.match(second.problem, /Another Claude Code window on this laptop serves your agent/);
+        assert.match(second.problem, /Another process on this laptop serves your agent/);
 
         // Alice and the agent have sent many messages in a few seconds by now (D-091).
         const unthrottle = () => instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
@@ -1004,7 +1109,7 @@ describe('agent client (R-027)', () => {
           'INSERT INTO webchat.project_repos (project_id, repo, repo_id, installation_id, conversation_id, added_by, added_at) VALUES ($1, $2, 7, 8, $3, $4, $5)',
           [app.project.id, 'acme/web', general, alice.id, Date.now()],
         );
-        await fs.writeFile(ghState, JSON.stringify({ ...JSON.parse(await fs.readFile(ghState, 'utf8')), clones: { 'acme/web': webOrigin } }));
+        await fs.appendFile(gitConfig, `[url "${webOrigin}"]\n\tinsteadOf = https://github.com/acme/web.git\n`);
         const inDirect = async (repo: string) => (await alice.send(direct, { text: 'Run K-7 with Claude Code', run: { ...request, repo, sentAt: Date.now() } })).id;
         const offered = async (id: number, repo: string) => {
           // Each look reads only what came since, so a seen offer stays seen.
@@ -1031,7 +1136,8 @@ describe('agent client (R-027)', () => {
         await (await checkIn()).handled;
         await webWaits;
         assert.deepEqual(await reportsOn(webRun), [`Cloning acme/web into ${cloneDir}. This can take a while.`, `I finished K-7 on ${branch} (acme/web#4). Sums add up now.`]);
-        assert.deepEqual(JSON.parse(await fs.readFile(ghState, 'utf8')).cloned, ['acme/web', cloneDir, '--', '--filter=blob:none']);
+        assert.equal((await git(cloneDir, 'config', '--get', 'remote.origin.url')).stdout.trim(), 'https://github.com/acme/web.git', 'the clone pushes where GitHub has the repository');
+        assert.equal((await git(cloneDir, 'rev-parse', 'HEAD')).stdout.trim(), (await git(cloneDir, 'rev-parse', 'origin/main')).stdout.trim(), 'it is on the default branch');
         assert.ok((await turns()).at(-1)!.cwd.startsWith(path.join(await fs.realpath(cloneDir), '.claude', 'worktrees')), 'the run went on in the clone');
         assert.deepEqual(plugin.client!.repos, ['acme/app', 'acme/web']);
 
@@ -1049,7 +1155,7 @@ describe('agent client (R-027)', () => {
         assert.deepEqual(await withEnv({ FAKE_CLAUDE_COMMIT: '0' }, askWeb), ['I am on K-7: Sums are off by one', 'I could not run K-7: I left no new commits.']);
         assert.equal((await pullsNow()).at(-1)!.closed, 'The agent stopped: I left no new commits. The branch stays.');
         // Disconnecting forgets the folder, never its files.
-        assert.match(await new Plugin({ ...options, code: '', dataDir, projectDir: cloneDir }).call('disconnect'), /Disconnected acme\/web/);
+        await disconnect(dataDir, 'acme/web');
         await plugin.scan();
         assert.deepEqual(plugin.client!.repos, ['acme/app']);
         assert.ok(existsSync(path.join(cloneDir, 'README.md')));
@@ -1058,13 +1164,13 @@ describe('agent client (R-027)', () => {
           const id = (await ask(alice, { repo: 'acme/web' })).id;
           const handled = (await checkIn()).handled;
           await offered(id, 'acme/web');
-          await new Plugin({ ...options, code: '', dataDir, projectDir: cloneDir }).call('connect');
+          await connect(dataDir, 'acme/web', cloneDir);
           await plugin.scan();
           await handled;
           return reportsOn(id);
         };
         assert.deepEqual(await withEnv({ FAKE_CLAUDE_ANSWER: failed }, connectWaits), ['I could not run K-7: Not today.'], 'the run went on in the connected folder');
-        await new Plugin({ ...options, code: '', dataDir, projectDir: cloneDir }).call('disconnect');
+        await disconnect(dataDir, 'acme/web');
         await plugin.scan();
         // Alice forgets the app's folder from the pane, and Carol cannot: the mark goes, the files stay (R-038).
         const forget = (from: AgentClient, chat: number) => from.send(chat, { text: 'Forget the folder of acme/app', forget: { repo: 'acme/app', sentAt: Date.now() } });
@@ -1081,7 +1187,7 @@ describe('agent client (R-027)', () => {
         assert.ok(existsSync(path.join(project, 'README.md')));
 
         // Alice links the board to the repository, whose docs then copy the board (R-040, D-117).
-        await new Plugin({ ...options, code: '', dataDir, projectDir: project }).call('connect');
+        await connect(dataDir, 'acme/app', project);
         await plugin.scan();
         await unthrottle();
         await git(project, 'config', 'user.name', 'Alice');
@@ -1185,11 +1291,6 @@ describe('agent client (R-027)', () => {
         const turnsBefore = (await turns()).length;
         assert.deepEqual((await runK7()).said.map((r) => r.text), ['I could not run K-7: acme/app#8 claims K-7 already. Pick another card, or ask whoever opened it.']);
         assert.equal((await turns()).length, turnsBefore, 'no Claude ran for it');
-        // So does a request naming a coding agent that takes no cards here, with the reason.
-        const codex = (await ask(alice, { hash: await briefNow(), harness: 'Codex' })).id;
-        await (await checkIn()).handled;
-        assert.deepEqual(await reportsOn(codex), [`I could not run K-7: ${CODEX_GAP}`]);
-        assert.equal((await turns()).length, turnsBefore, 'no Claude ran for it either');
 
         // A card the code already does ends at its check, pushes nothing, and offers its new status
         // as a change Alice adds (D-104).
@@ -1241,7 +1342,7 @@ describe('agent client (R-027)', () => {
         await alice.send(general, { text: 'Go on with D-1', run: { kind: 'fix', request: paused.id, note: 'I added the decision as D-1. Go on with the work.', sentAt: Date.now() } });
         await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify(finished) }, async () => (await checkIn()).handled);
         const resumed = (await turns()).at(-1)!;
-        assert.equal(resumed.args[resumed.args.indexOf('--resume') + 1], pausedCheck!.args[pausedCheck!.args.indexOf('--session-id') + 1], 'it resumes the run');
+        assert.equal(resumed.session, pausedCheck!.session, 'it resumes the run');
         assert.ok(resumed.input.includes('I added the decision as D-1') && resumed.input.includes('Your owner added the decision you waited for'), 'the round has the number');
         const goneOn = await reports(paused.id);
         assert.deepEqual(goneOn.map((r) => r.text), [
@@ -1318,7 +1419,7 @@ describe('agent client (R-027)', () => {
         assert.equal(stoppedPull.closed, undefined, 'the draft stays open');
         await fs.access(stoppedWork!.cwd);
         const stoppedRecord = (JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'pulls.json'), 'utf8')) as Array<{ taken: { message: number }; session: string; unfinished?: { paused?: number; stopped?: true } }>).find((w) => w.taken.message === stopped.id)!;
-        assert.equal(stoppedRecord.session, stoppedCheck!.args[stoppedCheck!.args.indexOf('--session-id') + 1], 'the session is kept');
+        assert.equal(stoppedRecord.session, stoppedCheck!.session, 'the session is kept');
         assert.ok(stoppedRecord.unfinished?.paused && stoppedRecord.unfinished.stopped, 'the run waits as paused');
         await plugin.pollPulls();
         assert.deepEqual(await reports(stopped.id), [], 'nothing ends a paused run');
@@ -1341,7 +1442,7 @@ describe('agent client (R-027)', () => {
         await (await checkIn()).handled;
         const [redirectedCheck] = redirected.turns;
         const steered = (await turns()).at(-1)!;
-        assert.equal(steered.args[steered.args.indexOf('--resume') + 1], redirectedCheck!.args[redirectedCheck!.args.indexOf('--session-id') + 1], 'the same session goes on');
+        assert.equal(steered.session, redirectedCheck!.session, 'the same session goes on');
         assert.ok(steered.input.includes(`OWNER'S WORDS START ============\n${words}\n============`), 'the words are fenced');
         assert.ok(steered.input.includes('read `git status` first'), 'it looks at the worktree first');
         const redirectedPull = (await pullsNow()).at(-1)!;
@@ -1376,34 +1477,125 @@ describe('agent client (R-027)', () => {
         assert.deepEqual(await reportsOn(planned.id), ['I am back on K-7: you said go', `I finished K-7 on ${planPull.head} (acme/app#${pullsBeforePlan + 1}). Sums add up now.`]);
         assert.deepEqual(await log(planPull.head), ['Change sum.test.js', 'chore: Claim K-7']);
         const [, planWork] = (await turns()).slice(turnsBeforePlan);
-        assert.equal(planWork!.args[planWork!.args.indexOf('--resume') + 1], planCheck!.args[planCheck!.args.indexOf('--session-id') + 1], 'the work resumes the check');
+        assert.equal(planWork!.session, planCheck!.session, 'the work resumes the check');
         assert.ok(planWork!.input.includes('says go') && planWork!.input.includes(`acme/app#${pullsBeforePlan + 1} claims it`), 'the brief carries the go');
+        // A card run asks its owner before an action Claude Code would ask about, through its permission
+        // prompt tool, which the fake calls on a loopback endpoint of the plugin; the owner's second
+        // device answers (docs/decisions/harness-approvals.md). The plan gate is off again for these.
+        await setup(alice, direct, { ...chosen, noPlan: true });
+        await unthrottle();
+        await fs.writeFile(ghState, JSON.stringify({ ...JSON.parse(await fs.readFile(ghState, 'utf8')), open: [] }));
+        await fs.copyFile(path.join(home, 'alice.json'), path.join(home, 'alice-phone2.json'));
+        const phone = await AgentClient.load(path.join(home, 'alice-phone2.json'));
+        const askedLog = path.join(home, 'asked.log');
+        const restoreAsk = setEnv({ FAKE_CLAUDE_ASK: JSON.stringify([{ tool_name: 'Write', input: { file_path: '$CWD/.claude/settings.json', content: '{}' } }]), FAKE_CLAUDE_ASKED: askedLog });
+        try {
+          const decisions = async () => (await fs.readFile(askedLog, 'utf8').catch(() => '')).split('\n').filter(Boolean).map((l) => JSON.parse(l) as { decision: { behavior?: string; message?: string; updatedInput?: object; status?: number } });
+          const heardPermits: OpenedMessage[] = [];
+          const nextQuestion = async (n: number) => {
+            await waitFor('the question reaches the owner', async () => {
+              heardPermits.push(...(await phone.sync()).filter((m) => m.senderId === agent.id && m.content?.permit));
+              return heardPermits.filter((m) => m.content!.permit!.kind === 'question').length > n;
+            });
+            return heardPermits.filter((m) => m.content!.permit!.kind === 'question')[n]!;
+          };
+          const reply = async (question: OpenedMessage, decision: 'once' | 'run' | 'deny') => {
+            const permit = question.content!.permit as Extract<PermitDTO, { kind: 'question' }>;
+            await phone.send(direct, { text: 'Answer', permit: { kind: 'answer', to: question.clientId!, decision, seen: await permitHash(permit), sentAt: Date.now() } });
+            for (const m of await plugin.client!.sync()) await plugin.handle(m);
+          };
+          const startAsking = async () => {
+            const id = (await ask(alice, { hash: await briefNow(), asks: true })).id;
+            return { id, handled: (await checkIn()).handled };
+          };
+
+          // Allow, from the second device: the run goes on and finishes. The question names the file Claude Code would write.
+          const turnsBeforeAsk = (await turns()).length;
+          const allowed = await startAsking();
+          const first = await nextQuestion(0);
+          const permit = first.content!.permit as Extract<PermitDTO, { kind: 'question' }>;
+          assert.deepEqual([permit.what, permit.request, permit.detail.startsWith('Write ') && permit.detail.endsWith('.claude/settings.json')], ['edit', allowed.id, true]);
+          assert.deepEqual(await decisions(), [], 'Claude Code waits for the answer');
+          await reply(first, 'once');
+          await allowed.handled;
+          const allowedPull = (await pullsNow()).at(-1)!;
+          assert.deepEqual((await reportsOn(allowed.id)).at(-1), `I finished K-7 on ${allowedPull.head} (acme/app#${(await pullsNow()).length}). Sums add up now.`);
+          const [answered] = await decisions();
+          assert.deepEqual([answered!.decision.behavior, typeof answered!.decision.updatedInput], ['allow', 'object'], 'the tool answers allow, with the input');
+          // One process took both turns, started with the prompt tool and no refusal of what it asks.
+          const [check, work] = (await turns()).slice(turnsBeforeAsk);
+          assert.equal(check!.pid, work!.pid, 'one process for the session');
+          for (const flag of ['--mcp-config', '--permission-prompt-tool', '--disallowedTools']) assert.ok(check!.args.includes(flag), flag);
+          assert.ok(!check!.args.includes('--permission-prompts'), 'it no longer refuses what it asks');
+          const approveFile = check!.args[check!.args.indexOf('--mcp-config') + 1]!;
+          assert.equal((await fs.stat(approveFile)).mode & 0o777, 0o600, 'the token file is for the owner only');
+          assert.ok(approveFile.startsWith(path.join(dataDir, 'laptop')), 'it is in the plugin\'s folder, which the shell cannot read');
+          // Only the plugin's own endpoint is called, and only with the token.
+          const server = check!.mcp!.mcpServers.webchat;
+          const post = (headers: Record<string, string>) => fetch(server.url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) });
+          assert.equal((await post({})).status, 401, 'no token');
+          assert.equal((await post({ authorization: 'Bearer wrong' })).status, 401, 'a wrong token');
+          assert.equal((await post({ authorization: server.headers.Authorization, origin: 'https://evil.example' })).status, 401, 'a page in a browser');
+          const tools = (await (await post({ authorization: server.headers.Authorization })).json()) as { result: { tools: Array<{ name: string }> } };
+          assert.deepEqual(tools.result.tools.map((t) => t.name), ['approve']);
+
+          // Deny stops that action: the fake writes nothing and commits nothing, so the run has no work to push.
+          await unthrottle();
+          const denied = await startAsking();
+          await reply(await nextQuestion(1), 'deny');
+          await denied.handled;
+          assert.deepEqual((await decisions()).at(-1)!.decision, { behavior: 'deny', message: 'Your owner said no. Do not try it again: do something else, or stop.' });
+          assert.equal((await reportsOn(denied.id)).at(-1), 'I could not run K-7: I left no new commits.');
+
+          // A question left 7 days ends the run: it fails with the reason, closes its draft, and keeps the branch.
+          await unthrottle();
+          const forgotten = await startAsking();
+          await nextQuestion(2);
+          const draftsBefore = (await pullsNow()).length;
+          await plugin.pollPulls(Date.now() + 8 * DAY);
+          await forgotten.handled;
+          assert.equal((await reportsOn(forgotten.id)).at(-1), 'I could not run K-7: No answer came within 7 days.');
+          assert.equal((await pullsNow()).at(-1)!.closed, 'The agent stopped: No answer came within 7 days. The branch stays.');
+          assert.equal((await pullsNow()).length, draftsBefore, 'the draft it opened is the one closed');
+          await waitFor('the owner is told it expired', async () => {
+            heardPermits.push(...(await phone.sync()).filter((m) => m.senderId === agent.id && m.content?.permit));
+            return heardPermits.some((m) => m.content!.permit!.kind === 'settled' && m.content!.permit!.outcome === 'expired');
+          });
+          // A request from a page that sets no flag asks nothing, and the process refuses what it would ask, as before.
+          await unthrottle();
+          const before = (await turns()).length;
+          const refused = (await ask(alice, { hash: await briefNow() })).id;
+          await (await checkIn()).handled;
+          const [plain] = (await turns()).slice(before);
+          assert.ok(plain!.args.includes('--permission-prompts') && !plain!.args.includes('--mcp-config'), 'no question can be asked, so it refuses');
+          assert.equal((await reportsOn(refused)).length > 0, true);
+        } finally {
+          restoreAsk();
+        }
+        // Ending the sessions ends the processes, and the token files go with them.
+        await Promise.all(options.harnesses.map((h) => h.end?.()));
+        assert.deepEqual(await fs.readdir(path.join(dataDir, 'laptop', 'approve')), []);
       } finally {
         restore();
       }
     },
   );
 
-  test('sleeps on its owner\'s word in every window until a wake, and a background job never serves (K-66, D-113)', { timeout: 30_000 }, async () => {
+  test('sleeps on its owner\'s word, whichever process serves, until a wake (K-66, D-113)', { timeout: 30_000 }, async () => {
     const dataDir = path.join(home, 'sleepy');
-    const projectDir = path.join(home, 'sleepy-folder');
-    await fs.mkdir(projectDir);
-    const options = { claude: '', guard: 'true', cloneRoot: path.join(home, 'WebChat'), dataDir, projectDir };
+    const options = { harnesses: [claudeHarness('', dataDir)], cloneRoot: path.join(home, 'WebChat'), dataDir };
     const code = newPairingCode();
     const first = new Plugin({ ...options, code: `${baseUrl}#${code}` });
     const second = new Plugin({ ...options, code: '' });
-    // Caught, as agent/mcp.ts does: a window whose check-in outlasts the test starts again after
+    // Caught, as agent/index.ts does: a process whose check-in outlasts the test starts again after
     // the file's server closed and its folder went, and pairs again with nobody to answer.
     const serve = (window: Plugin) => void window.serve().catch(() => undefined);
     serve(first);
     try {
       const agent = await approve(alice, code, 'Sleepy');
       await waitFor('the first window serves', () => first.problem === '');
-      const job = new Plugin({ ...options, code: '', job: true });
-      assert.equal(await job.start(), false);
-      assert.match(await job.call('status'), /background job, so it does not serve/);
       serve(second);
-      await waitFor('the second window waits', () => /Another Claude Code window/.test(second.problem));
+      await waitFor('the second window waits', () => /Another process on this laptop/.test(second.problem));
 
       // Nothing runs, so the agent sleeps at once on Alice's word in the pane, and says so.
       await alice.sync();
@@ -1413,22 +1605,279 @@ describe('agent client (R-027)', () => {
       for (const message of await first.client!.sync()) await first.handle(message);
       await waitFor('the first window sleeps', () => /asleep/.test(first.problem));
       const said = (await alice.sync()).filter((m) => m.senderId === agent.id).map((m) => m.content?.text);
-      assert.deepEqual(said, ['I go to sleep now. To wake me, type /webchat:wake in Claude Code on your laptop.']);
+      assert.deepEqual(said, ['I go to sleep now. To wake me, run webchat-agent wake in a terminal on your laptop.']);
       // The watch is free, and no window takes it while the agent sleeps.
       assert.equal(existsSync(path.join(dataDir, 'watch.lock')), false);
-      assert.match(await second.call('status'), /Your agent is asleep/);
+      assert.match((await second.status()).text, /Your agent is asleep/);
 
       // A wake in the waiting window serves there at once, and a sleep there stops it again.
-      assert.match(await second.call('wake'), /waking up/);
+      assert.match(await second.wake(), /waking up/);
       await waitFor('the second window serves', () => second.problem === '');
-      assert.match(await second.call('sleep'), /goes to sleep within 15 seconds/);
+      assert.match(await second.goToSleep(), /goes to sleep within 15 seconds/);
       await waitFor('the second window sleeps', () => /asleep/.test(second.problem));
       assert.equal(existsSync(path.join(dataDir, 'watch.lock')), false);
     } finally {
       // A window that still serves would keep checking in after the test.
-      await first.call('sleep');
-      await second.call('sleep');
+      await first.goToSleep();
+      await second.goToSleep();
     }
+  });
+
+  test('shows offline while no runner is connected, serves once one says hello, and stops when it goes (docs/decisions/locked-room.md)', { timeout: 30_000 }, async () => {
+    const dataDir = path.join(home, 'roomy');
+    const room = new Room({ version: '1' });
+    const file = path.join(home, 'roomy.sock');
+    const code = newPairingCode();
+    const plugin = new Plugin({ bench: room.bench, runner: room, cloneRoot: path.join(home, 'WebChat'), dataDir, code: `${baseUrl}#${code}` });
+    await room.listen(file, plugin);
+    const bench = new LocalBench([claudeHarness('', dataDir)], undefined, dataDir);
+    const runners: Array<{ close: () => void }> = [];
+    void plugin.serve().catch(() => undefined);
+    try {
+      await waitFor('it shows offline', () => /not started the part of this agent/.test(plugin.problem));
+      assert.equal(plugin.client, null, 'it checked in nowhere');
+      runners.push(await connectRunner({ file, bench, version: '1' }));
+      await approve(alice, code, 'Roomy');
+      await waitFor('it serves', () => plugin.problem === '');
+      // `status` answers fields, which doctor and setup read (docs/decisions/locked-room.md).
+      const said = await callRoom<RoomStatus>(file, 'status', {}, '1');
+      assert.deepEqual([said.runner, said.paired, said.asleep, said.linked, said.folders], [true, true, false, [], []]);
+      runners[0]!.close();
+      await waitFor('it is offline again', () => /not started the part of this agent/.test(plugin.problem));
+      runners.push(await connectRunner({ file, bench, version: '1' }));
+      await waitFor('it serves again', () => plugin.problem === '');
+    } finally {
+      runners.forEach((r) => r.close());
+      await plugin.goToSleep();
+      room.close();
+    }
+  });
+
+  test('runs a card with Codex through the socket to a draft: the check, the owner’s go, the runner commits what Codex leaves, and the keyholder pushes the bundle (docs/decisions/locked-room.md)', { timeout: 60_000 }, async () => {
+    const origin = path.join(home, 'codex-app.git');
+    const project = path.join(home, 'codex-app');
+    await sh('git', ['init', '-q', '--bare', '-b', 'main', origin]);
+    await sh('git', ['clone', '-q', origin, project]);
+    await fs.writeFile(path.join(project, 'README.md'), '# App\n');
+    await git(project, 'add', 'README.md');
+    await git(project, 'commit', '-q', '-m', 'Start');
+    await git(project, 'push', '-q', '-u', 'origin', 'main');
+    await git(project, 'remote', 'set-url', 'origin', 'https://github.com/acme/app.git');
+    const bin = path.join(home, 'codex-bin');
+    await fs.mkdir(bin);
+    await fs.writeFile(path.join(bin, 'gh'), FAKE_GH, { mode: 0o755 });
+    await fs.writeFile(path.join(bin, 'codex'), FAKE_CODEX, { mode: 0o755 });
+    const ghState = path.join(home, 'codex-gh.json');
+    await fs.writeFile(ghState, JSON.stringify({ origin, pulls: [] }));
+    // The keyholder's own clone fetches and pushes GitHub's address, which the test points at its bare repository.
+    const gitConfig = path.join(home, 'codex-gitconfig');
+    await fs.writeFile(gitConfig, `[user]\n\tname = Alice\n\temail = alice@example.com\n[url "${origin}"]\n\tinsteadOf = https://github.com/acme/app.git\n`);
+    const restore = setEnv({
+      GIT_CONFIG_GLOBAL: gitConfig,
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      FAKE_GH_STATE: ghState,
+      FAKE_CODEX_LOG: path.join(home, 'codex-turns.log'),
+      CODEX_HOME: path.join(home, 'codex-home'),
+      GH_CONFIG_DIR: path.join(home, 'codex-gh'),
+    });
+    // Codex is the only harness linked, and it declares no knob to skip the plan gate.
+    const dataDir = path.join(home, 'codex-keyholder');
+    await fs.mkdir(path.join(dataDir, 'laptop'), { recursive: true });
+    await fs.writeFile(path.join(dataDir, 'laptop', 'setup.json'), JSON.stringify({ choice: { claudeMd: false, skills: [], noAttribution: false, linked: ['Codex'] } }));
+    const room = new Room({ version: '1' });
+    const file = path.join(home, 'codex-room.sock');
+    const code = newPairingCode();
+    const plugin = new Plugin({ bench: room.bench, runner: room, cloneRoot: path.join(home, 'WebChat'), dataDir, code: `${baseUrl}#${code}` });
+    await room.listen(file, plugin);
+    const runnerDir = path.join(home, 'codex-runner');
+    const harness = codexHarness(path.join(bin, 'codex'), runnerDir);
+    await fs.mkdir(runnerDir);
+    let runner: { close: () => void } | undefined;
+    // The tests before have used up this address's pairings and sends.
+    await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'pair:%' OR key LIKE 'send:%'");
+    try {
+      const starting = plugin.start();
+      runner = await connectRunner({ file, bench: new LocalBench([harness], undefined, runnerDir), version: '1' });
+      const agent = await approve(alice, code, 'Codexer');
+      assert.equal(await starting, true);
+      await connect(dataDir, 'acme/app', project);
+      await plugin.scan();
+      await plugin.client!.sync();
+
+      await alice.sync();
+      const key = await newChatKey(alice, [alice.id, agent.id]);
+      const app = await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'Codex app', memberIds: [agent.id], key });
+      const general = app.channel.id;
+      await alice.sync();
+      const board = { id: newKeyId(), conversationId: general };
+      const section = newKeyId().slice(0, 11);
+      const card = '### K-7: Sums are off by one\n\nStatus: Open.';
+      await alice.request('POST', '/docs', {
+        ...board,
+        revisions: [
+          { section: 'title', envelope: await alice.sealDoc(board, 'title', { text: 'Roadmap', board: 'roadmap' }) },
+          { section, envelope: await alice.sealDoc(board, section, { text: card, pos: 1 }) },
+        ],
+      });
+      const hash = await textHash(briefText(card, []));
+      const checkIn = async () => Promise.all((await plugin.client!.sync()).map((m) => plugin.handle(m)));
+      // Each call reads what came since the last.
+      const reports = async (request: number) =>
+        (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.run?.kind !== 'request' && m.content?.run?.request === request).map((m) => [m.content!.run!.kind, m.content!.text]);
+      const branches = async () => (await sh('git', ['--git-dir', origin, 'branch', '--format=%(refname:short)'])).stdout.trim();
+
+      // The check turn holds, and the plan waits for the owner's go: nothing is pushed or opened.
+      const plan = 'Fix the off-by-one in sum.js.';
+      const check = JSON.stringify({ outcome: 'holds', note: '', checked: 'Read K-7 and sum.js on main.', plan });
+      const request = await withEnv({ FAKE_CODEX_CHECK: check }, async () => {
+        const id = (await alice.send(general, { text: 'Run K-7 with Codex', run: { kind: 'request', card: 'K-7', title: 'Sums are off by one', docId: board.id, section, runtime: agent.id, sentAt: Date.now(), repo: 'acme/app', hash, harness: 'Codex' } })).id;
+        await checkIn();
+        return id;
+      });
+      assert.deepEqual(await reports(request), [['claimed', 'I am on K-7: Sums are off by one'], ['planned', `K-7 holds. My plan:\n\n${plan}\n\nSay go, or tell me what to change.`]]);
+      assert.deepEqual([await branches(), JSON.parse(await fs.readFile(ghState, 'utf8')).pulls], ['main', []]);
+
+      // The go claims the card with a draft, and Codex's work turn leaves sum.js uncommitted, since its sandbox cannot commit.
+      const done = JSON.stringify({ outcome: 'done', note: 'Sums add up now.', title: 'Fix sums', body: 'Sums were off by one.' });
+      await withEnv({ FAKE_CODEX_FILE: 'sum.js', FAKE_CODEX_ANSWER: done }, async () => {
+        await alice.send(general, { text: 'Go', run: { kind: 'fix', request, sentAt: Date.now() } });
+        await checkIn();
+      });
+      const branch = 'agent/k-7-sums-are-off-by-one';
+      assert.deepEqual(await reports(request), [['fixing', 'I am back on K-7: you said go'], ['done', `I finished K-7 on ${branch} (acme/app#1). Sums add up now.`]]);
+      // The runner committed what Codex left, titled with the answer's title, and the keyholder pushed it from a bundle.
+      assert.equal(await branches(), `${branch}\nmain`);
+      assert.deepEqual((await sh('git', ['--git-dir', origin, 'log', '--format=%s', `main..${branch}`])).stdout.trim().split('\n'), ['Fix sums', 'chore: Claim K-7']);
+      assert.equal((await sh('git', ['--git-dir', origin, 'show', `${branch}:sum.js`])).stdout, 'done\n');
+      assert.deepEqual(JSON.parse(await fs.readFile(ghState, 'utf8')).pulls, [{ head: branch, base: 'main', draft: true, title: 'K-7: Sums are off by one', body: `Claims K-7. Checked ${new Date().toISOString().slice(0, 10)}: Read K-7 and sum.js on main.`, edited: { title: 'Fix sums', body: 'Sums were off by one.' } }]);
+    } finally {
+      runner?.close();
+      await harness.end?.();
+      room.close();
+      restore();
+    }
+  });
+
+  test('connects a folder only on its owner\'s signed approval, within 10 minutes and once (docs/decisions/connect-approval.md)', { timeout: 60_000 }, async () => {
+    const dataDir = path.join(home, 'connector', 'laptop');
+    const folder = path.join(home, 'connector-app');
+    await sh('git', ['init', '-q', folder]);
+    const setOrigin = (repo: string) => git(folder, 'remote', 'set-url', 'origin', `https://github.com/${repo}.git`);
+    await git(folder, 'remote', 'add', 'origin', 'https://github.com/acme/app.git');
+    const options = { harnesses: [claudeHarness('', dataDir)], cloneRoot: path.join(home, 'WebChat'), dataDir, code: '' };
+    const terminal = new Plugin(options);
+    assert.match(await new Plugin({ ...options, dataDir: path.join(home, 'unpaired') }).requestConnect(folder, 'acme/app'), /Pair first/);
+    const code = newPairingCode();
+    const plugin = new Plugin({ ...options, code: `${baseUrl}#${code}` });
+    const starting = plugin.start();
+    const agent = await approve(alice, code, 'Connector');
+    assert.equal(await starting, true);
+    await alice.sync();
+    await carol.sync();
+    const carols = (await carol.request<{ id: number }>('POST', '/conversations/direct', { userId: agent.id, key: await newChatKey(carol, [carol.id, agent.id]) })).id;
+    const direct = (await alice.request<{ id: number }>('POST', '/conversations/direct', { userId: agent.id, key: await newChatKey(alice, [alice.id, agent.id]) })).id;
+    const group = (await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'Connect', memberIds: [agent.id], key: await newChatKey(alice, [alice.id, agent.id]) })).channel.id;
+    await alice.sync();
+    await carol.sync();
+    await plugin.client!.sync();
+    const mark = path.join(dataDir, 'repos', 'acme__app', 'connected');
+    const pending = () => (plugin as unknown as { setup: { asks?: Record<string, { at: number }> } }).setup.asks ?? {};
+    const heard = async () => {
+      const messages = await plugin.client!.sync();
+      await Promise.all(messages.map((m) => plugin.handle(m)));
+      return messages;
+    };
+    const failures: string[] = [];
+    const said = async () => {
+      const asks = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.ask).map((m) => m.content!);
+      failures.push(...asks.filter((c) => c.ask?.step === 'failed').map((c) => c.text));
+      return asks.filter((c) => c.ask?.step !== 'failed');
+    };
+    // What a person types in the folder, then the serving agent's tick: the request Alice sees, and its client id.
+    const ask = async () => {
+      assert.match(await terminal.requestConnect(folder, 'acme/app'), /Asked your agent's owner to connect acme\/app/);
+      await plugin.sendAsks();
+      const [sent] = await said();
+      assert.equal(sent?.ask?.step, 'request');
+      return { request: sent!.ask as Extract<AskDTO, { kind: 'connect'; step: 'request' }>, to: Object.keys(pending()).at(-1)! };
+    };
+    type Asked = Awaited<ReturnType<typeof ask>>;
+    const answer = async (from: AgentClient, chat: number, step: 'approve' | 'decline', asked: Asked, extra: object = {}) => {
+      const { repo, folder: shown } = asked.request;
+      await from.send(chat, { text: 'Answer', ask: { kind: 'connect', step, to: asked.to, sentAt: Date.now(), ...(step === 'approve' && { repo, folder: shown }), ...extra } as MessageContent['ask'] });
+      return heard();
+    };
+    const nothing = async (why: string) => {
+      await plugin.scan();
+      assert.equal(existsSync(mark), false, why);
+      assert.deepEqual(plugin.client!.repos, [], why);
+    };
+
+    // The real command, typed in a terminal, files a request and returns: nothing changes.
+    // It asks the keyholder over its socket, which here is the terminal's plugin.
+    const room = new Room({ version: pkg.version });
+    await room.listen(path.join(home, 'connector', 'keyholder.sock'), terminal);
+    const run = await sh(process.execPath, ['--import', import.meta.resolve('tsx'), fileURLToPath(new URL('../agent/index.ts', import.meta.url)), 'connect'], {
+      cwd: folder,
+      env: { PATH: '/usr/bin:/bin', HOME: path.join(home, 'connector'), WEBCHAT_AGENT_HOME: path.join(home, 'connector'), WEBCHAT_SOCKET: path.join(home, 'connector', 'keyholder.sock') },
+    }).finally(() => room.close());
+    assert.match(run.stdout, /Asked your agent's owner to connect acme\/app/);
+    await nothing('a typed connect marks nothing');
+    await plugin.sendAsks();
+    const [first] = await said();
+    assert.deepEqual([first?.ask?.step, (first?.ask as { repo?: string })?.repo], ['request', 'acme/app']);
+    await nothing('a request marks nothing');
+    // A second command for the repository while one waits sends no second request.
+    await terminal.requestConnect(folder, 'acme/app');
+    await plugin.sendAsks();
+    assert.deepEqual(await said(), []);
+    // Not the owner's word: Carol's in her own chat with the agent, Alice's outside her direct chat, a request nobody made, and one signed too long ago.
+    const open: Asked = { request: first!.ask as Asked['request'], to: Object.keys(pending())[0]! };
+    await answer(carol, carols, 'approve', open);
+    await answer(alice, group, 'approve', open);
+    await answer(alice, direct, 'approve', { ...open, to: 'nobody' });
+    await answer(alice, direct, 'approve', open, { sentAt: Date.now() - REQUEST_TTL_MS - 1000 });
+    await nothing('only the owner, in the direct chat, lately, and for a request that was made');
+    // Her approve connects the folder the laptop recorded, once.
+    const approving = await answer(alice, direct, 'approve', open);
+    assert.equal(await fs.readFile(mark, 'utf8'), await fs.realpath(folder), 'the folder the command ran in');
+    assert.deepEqual(plugin.client!.repos, ['acme/app']);
+    assert.equal((await said()).at(-1)?.ask?.step, 'done');
+    // The same message again, or another that names the same request, connects nothing once it is disconnected.
+    await fs.rm(mark);
+    await plugin.handle(approving.find((m) => m.content?.ask)!);
+    await answer(alice, direct, 'approve', open);
+    await nothing('an approval counts once');
+
+    // A request left past 10 minutes by the agent's clock fails with a note.
+    const lapsed = await ask();
+    pending()[lapsed.to]!.at -= REQUEST_TTL_MS + 1000;
+    await answer(alice, direct, 'approve', lapsed);
+    await nothing('a lapsed request');
+    await said();
+    assert.match(failures.at(-1)!, /older than 10 minutes/);
+    // An approval for another folder or repository than the request showed, and a folder that moved to another repository, connect nothing.
+    const another = await ask();
+    await answer(alice, direct, 'approve', another, { folder: `${another.request.folder}-other` });
+    await nothing('another folder');
+    const elsewhere = await ask();
+    await answer(alice, direct, 'approve', elsewhere, { repo: 'acme/other' });
+    await nothing('another repository');
+    const moved = await ask();
+    await setOrigin('acme/other');
+    await answer(alice, direct, 'approve', moved);
+    await setOrigin('acme/app');
+    await nothing('a folder that pushes elsewhere now');
+    // A decline connects nothing, and the request cannot be approved after it.
+    const declined = await ask();
+    await answer(alice, direct, 'decline', declined);
+    await answer(alice, direct, 'approve', declined);
+    await nothing('a decline');
+    await said();
+    assert.equal(failures.length, 4, 'each refusal is said, and a decline or an approval of nothing is not');
+    // A folder connected already asks nothing.
+    await connect(dataDir, 'acme/app', folder);
+    assert.match(await terminal.requestConnect(folder, 'acme/app'), /connected to this folder already/);
   });
 
   test('answers its owner\'s prompts in their direct chat, and resumes the conversation for each reply (R-035)', async () => {
@@ -1595,6 +2044,107 @@ describe('agent client (R-027)', () => {
     assert.ok(!saved.working && saved.session !== cut.session, 'a fresh session');
   });
 
+  test("asks its owner before an action its harness asks about, and goes on with the owner's signed answer from another device (docs/decisions/harness-approvals.md)", { timeout: 60_000 }, async () => {
+    const dataDir = path.join(home, 'asker', 'laptop');
+    // A harness that asks before it runs a command, and runs it only when told to.
+    const turns: Array<{ cwd: string; asked: boolean; reply?: Reply }> = [];
+    const fake = {
+      name: 'Fake',
+      asks: true,
+      refusal: async () => undefined,
+      offers: () => ({ knobs: [] }),
+      found: async () => ({ path: '/fake' }),
+      apply: async () => undefined,
+      async turn(t) {
+        const entry: (typeof turns)[number] = { cwd: t.cwd, asked: !!t.ask };
+        turns.push(entry);
+        if (t.ask) {
+          entry.reply = await t.ask({ tool: 'Bash', kind: 'execute', paths: [], detail: 'npm test' });
+          if (entry.reply.allow) await fs.writeFile(path.join(t.cwd, 'ran.txt'), 'x');
+        }
+        return { reply: entry.reply?.allow ? 'It ran.' : 'It did not run.' };
+      },
+    } as Harness;
+    const code = newPairingCode();
+    const plugin = new Plugin({ harnesses: [fake], cloneRoot: path.join(home, 'WebChat'), dataDir, code: `${baseUrl}#${code}` });
+    const starting = plugin.start();
+    const agent = await approve(alice, code, 'Asker');
+    assert.equal(await starting, true);
+    await alice.sync();
+    const direct = (await alice.request<{ id: number }>('POST', '/conversations/direct', { userId: agent.id, key: await newChatKey(alice, [alice.id, agent.id]) })).id;
+    const project = (await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'Asks', memberIds: [agent.id], key: await newChatKey(alice, [alice.id, agent.id]) })).project.id;
+    // Alice's second device: the same account, signed in again.
+    await fs.copyFile(path.join(home, 'alice.json'), path.join(home, 'alice-phone.json'));
+    const phone = await AgentClient.load(path.join(home, 'alice-phone.json'));
+    await alice.sync();
+    await plugin.client!.sync();
+
+    const prompt = async (asks: boolean) => {
+      await alice.send(direct, { text: 'Run the tests', prompt: { kind: 'prompt', sentAt: Date.now(), project, ...(asks && { asks: true as const }) } });
+      // Not awaited: the turn waits for the owner.
+      for (const m of await plugin.client!.sync()) void plugin.handle(m);
+    };
+    // Everything each reader heard from the agent, since a sync returns a message once.
+    const heard = new Map<AgentClient, OpenedMessage[]>();
+    const fromAgent = async (reader: AgentClient) => {
+      const list = heard.get(reader) ?? [];
+      heard.set(reader, list);
+      list.push(...(await reader.sync()).filter((m) => m.senderId === agent.id));
+      return list;
+    };
+    /** The nth question the agent asked, once it reaches the reader. */
+    const question = async (reader: AgentClient, n: number) => {
+      let found: OpenedMessage | undefined;
+      await waitFor('the question reaches the owner', async () => !!(found = (await fromAgent(reader)).filter((m) => m.content?.permit?.kind === 'question')[n]));
+      return found!;
+    };
+    const answer = async (to: OpenedMessage, decision: 'once' | 'run' | 'deny', from: AgentClient = phone) => {
+      const asked = to.content!.permit as Extract<PermitDTO, { kind: 'question' }>;
+      await from.send(direct, { text: 'Answer', permit: { kind: 'answer', to: to.clientId!, decision, seen: await permitHash(asked), sentAt: Date.now() } });
+      for (const m of await plugin.client!.sync()) await plugin.handle(m);
+    };
+    const replies = async () => (await fromAgent(alice)).filter((m) => m.content?.prompt?.kind === 'answer' || m.content?.prompt?.kind === 'failed').map((m) => m.content!.text);
+
+    // The owner's page can show a question: it asks, sealed, and Alice's second device answers.
+    await prompt(true);
+    const asked = await question(phone, 0);
+    const permit = asked.content!.permit as Extract<PermitDTO, { kind: 'question' }>;
+    assert.deepEqual([permit.what, permit.detail, typeof permit.to, asked.content!.text.split('\n')[0]], ['run', 'npm test', 'string', 'Your agent asks your permission to run a command:']);
+    const [row] = await instance.sql.query<Record<string, unknown>>('SELECT * FROM webchat.messages WHERE id = $1', [asked.id]);
+    assert.ok(!JSON.stringify(row).includes('npm test') && !JSON.stringify(row).includes('permission'), 'the server holds the question sealed');
+    assert.equal(turns.at(-1)!.reply, undefined, 'the turn waits for the answer');
+    await answer(asked, 'once');
+    await waitFor('the turn goes on', async () => (await replies()).includes('It ran.'));
+    await fs.access(path.join(turns.at(-1)!.cwd, 'ran.txt'));
+    assert.deepEqual((await fromAgent(phone)).map((m) => m.content?.permit?.kind).filter(Boolean), ['question', 'settled'], 'the second device learns it was answered');
+    // The answer counts once: sent again, it changes nothing.
+    await answer(asked, 'deny');
+    assert.equal((await replies()).filter((r) => r === 'It did not run.').length, 0);
+
+    // Deny stops that action, and the turn still ends with its answer.
+    await prompt(true);
+    await answer(await question(phone, 1), 'deny');
+    await waitFor('the turn ends', async () => (await replies()).includes('It did not run.'));
+    assert.equal(existsSync(path.join(turns.at(-1)!.cwd, 'ran.txt')), false, 'the action did not run');
+    assert.deepEqual(turns.at(-1)!.reply, { allow: false, message: 'Your owner said no. Do not try it again: do something else, or stop.' });
+
+    // A page from before questions sets no flag: nothing is asked, and the harness gets no way to ask.
+    const quiet = turns.length;
+    const permitted = async () => (await fromAgent(alice)).filter((m) => m.content?.permit).length;
+    const before = await permitted();
+    await prompt(false);
+    await waitFor('the turn ran', async () => turns.length === quiet + 1);
+    assert.equal(turns.at(-1)!.asked, false);
+    assert.equal(await permitted(), before, 'no question was posted');
+
+    // A question that waits 7 days ends the turn, and says so.
+    await prompt(true);
+    await question(alice, 2);
+    await plugin.pollPulls(Date.now() + 8 * 24 * 60 * 60_000);
+    await waitFor('the turn failed', async () => (await replies()).includes('I could not answer. No answer came within 7 days.'));
+    assert.ok((await fromAgent(alice)).some((m) => m.content?.permit?.kind === 'settled' && m.content.permit.outcome === 'expired'));
+  });
+
   test('goes when its owner deletes their account (R-030)', async () => {
     const dave = await AgentClient.signUp(path.join(home, 'dave.json'), { server: baseUrl, username: 'dave', password: PASSWORD, kdfIterations: KDF_ROUNDS }, 'Dave', 'friends-only');
     const code = newPairingCode();
@@ -1621,44 +2171,249 @@ describe('agent client (R-027)', () => {
     await assert.rejects(alice.request('DELETE', `/agents/${spare.id}`), { status: 404 });
   });
 
-  test('keeps the file tools away from the secrets, even through a link (R-030)', async () => {
-    const dir = await fs.mkdtemp(path.join(home, 'guard-'));
+  test('counts an agent online for 2 minutes after its check-in, a person for 1, on the page and in the sync fingerprint (docs/roadmap/new-agent-setup.md)', async () => {
+    const db = await openDb(instance.sql);
+    const seen = (id: number, ms: number) => instance.sql.query('UPDATE webchat.users SET last_active_at = $2 WHERE id = $1', [id, Date.now() - ms]);
+    // The fingerprint's online part names the ids, and its repositories part hashes who is online by folder.
+    const parts = async () => (await db.stamp(alice.id)).split('.');
+    const onlineIds = async () => ((await parts())[9] ?? '').split(',');
+    const dto = async (id: number) => toUserDTO((await db.listUsers()).find((row) => row.id === id)!);
+    await instance.sql.query(`INSERT INTO webchat.agent_repos (user_id, repo, last_seen, protocol) VALUES ($1, 'acme/window', $2, 5)`, [bot.id, Date.now() - 90_000]);
+    try {
+      await seen(alice.id, 90_000);
+      await seen(bot.id, 90_000);
+      assert.deepEqual([(await dto(alice.id)).online, (await dto(bot.id)).online, (await dto(bot.id)).agentRepos[0]?.online], [false, true, true]);
+      assert.deepEqual([(await onlineIds()).includes(String(alice.id)), (await onlineIds()).includes(String(bot.id))], [false, true]);
+      const before = (await parts())[11];
+      await seen(bot.id, 150_000);
+      await instance.sql.query(`UPDATE webchat.agent_repos SET last_seen = $2 WHERE user_id = $1 AND repo = 'acme/window'`, [bot.id, Date.now() - 150_000]);
+      assert.deepEqual([(await dto(bot.id)).online, (await dto(bot.id)).agentRepos[0]?.online], [false, false]);
+      assert.equal((await onlineIds()).includes(String(bot.id)), false);
+      assert.notEqual((await parts())[11], before, 'the page learns when a folder goes offline');
+    } finally {
+      await instance.sql.query(`DELETE FROM webchat.agent_repos WHERE repo = 'acme/window'`);
+      await alice.sync();
+    }
+  });
+
+  test('waits for the interval it is asked for before each check-in', async () => {
+    const stop = new AbortController();
+    let rounds = 0;
+    for await (const message of alice.watch(stop.signal, () => (++rounds === 3 && stop.abort(), 5))) assert.ok(message);
+    assert.equal(rounds, 3);
+  });
+
+  test('sets an agent up with one command: builds its room, pairs it as the role account, installs the runner’s login service, replaces it on a second run, and removes it (docs/roadmap/new-agent-setup.md)', { timeout: 30_000 }, async () => {
+    const dir = await fs.mkdtemp(path.join(home, 'setup-'));
+    const { bin, laptopHome, agentHome, log, restore, program, layout, room, unitFile } = await fakeLaptop(dir);
+    const said: string[] = [];
+    const print = console.log;
+    console.log = (...words: unknown[]) => void said.push(words.join(' '));
+    const asked: string[] = [];
+    const account = path.join(layout.data, 'laptop', 'account.json');
+    // The role account's `pair` is setup's own function, with the code from stdin.
+    room.onPair = ({ code, picks }) => pairInto(account, code, picks as Parameters<typeof pairInto>[2]);
+    const options = { home: agentHome, program, layout, root: room.root, read: room.read, ghArchive: async () => Buffer.from('archive'), ask: async (question: string) => (asked.push(question), 'y') };
+    const commands = async () => (await fs.readFile(log, 'utf8')).trim().split('\n');
+    try {
+      // Not an administrator: it says so alone, asks nothing and changes nothing.
+      process.env.FAKE_GROUPS = 'staff';
+      await assert.rejects(setup(`${baseUrl}#${newPairingCode()}`, options), /Nothing was changed/);
+      // Only the read-only check that `systemctl --user` runs, on Linux, reaches the services.
+      const ran = existsSync(log) ? (await commands()).filter((line) => line !== 'systemctl --user show-environment') : [];
+      assert.deepEqual([asked.length, existsSync(unitFile), ran, said.filter((line) => /Administrator/.test(line)).length, room.log.length, existsSync(layout.data), existsSync(layout.programDir)], [0, false, [], 1, 0, false, false]);
+      process.env.FAKE_GROUPS = 'staff admin sudo';
+
+      const code = newPairingCode();
+      const [agent] = await Promise.all([approve(alice, code, 'Laptop'), setup(`${baseUrl}#${code}`, options)]);
+      assert.match(asked[0]!, /pair with .* you approve the agent in WebChat[\s\S]*login service[\s\S]*changes no security setting/);
+      assert.match(asked[0]!, /\[x\] Claude Code 2\.1\.300, signed in\n {2}\[x\] Codex 0\.58\.0, signed in/, 'both are ticked: found and signed in');
+      assert.ok(said.some((line) => /^ {2}ok {2,}Claude Code 2\.1\.300, signed in: found, not linked\.$/.test(line)), said.join('\n'));
+      assert.ok(said.includes('Paired with Alice.'));
+      // The account is in the role account's folder, paired with the code on stdin and never in an argument; the runner's service runs the installed program, with the login shell's PATH.
+      const saved = JSON.parse(await fs.readFile(account, 'utf8')) as { userId: number; owner: number; picked: string[] };
+      assert.deepEqual([saved.userId, saved.owner, saved.picked], [agent.id, alice.id, ['Claude Code', 'Codex']]);
+      assert.deepEqual(room.log.filter((cmd) => cmd.argv.at(-1) === 'pair').map((cmd) => [cmd.as, cmd.argv.some((word) => word.includes(code))]), [[layout.user, false]]);
+      assert.equal(await fs.readFile(programOf(layout), 'utf8'), 'the program');
+      assert.equal(await fs.readFile(path.join(layout.programDir, 'bin', 'gh'), 'utf8'), 'archive');
+      const unit = await fs.readFile(unitFile, 'utf8');
+      assert.ok(unit.includes(`${programOf(layout)}`) && unit.includes(bin) && /runner/.test(unit), unit);
+      assert.equal(await fs.readlink(path.join(laptopHome, '.local', 'bin', 'webchat-agent')), programOf(layout));
+      const first = await commands();
+      assert.ok(first.some((line) => (process.platform === 'darwin' ? line.startsWith(`launchctl bootstrap gui/${process.getuid!()} ${unitFile}`) : line === 'systemctl --user restart webchat-agent')), first.join('\n'));
+
+      // The updater: stopped before the program is built over, installed after the keyholder's service, with the paired server in the settings only root writes.
+      const at = (match: (cmd: Cmd) => boolean) => room.log.findIndex(match);
+      const stop = at((cmd) => cmd.soft === true && cmd.argv.some((word) => word.includes(layout.updaterLabel)));
+      assert.ok(stop >= 0 && stop < at((cmd) => cmd.argv.at(-1) === programOf(layout)), 'stopped first');
+      assert.ok(at((cmd) => cmd.argv.at(-1) === layout.unit) < at((cmd) => cmd.argv.at(-1) === layout.updaterUnit), 'installed after the keyholder');
+      assert.equal(JSON.parse(await fs.readFile(updateConfigOf(layout), 'utf8')).server, baseUrl);
+      assert.match(await fs.readFile(layout.updaterUnit, 'utf8'), /update/);
+
+      // A second run, with no code, pairs nothing again and replaces the service.
+      room.system.made = true;
+      said.length = 0;
+      await setup(undefined, options);
+      assert.equal(asked.length, 2);
+      assert.doesNotMatch(asked[1]!, /pair with|to link/);
+      assert.ok(!said.includes('Approve the agent in WebChat, in the window that shows the code.'));
+      assert.ok((await commands()).length > first.length);
+
+      // A run that fails after it stopped the updater starts it again, so the agent still follows the server's release.
+      const before = room.log.length;
+      await assert.rejects(setup(undefined, { ...options, ghArchive: async () => Promise.reject(new Error('offline')) }), /offline/);
+      const failed = room.log.slice(before);
+      const stopped = failed.findIndex((cmd) => cmd.soft === true && cmd.argv.some((word) => word.includes(layout.updaterLabel)));
+      assert.ok(stopped >= 0 && failed.findIndex((cmd, i) => i > stopped && cmd.argv.at(-1) === layout.updaterUnit) > stopped, 'started again');
+
+      // Declined, uninstall removes nothing; agreed, it leaves no service, no folder and no account.
+      const gone = { layout, root: room.root, read: room.read };
+      await assert.rejects(uninstall(agentHome, async () => false, gone), /Nothing was removed/);
+      assert.equal(existsSync(unitFile), true);
+      await uninstall(agentHome, async () => true, gone);
+      assert.deepEqual([unitFile, layout.data, layout.ipc, layout.programDir, layout.unit, layout.updaterUnit, path.join(laptopHome, '.local', 'bin', 'webchat-agent')].map((file) => existsSync(file)), [false, false, false, false, false, false, false]);
+      assert.equal(room.system.made, false);
+      assert.match((await commands()).at(-1) ?? '', process.platform === 'darwin' ? /^launchctl bootout|^launchctl bootstrap/ : /^systemctl --user daemon-reload/);
+    } finally {
+      console.log = print;
+      restore();
+    }
+  });
+
+  test('moves a plugin’s or the daemon’s account into the keyholder’s folder without pairing again: the newer cursor wins, and a live Claude Code window stops it (docs/decisions/locked-room.md)', { timeout: 30_000 }, async () => {
+    const dir = await fs.mkdtemp(path.join(home, 'move-'));
+    const { laptopHome, agentHome, restore, program, layout, room } = await fakeLaptop(dir);
+    const [plugin, daemon] = [path.join(laptopHome, '.claude', 'plugins', 'data', 'webchat-webchat'), path.join(agentHome, 'laptop')];
+    const restoreClaude = setEnv({ CLAUDE_CONFIG_DIR: path.join(laptopHome, '.claude') });
+    const print = console.log;
+    console.log = () => undefined;
+    const pairings = async () => (await instance.sql.query<{ n: string }>('SELECT count(*) AS n FROM webchat.pairings'))[0]!.n;
+    const options = { home: agentHome, program, layout, root: room.root, read: room.read, ghArchive: async () => Buffer.from('archive'), ask: async () => 'y' };
+    const setupOf = (from: string) => JSON.stringify({ choice: { claudeMd: false, skills: [], noAttribution: false, linked: [] }, from });
+    const kept = (...parts: string[]) => fs.readFile(path.join(layout.data, 'laptop', ...parts), 'utf8').catch(() => undefined);
+    try {
+      // A plugin's account, paired for real, and an older copy of it as the daemon kept it.
+      await fs.mkdir(path.join(plugin, 'laptop'), { recursive: true });
+      const code = newPairingCode();
+      await Promise.all([approve(alice, code, 'Laptop'), AgentClient.pair(path.join(plugin, 'account.json'), baseUrl, code)]);
+      const file = JSON.parse(await fs.readFile(path.join(plugin, 'account.json'), 'utf8')) as { cursor: number; userId: number };
+      await fs.mkdir(path.join(daemon, 'laptop'), { recursive: true });
+      await fs.writeFile(path.join(daemon, 'account.json'), JSON.stringify({ ...file, cursor: file.cursor - 1 }));
+      await fs.writeFile(path.join(daemon, 'laptop', 'setup.json'), setupOf('daemon'));
+      await fs.writeFile(path.join(plugin, 'laptop', 'setup.json'), setupOf('plugin'));
+      await fs.writeFile(path.join(plugin, 'codex-threads.json'), 'threads');
+      await fs.mkdir(path.join(plugin, 'repos', 'acme__app'), { recursive: true });
+      await fs.writeFile(path.join(plugin, 'repos', 'acme__app', 'connected'), '/work/app');
+      await fs.writeFile(path.join(plugin, 'laptop', 'claude.json'), 'settings');
+      const before = await pairings();
+
+      // A Claude Code window that holds the plugin's lock stops setup before it changes anything.
+      await fs.writeFile(path.join(plugin, 'watch.lock'), String(process.pid));
+      await assert.rejects(setup(undefined, options), /Nothing was changed/);
+      assert.deepEqual([room.log.length, existsSync(layout.data)], [0, false]);
+      await fs.rm(path.join(plugin, 'watch.lock'));
+
+      await setup(undefined, options);
+      // The plugin's account, the one that saw more, is in the keyholder's folder as it was: the same agent and cursor, with no new pairing.
+      const moved = JSON.parse((await kept('account.json'))!) as { cursor: number; userId: number };
+      assert.deepEqual([moved.cursor, moved.userId, await pairings()], [file.cursor, file.userId, before]);
+      assert.deepEqual([await kept('laptop', 'setup.json'), await kept('repos', 'acme__app', 'connected'), await kept('laptop', 'claude.json')], [setupOf('plugin'), '/work/app', undefined]);
+      assert.equal(await fs.readFile(path.join(agentHome, 'runner', 'codex-threads.json'), 'utf8'), 'threads', 'the runner keeps its own files');
+      // Once the keyholder took it, the plugin's copy is gone and the daemon's older one is left, which the owner can delete.
+      assert.deepEqual([existsSync(path.join(plugin, 'account.json')), existsSync(path.join(plugin, 'repos', 'acme__app', 'connected')), existsSync(path.join(daemon, 'account.json'))], [false, false, true]);
+      // The account went in as the role account, through stdin, in a folder only it reads.
+      const writes = room.log.filter((cmd) => cmd.as === layout.user && cmd.stdin);
+      assert.ok(writes.length >= 3 && writes.every((cmd) => cmd.argv[2]!.includes('umask 077')));
+    } finally {
+      console.log = print;
+      restoreClaude();
+      restore();
+    }
+  });
+
+  test('finds the supported harnesses on the PATH and in the usual folders, and names each row for doctor', { timeout: 30_000 }, async () => {
+    const dir = await fs.mkdtemp(path.join(home, 'finder-'));
+    const [bin, userHome, agentHome] = ['bin', 'home', 'home/.webchat'].map((name) => path.join(dir, name));
+    await fs.mkdir(bin);
+    await fs.mkdir(path.join(userHome, '.local', 'bin'), { recursive: true });
+    const fake = (where: string, name: string, body: string) => fs.writeFile(path.join(where, name), body, { mode: 0o755 });
+    await fake(bin, 'claude', FAKE_CLAUDE);
+    await fake(bin, 'shell', `#!/bin/sh\nprintf '%s%s%s' __webchat_path__ "$PATH" __webchat_path__\n`);
+    await fake(bin, 'id', '#!/bin/sh\necho admin sudo\n');
+    await fake(bin, 'gh', FAKE_GH);
+    await fs.writeFile(path.join(dir, 'gh.json'), JSON.stringify({ pulls: [] }));
+    // A PATH of its own, with node for the shims and none of the real harnesses this machine may have.
+    await fs.mkdir(path.join(dir, 'tools'));
+    await fs.symlink(process.execPath, path.join(dir, 'tools', 'node'));
+    const restore = setEnv({ HOME: userHome, SHELL: path.join(bin, 'shell'), PATH: ['relative-bin', bin, path.join(dir, 'tools'), '/usr/bin', '/bin'].join(path.delimiter), FAKE_GH_STATE: path.join(dir, 'gh.json') });
+    const print = console.log;
+    const said: string[] = [];
+    try {
+      assert.deepEqual(pathDirs().slice(0, 1), [bin], 'a relative PATH entry is no place to look: the model writes the worktree');
+      const find = harnessFinder({ dataDir: agentHome });
+      const where = async () => Promise.all((await find()).map(async (h) => (await h.found()).path));
+      const [claude, codex] = await find();
+      assert.deepEqual(await where(), [path.join(bin, 'claude'), undefined], 'Codex is not found, and still listed');
+      assert.equal(await codex!.refusal(), 'I cannot find Codex on this laptop.');
+      // Installed later, in a folder the installers use, it shows at the next look, and the adapter before it stays.
+      await fake(path.join(userHome, '.local', 'bin'), 'codex', FAKE_CODEX);
+      assert.deepEqual(await where(), [path.join(bin, 'claude'), path.join(userHome, '.local', 'bin', 'codex')]);
+      assert.equal((await find())[0], claude, 'an unchanged program keeps its adapter');
+      await fs.utimes(path.join(bin, 'claude'), new Date(), new Date(Date.now() + 5000));
+      assert.notEqual((await find())[0], claude, 'an updated one gets a new adapter');
+      assert.deepEqual([supported('Claude Code')?.id, supported('CODEX')?.id, supported('hermes')], ['claude', 'codex', undefined]);
+      assert.equal(supportedList(), 'claude (Claude Code), codex (Codex)');
+      await assert.rejects(sh(process.execPath, ['--import', 'tsx', 'agent/index.ts', 'link', 'hermes']), (error: { code: number; stderr: string }) => error.code === 1 && /^'hermes' is not a harness WebChat supports\. Supported: claude \(Claude Code\), codex \(Codex\)\./.test(error.stderr));
+
+      assert.equal(await claudeHarness(path.join(bin, 'claude'), agentHome).refusal(), undefined);
+      await withEnv({ FAKE_CLAUDE_VERSION: '2.1.258' }, async () => assert.equal(await claudeHarness(path.join(bin, 'claude'), agentHome).refusal(), 'Claude Code 2.1.258 is older than 2.1.259, which I need. Update it.'));
+      for (const [found, min, ok] of [['2.1.259', '2.1.259', true], ['2.1.260', '2.1.259', true], ['2.2.0', '2.1.259', true], ['3', '2.1.259', true], ['2.1.258', '2.1.259', false], ['2.0.999', '2.1.259', false], ['2.1.259-beta', '2.1.259', true], ['dev', '2.1.259', true], [undefined, '2.1.259', true]] as const) {
+        assert.equal(versionAtLeast(found, min), ok, `${found} against ${min}`);
+      }
+
+      // One doctor line per supported harness, for each state a row can be in (docs/decisions/harness-linking.md).
+      console.log = (...words: unknown[]) => void said.push(words.join(' '));
+      const doctorSays = async (linked: string[], env: Record<string, string> = {}) => {
+        await fs.mkdir(path.join(agentHome, 'laptop', 'laptop'), { recursive: true });
+        await fs.writeFile(path.join(agentHome, 'laptop', 'laptop', 'setup.json'), JSON.stringify({ choice: { claudeMd: false, skills: [], noAttribution: false, linked } }));
+        said.length = 0;
+        await withEnv(env, () => doctor(agentHome));
+        process.exitCode = 0;
+        return said.filter((line) => /^ {2}\w+ {2,}(Claude Code|Codex)/.test(line)).map((line) => line.replace(/^ {2}\w+ {2,}/, ''));
+      };
+      assert.deepEqual(await doctorSays(['Claude Code', 'Codex']), ['Claude Code 2.1.300, signed in: linked.', 'Codex 0.58.0, signed in: linked.']);
+      assert.deepEqual(await doctorSays(['Claude Code']), ['Claude Code 2.1.300, signed in: linked.', 'Codex 0.58.0, signed in: found, not linked.']);
+      assert.deepEqual((await doctorSays(['Codex'], { FAKE_CODEX_SIGNED_OUT: '1' }))[1], 'Codex 0.58.0: linked, needs attention.');
+      assert.deepEqual((await doctorSays(['Claude Code'], { FAKE_CLAUDE_VERSION: '2.1.0' }))[0], 'Claude Code 2.1.0, signed in: linked, needs attention.');
+      await fs.rm(path.join(userHome, '.local', 'bin', 'codex'));
+      assert.deepEqual(await doctorSays(['Codex']), ['Claude Code 2.1.300, signed in: found, not linked.', 'Codex: linked, needs attention.']);
+      assert.deepEqual(await doctorSays([]), ['Claude Code 2.1.300, signed in: found, not linked.', 'Codex: not installed.']);
+    } finally {
+      console.log = print;
+      restore();
+    }
+  });
+
+  test('reads setup\'s answer: yes takes the ticked harnesses, names take exactly those, and anything else stops it', () => {
+    const found = [
+      { id: 'claude', name: 'Claude Code', command: 'claude', program: '/bin/claude', signedIn: true },
+      { id: 'codex', name: 'Codex', command: 'codex', program: '/bin/codex' },
+    ];
+    const names = (answer: string) => linksFrom(answer, found)?.map((f) => f.name);
+    assert.deepEqual([names('y'), names('Yes'), names('none'), names('codex'), names('claude-code, codex'), names('codex codex')], [['Claude Code'], ['Claude Code'], [], ['Codex'], ['Claude Code', 'Codex'], ['Codex']]);
+    assert.deepEqual([names(''), names('n'), names('hermes'), names('claude hermes')], [undefined, undefined, undefined, undefined]);
+  });
+
+  test('warns when a managed setting would let the shell read the secrets (R-030)', async () => {
+    const dir = await fs.mkdtemp(path.join(home, 'sandbox-'));
     const data = path.join(dir, 'data');
     const project = path.join(dir, 'app');
-    const worktree = path.join(project, '.claude', 'worktrees', 'k-7');
-    await fs.mkdir(worktree, { recursive: true });
+    await fs.mkdir(path.join(project, '.claude'), { recursive: true });
     await fs.mkdir(data);
-    await fs.symlink(data, path.join(worktree, 'link'));
-    const use = (tool_name: string, tool_input: Record<string, unknown> = {}, cwd = project) => ({ tool_name, tool_input, cwd });
-    assert.match(guard(use('Read', { file_path: path.join(data, 'account.json') }), [data]) ?? '', /secrets/);
-    assert.match(guard(use('Read', { file_path: 'link/account.json' }, worktree), [data]) ?? '', /secrets/);
-    assert.equal(guard(use('Read', { file_path: 'README.md' }), [data]), undefined);
-    // Nor through a link to a file not made yet, which Write would make in the folder (K-55).
-    await fs.symlink(path.join(data, 'new.json'), path.join(worktree, 'new.json'));
-    await fs.symlink('loop', path.join(worktree, 'loop'));
-    await fs.mkdir(path.join(data, 'inner'));
-    await fs.writeFile(path.join(data, 'account.json'), '{}');
-    await fs.symlink(path.join(data, 'inner'), path.join(worktree, 'inner'));
-    await fs.symlink('inner/../account.json', path.join(worktree, 'up.json'));
-    await fs.symlink('inner/../made.json', path.join(worktree, 'up-new.json'));
-    await fs.mkdir(path.join(worktree, 'a', 'b'), { recursive: true });
-    await fs.symlink(path.join(worktree, 'a', 'b'), path.join(worktree, 'hop'));
-    await fs.symlink(path.relative(path.join(worktree, 'a', 'b'), path.join(data, 'far.json')), path.join(worktree, 'a', 'b', 'far.json'));
-    const caseBlind = await fs.access(path.join(dir, 'DATA')).then(() => true, () => false);
-    assert.match(guard(use('Write', { file_path: 'new.json' }, worktree), [data]) ?? '', /secrets/);
-    assert.equal(guard(use('Write', { file_path: 'loop' }, worktree), [data]), undefined, 'a loop of links ends');
-    // Paths resolve as the kernel resolves them: `..` after a link goes up from its target, and other
-    // letter case names the folder where the disk ignores case, as macOS's does by default.
-    assert.match(guard(use('Read', { file_path: 'up.json' }, worktree), [data]) ?? '', /secrets/);
-    assert.match(guard(use('Write', { file_path: 'up-new.json' }, worktree), [data]) ?? '', /secrets/);
-    // A relative link counts from its real folder, not from the linked folder that named it.
-    assert.match(guard(use('Write', { file_path: 'hop/far.json' }, worktree), [data]) ?? '', /secrets/);
-    assert.equal(guard(use('Read', { file_path: path.join(dir, 'DATA', 'account.json') }), [data]) !== undefined, caseBlind);
-
     // A background Claude reads only managed settings and the plugin's file, so the project cannot reopen the secrets (R-035).
     await fs.writeFile(path.join(project, '.claude', 'settings.json'), JSON.stringify({ sandbox: { filesystem: { allowRead: [data] } } }));
     const file = path.join(dir, 'claude.json');
-    await fs.writeFile(file, JSON.stringify(claudeSettings({ secrets: [data], npmCache: path.join(dir, 'npm'), guard: 'true', env: {} })));
+    await fs.writeFile(file, JSON.stringify(claudeSettings({ secrets: [data], npmCache: path.join(dir, 'npm'), env: {} })));
     assert.equal(await sandboxProblem(project, [data], restrictedSettings(file)), undefined);
     // Its reads stop at the working directories, so only a folder inside them needs a rule of its own.
     assert.match((await sandboxProblem(project, [data, path.join(project, 'keys')], restrictedSettings(file))) ?? '', /could read/, 'a folder in the project the file leaves out');
@@ -1675,7 +2430,7 @@ describe('agent client (R-027)', () => {
     assert.match((await sandboxProblem(project, [path.join(data, 'keys')], [[managed, dir], [file, dir]])) ?? '', /could read/, 'a narrower allow wins');
     // Its shell gets no variable that holds a credential, by its name or by a password in a URL.
     const env = { GH_TOKEN: 'x', DATABASE_URL: 'postgres://me:pw@db/app', SSH_AUTH_SOCK: '/tmp/agent', MY_VAR: 'ghp_abc', PATH: '/bin', HOME: '/home/me' };
-    const denied = claudeSettings({ secrets: [], npmCache: '', guard: '', env }).sandbox.credentials.envVars.map((v) => v.name);
+    const denied = claudeSettings({ secrets: [], npmCache: '', env }).sandbox.credentials.envVars.map((v) => v.name);
     assert.deepEqual(denied, ['GH_TOKEN', 'DATABASE_URL', 'SSH_AUTH_SOCK', 'MY_VAR']);
   });
 });
@@ -1721,28 +2476,46 @@ test('cuts an answer into messages after line breaks, never inside a surrogate p
   assert.equal(emoji.join(''), `${'a'.repeat(3999)}\u{1F600} and more`);
 });
 
-test('answers through Codex with the message on stdin, and resumes its thread after a restart; takes no cards', async () => {
+test('answers through Codex app-server, one process for a session, and resumes its thread after a restart; takes no cards', async () => {
   const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-codex-')));
   const program = path.join(dir, 'codex');
   const log = path.join(dir, 'codex.log');
   await fs.writeFile(program, FAKE_CODEX, { mode: 0o755 });
-  const restore = setEnv({ FAKE_CODEX_LOG: log });
+  // The owner's Codex config lists MCP servers, which are turned off by name.
+  const home = path.join(dir, 'home');
+  await fs.mkdir(home);
+  await fs.writeFile(path.join(home, 'config.toml'), '[mcp_servers.github]\ncommand = "x"\n[mcp_servers.github.env]\nA = "1"\n[mcp_servers."odd.name"]\ncommand = "y"\n');
+  const restore = setEnv({ FAKE_CODEX_LOG: log, CODEX_HOME: home });
+  const entries = async () => (await fs.readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string; args?: string[]; input?: string; schema?: object; thread?: string; pid?: number; params?: Record<string, unknown> });
+  const harnesses: Harness[] = [];
   try {
     const schema = { type: 'object', properties: { reply: { type: 'string' }, drafts: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] } } }, required: ['reply'] };
     const turn = (harness: Harness, resume: boolean, message: string) => harness.turn({ cwd: dir, session: 's-1', resume, message, schema, setup: {}, signal: new AbortController().signal });
     const harness = codexHarness(program, dir);
-    assert.equal(await harness.refusal(), undefined, 'it answers questions');
-    assert.equal(await harness.refusal(dir), CODEX_GAP, 'it takes no cards');
+    harnesses.push(harness);
+    assert.equal(await harness.refusal(), undefined);
     assert.equal(await codexHarness('', dir).refusal(), 'I cannot find Codex on this laptop.');
     assert.deepEqual(await turn(harness, false, 'What does sum.js do?'), { reply: 'It adds.' }, 'a null for a left-out field is dropped');
+    assert.deepEqual(await turn(harness, true, 'And again?'), { reply: 'It adds.' });
     // A restart keeps the thread of each session.
-    await withEnv({ FAKE_CODEX_ANSWER: '{"reply":"Still adds.","drafts":[{"title":"Sums"}]}' }, () => turn(codexHarness(program, dir), true, 'And now?'));
-    const [first, second] = (await fs.readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { args: string[]; input: string; cwd: string; schema: object });
+    const again = codexHarness(program, dir);
+    harnesses.push(again);
+    await withEnv({ FAKE_CODEX_ANSWER: '{"reply":"Still adds.","drafts":[{"title":"Sums"}]}' }, () => turn(again, true, 'And now?'));
+    const all = await entries();
+    const [first, second, third] = all.filter((e) => e.method === 'turn/start');
+    const [start, resumed] = all.filter((e) => e.method?.startsWith('thread/'));
     assert.equal(first!.input, 'What does sum.js do?');
-    assert.ok(!first!.args.some((arg) => arg.includes('sum.js')), 'the message is never in the arguments');
-    assert.deepEqual(first!.args.slice(-1), ['-'], 'the message is read from stdin');
-    assert.deepEqual(second!.args.slice(-3), ['resume', '0199a213-81c0-7800-8aa1-bbab2a035a53', '-']);
-    assert.ok(first!.args.includes('--ignore-user-config') && first!.args.includes('shell_environment_policy.inherit="core"'), "none of the owner's config or tokens");
+    assert.equal(first!.pid, second!.pid, 'one process takes the turns of a session');
+    assert.notEqual(first!.pid, third!.pid, 'a restart starts another');
+    assert.equal(start!.method, 'thread/start');
+    assert.equal(resumed!.method, 'thread/resume');
+    assert.equal(resumed!.params!.threadId, '0199a213-81c0-7800-8aa1-bbab2a035a53');
+    assert.equal(start!.params!.approvalPolicy, 'never', 'with no question to ask, it asks for nothing');
+    const args = all[0]!.args!;
+    assert.ok(!args.some((arg) => arg.includes('sum.js')), 'the message is never in the arguments');
+    assert.ok(args.includes('shell_environment_policy.inherit="core"') && args.includes('features.hooks=false'), "none of the owner's hooks or tokens");
+    assert.ok(args.includes('mcp_servers.github.enabled=false') && args.includes('mcp_servers."odd.name".enabled=false'), "none of the owner's MCP servers, one by one");
+    assert.ok(!args.includes('--ignore-user-config'), 'app-server has no such flag');
     assert.deepEqual(first!.schema, {
       type: 'object',
       properties: {
@@ -1752,9 +2525,122 @@ test('answers through Codex with the message on stdin, and resumes its thread af
       required: ['reply', 'drafts'],
       additionalProperties: false,
     });
-    await assert.rejects(withEnv({ FAKE_CODEX_FAIL: 'Usage limit reached.' }, () => turn(harness, true, 'Again?')), /Usage limit reached/);
+    await assert.rejects(withEnv({ FAKE_CODEX_FAIL: 'Usage limit reached.' }, () => turn(again, true, 'Again?')), /Usage limit reached/);
   } finally {
     restore();
+    await Promise.all(harnesses.map((h) => h.end?.()));
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('asks through Claude Code\'s permission prompt tool, one process for a session, and no rule outlives the turn (docs/decisions/harness-approvals.md)', async () => {
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-claude-ask-')));
+  const program = path.join(dir, 'claude');
+  await fs.writeFile(program, FAKE_CLAUDE, { mode: 0o755 });
+  const [log, asked] = [path.join(dir, 'claude.log'), path.join(dir, 'asked.log')];
+  const calls = [
+    { tool_name: 'Bash', input: { command: 'npm test ../elsewhere', description: 'Quietly delete everything' } },
+    { tool_name: 'Edit', input: { file_path: 'src/a.ts', old_string: 'a', new_string: 'b' } },
+    { tool_name: 'mcp__owner__mail', input: { to: 'x' } },
+  ];
+  const restore = setEnv({ FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_ASKED: asked, FAKE_CLAUDE_ASK: JSON.stringify(calls), FAKE_CLAUDE_COMMIT: '0' });
+  const harness = claudeHarness(program, dir);
+  try {
+    await fs.mkdir(path.join(dir, 'laptop'), { recursive: true });
+    const one = { type: 'object', properties: { outcome: { type: 'string', enum: ['holds', 'stale'] }, note: { type: 'string' }, checked: { type: 'string' } }, required: ['outcome', 'note', 'checked'] };
+    const two = { type: 'object', properties: { outcome: { type: 'string', enum: ['done', 'failed'] }, note: { type: 'string' }, title: { type: 'string' } }, required: ['outcome', 'note'] };
+    const seen: Ask[] = [];
+    const replies: Reply[] = [{ allow: true }, { allow: false, message: 'Your owner said no.' }, { allow: true }];
+    const turn = (over: Partial<Turn> = {}) =>
+      harness.turn({ cwd: dir, session: 's-1', resume: false, message: 'Run it', schema: two, schemas: [one, two], setup: {}, signal: new AbortController().signal, ask: async (ask) => (seen.push(ask), replies[seen.length - 1]!), ...over });
+    await withEnv({ FAKE_CLAUDE_ANSWER: '{"outcome":"done","note":"ok"}' }, () => turn());
+    // What the owner is asked is the tool's own input, never the model's description, and paths are the ones that name a place.
+    assert.deepEqual(seen.map((a) => [a.tool, a.kind, a.detail, a.paths]), [
+      ['Bash', 'execute', 'npm test ../elsewhere', [path.resolve(dir, '../elsewhere')]],
+      ['Edit', 'edit', 'Edit src/a.ts', [path.join(dir, 'src/a.ts')]],
+      ['mcp__owner__mail', 'other', 'mcp__owner__mail {"to":"x"}', []],
+    ]);
+    const decisions = (await fs.readFile(asked, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { decision: { behavior: string; message?: string; updatedInput?: object } });
+    assert.deepEqual(decisions.map((d) => d.decision.behavior), ['allow', 'deny', 'allow']);
+    assert.deepEqual(decisions[0]!.decision.updatedInput, calls[0]!.input, 'an allow hands the input back');
+    assert.equal(decisions[1]!.decision.message, 'Your owner said no.');
+    const [first] = (await fs.readFile(log, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { args: string[]; input: string; pid: number; mcp: { mcpServers: { webchat: { type: string; url: string; timeout: number } } } });
+    const flag = (name: string) => first!.args[first!.args.indexOf(name) + 1];
+    assert.equal(flag('--permission-prompt-tool'), 'mcp__webchat__approve');
+    assert.equal(flag('--disallowedTools'), 'mcp__webchat__approve', 'the model cannot call the tool');
+    assert.ok(first!.args.includes('--strict-mcp-config') && first!.args.includes('--restricted') && !first!.args.includes('--permission-prompts'));
+    assert.equal(first!.args.at(-2), '--session-id');
+    assert.deepEqual(first!.mcp.mcpServers.webchat.type, 'http');
+    assert.match(first!.mcp.mcpServers.webchat.url, /^http:\/\/127\.0\.0\.1:\d+\/mcp$/, 'a port of this machine only');
+    assert.ok(first!.mcp.mcpServers.webchat.timeout > 7 * 24 * 60 * 60_000, 'it outwaits the 7 days a question waits');
+    // One schema serves the session, with what every turn needs; the turn's own schema is in its message.
+    const schema = JSON.parse(flag('--json-schema')!) as { properties: Record<string, { enum?: string[] }>; required: string[] };
+    assert.deepEqual([Object.keys(schema.properties), schema.properties.outcome!.enum, schema.required], [['outcome', 'note', 'checked', 'title'], ['holds', 'stale', 'done', 'failed'], ['outcome', 'note']]);
+    assert.ok(first!.input.includes('Answer this message only') && first!.input.includes(JSON.stringify(two)), 'each turn says to answer afresh, as its own schema says');
+    assert.ok(!first!.args.some((arg) => arg.includes('Run it')), 'the message is never in the arguments');
+    assert.equal((await fs.readdir(path.join(dir, 'laptop', 'approve'))).length, 1, 'a token file while it runs');
+
+    // A later turn of the session goes to the same process, which takes a different schema; one with no way to ask starts another that refuses.
+    seen.length = 0;
+    replies.push({ allow: true }, { allow: true }, { allow: true });
+    await withEnv({ FAKE_CLAUDE_ANSWER: '{"outcome":"holds","note":"","checked":"x"}' }, () => turn({ resume: true, schema: one }));
+    const later = (await fs.readFile(log, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { pid: number; turn: number; args: string[] });
+    assert.deepEqual([later[1]!.pid === later[0]!.pid, later[1]!.turn], [true, 1], 'one process takes the session\'s turns');
+    await withEnv({ FAKE_CLAUDE_ANSWER: '{"outcome":"done","note":"ok"}' }, () => turn({ resume: true, ask: undefined }));
+    const refusing = (await fs.readFile(log, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { pid: number; args: string[] }).at(-1)!;
+    assert.notEqual(refusing.pid, later[0]!.pid);
+    assert.deepEqual([refusing.args.includes('--permission-prompts'), refusing.args.includes('--mcp-config'), refusing.args.includes('--resume')], [true, false, true]);
+    // An answer that does not fit the turn's own schema fails the turn.
+    await assert.rejects(withEnv({ FAKE_CLAUDE_ANSWER: '{"outcome":"done"}' }, () => turn({ ask: undefined })), /answer did not fit: the answer\.note: required/);
+    // A question that cannot be asked fails the turn with the reason, and its process ends.
+    await assert.rejects(turn({ resume: true, ask: async () => Promise.reject(new Error('No answer came within 7 days.')) }), /^Error: No answer came within 7 days\.$/);
+    await harness.end?.();
+    assert.deepEqual(await fs.readdir(path.join(dir, 'laptop', 'approve')), [], 'no token file outlives its process');
+  } finally {
+    restore();
+    await harness.end?.();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('answers Codex\'s approvals accept or decline only, and never a rule that outlives one (docs/decisions/harness-approvals.md)', async () => {
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-codex-ask-')));
+  const program = path.join(dir, 'codex');
+  const log = path.join(dir, 'codex.log');
+  await fs.writeFile(program, FAKE_CODEX, { mode: 0o755 });
+  const requests = [
+    { method: 'item/commandExecution/requestApproval', params: { itemId: 'i1', command: '/bin/zsh -lc \'curl https://example.com\'', cwd: dir } },
+    { method: 'item/fileChange/requestApproval', params: { itemId: 'i2', reason: null, grantRoot: null }, changes: [{ path: 'src/a.ts', kind: 'update', diff: '' }] },
+    { method: 'item/fileChange/requestApproval', params: { itemId: 'i3', grantRoot: '/' }, changes: [{ path: 'b.ts', kind: 'add', diff: '' }] },
+    { method: 'item/permissions/requestApproval', params: { itemId: 'i4' } },
+  ];
+  const restore = setEnv({ FAKE_CODEX_LOG: log, FAKE_CODEX_ASK: JSON.stringify(requests), CODEX_HOME: path.join(dir, 'none') });
+  const harness = codexHarness(program, dir);
+  try {
+    const schema = { type: 'object', properties: { reply: { type: 'string' } }, required: ['reply'] };
+    const seen: Ask[] = [];
+    await harness.turn({ cwd: dir, session: 's-1', resume: false, message: 'Go', schema, setup: {}, signal: new AbortController().signal, ask: async (ask): Promise<Reply> => (seen.push(ask), seen.length === 1 ? { allow: true } : { allow: false, message: 'No.' }) });
+    assert.deepEqual(seen.map((a) => [a.tool, a.kind, a.detail, a.paths]), [
+      ['shell', 'execute', '/bin/zsh -lc \'curl https://example.com\'', []],
+      ['apply_patch', 'edit', path.join(dir, 'src/a.ts'), [path.join(dir, 'src/a.ts')]],
+    ], 'a file change names its files from the item it joins, and one that asks for a whole folder is declined unasked');
+    const entries = (await fs.readFile(log, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { method?: string; params?: { approvalPolicy: string }; asked?: string; decision?: unknown });
+    assert.equal(entries.find((e) => e.method === 'thread/start')!.params!.approvalPolicy, 'on-request', 'with a way to ask, Codex asks');
+    assert.deepEqual(
+      entries.filter((e) => e.asked).map((e) => [e.asked, e.decision]),
+      [
+        ['item/commandExecution/requestApproval', { decision: 'accept' }],
+        ['item/fileChange/requestApproval', { decision: 'decline' }],
+        ['item/fileChange/requestApproval', { decision: 'decline' }],
+        ['item/permissions/requestApproval', { code: -32601, message: 'WebChat answers only the approval of a command or a file change.' }],
+      ],
+      'only accept or decline, never a decision for the session or an amendment',
+    );
+    // A question that cannot be asked fails the turn with its reason.
+    await assert.rejects(harness.turn({ cwd: dir, session: 's-2', resume: false, message: 'Go', schema, setup: {}, signal: new AbortController().signal, ask: () => Promise.reject(new Error('No answer came within 7 days.')) }), /^Error: No answer came within 7 days\.$/);
+  } finally {
+    restore();
+    await harness.end?.();
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
@@ -1763,7 +2649,7 @@ test('answers through Codex with the message on stdin, and resumes its thread af
 // the account `claude` is signed in to, so it runs only when asked. Run it after each Claude Code
 // update: a -p run drops, without a word, a settings file holding a value it no longer accepts.
 test(
-  'runs a background Claude restricted, sandboxed and guarded, and resumes its session (R-035)',
+  'runs a background Claude restricted and sandboxed, and resumes its session (R-035)',
   { skip: !process.env.WEBCHAT_REAL_CLAUDE && 'set WEBCHAT_REAL_CLAUDE=1 to run it with your claude', timeout: 10 * 60_000 },
   async (t) => {
     const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-claude-')));
@@ -1790,46 +2676,33 @@ test(
     await git(project, 'add', '-A');
     await git(project, 'commit', '-q', '-m', 'Start');
     await git(project, 'worktree', 'add', '-q', '-b', 'agent/k-1', worktree);
-    // A link in the worktree, which the file tools follow and the guard must catch.
-    await fs.symlink(data, path.join(worktree, 'link'));
 
     const settings = path.join(dir, 'claude.json');
-    const tsx = fileURLToPath(import.meta.resolve('tsx'));
-    const hook = `"${process.execPath}" --import "${tsx}" "${fileURLToPath(new URL('../agent/mcp.ts', import.meta.url))}" guard "${data}"`;
     // Tokens the owner's environment holds, which the shell of a background Claude must not inherit.
     const githubToken = `gho_CANARY${randomUUID().replaceAll('-', '')}`.slice(0, 40);
     const npmToken = `npm_CANARY${randomUUID().replaceAll('-', '')}`.slice(0, 40);
     t.after(setEnv({ GH_TOKEN: githubToken, NPM_TOKEN: npmToken }));
     // Claude Code lets a sandboxed shell read the environments SessionStart hooks left, tokens and all.
     const sessionEnv = path.join(os.homedir(), '.claude', 'session-env');
-    await fs.writeFile(settings, JSON.stringify(claudeSettings({ secrets: [data, sessionEnv], npmCache: path.join(dir, 'npm'), guard: hook, env: process.env })));
+    await fs.writeFile(settings, JSON.stringify(claudeSettings({ secrets: [data, sessionEnv], npmCache: path.join(dir, 'npm'), env: process.env })));
     assert.equal(await sandboxProblem(worktree, [data], restrictedSettings(settings)), undefined);
 
     const lines: string[] = [];
     const session = randomUUID();
     const answer = { type: 'object', properties: { reply: { type: 'string' } }, required: ['reply'] };
-    const turn = (input: string, resume: boolean) =>
-      start(
-        'claude',
-        [...claudeArgs({ settings, session, resume, answer }), '--model', 'haiku', '--max-budget-usd', '1'],
-        worktree,
-        AbortSignal.timeout(5 * 60_000),
-        (line) => (lines.push(line), claudeResult(line)),
-        input,
-      );
+    const turn = (input: string, resume: boolean) => runClaude([...claudeArgs({ settings, session, resume, schema: answer }), '--model', 'haiku', '--max-budget-usd', '1'], worktree, input, (line) => lines.push(line));
     const first = await turn(
       [
-        'This checks a sandbox. Do these steps in order, one tool call each, and do not retry one that fails. Steps 1 to 3, 6 and 7 are meant to fail.',
+        'This checks a sandbox. Do these steps in order, one tool call each, and do not retry one that fails. Steps 1, 2, 5 and 6 are meant to fail.',
         `1. Run with the Bash tool: cat ${path.join(data, 'canary.txt')}`,
-        '2. Use the Read tool on link/canary.txt',
-        "3. Run with the Bash tool: curl -sS -m 8 -o /dev/null -w '%{http_code}' https://example.com",
-        "4. Run with the Bash tool: curl -sS -m 8 -o /dev/null -w '%{http_code}' https://registry.npmjs.org/left-pad",
-        '5. Run with the Bash tool: echo hi > notes.txt && git add notes.txt && git commit -q -m "Add notes"',
-        '6. Run with the Bash tool: ls ~/Library/Keychains',
-        '7. Run with the Bash tool: ls ~/.claude/session-env',
-        '8. Run with the Bash tool: npm view left-pad version',
-        '9. Run with the Bash tool: printenv > env.txt',
-        '10. Keep the word PELICAN in mind for later.',
+        "2. Run with the Bash tool: curl -sS -m 8 -o /dev/null -w '%{http_code}' https://example.com",
+        "3. Run with the Bash tool: curl -sS -m 8 -o /dev/null -w '%{http_code}' https://registry.npmjs.org/left-pad",
+        '4. Run with the Bash tool: echo hi > notes.txt && git add notes.txt && git commit -q -m "Add notes"',
+        '5. Run with the Bash tool: ls ~/Library/Keychains',
+        '6. Run with the Bash tool: ls ~/.claude/session-env',
+        '7. Run with the Bash tool: npm view left-pad version',
+        '8. Run with the Bash tool: printenv > env.txt',
+        '9. Keep the word PELICAN in mind for later.',
         'Then put one line per step in reply.',
       ].join('\n'),
       false,
@@ -1846,7 +2719,6 @@ test(
       return JSON.stringify(blocks.find((b) => b.type === 'tool_result' && b.tool_use_id === use.id)?.content);
     };
     assert.match(resultOf('cat '), /Operation not permitted/, 'the sandbox keeps the shell from the secrets, whatever the project allows');
-    assert.match(resultOf('link/canary.txt'), /secrets the WebChat plugin keeps/, 'the guard hook runs, and follows the link');
     assert.match(resultOf('example.com'), /deny network-outbound/, 'the shell reaches no other host');
     assert.match(resultOf('registry.npmjs.org'), /200/, 'the shell reaches the registry');
     assert.ok(!lines.some((line) => line.includes(canary)), 'the secret never reaches the model');
@@ -1890,14 +2762,11 @@ test(
     await git(project, 'config', 'user.email', 'claude@example.com');
     await git(project, 'commit', '-q', '--allow-empty', '-m', 'Start');
     const settings = path.join(dir, 'claude.json');
-    await fs.writeFile(settings, JSON.stringify(claudeSettings({ secrets: [], npmCache: path.join(dir, 'npm'), guard: 'true', env: process.env, noAttribution: true })));
+    await fs.writeFile(settings, JSON.stringify(claudeSettings({ secrets: [], npmCache: path.join(dir, 'npm'), env: process.env, noAttribution: true })));
     const answer = { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' } }, required: ['title', 'body'] };
-    const turn = await start(
-      'claude',
-      [...claudeArgs({ settings, session: randomUUID(), resume: false, answer, claudeMd, skills }), '--model', 'haiku', '--max-budget-usd', '1'],
+    const turn = await runClaude(
+      [...claudeArgs({ settings, session: randomUUID(), resume: false, schema: answer, claudeMd, skills }), '--model', 'haiku', '--max-budget-usd', '1'],
       project,
-      AbortSignal.timeout(5 * 60_000),
-      claudeResult,
       'Add a line "hi" to notes.txt and commit it with git. Then answer with the title and the body of a pull request for it.',
     );
     const pull = turn.answer as { title?: string; body?: string } | undefined;
@@ -1908,3 +2777,19 @@ test(
     assert.doesNotMatch(commit, /Co-Authored-By/i, 'the commit has no attribution trailer');
   },
 );
+
+test('a login service from before the room that still runs `serve` is told to run setup, and idles instead of restarting in a loop', async () => {
+  const child = spawn(process.execPath, ['--import', 'tsx', 'agent/index.ts', 'serve'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const said: Buffer[] = [];
+  child.stderr.on('data', (chunk: Buffer) => said.push(chunk)).on('error', () => undefined);
+  child.on('error', () => undefined);
+  const ended = new Promise((resolve) => child.once('close', resolve));
+  try {
+    await waitFor('it says so', () => /run `webchat-agent setup`/.test(Buffer.concat(said).toString()));
+    await sleep(300);
+    assert.equal(child.exitCode, null, 'it is still running');
+  } finally {
+    child.kill();
+    await ended;
+  }
+});

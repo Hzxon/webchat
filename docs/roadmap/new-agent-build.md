@@ -1,6 +1,6 @@
 ### R: Ship the agent as one file per OS from GitHub releases
 
-Status: Idea. Proposed 2026-11-12 from the agent host design.
+Status: Done in #199. Proposed 2026-11-12 from the agent host design.
 
 Order: first. Every other card of this design installs the agent this way.
 

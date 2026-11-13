@@ -1480,6 +1480,38 @@ a {
   accent-color: var(--accent);
 }
 
+.harness-row {
+  flex-wrap: wrap;
+}
+
+/* The name and path take a line of their own on a phone, so a long path does not wrap letter by letter. */
+.harness-row > span {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agents-link-asks {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.agents-link-ask {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.agents-link-ask p {
+  margin: 0 0 8px;
+}
+
+.agents-link-buttons {
+  display: flex;
+  gap: 8px;
+}
+
 .people-list {
   display: grid;
   max-height: 340px;
@@ -3143,11 +3175,14 @@ a {
 
 /* The harness picker beside the repository, on the same line. */
 .agents-repo .agents-repo {
+  max-width: 100%;
   margin: 0;
 }
 
+/* A long reason on a greyed option would widen the select past its card. */
 .agents-repo select {
   min-width: 0;
+  max-width: 100%;
   padding: 4px 6px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -3327,6 +3362,12 @@ a {
   align-items: center;
   gap: 8px;
   margin-top: 4px;
+}
+
+.agents-draft-actions .agents-note {
+  flex-basis: 100%;
+  margin: 0;
+  text-align: left;
 }
 
 .agents-draft-actions select {

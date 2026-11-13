@@ -32,10 +32,13 @@ docs/decisions.md that explains it. The process itself is in AGENTS.md.
 - A constraint that people editing an area must hold gets one line in that area's file under `.claude/rules/` (D-090).
 - The `doc-ids` check fails duplicate `### D-0xx:`, `K-n`, `R-nnn` and `Q-n` headings; until the board is linked, the later pull request renumbers (D-063).
 - CI runs typecheck, tests and build, and `doc-ids` its id check, on pull requests and on main. Main has no branch protection and no merge queue, so nothing checks a pull request again after main moves (D-076).
+- CI and `doc-ids` run on either of the owner's self-hosted runners (`runs-on: self-hosted`), the Linux server or the Mac, and Release Please on the Linux one only (`[self-hosted, linux]`); none spends Actions minutes, and only the agent's release builds use GitHub's machines (docs/decisions/self-hosted-ci.md).
 - The pull request title type sets the version: `fix` patch, `feat` minor, `!` or `BREAKING CHANGE:` also minor below 1.0.0 (D-055).
 - Never edit the version or `CHANGELOG.md` by hand; Release Please owns them, and needs "Allow GitHub Actions to create and approve pull requests" on (D-055).
-- Only Release Please may title a commit `chore(main): Release `; the ignore script skips it (D-058).
+- A Release Please commit deploys, since `GET /api/config` names the version it sets; the ignore script skips only commits that change none of the app (D-058).
 - The Claude Code plugin ships from the `plugin` branch, which the release job builds from the tag; Release Please sets `plugin/.claude-plugin/plugin.json`'s version (D-092).
+- The agent ships as one file per OS and processor, each built by the release job on that kind of runner and run with `--version` before it ships; `agent/install.sh` installs nothing that misses its `.sha256` in the release, and the job writes the release's address over every `@BASE@` (docs/decisions/agent-install.md).
+- `npm run build:agent` needs Node from nodejs.org, as setup-node gives: Homebrew's has single executables disabled. On macOS the file is signed ad hoc, or the system kills it (docs/decisions/agent-install.md).
 - A file under `docs/`, `test/`, `.github/`, `scripts/`, `agent/` or `plugin/`, or any Markdown, never ships; move a file the app reads at runtime out first (D-058).
 - Only main deploys from Git: keep `git.deploymentEnabled` and the Vercel Ignored Build Step (D-041).
 - The function runs in `sin1` (`vercel.json`), the same region as the database (D-003).
@@ -50,3 +53,4 @@ docs/decisions.md that explains it. The process itself is in AGENTS.md.
 - Rules 3, 6, 7 and 8 of AGENTS.md have a test; `test/rules.test.ts` checks migrations and `req.query`, `test/chat.test.ts` the push payload, `test/github.test.ts` the GitHub token (D-091).
 - A new migration appends one line to `FROZEN_MIGRATIONS` in `test/rules.test.ts`, which the failing test prints; never change or remove a line there. The hash covers the SQL without comments, so a comment may change (D-091).
 - A new test that sends from Alice in `test/chat.test.ts` may hit her 30 sends per 10 seconds; clear the `send:` rate limit rows after it, as the push payload test does (D-091).
+- The `room` job of `ci.yml` builds the real locked room (`test/room.real.test.ts`: a `_webchattest` account, groups, folders and system service, with passwordless sudo) on the owner's self-hosted Linux runner only, only when `agent/**`, that test or `ci.yml` changes; it lints the unit with `systemd-analyze verify` and the plist with `plutil -lint`. The test runs only with `WEBCHAT_REAL_ROOM=1`, never on a machine you cannot spare (docs/decisions/locked-room.md).

@@ -40,6 +40,8 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - The server sends no push to a Safari endpoint while the user looks, except urgent ones; `showsEveryPush` identifies Safari by Apple's push host (D-047).
 - A check-in answers `more: true` with an empty fingerprint when the newest message id is past its cursor; `GET /api/bootstrap` reads the fingerprint before anything else (D-048).
 - A route answers JSON or 204 (D-056).
+- The fingerprint's online and repositories parts use the windows `toUserDTO` does: 1 minute for a person, 2 for an agent, so the page flips when the fingerprint does (docs/roadmap/new-agent-setup.md).
+- `GET /api/config` names the server's `release`, package.json's version, which only Release Please sets; the Connect dialog and the agent follow it (docs/decisions/agent-install.md).
 - (chat, sender, client id) is unique in `webchat.messages`; a repeat returns the stored message with 200 and sends no push (D-061).
 - A `GET /api/urgent/ring` call runs only while an unread urgent message exists; urgent pushes carry a `Topic` header from the hashed tag; a Bark alert for an urgent message is critical (D-079).
 - `conversations.last_event_id` follows reactions, `last_message_id` does not (D-030).
