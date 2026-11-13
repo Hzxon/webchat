@@ -53,6 +53,8 @@ export interface Harness {
   refusal(): Promise<string | undefined>;
   /** What the owner should know about its sandbox while it runs: a managed setting that lets its shell read the owner's secrets. It stops nothing. */
   warning?(): Promise<string | undefined>;
+  /** Whether its shell cannot leave its sandbox now, so a command it asks about needs no owner (docs/decisions/harness-rulebook.md). Left out means it can. */
+  sandboxed?(): Promise<boolean>;
   /**
    * What of the owner's setup it can load: the instructions file and the skills folder it reads,
    * and the knobs it honors, named as in `SetupChoice`, such as `noAttribution`. It declares a knob

@@ -5,7 +5,7 @@ Status: Proposed 2026-11-13 in #204 (docs/roadmap/new-harness-approvals.md).
 Where the owner's page can show a question (a signed `asks` flag, an `AGENT_LEVEL.asks` bit), a
 harness that asks before an action asks the owner: Allow, Allow for this run or Deny, once, within 10
 minutes of the signing. A question left 7 days ends the run; the 2-hour silence timer stands still
-meanwhile. The rulebook only refuses or asks. "For this run" covers exactly the same action, in
+meanwhile. The rulebook only refuses or asks, but for a command a sandbox holds (docs/decisions/harness-rulebook.md). "For this run" covers exactly the same action, in
 memory: no rule outlives a run. At most 3 questions are open and 25 asked for a run. Without the
 flag the harness refuses what it would ask, as before. Claude Code is one stream-json process per
 session, asking through its prompt tool; Codex is one `app-server` per session, answering accept or

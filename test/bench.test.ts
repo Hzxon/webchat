@@ -131,4 +131,34 @@ describe('the bench', () => {
     assert.match(replies[1]!.message!, /secrets/);
     assert.deepEqual(asked, ['Read a.js'], 'only what the rulebook would allow reaches the permit');
   });
+
+  test('a command of a harness whose shell cannot leave its sandbox passes without the owner', async () => {
+    const work = path.join(root, 'held-work');
+    const keys = path.join(root, 'held-keys');
+    await fs.mkdir(work);
+    await fs.mkdir(keys);
+    const run = async (sandboxed?: () => Promise<boolean>) => {
+      const asked: string[] = [];
+      const harness = {
+        name: 'Fake',
+        sandboxed,
+        turn: async (turn: Parameters<Harness['turn']>[0]) =>
+          Promise.all([
+            { tool: 'Bash', kind: 'execute' as const, paths: [], detail: 'PORT=3001 npm test' },
+            { tool: 'Bash', kind: 'execute' as const, paths: [path.join(keys, 'account.json')], detail: 'cat account.json' },
+            { tool: 'Read', kind: 'read' as const, paths: [path.join(work, 'a.js')], detail: 'Read a.js' },
+          ].map((action) => turn.ask!(action))),
+        offers: () => ({ knobs: [] }),
+        apply: async () => undefined,
+      } as unknown as Harness;
+      const { answer } = await new LocalBench([harness], undefined, keys).turn(
+        { harness: 'Fake', cwd: work, session: 's', resume: false, message: '', schema: {}, schemas: [], setup: { claudeMd: false, skills: [], noAttribution: false } },
+        { signal: new AbortController().signal, permit: () => ({ ask: async (action) => (asked.push(action.detail), { allow: true }), quiet: new Quiet(), done: () => undefined }) },
+      );
+      return { allowed: (answer as Array<{ allow: boolean }>).map((r) => r.allow), asked };
+    };
+    assert.deepEqual(await run(async () => true), { allowed: [true, false, true], asked: ['Read a.js'] }, 'the command passes, and one that names a secret is still refused');
+    assert.deepEqual((await run(async () => false)).asked, ['PORT=3001 npm test', 'Read a.js']);
+    assert.deepEqual((await run()).asked, ['PORT=3001 npm test', 'Read a.js'], 'a harness that does not say so keeps asking');
+  });
 });
