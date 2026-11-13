@@ -126,9 +126,9 @@ export class Keep {
       const heads = (await this.git(repo, ['bundle', 'list-heads', file])).split('\n').map((l) => l.split(' ')[1]);
       if (heads.length !== 1 || heads[0] !== ref) throw new Error(`The work holds more than ${ref}, or another branch than it.`);
       await this.git(repo, ['bundle', 'verify', '-q', file]);
-      // Into a ref of its own first, so a bundle that fails a check below moves nothing.
+      // Into a ref of its own first, so a bundle that fails a check below moves nothing. Forced, since a keyholder stopped mid-accept leaves the last one there.
       const incoming = 'refs/webchat/incoming';
-      await this.git(repo, ['-c', 'transfer.fsckObjects=true', 'fetch', '-q', '--no-tags', file, `${ref}:${incoming}`]);
+      await this.git(repo, ['-c', 'transfer.fsckObjects=true', 'fetch', '-q', '--no-tags', file, `+${ref}:${incoming}`]);
       try {
         const head = await this.git(repo, ['rev-parse', incoming]);
         const old = await this.git(repo, ['rev-parse', '--verify', '-q', ref]).catch(() => '');
