@@ -28,6 +28,7 @@ import { runAnswerServer } from './answer.ts';
 import { onPath, pathDirs } from './claude.ts';
 import { harnessFinder, supported, supportedList } from './harnesses.ts';
 import { LocalBench } from './bench.ts';
+import { runBrowser } from './browser.ts';
 import { layoutFor, selfProblem, socketOf } from './lockroom.ts';
 import { NO_REPOSITORY, Plugin } from './plugin.ts';
 import { callRoom, Room, runRunner, type RoomStatus } from './room.ts';
@@ -169,6 +170,9 @@ async function main([command, ...args]: string[]) {
     // The submit_answer MCP server an ACP agent starts for each session (agent/answer.ts).
     case 'answer':
       return runAnswerServer();
+    // The browser's MCP server, which a Claude Code turn starts for a run that browses (agent/browser.ts).
+    case 'browser':
+      return runBrowser(args);
     case '--version':
       return console.log(pkg.version);
     default:

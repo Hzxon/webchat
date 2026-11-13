@@ -1578,7 +1578,9 @@ describe('agent client (R-027)', () => {
           assert.equal((await post({ authorization: 'Bearer wrong' })).status, 401, 'a wrong token');
           assert.equal((await post({ authorization: server.headers.Authorization, origin: 'https://evil.example' })).status, 401, 'a page in a browser');
           const tools = (await (await post({ authorization: server.headers.Authorization })).json()) as { result: { tools: Array<{ name: string }> } };
-          assert.deepEqual(tools.result.tools.map((t) => t.name), ['approve']);
+          // On macOS the run browses (R-046): the dev server's tool, and the browser's own server beside it.
+          assert.deepEqual(tools.result.tools.map((t) => t.name), process.platform === 'darwin' ? ['approve', 'dev_server'] : ['approve']);
+          assert.equal(!!(check!.mcp!.mcpServers as Record<string, unknown>).browser, process.platform === 'darwin');
 
           // Deny stops that action: the fake writes nothing and commits nothing, so the run has no work to push.
           await unthrottle();
@@ -2280,7 +2282,7 @@ describe('agent client (R-027)', () => {
     const account = path.join(layout.data, 'laptop', 'account.json');
     // The role account's `pair` is setup's own function, with the code from stdin.
     room.onPair = ({ code, picks }) => pairInto(account, code, picks as Parameters<typeof pairInto>[2]);
-    const options = { home: agentHome, program, layout, root: room.root, read: room.read, ghArchive: async () => Buffer.from('archive'), ask: async (question: string) => (asked.push(question), 'y') };
+    const options = { home: agentHome, program, layout, root: room.root, read: room.read, ghArchive: async () => Buffer.from('archive'), browserArchive: async () => Buffer.from('package'), ask: async (question: string) => (asked.push(question), 'y') };
     const commands = async () => (await fs.readFile(log, 'utf8')).trim().split('\n');
     try {
       // Not an administrator: it says so alone, asks nothing and changes nothing.
@@ -2303,6 +2305,7 @@ describe('agent client (R-027)', () => {
       assert.deepEqual(room.log.filter((cmd) => cmd.argv.at(-1) === 'pair').map((cmd) => [cmd.as, cmd.argv.some((word) => word.includes(code))]), [[layout.user, false]]);
       assert.equal(await fs.readFile(programOf(layout), 'utf8'), 'the program');
       assert.equal(await fs.readFile(path.join(layout.programDir, 'bin', 'gh'), 'utf8'), 'archive');
+      assert.equal(await fs.readFile(path.join(layout.programDir, 'chrome-devtools-mcp', 'package.json'), 'utf8'), 'package', 'the browser’s pinned package (R-046)');
       const unit = await fs.readFile(unitFile, 'utf8');
       assert.ok(unit.includes(`${programOf(layout)}`) && unit.includes(bin) && /runner/.test(unit), unit);
       assert.equal(await fs.readlink(path.join(laptopHome, '.local', 'bin', 'webchat-agent')), programOf(layout));
@@ -2355,7 +2358,7 @@ describe('agent client (R-027)', () => {
     const print = console.log;
     console.log = () => undefined;
     const pairings = async () => (await instance.sql.query<{ n: string }>('SELECT count(*) AS n FROM webchat.pairings'))[0]!.n;
-    const options = { home: agentHome, program, layout, root: room.root, read: room.read, ghArchive: async () => Buffer.from('archive'), ask: async () => 'y' };
+    const options = { home: agentHome, program, layout, root: room.root, read: room.read, ghArchive: async () => Buffer.from('archive'), browserArchive: async () => Buffer.from('package'), ask: async () => 'y' };
     const setupOf = (from: string) => JSON.stringify({ choice: { claudeMd: false, skills: [], noAttribution: false, linked: [] }, from });
     const kept = (...parts: string[]) => fs.readFile(path.join(layout.data, 'laptop', ...parts), 'utf8').catch(() => undefined);
     try {

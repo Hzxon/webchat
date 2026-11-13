@@ -46,8 +46,8 @@ export function fakeRoom(layout: Layout): Fake {
       const { argv, stdin } = cmd;
       const text = argv.join(' ');
       if (argv[0] === 'sh' && stdin !== undefined) {
-        // Everything setup writes ends in its destination; the program's gh comes out of an archive.
-        const dst = argv[2]!.includes('mktemp') ? path.join(argv[4]!, 'bin', 'gh') : argv.at(-1)!;
+        // Everything setup writes ends in its destination; the program's gh and the browser's package come out of an archive.
+        const dst = argv[2]!.includes('.browser.') ? path.join(argv[4]!, 'chrome-devtools-mcp', 'package.json') : argv[2]!.includes('mktemp') ? path.join(argv[4]!, 'bin', 'gh') : argv.at(-1)!;
         await fs.mkdir(path.dirname(dst), { recursive: true });
         await fs.writeFile(dst, stdin);
         // The program is executable, and made by root.
