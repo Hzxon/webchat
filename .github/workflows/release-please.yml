@@ -14,7 +14,8 @@ permissions:
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    # The owner's own server, as CI's checks (docs/decisions/self-hosted-ci.md). The agent's builds stay on GitHub's machines, one per OS and processor.
+    runs-on: [self-hosted, linux]
     steps:
       # Pinned to a commit, because a moved tag would run other code with
       # write access to the repository.
@@ -29,7 +30,7 @@ jobs:
   plugin:
     needs: release-please
     if: needs.release-please.outputs.created == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
