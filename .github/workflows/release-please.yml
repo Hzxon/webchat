@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   release-please:
-    # The owner's Linux server, which holds nothing else of value (docs/decisions/self-hosted-ci.md). The agent's builds stay on GitHub's machines, one per OS and processor.
+    # The owner's Linux server, which holds nothing else of value (docs/decisions/self-hosted-ci.md).
     runs-on: [self-hosted, linux]
     steps:
       # Pinned to a commit, because a moved tag would run other code with
@@ -51,16 +51,16 @@ jobs:
   # Builds the agent as one file per OS and processor, with Node inside, each on its own kind of
   # machine, where it must print the release before it ships with its checksum. One of them also
   # adds the install script, with this release's address (docs/decisions/agent-install.md).
+  # Only the owner's two runners build, since the account has no Actions minutes, so Intel Macs and
+  # ARM Linux get no file (docs/decisions/self-hosted-ci.md).
   agent:
     needs: release-please
     if: needs.release-please.outputs.created == 'true'
     strategy:
       matrix:
         include:
-          - { runner: macos-latest, file: webchat-agent-darwin-arm64 }
-          - { runner: macos-15-intel, file: webchat-agent-darwin-x64 }
-          - { runner: ubuntu-24.04, file: webchat-agent-linux-x64 }
-          - { runner: ubuntu-24.04-arm, file: webchat-agent-linux-arm64 }
+          - { runner: [self-hosted, macos, arm64], file: webchat-agent-darwin-arm64 }
+          - { runner: [self-hosted, linux, x64], file: webchat-agent-linux-x64 }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,7 +80,7 @@ jobs:
           gzip -c dist/agent/webchat-agent > ${{ matrix.file }}.gz
           shasum -a 256 ${{ matrix.file }}.gz > ${{ matrix.file }}.gz.sha256
           gh release upload "$TAG" ${{ matrix.file }}.gz ${{ matrix.file }}.gz.sha256
-      - if: matrix.runner == 'ubuntu-24.04'
+      - if: matrix.file == 'webchat-agent-linux-x64'
         env:
           TAG: ${{ needs.release-please.outputs.tag }}
           GH_TOKEN: ${{ github.token }}

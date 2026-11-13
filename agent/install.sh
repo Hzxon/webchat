@@ -18,6 +18,11 @@ case "$(uname -m)" in
   x86_64 | amd64) cpu=x64 ;;
   *) echo "The WebChat agent has no build for $(uname -m) processors." >&2; exit 1 ;;
 esac
+# Releases build only on the owner's runners, an Apple silicon Mac and an x64 Linux server (docs/decisions/self-hosted-ci.md).
+case $os-$cpu in
+  darwin-arm64 | linux-x64) ;;
+  *) echo "The WebChat agent has no build for $os on $cpu processors yet." >&2; exit 1 ;;
+esac
 file=webchat-agent-$os-$cpu.gz
 
 # The download lands next to the program, so a small /tmp never fills and the last step is a rename.
