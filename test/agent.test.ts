@@ -2197,6 +2197,32 @@ describe('agent client (R-027)', () => {
     }
   });
 
+  test('a folder the agent names while a page loads the people reaches the page at its next check-in (K-70)', async () => {
+    await alice.sync();
+    const query = instance.sql.query;
+    // The agent's check-in lands just after the check-in's answer read the people, before it reads the fingerprint.
+    instance.sql.query = async function <T>(this: unknown, text: string, params?: unknown[]) {
+      const rows = await query.call(instance.sql, text, params);
+      if (text.includes('FROM webchat.agent_repos r WHERE r.user_id = u.id')) {
+        instance.sql.query = query;
+        await query.call(instance.sql, `INSERT INTO webchat.agent_repos (user_id, repo, last_seen, protocol) VALUES ($1, 'acme/late', $2, 5)`, [bot.id, Date.now()]);
+      }
+      return rows as T[];
+    };
+    const seat = () => alice.users.get(bot.id)?.agentRepos.find((s) => s.repo === 'acme/late');
+    try {
+      await instance.sql.query(`UPDATE webchat.users SET last_active_at = $2 WHERE id = $1`, [bot.id, Date.now()]);
+      await alice.sync();
+      assert.equal(instance.sql.query, query, 'the agent checked in while the answer was built');
+      await alice.sync();
+      assert.equal(seat()?.online, true, 'the page shows the folder Ready without a reload');
+    } finally {
+      instance.sql.query = query;
+      await instance.sql.query(`DELETE FROM webchat.agent_repos WHERE repo = 'acme/late'`);
+      await alice.sync();
+    }
+  });
+
   test('waits for the interval it is asked for before each check-in', async () => {
     const stop = new AbortController();
     let rounds = 0;

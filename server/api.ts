@@ -613,13 +613,15 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
 
     const messages = await db.messagesSince(me.id, cursor);
     await markDeliveredFrom(me.id, messages);
-    const [users, projects, conversations, docs, newStamp] = await Promise.all([
+    // Marking messages delivered changes the fingerprint, so read it again, and before the rest, as
+    // the bootstrap does: a change that lands while they load, such as an agent's folder, then makes
+    // the next check-in answer "changed" instead of leaving the page on the older list (K-70).
+    const newStamp = await db.stamp(me.id);
+    const [users, projects, conversations, docs] = await Promise.all([
       db.listUsers(),
       db.projectsFor(me.id),
       db.conversationsFor(me.id),
       db.docsFor(me.id),
-      // Marking messages delivered changes the fingerprint, so read it again.
-      db.stamp(me.id),
     ]);
     const newCursor = messages.reduce((max, m) => Math.max(max, m.id), cursor);
     // Each read above sees its own moment. A message that committed after messagesSince, or past
