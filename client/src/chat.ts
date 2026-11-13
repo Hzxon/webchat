@@ -44,7 +44,14 @@ import {
 } from './e2ee/keyring';
 import { keystore, type StoredUnsent } from './e2ee/keystore';
 import { refreshGithub, startGithub } from './github';
-import { disablePushHere, forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
+import {
+  disablePushHere,
+  forgetPushOnServer,
+  getPushState,
+  oldIos,
+  showLocalNotification,
+  syncPushSubscription,
+} from './push';
 import type { Card } from '../../shared/board';
 import { keyedQueue } from './queue';
 import { agentChats, agentOf, ownAgents, threadsOf } from './agents';
@@ -350,6 +357,8 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
   void syncPushSubscription()
     .then(refreshPushState)
     .then(() => syncNow());
+  // Once per load, not per check-in (D-004): only these phones' banner depends on Bark (K-1).
+  if (oldIos) void api.bark().then(actions.setBark, () => undefined);
   cleanups.push(startGithub(() => pushActiveHere));
   void alertMissedUrgent(data.urgent, keysOf, run);
 
