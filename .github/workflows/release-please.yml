@@ -41,12 +41,16 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git fetch -q origin plugin; then git worktree add -q -B plugin ../dist FETCH_HEAD; else git worktree add -q --orphan -b plugin ../dist; fi
-          rsync -a --delete --exclude .git plugin/ ../dist/
-          cd ../dist
+          # The runner keeps its folders between jobs and empties only this one. Detached, since a
+          # worktree an earlier job left may still hold the branch (docs/decisions/self-hosted-ci.md).
+          dist=$RUNNER_TEMP/plugin
+          git worktree prune
+          if git fetch -q origin plugin; then git worktree add -q --detach "$dist" FETCH_HEAD; else git worktree add -q --orphan "$dist"; fi
+          rsync -a --delete --exclude .git plugin/ "$dist"/
+          cd "$dist"
           git add -A
           git commit -q -m "build(plugin): Ship $TAG"
-          git push -q origin plugin
+          git push -q origin HEAD:refs/heads/plugin
 
   # Builds the agent as one file per OS and processor, with Node inside, each on its own kind of
   # machine, where it must print the release before it ships with its checksum. One of them also
@@ -57,6 +61,8 @@ jobs:
     needs: release-please
     if: needs.release-please.outputs.created == 'true'
     strategy:
+      # One platform's failure must not cancel the other's file.
+      fail-fast: false
       matrix:
         include:
           - { runner: [self-hosted, macos, arm64], file: webchat-agent-darwin-arm64 }
