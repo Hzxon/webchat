@@ -1,4 +1,5 @@
 # Runs the checks a pull request must pass: typecheck, the tests and the build.
+# A change to the docs alone skips them.
 # They also run on main and in the merge queue. See D-076 in docs/decisions.md.
 name: ci
 
@@ -27,16 +28,43 @@ jobs:
     steps:
       # Pinned to commits, like the actions in release-please.yml and doc-ids.yml.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # No check reads `docs/` or a Markdown file, so a change to those alone skips the steps below
+      # and leaves the runner free (D-076). The base is found as the room job finds it.
+      - name: Check whether anything but the docs changed
+        id: changed
+        env:
+          EVENT: ${{ github.event_name }}
+          PULL_BASE: ${{ github.event.pull_request.base.sha }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) base="$PULL_BASE" ;;
+            merge_group) base="$GROUP_BASE" ;;
+            *) base="$BEFORE" ;;
+          esac
+          # With no base to compare to, such as a new branch, run.
+          if [ -z "${base//0/}" ] || ! git diff --quiet "$base" HEAD -- . ':!docs' ':!*.md'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.changed.outputs.run == 'true'
         with:
           node-version: 26
           cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
+      - if: steps.changed.outputs.run == 'true'
+        run: npm ci
+      - if: steps.changed.outputs.run == 'true'
+        run: npm run typecheck
+      - if: steps.changed.outputs.run == 'true'
+        run: npm test
+      - if: steps.changed.outputs.run == 'true'
+        run: npm run build
       # The agent's single file must still build and run (docs/decisions/agent-install.md).
-      - run: npm run build:agent && dist/agent/webchat-agent --version
+      - if: steps.changed.outputs.run == 'true'
+        run: npm run build:agent && dist/agent/webchat-agent --version
 
   # Builds the locked room for real (docs/decisions/locked-room.md): a role account, its groups,
   # folders and system service, which needs passwordless sudo on the owner's Linux server
