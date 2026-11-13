@@ -618,7 +618,8 @@ describe('agent client (R-027)', () => {
   });
   test(
     'serves every folder from one window, runs a card in a background Claude, fixes its pull request, and clones a repository on its owner\'s word (R-030, R-035, R-036)',
-    { timeout: 60_000 },
+    // A backlog of 40 proposals alone takes 16 seconds under the send limit (K-71).
+    { timeout: 90_000 },
     async () => {
       // A checkout whose origin is on GitHub, as its config says. Its pushes land in a bare repository here.
       const origin = path.join(home, 'app.git');
@@ -1271,6 +1272,24 @@ describe('agent client (R-027)', () => {
         const copyNow = (await atBoard('docs/roadmap.md'))!;
         assert.ok(copyNow.includes('### K-10: Owned\n\nStatus: Open.') && !copyNow.includes('## Ready'), "Carol's Ready on Alice's card is not copied");
         assert.ok(copyNow.includes('### K-11: Kept'), "Carol's removal of Alice's card is not copied");
+
+        // A new install keeps no record of what it sent, and main still holds the added proposal's file
+        // until the copy merges: the board's R-1 has its title, so no draft goes again (K-71).
+        (plugin as unknown as { copies: Record<number, { proposals: object }> }).copies[app.project.id]!.proposals = {};
+        await fromAgent();
+        await plugin.syncBoards(start + 41 * 60_000);
+        assert.deepEqual((await fromAgent()).filter((m) => m.kind === 'proposal' && m.card.title === 'A new thing'), [], 'no draft for a card the board has');
+        // A backlog of 40 proposals goes out under the send limit, and the same round names the claims.
+        await docsAt(Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`docs/roadmap/new-burst-${i}.md`, `### K: Burst ${i}\n\nStatus: Open.\n`])));
+        const ghBefore = JSON.parse(await fs.readFile(ghState, 'utf8'));
+        await fs.writeFile(ghState, JSON.stringify({ ...ghBefore, open: [...ghBefore.open, { number: 9, title: 'Own it', body: 'Claims K-10.', headRefName: 'claude/k10' }] }));
+        await unthrottle();
+        await plugin.syncBoards(start + 47 * 60_000);
+        const burst = await fromAgent();
+        assert.equal(burst.filter((m) => m.kind === 'proposal').length, 40, 'every proposal went out, with no 429');
+        const claimsNow = burst.find((m) => m.kind === 'claims');
+        assert.deepEqual(claimsNow?.kind === 'claims' && claimsNow.claims, [{ card: 'K-7', pull: 8 }, { card: 'K-10', pull: 9 }]);
+        await fs.writeFile(ghState, JSON.stringify(ghBefore));
 
         // A card run follows the repository's workflow (R-042, D-118).
         await unthrottle();
