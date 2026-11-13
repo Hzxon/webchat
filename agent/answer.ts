@@ -89,7 +89,9 @@ export async function listenForAnswers() {
       }
       if (++turn.misfits >= MISFITS) turn.reject(new Error(`the agent's answers did not fit: ${problem}.`));
       reply({ error: `${problem}. Call submit_answer again with an answer that fits.` });
-    });
+    })
+      // readline passes a failed read on, and on Linux an answer server that exits with a reply unread resets the socket.
+      .on('error', () => undefined);
   });
   await new Promise<void>((resolve) => server.listen(address, resolve));
 
