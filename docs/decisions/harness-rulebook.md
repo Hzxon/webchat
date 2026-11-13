@@ -13,6 +13,12 @@ D-115 has them. When a harness asks before an action, the owner answers from Web
 drops docs/decisions/new-sandbox-owned.md. Why: the harness protects the machine; WebChat writes
 what it enforces.
 
+A command needs no owner when its adapter's `sandboxed()` says the shell cannot leave the sandbox:
+Claude Code asks about some commands it still runs there, such as `PORT=3001 npm test`, and the
+owner cannot judge one better than the sandbox. The rulebook's path checks still refuse first.
+Claude's adapter says so only while `sandboxProblem` finds nothing, which now also names a managed
+`allowUnsandboxedCommands` or `excludedCommands`. Codex and ACP do not say so, and keep asking.
+
 Cost: with a harness whose sandbox reads the owner's files, a teammate's text can get them into the
 agent's branch; the README says so. Approvals cover only what a harness asks about.
 

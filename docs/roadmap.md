@@ -155,6 +155,64 @@ Constraints: a knob is offered only when the adapter honors it without running c
 
 Done when: a Claude Code agent behaves as before and the tests pass; Settings lists the harnesses the laptop has, each with its state and knobs; a card run and a conversation each show the harness the owner picked; a request from an old page runs on the host harness; a request naming a harness that is not enabled fails with the reason.
 
+### R-046: A run checks its work in a browser that reaches only its own dev server
+
+Status: Idea.
+
+Checked: 2026-11-14. Read the board's cards and decisions (D-037, D-080, D-097, D-118, K-73), docs/decisions/new-sandbox-owned.md and locked-room.md, docs/roadmap/ and AGENTS.md, and grepped for chrome-devtools, Playwright and Puppeteer, on main at bb44370; open pull requests #233 and #229 by title only; tests not run.
+
+Order: after K-73 (#233).
+
+Why: AGENTS.md asks for a browser check with two accounts, at desktop width and 375 pixels, in
+light and dark, and for screenshots in the pull request. A run cannot do either. Its tools are the
+shell, the file tools, web search and web fetch (`agent/claude.ts`), its only MCP server is the
+approval tool, and its shell reaches only the npm registry. So the owner does the visual check by
+hand, and the model never sees what it built.
+
+Scope:
+
+- The runner adds `chrome-devtools-mcp` to the `--mcp-config` file, beside the approval tool. Setup
+  installs one pinned version; a run never fetches it. It runs headless with a temporary profile,
+  never the owner's, and with usage statistics, CrUX lookups, update checks and `file:` navigation
+  off. It launches Chrome itself, so no debugging port is open for the shell to drive.
+- Chrome sends every request, loopback included, through a proxy in the runner. The proxy passes
+  only `localhost` names and loopback addresses, on the ports the run's dev server opened.
+- The rulebook allows a named list of the server's tools: pages, input, resize and emulate, the
+  snapshot, the screenshot, console and network lists, and script evaluation. Any other tool is
+  refused, so a new version adds nothing silently. A `url` must be loopback on a run port. An
+  argument that names a file, such as `filePath` or `filePaths`, is judged as a path, so it stays
+  in the working folders.
+- The runner starts the dev server, not the model's shell, as the owner decided on 2026-11-14. The
+  model asks for it through a tool of WebChat's own, naming the command. The runner picks free
+  ports, so two runs do not clash on 3000 and 5173, and runs the command in a sandbox it owns: it
+  writes only the working folder, binds only those ports, and connects to nothing but them. It
+  ends with the turn.
+- Screenshots go back to the model and, sealed, to the owner in the run's thread. The pull request
+  says they are there.
+
+Constraints: screenshots are content, so they travel sealed (rule 1). The dev server is the
+model's code, so the runner never starts it as a plain process of the owner: that would run a
+teammate-steered model's code outside every sandbox. Claude Code's own sandbox cannot hold it
+either: its `network.allowLocalBinding` opens every loopback port of the laptop, such as another
+project's dev server or a local database, and does nothing on Linux, where a sandboxed command's
+`localhost` is private to it (code.claude.com/docs/en/sandboxing, read 2026-11-13). So the runner's
+sandbox names the ports: a profile of WebChat's own on macOS, and on Linux a network namespace
+that the dev server and the browser share. The model's shell keeps no local network, so it checks
+the server through the browser's tools, not `curl`. Web Push cannot be tested, since it needs a
+push service outside the laptop. Claude Code only: Codex and ACP agents need the same filter by
+another route.
+
+Cost: a sandbox WebChat owns and must keep working on two systems, which
+docs/decisions/new-sandbox-owned.md once dropped. A dependency to pin and watch, with 63 tools at
+this reading, of which the default set goes into every turn's context. A Chrome per run, a few
+hundred MB of memory, started at first use and ended with the turn.
+
+Done when: on macOS, a card run that changes the client starts the dev server, opens it as two
+accounts on `alice.localhost` and `bob.localhost`, and the owner gets screenshots at desktop width
+and 375 pixels, light and dark, with no question asked; tests show the proxy refusing another host
+and another port, the dev server failing to reach a port that is not its own, and the rulebook
+refusing a `file:` URL, a file path outside the folder and a tool off the list.
+
 ## Known issues
 
 ### K-69: An agent's board messages buzz the owner's phone and count as unread
@@ -174,6 +232,49 @@ Fix: a quiet message kind, `sync` (`MessageKind` in `shared/types.ts`, migration
 Decision: the quiet-sync decision, Proposed in #198 as `docs/decisions/quiet-sync-messages.md`, is not on the board yet and has no number. The server now sees which messages are board traffic; `docs/decisions/D-020.md` adds that to D-020, and the board's D-020 does not have the line yet.
 
 Tests: `test/chat.test.ts` (no push, never unread, no new preview, never urgent) and `test/agent.test.ts` (entries and claims go as `sync`).
+
+### K-73: K: The owner is asked about shell commands the sandbox already holds
+
+Status: Open.
+
+Checked: 2026-11-14. Read the board's cards and decisions, agent/rulebook.ts, permits.ts, claude.ts (sandboxProblem, claudeSettings), codex.ts, test/agent.test.ts and docs/decisions/harness-rulebook.md, harness-approvals.md and new-sandbox-owned.md on main at bb44370; open pull request #229 by title only; tests not run.
+
+Status: Open. Found by the owner on 2026-11-13, whose Claude Code runs asked command by command.
+
+The rulebook sends every shell command a harness asks about to the owner: `judge` in
+`agent/rulebook.ts` answers `execute` with "WebChat cannot check a shell command." Claude Code
+approves most sandboxed commands itself, but some forms still go to its permission prompt tool,
+though they run in the sandbox too: a command with a variable in front, such as `PORT=3001 npm test`,
+`make CC=clang`, `eval`, and an `rm` it takes for a critical path (code.claude.com/docs/en/sandboxing,
+read 2026-11-13). "Allow for this run" covers the same string exactly (`agent/permits.ts`), so
+`npm test` and `npm test -- chat` are two questions, and after 25 the model is told to stop asking.
+
+These questions protect nothing. WebChat's settings file keeps the shell in the sandbox
+(`allowUnsandboxedCommands: false`, `failIfUnavailable: true`), which writes only the working
+folder and reaches only the npm registry, and the locked room keeps the secrets under another
+account. The owner answers from a phone, cannot judge the command better than the sandbox, and the
+run waits meanwhile.
+
+Measured on 2026-11-13 with Claude Code 2.1.323, one real turn under the plugin's settings:
+`PORT=3001 npm test` and `eval "ls"` asked; `echo plain`, `npm test -- chat` and an `rm -rf` in the
+folder did not.
+
+Fix: an adapter says when its harness's shell cannot leave the sandbox, and the runner then lets a
+command pass. `judge` still runs first, so a command that names a secret folder or a path outside
+the working folders is refused. The Claude adapter says so only while `sandboxProblem` finds
+nothing, which now also names a managed setting that lets a command run unsandboxed. Codex and ACP
+agents do not say so, and keep asking. This changes docs/decisions/harness-rulebook.md.
+
+Cost: WebChat trusts Claude Code's sandbox for the shell without the owner's eye on each command,
+as docs/decisions/harness-rulebook.md already does for what Claude Code never asks about. A settings
+value Claude Code stops accepting drops the sandbox without a word (D-097), and `sandboxProblem` does
+not see that, so a run in that state would let every command through where it used to ask. `judge`
+sees only the paths written in a command, so a secret reached through a variable or a glob is kept
+out by the locked room alone.
+
+Done when: a test shows `judge` allowing `execute` for a sandboxed harness, still refusing a command
+that names a secret folder, and still asking for a harness that does not vouch; a Claude Code run
+that runs `PORT=3001 npm test` sends the owner no question; a Codex run still asks.
 
 ## Open questions
 

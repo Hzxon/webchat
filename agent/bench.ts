@@ -324,11 +324,14 @@ export class LocalBench implements Bench {
     const harness = this.harness(name);
     const { instructions, skills, applied } = await this.loadSetup(session, harness, choice);
     const asked = permit?.();
-    // The rulebook runs here, where the owner's paths are, and only refuses or asks; the owner's folders never reach the keyholder (docs/decisions/harness-rulebook.md).
+    // The rulebook runs here, where the owner's paths are; the owner's folders never reach the keyholder (docs/decisions/harness-rulebook.md).
     const roots = [cwd, ...(skills ? [skills] : [])];
+    const sandboxed = !!asked && !!(await harness.sandboxed?.());
     const ask = asked && (async (action: Ask): Promise<Reply> => {
       const verdict = judge(action, { folders: roots, secrets: secretDirs(this.dataDir), tools: [] });
-      return !verdict.allow && !verdict.ask ? { allow: false, message: verdict.why } : asked.ask(action);
+      if (!verdict.allow && !verdict.ask) return { allow: false, message: verdict.why };
+      // It refuses or asks, but for a command the sandbox holds: the owner could not judge it better, and the paths it names passed above.
+      return sandboxed && action.kind === 'execute' ? { allow: true } : asked.ask(action);
     });
     try {
       const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: { instructions, skills }, signal, progress, ask, quiet: asked?.quiet });
