@@ -1,5 +1,6 @@
 import { waitUntil } from '@vercel/functions';
 import express, { type NextFunction, type Request, type Response } from 'express';
+import pkg from '../package.json' with { type: 'json' };
 import {
   DEVICE_COOKIE,
   dummyPasswordHash,
@@ -407,7 +408,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
   }
 
   router.get('/config', (_req, res) => {
-    const body: ConfigDTO = { vapidPublicKey: push.publicKey, kdfSalt };
+    const body: ConfigDTO = { vapidPublicKey: push.publicKey, kdfSalt, release: pkg.version };
     res.json(body);
   });
 
@@ -524,6 +525,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
       keys: { dh: base64url(body?.keys?.dh, 'Encryption key', 87), sign: base64url(body?.keys?.sign, 'Signing key', 87) },
       proof: base64url(body?.proof, 'Pairing proof', 43),
       authKey: loginKey(body),
+      ...(body?.picks !== undefined && { picks: base64url(body.picks, 'Picks', 40, LIMITS.pairingPicks) }),
     };
     if (!(await db.createPairing(input, await hashPassword(input.authKey)))) {
       throw new HttpError(409, 'This pairing code was used already. Make a new one in WebChat.');
@@ -952,6 +954,13 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     res.json(await db.docSections(doc.id));
   });
 
+  /** Each section's oldest revision and each author's newest, which the board reads for owners and words. */
+  router.get('/docs/:id/words', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const doc = await requireDoc(docId(req.params.id), me.id);
+    res.json(await db.docWords(doc.id));
+  });
+
   /** One person deletes a doc for everyone: whoever made it, or the project's owner. */
   router.delete('/docs/:id', requireAuth, async (req, res) => {
     const me = currentUser(res);
@@ -1032,7 +1041,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const sealed = envelope(req.body?.envelope);
     // Signed into the envelope, so it must stay exactly as the client sent it.
     const clientId = base64url(req.body?.clientId, 'clientId', 1, 64);
-    const kind: Exclude<MessageKind, 'github'> = req.body?.kind === 'reaction' ? 'reaction' : 'message';
+    const kind: Exclude<MessageKind, 'github'> = req.body?.kind === 'reaction' || req.body?.kind === 'sync' ? req.body.kind : 'message';
     if (req.body?.kind !== undefined && req.body.kind !== kind) throw new HttpError(400, 'Unknown message kind.');
     await requireMember(conversationId, me.id);
     await requireCurrentKey(conversationId, sealed.kid);
@@ -1040,7 +1049,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
 
     const urgent = req.body?.urgent === true;
     // The urgent flag is signed into the envelope, so it is refused rather than quietly dropped.
-    if (urgent && kind === 'reaction') throw new HttpError(400, 'A reaction cannot be urgent.');
+    if (urgent && kind !== 'message') throw new HttpError(400, 'Only a message can be urgent.');
     const { message, repeated } = await db.insertMessage(conversationId, me.id, kind, sealed, urgent, clientId);
     // Answer the sender first; pushes go out after, while the function stays alive.
     if (!repeated) inBackground(notifyNewMessage(db, push, config, message, me), config.logger);
@@ -1080,7 +1089,9 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     if (Buffer.from(p256dh, 'base64url').length !== 65 || Buffer.from(auth, 'base64url').length !== 16) {
       throw new HttpError(400, 'Subscription keys are invalid.');
     }
-    await db.savePushSubscription(me.id, endpoint, p256dh, auth);
+    if (!(await db.savePushSubscription(me.id, endpoint, p256dh, auth))) {
+      throw new HttpError(409, 'Another account holds this push subscription.', 'endpoint_taken');
+    }
     res.status(204).end();
   });
 

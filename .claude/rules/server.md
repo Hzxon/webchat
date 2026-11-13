@@ -29,6 +29,7 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - Every API request names its account in `x-webchat-user`; a mismatch answers `409 account_changed` (D-008).
 - Attention lasts 45 seconds after the last check-in; a closing tab ends it with `POST /api/away` (D-007).
 - A tab with no push subscription gets no push and checks in every 3 seconds (D-007).
+- A push endpoint moves to another account only when the subscribe request holds its stored keys; the endpoint alone is not proof. A refusal answers `409 endpoint_taken`, and the page replaces its subscription with a new one.
 - Every `/api` response carries `X-WebChat-Build`; send none without a built page (D-040).
 - Count a sign-in attempt before it runs and return the hit with `returnRateLimit` before answering; never use the `finish` event, the function may stop after the answer (D-068).
 - Sign-up refuses a browser that sends the `webchat_device` cookie; sign-up, sign-in and sign-out set it (D-080).
@@ -39,10 +40,13 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - The server sends no push to a Safari endpoint while the user looks, except urgent ones; `showsEveryPush` identifies Safari by Apple's push host (D-047).
 - A check-in answers `more: true` with an empty fingerprint when the newest message id is past its cursor; `GET /api/bootstrap` reads the fingerprint before anything else (D-048).
 - A route answers JSON or 204 (D-056).
+- The fingerprint's online and repositories parts use the windows `toUserDTO` does: 1 minute for a person, 2 for an agent, so the page flips when the fingerprint does (docs/roadmap/new-agent-setup.md).
+- `GET /api/config` names the server's `release`, package.json's version, which only Release Please sets; the Connect dialog and the agent follow it (docs/decisions/agent-install.md).
 - (chat, sender, client id) is unique in `webchat.messages`; a repeat returns the stored message with 200 and sends no push (D-061).
 - A `GET /api/urgent/ring` call runs only while an unread urgent message exists; urgent pushes carry a `Topic` header from the hashed tag; a Bark alert for an urgent message is critical (D-079).
 - `conversations.last_event_id` follows reactions, `last_message_id` does not (D-030).
 - A reaction push only wakes a tab the recipient is looking at and notifies nobody; a reaction push tag is `reaction-` plus the chat id (D-030, D-070).
+- A `sync` message, an agent's board traffic with its owner's page, is pushed, counted and kept from the preview like a reaction, and is never urgent (the quiet-sync decision, proposed in #198).
 - Project and group invite pushes show even while the app is open; the server writes the project invite text, since project names are not encrypted (D-031, D-043).
 - Everyone on a deployment sees every other member's name and online status; sign-up needs the invite code from `INVITE_CODE` (D-002).
 - `/api/pairings` creates and reads with no sign-in and holds only public keys and proofs; a read answers 204 until the agent's half exists; approving needs the owner's session (D-093).

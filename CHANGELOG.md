@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.10.0](https://github.com/Hzxon/webchat/compare/v0.9.0...v0.10.0) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **agent:** the Claude Code plugin no longer hosts the agent. Plugin users must run `webchat-agent setup`, which needs administrator rights; without them there is no agent.
+
+### Features
+
+* **agent:** Approve harness actions from WebChat ([#204](https://github.com/Hzxon/webchat/issues/204)) ([c8b6b26](https://github.com/Hzxon/webchat/commit/c8b6b265d1da91d2a58e5f59ea93a6ca99e7f1f3))
+* **agent:** Build the locked room in setup ([#208](https://github.com/Hzxon/webchat/issues/208)) ([502fa12](https://github.com/Hzxon/webchat/commit/502fa122c804a48b983be4e6cc2ba2ff83a4ccd2))
+* **agent:** Connect a folder on the owner's go ([#202](https://github.com/Hzxon/webchat/issues/202)) ([1e9d444](https://github.com/Hzxon/webchat/commit/1e9d444e0772a63500d72c7b5145ee20e8cc0efc))
+* **agent:** Follow the server's release ([#210](https://github.com/Hzxon/webchat/issues/210)) ([bcfde91](https://github.com/Hzxon/webchat/commit/bcfde91bd78b15c10282015b43395c48c107187d))
+* **agent:** Join the keyholder and runner ([#207](https://github.com/Hzxon/webchat/issues/207)) ([e74ed0c](https://github.com/Hzxon/webchat/commit/e74ed0cabc59920e8c84c6a4496ba470c951c9be))
+* **agent:** Link harnesses from a supported list ([#201](https://github.com/Hzxon/webchat/issues/201)) ([af3876c](https://github.com/Hzxon/webchat/commit/af3876cfd65ac3e9aab9f71d49e381481adcab98))
+* **agent:** Retire the plugin host ([#209](https://github.com/Hzxon/webchat/issues/209)) ([f988e65](https://github.com/Hzxon/webchat/commit/f988e65e70659e37462f0d2bdf45d46430afcc75))
+* **agent:** Run ACP agents from a shipped list ([#203](https://github.com/Hzxon/webchat/issues/203)) ([279a148](https://github.com/Hzxon/webchat/commit/279a14885166106090f8132cd1728fa06dc7d305))
+* **agent:** Set up the agent with one command ([#200](https://github.com/Hzxon/webchat/issues/200)) ([45fb74d](https://github.com/Hzxon/webchat/commit/45fb74d04172d4af33bc8b1aa2d68a5de9960669))
+* **agent:** Ship the agent as one file per OS ([#199](https://github.com/Hzxon/webchat/issues/199)) ([baf3ac9](https://github.com/Hzxon/webchat/commit/baf3ac9052547cd9aa66a4ba90ea6daa125c4721))
+* **board:** Let a card's owner hold its gates ([#189](https://github.com/Hzxon/webchat/issues/189)) ([ef07569](https://github.com/Hzxon/webchat/commit/ef07569c4505d1d7937dba8b0bd24683b68f60b5))
+* **board:** Review a card like a pull request ([#190](https://github.com/Hzxon/webchat/issues/190)) ([83b9d1d](https://github.com/Hzxon/webchat/commit/83b9d1d9e9e233484c81b17049e1d4ae6b26a0a8))
+* **board:** Show the roadmap as lanes ([#188](https://github.com/Hzxon/webchat/issues/188)) ([35cc583](https://github.com/Hzxon/webchat/commit/35cc5832035f62872eb0fe8d55a96d238245fc34))
+
+
+### Bug Fixes
+
+* **agent:** Copy the board's statuses that stand ([#195](https://github.com/Hzxon/webchat/issues/195)) ([bd1ee0a](https://github.com/Hzxon/webchat/commit/bd1ee0a3d9474a48ceaa0845d4da8aa65abf8280))
+* **agent:** Fsck a bundle's objects on old git ([#212](https://github.com/Hzxon/webchat/issues/212)) ([5621744](https://github.com/Hzxon/webchat/commit/56217441c68f0892c4aec1f4f9919fb36337274a))
+* **board:** Keep a card's reviews on a hand edit ([#197](https://github.com/Hzxon/webchat/issues/197)) ([78ca9ba](https://github.com/Hzxon/webchat/commit/78ca9bae442fc4577a37f680bc01ac41839609d6))
+* **board:** Keep one editor open per board ([#196](https://github.com/Hzxon/webchat/issues/196)) ([d02a761](https://github.com/Hzxon/webchat/commit/d02a761718c9fb8429498e5ccc0d2658c403777f))
+* Close four gaps from the security audit ([#185](https://github.com/Hzxon/webchat/issues/185)) ([b9a8a67](https://github.com/Hzxon/webchat/commit/b9a8a67c77c3fa58e23131f7b8084cc9c8251748))
+
 ## [0.9.0](https://github.com/Hzxon/webchat/compare/v0.8.0...v0.9.0) (2026-11-09)
 
 

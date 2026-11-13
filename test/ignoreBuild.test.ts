@@ -48,7 +48,9 @@ describe("Vercel's Ignored Build Step in scripts/ignore-build.sh (D-058)", () =>
     assert.equal(skips('0123456789abcdef0123456789abcdef01234567'), false);
   });
 
-  test('skips a Release Please commit', () => {
-    assert.equal(skips('', 'chore(main): Release 0.2.0'), true);
+  test('builds a Release Please commit, since GET /api/config names the version it sets', () => {
+    const released = git('rev-parse', 'HEAD');
+    commit('package.json');
+    assert.equal(skips(released, 'chore(main): Release 0.2.0'), false);
   });
 });

@@ -14,7 +14,8 @@ permissions:
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    # The owner's Linux server, which holds nothing else of value (docs/decisions/self-hosted-ci.md).
+    runs-on: [self-hosted, linux]
     steps:
       # Pinned to a commit, because a moved tag would run other code with
       # write access to the repository.
@@ -25,21 +26,16 @@ jobs:
       tag: ${{ steps.release.outputs.tag_name }}
 
   # Ships the Claude Code plugin on the `plugin` branch, which is its marketplace: the plugin folder
-  # with its program built from the release's tag (R-030). Each release adds one commit there.
+  # as the release's tag has it. The plugin is skills only now, with no program to build, since the
+  # agent runs from `webchat-agent setup` (docs/decisions/locked-room.md). Each release adds one commit there.
   plugin:
     needs: release-please
     if: needs.release-please.outputs.created == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release-please.outputs.tag }}
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 26
-          cache: npm
-      - run: npm ci
-      - run: npm run build:plugin
       - env:
           TAG: ${{ needs.release-please.outputs.tag }}
         run: |
@@ -51,3 +47,43 @@ jobs:
           git add -A
           git commit -q -m "build(plugin): Ship $TAG"
           git push -q origin plugin
+
+  # Builds the agent as one file per OS and processor, with Node inside, each on its own kind of
+  # machine, where it must print the release before it ships with its checksum. One of them also
+  # adds the install script, with this release's address (docs/decisions/agent-install.md).
+  # Only the owner's two runners build, since the account has no Actions minutes, so Intel Macs and
+  # ARM Linux get no file (docs/decisions/self-hosted-ci.md).
+  agent:
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    strategy:
+      matrix:
+        include:
+          - { runner: [self-hosted, macos, arm64], file: webchat-agent-darwin-arm64 }
+          - { runner: [self-hosted, linux, x64], file: webchat-agent-linux-x64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - run: npm run build:agent
+      - env:
+          TAG: ${{ needs.release-please.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(dist/agent/webchat-agent --version)" = "${TAG#v}"
+          gzip -c dist/agent/webchat-agent > ${{ matrix.file }}.gz
+          shasum -a 256 ${{ matrix.file }}.gz > ${{ matrix.file }}.gz.sha256
+          gh release upload "$TAG" ${{ matrix.file }}.gz ${{ matrix.file }}.gz.sha256
+      - if: matrix.file == 'webchat-agent-linux-x64'
+        env:
+          TAG: ${{ needs.release-please.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sed "s|@BASE@|https://github.com/${{ github.repository }}/releases/download/$TAG|g" agent/install.sh > install.sh
+          gh release upload "$TAG" install.sh

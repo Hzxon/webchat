@@ -5,12 +5,13 @@
 // button stand the cards, decisions and pull requests the agent's check found it repeats or goes
 // against, and the card it writes carries the check's line (R-041).
 import { useEffect, useMemo, useState } from 'react';
+import { cardText, withReviews, type Card } from '../../../shared/board';
 import { textHash } from '../../../shared/e2ee';
-import type { CardDraftDTO } from '../../../shared/types';
+import { cardStatus, type CardDraftDTO } from '../../../shared/types';
 import { threadProject, type Thread } from '../agents';
-import { boardDocs, cardText, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, parseCard, withChecked, type Card } from '../board';
+import { boardDocs, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, withChecked } from '../board';
 import { noteAdded, syncNow, tellAgent } from '../chat';
-import { addCard, createBoard, loadSections, newSectionId, rewriteSection, sectionHistory } from '../docs';
+import { addCard, boardCards, createBoard, newSectionId, rewriteCard, sectionHistory } from '../docs';
 import type { ChatMessage } from '../e2ee/keyring';
 import { actions, senderName, useAppState } from '../store';
 import { formatSince } from './format';
@@ -72,11 +73,11 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
     if (added) return;
     let live = true;
     void (async () => {
-      const fresh = (await Promise.all(needed.map(async (c) => (columns[c] ? (await loadSections(columns[c]!)).map(parseCard) : [])))).flat();
+      const fresh = (await Promise.all(needed.map(async (c) => (columns[c] ? boardCards(columns[c]!) : [])))).flat();
       const card = change && fresh.find((c) => c.id === change.section);
       let gone: Stale | null = null;
       if (change && !card) gone = 'deleted';
-      else if (change && card && (await textHash(card.text.trim())) !== change.seen) {
+      else if (change && card && (await textHash(card.written.trim())) !== change.seen) {
         const [newest] = await sectionHistory(target!, card.id);
         const author = newest?.revision.authorId ?? null;
         gone = { by: author === meId ? 'You' : senderName(users, author, 'Someone'), at: newest?.revision.createdAt ?? Date.now() };
@@ -105,11 +106,13 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
       let id: string;
       if (change) {
         // Read and written under the card's lock, so nobody's save lands in between.
-        const written = await rewriteSection(doc, change.section, async (section) => {
-          const card = section && parseCard(section);
-          if (!card || (await textHash(card.text.trim())) !== change.seen) return null;
-          // A proposal's file may set a new status, as one that finishes its card does (R-040).
-          return { text: cardText(card.cardId, draft.title, draft.status ?? card.status, body), pos: card.pos };
+        // The agent saw the text as written; the change starts from the text that stands.
+        const written = await rewriteCard(doc, change.section, async (card) => {
+          if ((await textHash(card.written.trim())) !== change.seen) return null;
+          // A proposal's file may set a new status, as one that finishes its card does (R-040). Without one
+          // the status stays as written: `card.status` reads an older word as the new one.
+          // Reviews keep the lines that stand, so the owner's page never signs one a draft copied (the card-review decision).
+          return cardText(card.cardId, draft.title, draft.status ?? cardStatus(card.text), withReviews(body, card.reviews.map((r) => r.line)));
         });
         // Changed since the page last looked: the next load says how.
         if (!written) return void syncNow();

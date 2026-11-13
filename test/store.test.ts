@@ -60,3 +60,14 @@ describe('The sidebar tab, in client/src/store.ts (K-62)', () => {
     assert.equal(store.get().tab, 'projects');
   });
 });
+
+describe('The board a request opens, in client/src/store.ts', () => {
+  beforeEach(() => actions.reset());
+
+  test('opens a board on the card a request names, and the next board on none (the card-notes decision)', () => {
+    actions.setBoardOpen(3, 's1');
+    assert.deepEqual([store.get().boardOpen, store.get().boardCard], [3, 's1']);
+    actions.setBoardOpen(4);
+    assert.deepEqual([store.get().boardOpen, store.get().boardCard], [4, null]);
+  });
+});

@@ -1,6 +1,6 @@
 {
   "name": "webchat",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "private": true,
   "description": "Self-hosted web chat for friends with realtime and push notifications",
   "type": "module",
@@ -11,14 +11,14 @@
     "dev": "concurrently -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite",
-    "build": "npm run typecheck && npm run build:client && npm run build:plugin && tsc -p tsconfig.server.json && cp -R server/migrations dist/server/",
+    "build": "npm run typecheck && npm run build:client && tsc -p tsconfig.server.json && cp -R server/migrations dist/server/",
     "start": "node dist/server/index.js",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json && tsc -p tsconfig.sw.json && tsc -p tsconfig.tools.json",
-    "test": "node --test --test-concurrency=1 --test-timeout=15000 --import tsx test/*.test.ts",
+    "test": "node --test --test-concurrency=1 --test-timeout=15000 --test-force-exit --import tsx test/*.test.ts",
     "icons": "tsx scripts/gen-icons.ts",
     "agent": "tsx agent/index.ts",
     "build:client": "vite build && vite build --config vite.sw.config.ts",
-    "build:plugin": "vite build --config vite.plugin.config.ts"
+    "build:agent": "vite build --config vite.agent.config.ts && node --build-sea agent/sea.json && if [ \"$(uname)\" = Darwin ]; then codesign --sign - dist/agent/webchat-agent; fi"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.14",

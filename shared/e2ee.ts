@@ -17,11 +17,15 @@
 import {
   isRepoName,
   LIMITS,
+  type AskDTO,
   type BoardSyncDTO,
+  type CardNoteDTO,
   type CardDraftDTO,
   type EnvelopeDTO,
   type HarnessState,
   type MessageKind,
+  type PairingPick,
+  type PermitDTO,
   type PublicKeysDTO,
   type PullCardDTO,
   type PullChecks,
@@ -377,7 +381,7 @@ export interface MessageContent {
    * page opens: a card's brief hashes the same on both sides (K-57, D-110).
    */
   trust?: { user: number; fingerprint: string; sentAt: number };
-  /** The owner puts their agent to sleep from the pane; only `/webchat:wake` on the laptop wakes it (K-66, D-113). */
+  /** The owner puts their agent to sleep from the pane; only `webchat-agent wake` on the laptop wakes it (K-66, D-113). */
   sleep?: { sentAt: number };
   /**
    * The owner asks their agent what its runs load from their Claude setup, and with a choice,
@@ -387,6 +391,12 @@ export interface MessageContent {
   setupState?: SetupState;
   /** The board's copy in a linked repository, between the owner's page and their agent (R-040, D-117). */
   board?: BoardSyncDTO;
+  /** A request from the owner's laptop that the owner approves, and their answer (docs/decisions/harness-linking.md). */
+  ask?: AskDTO;
+  /** A request about a board card to the member asked (the card-notes decision). The text says the same in words. */
+  card?: CardNoteDTO;
+  /** An agent's question before an action, and its owner's answer (docs/decisions/harness-approvals.md). */
+  permit?: PermitDTO;
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -522,6 +532,7 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
       ...(short(raw.hash, 64) && { hash: raw.hash as string }),
       ...(short(raw.was, LIMITS.runNoteLength) !== undefined && { was: raw.was as string }),
       ...(short(raw.harness, LIMITS.harnessFieldLength) && { harness: raw.harness as string }),
+      ...(raw.asks === true && { asks: true as const }),
     };
   }
   if (raw.kind === 'cancel') return isId(raw.request) ? { kind: 'cancel', request: raw.request } : undefined;
@@ -556,7 +567,7 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
     const repo = typeof raw.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
     if ((raw.repo !== undefined && !repo) || (!repo && !isId(raw.project)) || !isId(raw.sentAt)) return;
     const harness = short(raw.harness, LIMITS.harnessFieldLength);
-    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }) };
+    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }) };
   }
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
@@ -599,11 +610,12 @@ function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | und
 
 /** A setup choice, if it has the right shape: skills only by a folder name that cannot leave `~/.claude/skills` (R-039). */
 function readChoice(raw: unknown): SetupChoice | undefined {
-  const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown; off?: unknown; noPlan?: unknown } | null | undefined;
+  const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown; linked?: unknown; off?: unknown; noPlan?: unknown } | null | undefined;
   if (typeof choice?.claudeMd !== 'boolean' || typeof choice.noAttribution !== 'boolean' || !Array.isArray(choice.skills)) return;
   const skills = choice.skills.filter((s): s is string => typeof s === 'string' && SKILL_NAME.test(s)).slice(0, LIMITS.setupSkills);
-  const off = Array.isArray(choice.off) ? choice.off.filter((n): n is string => !!short(n, LIMITS.harnessFieldLength)).slice(0, LIMITS.harnesses) : undefined;
-  return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution, ...(off && { off }), ...(typeof choice.noPlan === 'boolean' && { noPlan: choice.noPlan }) };
+  const names = (list: unknown) => (Array.isArray(list) ? list.filter((n): n is string => !!short(n, LIMITS.harnessFieldLength)).slice(0, LIMITS.harnesses) : undefined);
+  const [linked, off] = [names(choice.linked), names(choice.off)];
+  return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution, ...(linked && { linked }), ...(off && { off }), ...(typeof choice.noPlan === 'boolean' && { noPlan: choice.noPlan }) };
 }
 
 /** The harnesses an agent's answer lists, those of the right shape, or nothing from a plugin before them (D-115). */
@@ -615,7 +627,8 @@ function readHarnesses(raw: unknown): HarnessState[] | undefined {
     if (!h || !name) return [];
     const knobs = Array.isArray(h.knobs) ? h.knobs.filter((k): k is string => typeof k === 'string' && /^\w{1,32}$/.test(k)) : [];
     const signedIn = typeof h.signedIn === 'boolean' ? h.signedIn : undefined;
-    return [{ name, version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs }];
+    const linked = typeof h.linked === 'boolean' ? h.linked : undefined;
+    return [{ name, path: field(h.path), linked, attention: field(h.attention), answers: field(h.answers), version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs }];
   });
 }
 
@@ -655,6 +668,66 @@ function readBoardSync(raw: Record<string, unknown> | undefined): BoardSyncDTO |
   }
 }
 
+/** An ask or its answer, if it has the right shape: `to` names the request by its client id. */
+function readAsk(raw: Record<string, unknown> | undefined): AskDTO | undefined {
+  const kind = raw?.kind;
+  if (!raw || (kind !== 'link' && kind !== 'connect')) return;
+  const to = short(raw.to, 64);
+  const harness = short(raw.harness, LIMITS.harnessFieldLength);
+  const [repo, folder] = [short(raw.repo, 100), short(raw.folder, LIMITS.harnessFieldLength)];
+  const place = repo && folder && isRepoName(repo) ? { repo, folder } : undefined;
+  if (raw.step === 'request') {
+    if (kind === 'link') return harness ? { kind, step: 'request', harness } : undefined;
+    return place && { kind, step: 'request', ...place };
+  }
+  if (raw.step === 'approve' || raw.step === 'decline') {
+    if (!to || !isId(raw.sentAt)) return;
+    if (raw.step === 'decline' || kind === 'link') return { kind, step: raw.step, to, sentAt: raw.sentAt } as AskDTO;
+    return place && { kind, step: 'approve', to, sentAt: raw.sentAt, ...place };
+  }
+  if (raw.step !== 'done' && raw.step !== 'failed') return;
+  const note = short(raw.note, LIMITS.runNoteLength);
+  return to ? { kind, step: raw.step, to, ...(note && { note }) } : undefined;
+}
+
+const PERMIT_WHAT: ReadonlyArray<Extract<PermitDTO, { kind: 'question' }>['what']> = ['run', 'edit', 'read', 'fetch', 'other'];
+const PERMIT_OUTCOMES: ReadonlyArray<Extract<PermitDTO, { kind: 'settled' }>['outcome']> = ['allowed', 'allowedForRun', 'denied', 'expired', 'stopped', 'stale'];
+const PERMIT_DECISIONS: ReadonlyArray<Extract<PermitDTO, { kind: 'answer' }>['decision']> = ['once', 'run', 'deny'];
+
+/** A question, an answer or a settled mark, if it has the right shape. */
+function readPermit(raw: Record<string, unknown> | undefined): PermitDTO | undefined {
+  if (!raw) return;
+  if (raw.kind === 'question') {
+    const [request, to] = [isId(raw.request) ? raw.request : undefined, short(raw.to, 64)];
+    const what = PERMIT_WHAT.find((w) => w === raw.what);
+    const detail = short(raw.detail, LIMITS.messageLength);
+    // One thread: a card's request or a conversation's prompt, never both or neither.
+    if (!what || detail === undefined || !isId(raw.expires) || (request === undefined) === (to === undefined)) return;
+    return { kind: 'question', ...(request !== undefined && { request }), ...(to && { to }), what, detail, expires: raw.expires };
+  }
+  const to = short(raw.to, 64);
+  if (!to) return;
+  if (raw.kind === 'settled') {
+    const outcome = PERMIT_OUTCOMES.find((o) => o === raw.outcome);
+    return outcome && { kind: 'settled', to, outcome };
+  }
+  const decision = PERMIT_DECISIONS.find((d) => d === raw.decision);
+  const seen = short(raw.seen, 64);
+  return raw.kind === 'answer' && decision && seen && isId(raw.sentAt) ? { kind: 'answer', to, decision, seen, sentAt: raw.sentAt } : undefined;
+}
+
+/** What the owner saw of a question, hashed into their answer, so an answer cannot be for another action (D-105). */
+export const permitHash = (question: Extract<PermitDTO, { kind: 'question' }>) => textHash(`${question.what}\n${question.detail}`);
+
+const NOTE_KINDS: ReadonlyArray<CardNoteDTO['kind']> = ['ready', 'review', 'waiting'];
+
+/** A request about a board card, if it has the right shape. */
+function readCardNote(raw: Record<string, unknown> | undefined): CardNoteDTO | undefined {
+  const [card, docId, section] = [short(raw?.card, 8), short(raw?.docId, 64), short(raw?.section, 64)];
+  const kind = NOTE_KINDS.find((k) => k === raw?.kind);
+  return kind && card && CARD_ID.test(card) && docId && section ? { kind, card, docId, section } : undefined;
+}
+
 /** Keeps the parts of decrypted content that have the right shape. The sender signed it, so it is not tampered. */
 function readContent(value: unknown): MessageContent {
   const raw = value as {
@@ -671,6 +744,9 @@ function readContent(value: unknown): MessageContent {
     setup?: { sentAt?: unknown; choice?: unknown };
     setupState?: Record<string, unknown>;
     board?: Record<string, unknown>;
+    ask?: Record<string, unknown>;
+    card?: Record<string, unknown>;
+    permit?: Record<string, unknown>;
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -705,6 +781,12 @@ function readContent(value: unknown): MessageContent {
   if (state) content.setupState = state;
   const board = readBoardSync(raw.board);
   if (board) content.board = board;
+  const ask = readAsk(raw.ask);
+  if (ask) content.ask = ask;
+  const note = readCardNote(raw.card);
+  if (note) content.card = note;
+  const permit = readPermit(raw.permit);
+  if (permit) content.permit = permit;
   return content;
 }
 
@@ -771,6 +853,8 @@ export interface DocContent {
   board?: 'decisions' | 'roadmap';
   /** On the Roadmap's title: the repository whose docs copy the board, which only the project's owner sets (R-040). */
   repo?: string;
+  /** On a card's first revision: `addCard` opened it, so its author owns the card (the board-lanes decision). */
+  opened?: true;
 }
 
 const docHeader = (meta: DocMeta, keyId: string) =>
@@ -788,6 +872,7 @@ export async function decryptDoc(chatKey: CryptoKey, authorSignPublic: string, m
   if (raw.removed === true) content.removed = true;
   if (raw.board === 'decisions' || raw.board === 'roadmap') content.board = raw.board;
   if (typeof raw.repo === 'string' && isRepoName(raw.repo)) content.repo = raw.repo;
+  if (raw.opened === true) content.opened = true;
   return content;
 }
 
@@ -865,4 +950,45 @@ export async function pairingProof(code: string, agent: PublicKeysDTO, owner?: {
     ? [utf8(`webchat/pair/owner/v1:${owner.id}`), fromBase64Url(owner.keys.dh), fromBase64Url(owner.keys.sign)]
     : [utf8('webchat/pair/agent/v1')];
   return toBase64Url(await subtle().sign('HMAC', key, concat(...signer, fromBase64Url(agent.dh), fromBase64Url(agent.sign))));
+}
+
+// ---------------------------------------------------------------------------------------------
+// The harnesses an agent asks to link, which ride its pairing
+
+const PICKS_INFO = 'webchat/pair/picks/v1';
+
+/** The key the agent and the owner's page derive from the code, which the server never has. */
+const picksKey = async (code: string) =>
+  subtle().deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(), info: utf8(PICKS_INFO) },
+    await subtle().importKey('raw', pairingSecret(code), 'HKDF', false, ['deriveKey']),
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+
+/** The agent's keys are bound in, so the server cannot lay a blob of another pairing's under this one. */
+const picksAad = (agent: PublicKeysDTO) => concat(utf8(PICKS_INFO), fromBase64Url(agent.dh), fromBase64Url(agent.sign));
+
+/** Seals the picks under the pairing code, padded as content is, so the server sees only a size band. */
+export async function sealPicks(code: string, agent: PublicKeysDTO, picks: PairingPick[]): Promise<string> {
+  const iv = randomBytes(12);
+  const data = await subtle().encrypt({ name: 'AES-GCM', iv, additionalData: picksAad(agent) }, await picksKey(code), padContent(utf8(JSON.stringify(picks))));
+  return toBase64Url(concat(iv, new Uint8Array(data)));
+}
+
+/** Opens sealed picks, or returns nothing when they do not open or have the wrong shape: the owner still approves as before. */
+export async function openPicks(code: string, agent: PublicKeysDTO, sealed: string): Promise<PairingPick[]> {
+  try {
+    const bytes = fromBase64Url(sealed);
+    const plain = await subtle().decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12), additionalData: picksAad(agent) }, await picksKey(code), bytes.subarray(12));
+    const list = JSON.parse(decoder.decode(unpadContent(new Uint8Array(plain)))) as Array<Record<string, unknown> | null>;
+    return list.slice(0, LIMITS.harnesses).flatMap((p) => {
+      const name = short(p?.name, LIMITS.harnessFieldLength);
+      const version = short(p?.version, 64);
+      return name ? [{ name, ...(version && { version }), ...(typeof p?.signedIn === 'boolean' && { signedIn: p.signedIn }) }] : [];
+    });
+  } catch {
+    return [];
+  }
 }

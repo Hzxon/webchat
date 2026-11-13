@@ -42,13 +42,19 @@ export interface AgentRepoDTO {
  * What a plugin session can do, by the level its check-ins name (D-103): 1 answers the owner's
  * questions; 2 also runs cards from the pane, which it names only while `gh` is signed in (D-105).
  * Since R-039 the level is a set of these bits, with 4 for a plugin that heeds its owner's `setup`:
- * 5, or 7 with cards (D-115). Every level from 1 up answers, older ones included.
+ * 5, or 7 with cards (D-115). 8 says it asks its owner before an action its harness would ask about
+ * (docs/decisions/harness-approvals.md). Every level from 1 up answers, older ones included. The
+ * server takes any level under 100, so only 16 and 32 are left.
  */
-export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4 } as const;
+export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4, asks: 8 } as const;
 
-/** Whether a session at this level runs cards, or heeds `setup` (D-105, D-115). */
+/** Whether a session at this level runs cards, heeds `setup`, or asks (D-105, D-115). */
 export const runsCards = (level: number) => (level & AGENT_LEVEL.cards) !== 0;
 export const takesSetup = (level: number) => (level & AGENT_LEVEL.setup) !== 0;
+export const takesAsks = (level: number) => (level & AGENT_LEVEL.asks) !== 0;
+
+/** How long a question of an agent waits for its owner: the plan gate's 7 days. */
+export const ASK_WAIT_MS = 7 * 24 * 60 * 60_000;
 
 /** What a choice loads, in words, for the agent's answer and the pane alike (R-039). */
 export const setupWords = (c: SetupChoice) => [c.claudeMd && 'your CLAUDE.md', ...c.skills, c.noAttribution && 'no AI attribution', c.noPlan && 'no plan first'].filter(Boolean).join(', ') || 'nothing of your Claude setup';
@@ -64,7 +70,13 @@ export interface SetupChoice {
   claudeMd: boolean;
   skills: string[];
   noAttribution: boolean;
-  /** The harnesses the owner turned off, by name. A page from before the list sends none, and the agent keeps what it had. */
+  /**
+   * The harnesses the owner linked, by name, in the order that picks one for a request that names
+   * none (docs/decisions/harness-linking.md). An agent from before it has none until it first
+   * starts; a page from before it sends none, and the agent keeps what it had.
+   */
+  linked?: string[];
+  /** The harnesses an older page turned off, by name: still read, and they mute a linked one. A page that sends `linked` sends none. */
   off?: string[];
   /** Whether a card run goes on without showing its plan first; a page from before the gate sends none, which keeps it on (docs/decisions/redirect-plan-gate.md). */
   noPlan?: boolean;
@@ -77,13 +89,36 @@ export interface HarnessState {
   version?: string;
   /** Whether it is signed in, when its adapter can tell. */
   signedIn?: boolean;
-  /** Why it takes no cards on this laptop, or nothing when it does. */
+  /** Where the agent found it, with `~` for the home folder; none when it found none. */
+  path?: string;
+  /** Whether the owner linked it and it is not turned off. Undefined from a plugin that has no linking. */
+  linked?: boolean;
+  /** What a linked harness needs the owner to see: it cannot run turns, is too old or signed out, or its sandbox lets its shell read more than WebChat allows. */
+  attention?: string;
+  /** Why it answers no questions: not linked, turned off, missing or too old. Undefined from an agent before linking, whose `refusal` stands for both. */
+  answers?: string;
+  /** Why it runs nothing on this laptop, which is what `answers` says too, or nothing when it does. */
   refusal?: string;
   /** The instructions file and the skills folder it reads, such as `~/.claude/CLAUDE.md`. */
   instructions?: string;
   skills?: string;
   /** The knobs its adapter honors, named as in `SetupChoice`, such as `noAttribution`. */
   knobs: string[];
+}
+
+export type HarnessRow = 'linked' | 'attention' | 'found' | 'missing';
+
+/** What each row says, for Settings and `doctor` alike. */
+export const HARNESS_ROW_WORDS: Record<HarnessRow, string> = { linked: 'Linked', attention: 'Linked, needs attention', found: 'Found, not linked', missing: 'Not found' };
+
+/** Which of the four rows Settings shows for a harness, and `doctor` too. */
+export const harnessRow = (h: HarnessState): HarnessRow => (h.linked ? (h.attention ? 'attention' : 'linked') : h.path ? 'found' : 'missing');
+
+/** A harness the owner picked at pairing, as its pairing code seals it for the approval dialog. */
+export interface PairingPick {
+  name: string;
+  version?: string;
+  signedIn?: boolean;
 }
 
 /** The agent's answer to its owner's `setup`: what the laptop offers, the choice it keeps, and what its last run or turn loaded (R-039). */
@@ -115,9 +150,10 @@ export interface EnvelopeDTO {
 /**
  * "message" is a chat message. "reaction" puts an emoji on an earlier message, or takes it back;
  * which message and which emoji are inside the envelope, so only members can see them. "github" is
- * a card the server writes from GitHub's webhook, in plain text, with no sender (D-050).
+ * a card the server writes from GitHub's webhook, in plain text, with no sender (D-050). "sync" is an
+ * agent's board traffic with its owner's page: it is pushed and counted like a reaction (K-69).
  */
-export type MessageKind = 'message' | 'reaction' | 'github';
+export type MessageKind = 'message' | 'reaction' | 'github' | 'sync';
 
 export interface MessageDTO {
   id: number;
@@ -230,7 +266,12 @@ export interface ConfigDTO {
   vapidPublicKey: string;
   /** Random per deployment; mixed into the password key derivation. */
   kdfSalt: string;
+  /** The release this server runs, such as 0.10.0, whose agent files the Connect dialog names. */
+  release: string;
 }
+
+/** Where each release's agent files are: the install line and the agent's updater both read them here, never from the server (docs/decisions/agent-self-update.md). */
+export const AGENT_RELEASES = 'https://github.com/Hzxon/webchat/releases/download';
 
 /** A phone's Bark app that registered through the user's link. The key is what Bark shows for the device. */
 export interface BarkDeviceDTO {
@@ -293,6 +334,8 @@ export interface PairingInput {
   proof: string;
   /** The agent's login key, random, since an agent has no password. */
   authKey: string;
+  /** The harnesses it asks to link, sealed under the code (`sealPicks`); the server cannot read them. */
+  picks?: string;
 }
 
 export interface PairingDTO {
@@ -300,6 +343,7 @@ export interface PairingDTO {
   proof: string;
   /** Once the owner approved: the agent's new account, and the owner's keys bound to the code. */
   approved: { user: UserDTO; owner: { id: number; keys: PublicKeysDTO }; proof: string } | null;
+  picks?: string;
 }
 
 /** How long a pairing code works, from the page showing it to the owner's approval (R-030). */
@@ -500,8 +544,8 @@ export interface NewOwnerInput {
 
 /** JSON body of every Web Push message. The service worker turns it into a notification. */
 export interface PushPayload {
-  /** "reaction" only wakes a tab the user is looking at; "project" and "group" say someone added them to one. */
-  kind: 'message' | 'reaction' | 'project' | 'group' | 'github' | 'test';
+  /** "reaction" and "sync" only wake a tab the user is looking at; "project" and "group" say someone added them to one. */
+  kind: 'message' | 'reaction' | 'sync' | 'project' | 'group' | 'github' | 'test';
   title: string;
   /** Text for messages the server can read (tests, old plain messages). Empty for encrypted ones. */
   body: string;
@@ -595,6 +639,8 @@ export interface RunRequest {
    * none, and the run goes to the laptop's host harness; one the laptop has not enabled fails.
    */
   harness?: string;
+  /** The owner's page can show a question of the agent, so the agent may ask before an action (docs/decisions/harness-approvals.md). An older page never sets it. */
+  asks?: true;
 }
 
 export interface RunReport {
@@ -683,7 +729,7 @@ export const heldDecisions = (decisions: string[]) => decisions.filter(isHeld).m
 export type PromptDTO =
   // A prompt names its project's board and, unless the project links none, one of its repositories
   // (R-038), and the harness that answers, which every reply then resumes; none for the host harness.
-  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string }
+  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true }
   | { kind: 'reply'; to: string; sentAt: number }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }
@@ -725,6 +771,44 @@ export type BoardSyncDTO =
   | { kind: 'failed'; to: string }
   | { kind: 'proposal'; project: number; repo: string; card: CardDraftDTO }
   | { kind: 'claims'; project: number; repo: string; claims: Array<{ card: string; pull: number }> };
+
+/**
+ * A request about a board card, sent to the member asked in their direct chat with the asker, so
+ * only they get a push (the card-notes decision). It names the card inside the sealed content only.
+ */
+export interface CardNoteDTO {
+  kind: 'ready' | 'review' | 'waiting';
+  card: string;
+  docId: string;
+  section: string;
+}
+
+/**
+ * A request from the owner's laptop that the owner approves on their page, and the approval, in
+ * their direct chat, sealed (docs/decisions/harness-linking.md, docs/decisions/connect-approval.md).
+ * `kind` says what is asked; each kind has its own steps. The laptop's `request` names what it asks,
+ * and the approval or decline names the request by its message's client id (`to`) with the signed
+ * time it was sent. A connect's approval also signs the repository and the folder the owner saw.
+ */
+export type AskDTO =
+  | { kind: 'link'; step: 'request'; harness: string }
+  | { kind: 'connect'; step: 'request'; repo: string; folder: string }
+  | { kind: 'link'; step: 'approve'; to: string; sentAt: number }
+  | { kind: 'connect'; step: 'approve'; to: string; sentAt: number; repo: string; folder: string }
+  | { kind: 'link' | 'connect'; step: 'decline'; to: string; sentAt: number }
+  | { kind: 'link' | 'connect'; step: 'done' | 'failed'; to: string; note?: string };
+
+/**
+ * What an agent asks its owner before an action its harness would ask about, and the owner's answer,
+ * in their direct chat, sealed (docs/decisions/harness-approvals.md). A question names its thread as
+ * run reports and prompts do: `request` (the run request's message) for a card, `to` (the prompt's
+ * client id) for a conversation. An answer and a `settled` name the question by its client id, which
+ * its sender signs. The answer signs the time, and `seen`, a hash of what the owner saw.
+ */
+export type PermitDTO =
+  | { kind: 'question'; request?: number; to?: string; what: 'run' | 'edit' | 'read' | 'fetch' | 'other'; detail: string; expires: number }
+  | { kind: 'answer'; to: string; decision: 'once' | 'run' | 'deny'; seen: string; sentAt: number }
+  | { kind: 'settled'; to: string; outcome: 'allowed' | 'allowedForRun' | 'denied' | 'expired' | 'stopped' | 'stale' };
 
 /**
  * A pull request shared into a chat: a snapshot of how it stood when it was shared. It travels
@@ -886,7 +970,9 @@ export function showsEveryPush(endpoint: string | null): boolean {
 }
 
 /** What a message's content says in a chat list, a toast or a notification. An agent's answer is Markdown, shown as plain words (D-103). */
-export function previewOf(content: { text: string; pull?: { title: string } | null; prompt?: PromptDTO | null }) {
+export function previewOf(content: { text: string; pull?: { title: string } | null; prompt?: PromptDTO | null; permit?: PermitDTO | null }) {
+  // Never the command: a lock screen shows it to whoever looks.
+  if (content.permit?.kind === 'question') return 'Your agent asks your permission';
   if (content.pull) return `Pull request: ${content.pull.title}`;
   if (content.prompt?.kind === 'answer') return content.text.replace(/^\s*(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '').replace(/```\w*|\*\*|__|`/g, '');
   return content.text;
@@ -942,6 +1028,8 @@ export const LIMITS = {
   /** Harnesses an agent's answer lists, and the length of a name, a version, a path or a refusal (D-115). */
   harnesses: 8,
   harnessFieldLength: 500,
+  /** A pairing's sealed picks, in base64url characters. */
+  pairingPicks: 4096,
 } as const;
 
 /** Slack-style channel names (D-027): lowercase letters and digits in any script, joined by single hyphens. */
@@ -949,8 +1037,8 @@ const CHANNEL_NAME = /^[\p{Ll}\p{Lo}\p{Lm}\p{M}\p{N}]+(-[\p{Ll}\p{Lo}\p{Lm}\p{M}
 
 export const isChannelName = (name: string) => name.length <= LIMITS.channelNameLength && CHANNEL_NAME.test(name);
 
-/** A GitHub repository as "owner/name". */
-export const isRepoName = (name: string) => name.length <= 200 && /^[\w.-]+\/[\w.-]+$/.test(name);
+/** A GitHub repository as "owner/name". GitHub refuses "." and ".." as names, and the agent joins the name onto its clone folder, so they are refused here too. */
+export const isRepoName = (name: string) => name.length <= 200 && /^(?!\.\.?\/)[\w.-]+\/(?!\.\.?$)[\w.-]+$/.test(name);
 
 /** Turns what someone types into a channel name, such as "Slides & Design" into "slides-design". */
 export const toChannelName = (value: string) =>

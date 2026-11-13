@@ -2,23 +2,14 @@
 // the key of the project's #general channel and signed by its author. One person edits a section at
 // a time: editing locks it on the server, and every check-in of the editing tab keeps the lock.
 import { newKeyId, randomBytes, toBase64Url, type DocContent } from '../../shared/e2ee';
+import { cardsOf, cardSections, parseCard, sectionOf, usernamesOf, type Card, type DocSection } from '../../shared/board';
 import type { DocRevisionDTO } from '../../shared/types';
 import { api, ApiError } from './api';
-import { COLUMN_TITLES, idOf, parseCard, type BoardColumn, type CardKind } from './board';
-import { currentLookup, loadDraft, openDocs, setEditing, withChatKey } from './chat';
+import { COLUMN_TITLES, idOf, takeable, type BoardColumn, type CardKind } from './board';
+import { currentLookup, loadDraft, openDocs, setEditing, syncNow, withChatKey } from './chat';
 import { keystore } from './e2ee/keystore';
 import { keyring, type ChatDoc } from './e2ee/keyring';
 import { actions, generalOf, store } from './store';
-
-export interface DocSection {
-  id: string;
-  text: string;
-  pos: number;
-  /** Its revision did not decrypt, or its signature did not check. */
-  failed: boolean;
-  /** Who wrote its newest revision, for the brief that marks teammates' text (D-105). */
-  authorId?: number;
-}
 
 export const newSectionId = () => toBase64Url(randomBytes(8));
 
@@ -62,15 +53,22 @@ export async function loadSections(doc: ChatDoc): Promise<DocSection[]> {
   const opened = await openRevisions(doc, await api.docSections(doc.id));
   return opened
     .filter(({ revision, content }) => revision.section !== 'title' && !content?.removed)
-    .map(({ revision, content }) => ({
-      id: revision.section,
-      text: content?.text ?? '',
-      // A section that does not open keeps its place among the others by when it was written.
-      pos: content?.pos ?? revision.createdAt,
-      failed: !content,
-      authorId: revision.authorId,
-    }))
+    .map(sectionOf)
     .sort((a, b) => a.pos - b.pos);
+}
+
+/** A board doc's cards, with who opened each and every member's word, which take more than the newest revisions. */
+export const loadCards = async (doc: ChatDoc) => cardSections(await openRevisions(doc, await api.docWords(doc.id)));
+
+/**
+ * A board doc's cards, as every page reads them. The Roadmap's have owners, among the project's
+ * members now, and the status that stands; every page writes them through `rewriteCard` or `takeCard`.
+ */
+export async function boardCards(doc: ChatDoc): Promise<Card[]> {
+  if (doc.board !== 'roadmap') return (await loadSections(doc)).map(parseCard);
+  const { projects, conversations, users, me } = store.get();
+  const members = projects[conversations[doc.conversationId]?.projectId ?? 0]?.memberIds ?? [];
+  return cardsOf(await loadCards(doc), members, usernamesOf(members, users, me));
 }
 
 /** A section's revisions, newest first, each with what it held. */
@@ -124,16 +122,42 @@ export async function replaceSection(doc: ChatDoc, section: string, content: Doc
   }
 }
 
-/** Rewrites a section from what it holds under its lock, so no save lands between the read and the write. Null leaves it. */
-export async function rewriteSection(doc: ChatDoc, section: string, make: (current: DocSection | undefined) => Promise<DocContent | null>) {
+/**
+ * Rewrites a board card from the card as it stands under its lock, then syncs. `make` gives its new
+ * text, or null to leave it. The card's `text` is the text that stands (the card-owner decision), so
+ * a status or a removal its author could not make goes with the next write, which also brings back a
+ * section whose newest revision is a removal that does not stand.
+ */
+export async function rewriteCard(doc: ChatDoc, section: string, make: (card: Card) => string | null | Promise<string | null>) {
   await api.lockSection(doc.id, section);
+  let text: string | null = null;
   try {
-    const content = await make((await loadSections(doc)).find((s) => s.id === section));
-    if (content) await saveSection(doc, section, content);
-    return content !== null;
+    const card = (await boardCards(doc)).find((c) => c.id === section);
+    text = card && !card.failed ? await make(card) : null;
+    if (text !== null) await saveSection(doc, section, { text, pos: card!.pos });
   } finally {
     await api.unlockSection(doc.id, section);
   }
+  if (text !== null) void syncNow();
+  return text !== null;
+}
+
+/**
+ * Makes the user the owner of a card that has none (the card-owner decision): its text goes into a
+ * new section that says `opened`, so the user wrote its oldest revision, and the old section is
+ * removed, all under the old one's lock. It is the only way a card changes owner.
+ */
+export async function takeCard(doc: ChatDoc, section: string) {
+  await api.lockSection(doc.id, section);
+  try {
+    const card = (await boardCards(doc)).find((c) => c.id === section);
+    if (!card || !takeable(card, store.get().me?.displayName ?? '')) throw new Error('This card changed. Look at it again.');
+    await replaceSection(doc, newSectionId(), { text: card.text, pos: card.pos, opened: true });
+    await saveSection(doc, section, { text: card.text, pos: card.pos, removed: true });
+  } finally {
+    await api.unlockSection(doc.id, section);
+  }
+  void syncNow();
 }
 
 /**
@@ -154,10 +178,11 @@ export async function addCard(doc: ChatDoc, section: string, kind: CardKind, tex
     }
   }
   try {
-    const cards = (await loadSections(doc)).map(parseCard);
+    // A card whose removal does not stand keeps its number.
+    const cards = await boardCards(doc);
     const id = idOf(cards.map((c) => c.cardId), kind);
     const content = { text: text(id), pos: Math.max(0, ...cards.map((c) => c.pos)) + 1 };
-    await replaceSection(doc, section, content);
+    await replaceSection(doc, section, { ...content, opened: true });
     return { id, ...content };
   } finally {
     await api.unlockSection(doc.id, 'title').catch(() => undefined);

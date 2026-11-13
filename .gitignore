@@ -1,7 +1,5 @@
 node_modules
 dist/
-# The Claude Code plugin's program, built by npm run build:plugin (R-030)
-plugin/server.mjs
 data/
 *.db
 *.db-shm

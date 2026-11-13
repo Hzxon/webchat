@@ -6,16 +6,20 @@
 //
 // Everything the server sends is decrypted on the way in, and every message is encrypted on the
 // way out (see e2ee/keyring.ts). The store only ever holds readable text.
-import { keyFingerprint, pairingId, pairingProof, type MessageContent, type QuotedMessage } from '../../shared/e2ee';
+import { keyFingerprint, openPicks, pairingId, pairingProof, permitHash, type MessageContent, type QuotedMessage } from '../../shared/e2ee';
 import {
   LIMITS,
   previewOf,
   showsEveryPush,
+  type CardNoteDTO,
   type ConversationDTO,
   type DocDTO,
   type PullCardDTO,
   type PullRequestDTO,
   type MessageDTO,
+  type AskDTO,
+  type PermitDTO,
+  type PairingPick,
   type PublicKeysDTO,
   type RunDTO,
   type RunRequest,
@@ -41,7 +45,7 @@ import {
 import { keystore, type StoredUnsent } from './e2ee/keystore';
 import { refreshGithub, startGithub } from './github';
 import { disablePushHere, forgetPushOnServer, getPushState, showLocalNotification, syncPushSubscription } from './push';
-import type { Card } from './board';
+import type { Card } from '../../shared/board';
 import { keyedQueue } from './queue';
 import { agentChats, agentOf, ownAgents, threadsOf } from './agents';
 import { actions, chatTitle, localEditCount, reloadPath, senderName, store, type State } from './store';
@@ -563,9 +567,10 @@ export async function openConversation(conversationId: number) {
   else actions.setAgentsOpen(true);
   await loadChat(conversationId);
   // A notification is for the chat's newest message, so it opens that message's conversation, unless
-  // the user went elsewhere while it loaded.
+  // the user went elsewhere while it loaded. A request has none: it waits in the list.
   const now = store.get();
-  if (agent && now.agentsOpen && now.agentThread === null) actions.setAgentsOpen(true, threadsOf(now.messages[conversationId] ?? [], meId, agent.id, now.pending)[0]?.root ?? null);
+  const list = now.messages[conversationId] ?? [];
+  if (agent && now.agentsOpen && now.agentThread === null) actions.setAgentsOpen(true, list.at(-1)?.ask ? null : threadsOf(list, meId, agent.id, now.pending)[0]?.root ?? null);
 }
 
 /** Loads a chat's newest messages when the page has none yet, and marks it read while the user looks. */
@@ -782,7 +787,7 @@ export function sendMessage(conversationId: number, body: string, urgent: boolea
 export async function requestRun(docId: string, card: Card, runtime: UserDTO, repo: string, hash: string, harness?: string) {
   const conversationId = await startDirectChat(runtime.id);
   const id = `${card.kind}-${card.number}`;
-  const run: RunRequest = { kind: 'request', card: id, title: card.title.slice(0, LIMITS.runNoteLength), docId, section: card.id, runtime: runtime.id, sentAt: Date.now(), repo, hash, was: card.status, ...(harness && { harness }) };
+  const run: RunRequest = { kind: 'request', card: id, title: card.title.slice(0, LIMITS.runNoteLength), docId, section: card.id, runtime: runtime.id, sentAt: Date.now(), repo, hash, was: card.status, asks: true, ...(harness && { harness }) };
   const clientId = newClientId();
   void sendContent(conversationId, { text: `Run ${id}: ${card.title}`, run }, false, clientId);
   return clientId;
@@ -819,11 +824,21 @@ export async function askAgent(agentId: number, project: number, repo: string | 
   const conversationId = await startDirectChat(agentId);
   const clientId = newClientId();
   // The message shows as sending at once, so the pane can open its conversation.
-  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, ...(repo && { repo }), ...(harness && { harness }) } }, false, clientId);
+  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, asks: true, ...(repo && { repo }), ...(harness && { harness }) } }, false, clientId);
   return clientId;
 }
 
-/** Puts the user's agent to sleep after what it runs; only `/webchat:wake` on the laptop wakes it (K-66, D-113). */
+/**
+ * Answers an agent's question before an action (docs/decisions/harness-approvals.md): the question
+ * is named by its client id, and the answer signs the time and a hash of what the owner saw.
+ */
+export async function answerPermit(conversationId: number, question: ChatMessage & { permit: Extract<PermitDTO, { kind: 'question' }> }, decision: 'once' | 'run' | 'deny') {
+  const permit: PermitDTO = { kind: 'answer', to: question.clientId!, decision, seen: await permitHash(question.permit), sentAt: Date.now() };
+  const text = { once: 'Allow it', run: 'Allow it for this run', deny: 'Deny it' }[decision];
+  return sendContent(conversationId, { text, permit }, false);
+}
+
+/** Puts the user's agent to sleep after what it runs; only `webchat-agent wake` on the laptop wakes it (K-66, D-113). */
 export async function putToSleep(agentId: number) {
   await sendContent(await startDirectChat(agentId), { text: 'Go to sleep', sleep: { sentAt: Date.now() } }, false);
 }
@@ -838,6 +853,13 @@ export async function askSetup(agentId: number, choice?: SetupChoice) {
   const text = choice ? 'Change what your runs load from my Claude setup' : 'What do your runs load from my Claude setup?';
   void sendContent(conversationId, { text, setup: { sentAt: Date.now(), ...(choice && { choice }) } }, false, clientId);
   return clientId;
+}
+
+/** Answers an agent's request, which names it by its client id (docs/decisions/harness-linking.md, docs/decisions/connect-approval.md). A connect's approval signs the repository and folder shown. */
+export function answerAsk(conversationId: number, to: string, request: Extract<AskDTO, { step: 'request' }>, step: 'approve' | 'decline') {
+  const sentAt = Date.now();
+  const ask: AskDTO = step === 'decline' ? { kind: request.kind, step, to, sentAt } : request.kind === 'link' ? { kind: 'link', step, to, sentAt } : { kind: 'connect', step, to, sentAt, repo: request.repo, folder: request.folder };
+  return sendContent(conversationId, { text: step === 'approve' ? 'Approve it' : 'Decline it', ask }, false);
 }
 
 /** Asks the user's agent for a repository's entries, to link the board to it (R-040). Returns the ask's client id, which its answers name. */
@@ -863,6 +885,14 @@ export function noteAdded(conversationId: number, to: string, draft: string, car
   return sendContent(conversationId, { text: `Added ${card} to the board.`, added: { to, draft, card } }, false);
 }
 
+/**
+ * Asks a member about a board card in the direct chat with them, so they alone get a push, an
+ * ordinary message's (the card-notes decision).
+ */
+export function sendCardNote(conversationId: number, card: CardNoteDTO, text: string) {
+  return sendContent(conversationId, { text, card }, false);
+}
+
 /** Stops a run the user handed to an agent (R-030). The agent heeds only the person who sent the request. */
 export function cancelRun(request: ChatMessage & { run: RunRequest }) {
   const text = `Cancel ${request.run.card} with ${senderName(store.get().users, request.run.runtime)}`;
@@ -877,13 +907,14 @@ export async function removeAgent(agent: UserDTO) {
 
 /**
  * The coding agent's half of a pairing, once it sent one: its keys, which the code proves (R-030,
- * D-093). Null while it has not. The code stays in this page: the server sees only a hash of it.
+ * D-093), and the harnesses it asks to link, which the code opens. Null while it has sent none. The
+ * code stays in this page: the server sees only a hash of it.
  */
-export async function pairingKeys(code: string): Promise<PublicKeysDTO | null> {
+export async function pairingKeys(code: string): Promise<{ keys: PublicKeysDTO; picks: PairingPick[] } | null> {
   const pairing = await api.pairing(await pairingId(code));
   if (!pairing) return null;
   if (pairing.proof !== (await pairingProof(code, pairing.keys))) throw new Error('These keys did not come with the code. Close this window and make a new code.');
-  return pairing.keys;
+  return { keys: pairing.keys, picks: pairing.picks ? await openPicks(code, pairing.keys, pairing.picks) : [] };
 }
 
 /**
@@ -899,6 +930,8 @@ export async function connectAgent(code: string, keys: PublicKeysDTO, displayNam
   await keyring.trust(agent);
   await reloadAll();
   for (const projectId of projectIds) await addProjectMembers(projectId, [agent.id]);
+  // The agent never makes a chat key, so it needs this chat to send a request into (docs/decisions/connect-approval.md).
+  await startDirectChat(agent.id).catch(() => undefined);
   return agent;
 }
 
@@ -947,6 +980,9 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     added: entry.content.added ?? null,
     setupState: null,
     board: entry.content.board ?? null,
+    ask: entry.content.ask ?? null,
+    permit: entry.content.permit ?? null,
+    card: entry.content.card ?? null,
     security: 'encrypted',
   };
 }

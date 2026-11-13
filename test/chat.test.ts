@@ -555,6 +555,22 @@ describe('chat server', () => {
     await bob.request('POST', '/push/unsubscribe', { endpoint: good.json.endpoint });
   });
 
+  test('a push endpoint moves to another account only with its keys', async () => {
+    const browser = makeSubscription(`http://${pushService.host}/bob-shared`);
+    const ownerOf = async () =>
+      (await instance.sql.query<{ user_id: number }>('SELECT user_id FROM webchat.push_subscriptions WHERE endpoint = $1', [browser.json.endpoint]))[0]?.user_id;
+    assert.equal((await bob.request('POST', '/push/subscribe', browser.json)).status, 204);
+    const forged = makeSubscription(browser.json.endpoint);
+    // Refused, so the page makes a new subscription instead of believing it has one.
+    const refused = await carol.request<{ code?: string }>('POST', '/push/subscribe', forged.json);
+    assert.deepEqual([refused.status, refused.data.code], [409, 'endpoint_taken']);
+    assert.equal(await ownerOf(), bob.id, 'knowing the endpoint is not enough');
+    // The same browser signed in to another account sends the same subscription.
+    assert.equal((await carol.request('POST', '/push/subscribe', browser.json)).status, 204);
+    assert.equal(await ownerOf(), carol.id);
+    await carol.request('POST', '/push/unsubscribe', { endpoint: browser.json.endpoint });
+  });
+
   test('a sync with nothing new answers "unchanged"', async () => {
     await bob.bootstrap();
     // The first check-in brings Bob online, which is itself a change.
@@ -760,6 +776,61 @@ describe('chat server', () => {
     assert.equal(payload.envelope, null, 'a message that does not fit goes without its envelope');
     assert.ok(!serialized.includes('never leave'), 'no plain text in the push');
     await bob.request('POST', '/push/unsubscribe', { endpoint: watch.json.endpoint });
+  });
+
+  test('a request about a board card pushes only the person asked, as an ordinary message (the card-notes decision)', async () => {
+    const asked = makeSubscription(`http://${pushService.host}/bob-note`);
+    const elsewhere = makeSubscription(`http://${pushService.host}/carol-note`);
+    assert.equal((await bob.request('POST', '/push/subscribe', asked.json)).status, 204);
+    assert.equal((await carol.request('POST', '/push/subscribe', elsewhere.json)).status, 204);
+    await carol.sync(false);
+    await bob.sync(false);
+
+    pushService.received.length = 0;
+    const title = 'Fix the secret login bug';
+    const note = { text: `Asks you to mark K-4 ready: ${title}`, card: { kind: 'ready' as const, card: 'K-4', docId: 'doc-secret', section: 'section-secret' } };
+    assert.equal((await alice.send(directChat.id, note)).status, 201);
+    await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+    const pushes = await waitForPushes(pushService.received, 4);
+    await sleep(200);
+    const paths = pushService.received.map((p) => p.path);
+    assert.ok(paths.length > 0 && paths.every((p) => p.startsWith('/bob-')), `only Bob's devices: ${paths}`);
+    assert.equal(new Set(paths).size, paths.length, 'each device once');
+    const payload = asked.decrypt(pushes.find((p) => p.path === '/bob-note')!.body);
+    const serialized = JSON.stringify(payload);
+    assert.ok(Buffer.byteLength(serialized) <= 3000);
+    // The envelope is base64url, so a part as short as the card's id could show up in it by chance.
+    for (const part of [title, 'doc-secret', 'section-secret', 'ready']) assert.ok(!serialized.includes(part), `no "${part}" in the push`);
+    await bob.request('POST', '/push/unsubscribe', { endpoint: asked.json.endpoint });
+    await carol.request('POST', '/push/unsubscribe', { endpoint: elsewhere.json.endpoint });
+  });
+
+  test("an agent's board traffic is a sync message: no push, never unread, no new preview (K-69)", async () => {
+    const phone = makeSubscription(`http://${pushService.host}/bob-board`);
+    assert.equal((await bob.request('POST', '/push/subscribe', phone.json)).status, 204);
+    await bob.sync(false);
+    const before = (await bob.bootstrap()).conversations.find((c) => c.id === directChat.id)!;
+
+    pushService.received.length = 0;
+    const claims = { text: 'Claims in acme/app', board: { kind: 'claims' as const, project: 1, repo: 'acme/app', claims: [{ card: 'K-4', pull: 7 }] } };
+    assert.equal((await alice.send(directChat.id, claims, true, 'sync')).status, 400, 'a sync message is never urgent');
+    const sent = await alice.send(directChat.id, claims, false, 'sync');
+    await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+    assert.equal(sent.status, 201);
+    assert.equal(sent.data.kind, 'sync');
+    await sleep(300);
+    assert.equal(pushService.received.length, 0, 'nobody is looking, so nothing is pushed');
+
+    const res = await bob.sync(false);
+    assert.ok(res.changed);
+    const chat = res.conversations.find((c) => c.id === directChat.id)!;
+    assert.equal(chat.unread, before.unread, 'a sync message does not count as unread');
+    assert.equal(chat.lastMessage?.id, before.lastMessage?.id, 'a sync message does not replace the chat preview');
+    const event = res.messages.find((m) => m.id === sent.data.id)!;
+    assert.deepEqual((await bob.readContent(event, keysOf(alice))).board, claims.board);
+    await bob.request('POST', '/push/unsubscribe', { endpoint: phone.json.endpoint });
+    // The migration tests below run migration 8 again, whose kind check knows no sync.
+    await instance.sql.query('DELETE FROM webchat.messages WHERE id = $1', [sent.data.id]);
   });
 
   test('an unread urgent message rings again, like an alarm, until it is read (D-079)', async () => {
@@ -1167,6 +1238,12 @@ describe('chat server', () => {
       assert.equal(outsider.status, 404);
     });
 
+    test('someone removed after the membership check cannot add a channel', async () => {
+      // The route checked Carol while she was a member; the lock is where the removal shows.
+      const key = await carol.newChatKey([alice, bob].map((c) => ({ id: c.id, keys: keysOf(c) })));
+      assert.equal(await (await openDb(instance.sql)).createChannel(project.id, 'late', carol.id, key), 'stale');
+    });
+
     test('a channel cannot take an id from before #general, which pages tell by the lowest id (D-111)', async () => {
       const members = [{ id: alice.id, keys: keysOf(alice) }];
       const early = await alice.newChatKey(members);
@@ -1560,6 +1637,20 @@ describe('chat server', () => {
       assert.equal((await save(bob, 'Too late')).data.code, 'not_locked');
       assert.equal((await save(alice, plan)).status, 200);
       assert.equal((await lock(alice, 'DELETE')).status, 204);
+    });
+
+    test("a doc's words are each section's first revision and each author's newest, for members only", async () => {
+      const history = (await alice.request<DocRevisionDTO[]>('GET', `/docs/${id}/sections/${goals}`)).data;
+      assert.deepEqual(history.map((r) => r.authorId), [alice.id, bob.id, alice.id, alice.id]);
+      const words = await bob.request<DocRevisionDTO[]>('GET', `/docs/${id}/words`);
+      assert.equal(words.status, 200);
+      assert.deepEqual(
+        words.data.filter((r) => r.section === goals).map((r) => r.id),
+        [history[3]!.id, history[1]!.id, history[0]!.id],
+        'the first, then Bob’s and Alice’s newest, in id order, and not Alice’s revision between',
+      );
+      assert.equal(words.data.filter((r) => r.section === 'title').length, 1);
+      assert.equal((await carol.request('GET', `/docs/${id}/words`)).status, 404);
     });
 
     test('only whoever made a doc, or the project owner, deletes it', async () => {

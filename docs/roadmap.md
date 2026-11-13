@@ -2,7 +2,7 @@
 
 This file is a copy of the Roadmap column of the project's board in WebChat, which its owner's agent writes. Do not edit it by hand: a pull request proposes a new entry as a file under `docs/roadmap/`, named by a short name such as `new-bark-banner.md`, or a change to one as `docs/roadmap/K-12.md`.
 
-## In progress
+## Running
 
 ### K-1: The iOS 16.4 banner stays after Bark is linked
 
@@ -20,7 +20,7 @@ Fix: on iOS before 16.4, the page fetches the Bark state, or keeps the dialog's 
 
 Done when: an iOS 15 user agent with a linked Bark device shows no notification warning, one without a link or device still shows it, and a test proves both.
 
-## Next
+## Ready
 
 ### R-005: Photos and files
 
@@ -64,23 +64,6 @@ report a comment by someone else when two comments arrive between polls and the 
 user's own (`comparePulls` only looks at the last commenter).
 
 Done when: a comment-only review on the fake GitHub becomes an event, and a test proves it.
-
-### R-016: Link a project to repositories
-
-Status: Planned. Started in #14. Since #17 (D-050), a project links repositories through a GitHub App, and its webhooks post a card into the channel for every pull request that opens, is ready for review, is reopened, merged or closed. Still to do: the Projects tab list, reviewers shown by their WebChat names instead of GitHub logins, and cards that show a pull request's current checks and review decision instead of a snapshot.
-
-Why: the pane lists one person's pull requests across every repository, with no grouping. A team
-wants to see every open pull request of its repositories, by any member, next to its channels. Only
-pull requests are watched today: pushes and commits are not, and teams that push to main see
-nothing.
-
-Scope: a project names one or more repositories. The Projects tab shows their open pull requests,
-grouped by repository. Reading them needs the GitHub App's installation token, which needs the
-app's private key on the server (D-050 keeps no token).
-
-Settled in D-050: every pull request in a linked repository goes to the channel, whoever opens it.
-Everyone in the project sees its title, even without access to the repository, so the list here
-would show the same to the whole project.
 
 ### R-029: Hand a card to a teammate's agent
 

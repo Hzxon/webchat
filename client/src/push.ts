@@ -1,5 +1,5 @@
 // Browser notification permission and the Web Push subscription for this device.
-import { api } from './api';
+import { api, ApiError } from './api';
 import { iosVersion } from './ios';
 
 export type PermissionState = NotificationPermission | 'unsupported';
@@ -74,15 +74,19 @@ export async function enableNotifications(): Promise<PushState> {
 async function subscribeThisDevice() {
   const reg = await registerServiceWorker();
   if (!reg || !('PushManager' in window)) return;
-  let subscription = await reg.pushManager.getSubscription();
-  if (!subscription) {
+  const subscribe = async () => {
     const { vapidPublicKey } = await api.config();
-    subscription = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: base64UrlToBytes(vapidPublicKey),
-    });
+    return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlToBytes(vapidPublicKey) });
+  };
+  const subscription = (await reg.pushManager.getSubscription()) ?? (await subscribe());
+  try {
+    await api.subscribePush(subscription.toJSON());
+  } catch (error) {
+    // Another account holds this endpoint under other keys: a new subscription gets a new endpoint.
+    if (!(error instanceof ApiError && error.code === 'endpoint_taken')) throw error;
+    await subscription.unsubscribe();
+    await api.subscribePush((await subscribe()).toJSON());
   }
-  await api.subscribePush(subscription.toJSON());
 }
 
 /**

@@ -18,10 +18,15 @@ import {
   openChatKeyBytes,
   openIdentity,
   openKeyLink,
+  openPicks,
   padContent,
+  permitHash,
   PAD_MIN_BYTES,
+  newPairingCode,
   safetyCode,
   sealIdentity,
+  sealPicks,
+  TamperedMessageError,
   toBase64Url,
   unpadContent,
   unwrapChatKey,
@@ -31,9 +36,10 @@ import {
   type DocContent,
   type DocMeta,
   type IdentitySecrets,
+  type MessageContent,
   type MessageMeta,
 } from '../shared/e2ee.ts';
-import type { PullCardDTO, RunDTO } from '../shared/types.ts';
+import { previewOf, type PullCardDTO, type RunDTO } from '../shared/types.ts';
 
 // Fewer PBKDF2 rounds keep the suite fast; one test runs the real count.
 const FAST = 1000;
@@ -218,6 +224,107 @@ describe('end-to-end encryption', () => {
     assert.equal(opened.text, content.text);
   });
 
+  test('a request about a board card travels inside the envelope, and a malformed one is dropped (the card-notes decision)', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const keyId = newKeyId();
+    // An ordinary message: the header has no field for the card, so the server learns nothing new.
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'n1' };
+    const open = async (content: object) => decryptContent(key, alice.identity.publicKeys.sign, meta, await encryptMessage(key, keyId, alice.identity.signPrivate, meta, content as MessageContent));
+    const content = { text: 'Asks you to mark K-4 ready: Fix it', card: { kind: 'ready' as const, card: 'K-4', docId: 'd1', section: 's1' } };
+    const opened = await open(content);
+    assert.deepEqual(opened, content);
+    assert.equal(previewOf(opened), content.text, 'the notification shows the text');
+    for (const card of [{ ...content.card, kind: 'merge' }, { ...content.card, card: 'K-4; drop' }, { ...content.card, docId: 'x'.repeat(65) }, { ...content.card, section: 3 }, 'K-4']) {
+      const dropped = await open({ ...content, card });
+      assert.deepEqual(dropped, { text: content.text }, 'the text stays, the card goes');
+    }
+    assert.deepEqual(await open({ text: 'Hi' }), { text: 'Hi' }, 'a message without it opens as before');
+  });
+
+  test('a link or connect request and its answer travel inside the envelope, and a malformed one is dropped (docs/decisions/harness-linking.md)', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'l1' };
+    const open = async (content: object) => decryptContent(key, alice.identity.publicKeys.sign, meta, await encryptMessage(key, newKeyId(), alice.identity.signPrivate, meta, content as MessageContent));
+    for (const ask of [
+      { kind: 'link', step: 'request', harness: 'Codex' },
+      { kind: 'link', step: 'approve', to: 'c1', sentAt: 5 },
+      { kind: 'link', step: 'decline', to: 'c1', sentAt: 5 },
+      { kind: 'link', step: 'done', to: 'c1' },
+      { kind: 'link', step: 'failed', to: 'c1', note: 'Too old.' },
+      { kind: 'connect', step: 'request', repo: 'acme/app', folder: '~/code/app' },
+      { kind: 'connect', step: 'approve', to: 'c1', sentAt: 5, repo: 'acme/app', folder: '~/code/app' },
+      { kind: 'connect', step: 'decline', to: 'c1', sentAt: 5 },
+      { kind: 'connect', step: 'done', to: 'c1' },
+    ]) assert.deepEqual((await open({ text: 'x', ask })).ask, ask);
+    for (const ask of [{ kind: 'link', step: 'request' }, { kind: 'link', step: 'approve', to: 'c1' }, { kind: 'link', step: 'approve', to: 'c1', sentAt: 0 }, { kind: 'link', step: 'remove', to: 'c1' }, { kind: 'connect', step: 'request', harness: 'Codex' }, { kind: 'connect', step: 'request', repo: '../x', folder: '~/app' }, { kind: 'connect', step: 'request', repo: 'acme/app' }, { kind: 'connect', step: 'approve', to: 'c1', sentAt: 5, repo: 'acme/app' }, 'link']) {
+      assert.deepEqual(await open({ text: 'x', ask }), { text: 'x' });
+    }
+  });
+
+  test("an agent's question and its owner's answer travel inside the envelope, signed, and a malformed one is dropped (docs/decisions/harness-approvals.md)", async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'q1' };
+    const open = async (content: object, as: MessageMeta = meta) => decryptContent(key, alice.identity.publicKeys.sign, as, await encryptMessage(key, newKeyId(), alice.identity.signPrivate, meta, content as MessageContent));
+    const question = { kind: 'question', request: 5, what: 'run', detail: 'npm test', expires: 9 } as const;
+    for (const permit of [
+      question,
+      { kind: 'question', to: 'p1', what: 'edit', detail: '', expires: 9 },
+      { kind: 'answer', to: 'q1', decision: 'once', seen: await permitHash(question), sentAt: 5 },
+      { kind: 'answer', to: 'q1', decision: 'run', seen: 'h', sentAt: 5 },
+      { kind: 'answer', to: 'q1', decision: 'deny', seen: 'h', sentAt: 5 },
+      ...(['allowed', 'allowedForRun', 'denied', 'expired', 'stopped', 'stale'] as const).map((outcome) => ({ kind: 'settled', to: 'q1', outcome })),
+    ]) assert.deepEqual((await open({ text: 'x', permit })).permit, permit);
+    for (const permit of [
+      { kind: 'question', what: 'run', detail: 'x', expires: 9 },
+      { kind: 'question', request: 5, to: 'p1', what: 'run', detail: 'x', expires: 9 },
+      { kind: 'question', request: 5, what: 'format', detail: 'x', expires: 9 },
+      { kind: 'question', request: 5, what: 'run', expires: 9 },
+      { kind: 'answer', to: 'q1', decision: 'always', seen: 'h', sentAt: 5 },
+      { kind: 'answer', to: 'q1', decision: 'once', sentAt: 5 },
+      { kind: 'answer', to: 'q1', decision: 'once', seen: 'h' },
+      { kind: 'answer', decision: 'once', seen: 'h', sentAt: 5 },
+      { kind: 'settled', to: 'q1', outcome: 'maybe' },
+      'question',
+    ]) assert.deepEqual(await open({ text: 'x', permit }), { text: 'x' });
+    // What the owner saw is hashed into the answer, so it fits that action only.
+    assert.notEqual(await permitHash(question), await permitHash({ ...question, detail: 'rm -rf /' }));
+    assert.notEqual(await permitHash(question), await permitHash({ ...question, what: 'edit' }));
+    // The signature covers the content, and the answer names its question by the client id its sender signs.
+    const sealed = await encryptMessage(key, newKeyId(), alice.identity.signPrivate, meta, { text: 'x', permit: { kind: 'answer', to: 'q1', decision: 'deny', seen: 'h', sentAt: 5 } });
+    await assert.rejects(decryptContent(key, alice.identity.publicKeys.sign, { ...meta, clientId: 'q2' }, sealed), TamperedMessageError);
+    // The flag a page signs into its request, or its prompt, which only a page that can show a question sets.
+    const run = { kind: 'request', card: 'K-1', title: 'T', docId: 'd', section: 's', runtime: 3, sentAt: 1, asks: true };
+    assert.deepEqual((await open({ text: 'x', run })).run, run);
+    assert.equal(((await open({ text: 'x', run: { ...run, asks: 'yes' } })).run as { asks?: true }).asks, undefined);
+    const prompt = { kind: 'prompt', project: 2, sentAt: 1, asks: true };
+    assert.deepEqual((await open({ text: 'x', prompt })).prompt, prompt);
+    // A lock screen shows no word of what the agent asks.
+    assert.equal(previewOf({ text: 'Your agent asks your permission to run a command:\nnpm test', permit: question }), 'Your agent asks your permission');
+  });
+
+  test('a setup choice keeps the harnesses it links, and drops names of the wrong shape', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 's1' };
+    const choice = { claudeMd: false, skills: [], noAttribution: false };
+    const open = async (setup: object) => (await decryptContent(key, alice.identity.publicKeys.sign, meta, await encryptMessage(key, newKeyId(), alice.identity.signPrivate, meta, { text: 'x', setup } as MessageContent))).setup;
+    assert.deepEqual(await open({ sentAt: 5, choice: { ...choice, linked: ['Claude Code', 3, 'Codex'], off: [] } }), { sentAt: 5, choice: { ...choice, linked: ['Claude Code', 'Codex'], off: [] } });
+    assert.deepEqual(await open({ sentAt: 5, choice }), { sentAt: 5, choice }, 'a page from before linking sends none');
+  });
+
+  test('the harnesses a pairing asks to link open only with its code, for its agent, and whole', async () => {
+    const code = newPairingCode();
+    const { publicKeys } = alice.identity;
+    const picks = [{ name: 'Claude Code', version: '2.1.300', signedIn: true }, { name: 'Codex' }];
+    const sealed = await sealPicks(code, publicKeys, picks);
+    assert.ok(!atob(sealed.replace(/-/g, '+').replace(/_/g, '/')).includes('Claude'), 'nothing reads in the blob');
+    assert.deepEqual(await openPicks(code, publicKeys, sealed), picks);
+    assert.deepEqual(await openPicks(newPairingCode(), publicKeys, sealed), [], 'another code');
+    assert.deepEqual(await openPicks(code, bob.identity.publicKeys, sealed), [], 'another agent');
+    const bytes = fromBase64Url(sealed);
+    bytes[bytes.length - 1]! ^= 1;
+    assert.deepEqual(await openPicks(code, publicKeys, toBase64Url(bytes)), [], 'one flipped byte');
+  });
+
   test('a run request and its reports travel inside the envelope, and a malformed one is dropped (R-027)', async () => {
     const key = await importChatKey(newChatKeyBytes());
     const keyId = newKeyId();
@@ -365,7 +472,8 @@ describe('end-to-end encryption', () => {
     assert.equal(await decryptMessage(chatKey, aliceSign, meta, envelope), text);
     assert.ok(!JSON.stringify(envelope).includes('urgent'), 'no plain text in the envelope');
 
-    const flipped = { ...envelope, ct: envelope.ct.slice(0, -2) + (envelope.ct.endsWith('A') ? 'BA' : 'AA') };
+    // The first character always carries data; the last ones can hold padding bits, or be what they are set to.
+    const flipped = { ...envelope, ct: (envelope.ct.startsWith('A') ? 'B' : 'A') + envelope.ct.slice(1) };
     await assert.rejects(decryptMessage(chatKey, aliceSign, meta, flipped), /bad signature/);
     for (const changed of [
       { ...meta, urgent: false },
@@ -403,6 +511,11 @@ describe('end-to-end encryption', () => {
     // A board doc's title carries which column it is (R-021), and nothing else slips through.
     const title = await encryptDoc(key, keyId, alice.identity.signPrivate, meta, { text: 'Decisions', board: 'decisions', extra: 1 } as DocContent);
     assert.deepEqual(await decryptDoc(key, aliceSign, meta, title), { text: 'Decisions', board: 'decisions' });
+    // A card's first revision says addCard opened it; only true counts, and a revision without it opens.
+    const opened = await encryptDoc(key, keyId, alice.identity.signPrivate, meta, { text: '### K-1: Bug', pos: 1, opened: true });
+    assert.deepEqual(await decryptDoc(key, aliceSign, meta, opened), { text: '### K-1: Bug', pos: 1, opened: true });
+    const loose = await encryptDoc(key, keyId, alice.identity.signPrivate, meta, { text: '### K-1: Bug', opened: 'yes' } as unknown as DocContent);
+    assert.deepEqual(await decryptDoc(key, aliceSign, meta, loose), { text: '### K-1: Bug' });
   });
 
   test('safety codes match on both sides and change when a key changes', async () => {

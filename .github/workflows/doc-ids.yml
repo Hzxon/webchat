@@ -12,9 +12,14 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request cancels its older run, which would hold a runner for nothing. Runs on main are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   unique-ids:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       # Pinned to a commit, like the action in release-please.yml.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,7 +50,7 @@ jobs:
   # the board is linked this fails nothing (R-040, D-117).
   board-copy:
     if: github.event_name == 'pull_request' && github.head_ref != 'agent/board'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

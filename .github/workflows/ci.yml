@@ -11,9 +11,19 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request or to main cancels its older run, which would hold a runner for
+# nothing. On main, a burst of merges then tests only the newest commit: a break still shows, but
+# finding the merge that caused it takes a bisect.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    # Either of the owner's runners, a Linux server or a Mac, since the account's Actions minutes ran out (docs/decisions/self-hosted-ci.md).
+    runs-on: self-hosted
+    # A test that leaves a process behind once held a run for hours, and each runner takes one job at a time.
+    timeout-minutes: 15
     steps:
       # Pinned to commits, like the actions in release-please.yml and doc-ids.yml.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -25,3 +35,62 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      # The agent's single file must still build and run (docs/decisions/agent-install.md).
+      - run: npm run build:agent && dist/agent/webchat-agent --version
+
+  # Builds the locked room for real (docs/decisions/locked-room.md): a role account, its groups,
+  # folders and system service, which needs passwordless sudo on the owner's Linux server
+  # (docs/decisions/self-hosted-ci.md). macOS's room is checked by unit tests and by hand. It runs
+  # only when the agent, this test or this file changes, so most pull requests skip its steps.
+  room:
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check whether the agent changed
+        id: changed
+        env:
+          EVENT: ${{ github.event_name }}
+          PULL_BASE: ${{ github.event.pull_request.base.sha }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) base="$PULL_BASE" ;;
+            merge_group) base="$GROUP_BASE" ;;
+            *) base="$BEFORE" ;;
+          esac
+          # With no base to compare to, such as a new branch, run.
+          if [ -z "${base//0/}" ] || ! git diff --quiet "$base" HEAD -- agent test/room.real.test.ts test/fakeRoom.ts .github/workflows/ci.yml; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.changed.outputs.run == 'true'
+        with:
+          node-version: 26
+          cache: npm
+      - if: steps.changed.outputs.run == 'true'
+        run: npm ci
+      # A second build at release 99.0.0, which the test serves from a folder of its own to see the
+      # updater swap the program for real (docs/decisions/agent-self-update.md). It costs one more build.
+      - if: steps.changed.outputs.run == 'true'
+        run: |
+          npm pkg set version=99.0.0
+          npm run build:agent
+          mv dist/agent/webchat-agent next-agent
+          git checkout package.json
+      - if: steps.changed.outputs.run == 'true'
+        run: npm run build:agent
+      # The keyholder refuses a program under a folder that anyone but root writes. CI changes nothing
+      # on the owner's server, so a writable /opt fails here with the fix, not later in the test.
+      - if: steps.changed.outputs.run == 'true'
+        run: |
+          if [ "$(stat -c %u /opt)" != 0 ] || [ -n "$(find /opt -maxdepth 0 -perm /022)" ]; then
+            echo "::error::/opt must be root's alone. On the runner's server: sudo chown root:root /opt && sudo chmod 755 /opt"
+            exit 1
+          fi
+      # The test lints the services' units with `systemd-analyze verify`, or their plists with `plutil -lint`.
+      - if: steps.changed.outputs.run == 'true'
+        run: WEBCHAT_REAL_ROOM=1 WEBCHAT_NEXT_AGENT=next-agent node --test --test-timeout=400000 --test-force-exit --import tsx test/room.real.test.ts

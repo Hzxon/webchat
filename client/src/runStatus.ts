@@ -1,16 +1,17 @@
 // Keeps a card's status line in step with its run, from whichever page of its owner is open
 // (D-105, D-100). Teammates see no run messages, so the status line is how they learn that a card
-// runs: "In progress: Ann's agent" once the agent took it, after it checked the brief, "Waiting for
+// runs: "Running: Ann's agent" once the agent took it, after it checked the brief, "Waiting for
 // a decision" while it waits for one, "In review: repo#N" once its work is in its draft, "Done in
 // repo#N" once that is merged, and the status it had before when the run fails, the card no
 // longer holds (R-042) or the draft is closed unmerged. Each move is made only from the status it
 // expects, so a status a teammate set since stays, and only under the card's lock, read there,
 // never while anyone, another tab included, holds it.
-import { cardStatus, type BoardSyncDTO, type RunRequest } from '../../shared/types';
+import { newStatus, WAITING, withStatus, type Card } from '../../shared/board';
+import type { BoardSyncDTO, RunRequest } from '../../shared/types';
 import { agentChats, inOrder } from './agents';
-import { boardDocs, cardRuns, dateOf, GROUPS, groupOf, parseCard, statusMove, withStatus, workingStatus, type Card } from './board';
-import { syncNow } from './chat';
-import { loadSections, rewriteSection } from './docs';
+import { boardDocs, cardRuns, dateOf, startable, statusMove, workingStatus } from './board';
+import { sendCardNote, startDirectChat } from './chat';
+import { boardCards, rewriteCard } from './docs';
 import type { ChatDoc, ChatMessage } from './e2ee/keyring';
 import { store } from './store';
 
@@ -28,13 +29,14 @@ export async function followRuns() {
   const requests = new Map<number, RunRequest>(messages.flatMap((m) => (m.run?.kind === 'request' && m.senderId === me.id ? [[m.id, m.run] as const] : [])));
   const working = workingStatus(me.displayName);
   const read = new Map<string, Promise<Card[]>>();
-  const cardsOf: Cards = (doc) => read.get(doc.id) ?? read.set(doc.id, loadSections(doc).then((sections) => sections.map(parseCard))).get(doc.id)!;
+  const cardsOf: Cards = (doc) => read.get(doc.id) ?? read.set(doc.id, boardCards(doc)).get(doc.id)!;
   for (const docId of new Set([...requests.values()].map((r) => r.docId))) {
     const doc = state.docs[docId];
     if (!doc) continue;
     for (const [section, run] of cardRuns(messages, me.id, docId, state.pending, Date.now())) {
       const request = requests.get(run.request)!;
-      const was = request.was ?? '';
+      // An older page signed the status it saw in the old words, and the cards read in today's.
+      const was = newStatus(request.was ?? '');
       const key = `${run.request}:${run.at}`;
       if (run.state === 'merged' && run.pull) await accept(doc, run.decisions ?? [], `Accepted ${dateOf(new Date())} in ${run.pull.repo}#${run.pull.number} (${request.card})`, key, cardsOf);
       const [from, to] = statusMove(run, request.card, was, working);
@@ -42,19 +44,21 @@ export async function followRuns() {
       tried.add(key);
       // Most reports moved their card already, so only a card that stands where the move starts takes its lock.
       const card = (await cardsOf(doc)).find((c) => c.id === section);
-      if (card && from.includes(card.status)) await move(doc, section, (status) => from.includes(status), to);
+      if (!card || !from.includes(card.status) || !(await move(doc, section, (status) => from.includes(status), to))) continue;
+      // The owner decides for the card, so they get a push; only the requester's go resumes the run (D-118). A second tab finds it moved and sends none.
+      // With a verdict on the card, a WAITING of anyone but its owner would not stand.
+      if (to === WAITING && card.owner !== undefined && card.owner !== me.id && card.reviews.every((r) => r.verdict === 'review_required'))
+        await startDirectChat(card.owner)
+          .then((chat) => sendCardNote(chat, { kind: 'waiting', card: card.cardId, docId, section }, `${card.cardId} waits for your decision: ${card.title}`))
+          .catch(() => undefined);
     }
   }
   await followClaims(messages, me.id, cardsOf);
 }
 
-/** Sets a card's status under its lock, only while `from` allows the status it has there, and syncs once it moved. */
-async function move(doc: ChatDoc, section: string, from: (status: string) => boolean, to: string) {
-  const moved = await rewriteSection(doc, section, async (card) =>
-    card && !card.failed && from(cardStatus(card.text)) ? { text: withStatus(card.text, to), pos: card.pos } : null,
-  ).catch(() => false);
-  if (moved) void syncNow();
-}
+/** Sets a card's status under its lock, only while `from` allows the status that stands there, and syncs once it moved. Returns whether it moved. */
+const move = (doc: ChatDoc, section: string, from: (status: string) => boolean, to: string) =>
+  rewriteCard(doc, section, (card) => (from(card.status) ? withStatus(card.text, to) : null)).catch(() => false);
 
 const PROPOSED = /^Proposed\b/i;
 
@@ -73,9 +77,10 @@ async function accept(card: ChatDoc, ids: string[], status: string, key: string,
 }
 
 /**
- * Sets the cards that open pull requests claim to `In progress: repo#N`, as the owner's agent names
- * them for a linked board, so a claim made outside WebChat shows there too (R-040). Only an open
- * card moves, never one that runs, waits for review or is finished.
+ * Sets the cards that open pull requests claim to `Running: repo#N`, as the owner's agent names
+ * them for a linked board, so a claim made outside WebChat shows there too (R-040). Only a ready
+ * card moves, or an open one with no owner, since only an owner marks theirs ready (the card-owner
+ * decision); never one that runs, waits for review or is finished.
  */
 async function followClaims(messages: ChatMessage[], meId: number, cardsOf: Cards) {
   const state = store.get();
@@ -89,8 +94,8 @@ async function followClaims(messages: ChatMessage[], meId: number, cardsOf: Card
     for (const { card: id, pull } of fresh) {
       tried.add(`${doc.id}:${id}:${pull}`);
       const card = cards.find((c) => c.cardId === id);
-      if (!card || !['Next', 'Open'].includes(GROUPS.roadmap[groupOf('roadmap', card.status)]!.name) || doc.locks.some((l) => l.section === card.id)) continue;
-      await move(doc, card.id, (status) => status === card.status, `In progress: ${repo}#${pull}`);
+      if (!card || !startable(card, state.me?.displayName ?? '') || doc.locks.some((l) => l.section === card.id)) continue;
+      await move(doc, card.id, (status) => status === card.status, `Running: ${repo}#${pull}`);
     }
   }
 }

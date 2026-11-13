@@ -1,0 +1,6 @@
+{
+  "main": "dist/agent/webchat-agent.mjs",
+  "mainFormat": "module",
+  "output": "dist/agent/webchat-agent",
+  "disableExperimentalSEAWarning": true
+}

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { ASK_WAIT_MS, harnessRow, type HarnessState } from '../shared/types.ts';
 
 // In a variable, so the tools tsconfig, which has no DOM types, does not typecheck the client module.
 const clientAgents = '../client/src/agents.ts';
@@ -137,6 +138,35 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.equal(threads[0].state, 'working');
   });
 
+  test("a question of the agent makes its thread Asking you, until the agent says it settled, and waits 7 days (docs/decisions/harness-approvals.md)", () => {
+    const sayPermit = (senderId: number, permit: object, clientId: string, createdAt = ++id) => ({ ...say(senderId, {}, clientId, createdAt), prompt: null, permit });
+    const sayRun = (senderId: number, run: object, createdAt = ++id) => ({ ...say(senderId, {}, `r${id}`, createdAt), prompt: null, run });
+    const request = sayRun(ME, { kind: 'request', card: 'K-7', title: 'Sums', docId: 'd', section: 's', runtime: AGENT, repo: 'team/app', sentAt: 1, hash: 'h' });
+    const asked = sayPermit(AGENT, { kind: 'question', request: request.id, what: 'run', detail: 'npm test', expires: 9 }, 'q1');
+    const answered = sayPermit(ME, { kind: 'answer', to: 'q1', decision: 'once', seen: 'h', sentAt: 1 }, 'a1');
+    const settled = (outcome: string) => sayPermit(AGENT, { kind: 'settled', to: 'q1', outcome }, 's1');
+    const thread = (...rest: object[]) => threadsOf([request, ...rest], ME, AGENT, {}, 100)[0];
+    assert.deepEqual([thread(asked).state, thread(asked).ask.message.clientId, thread(asked).ask.answered, thread(asked).messages.length], ['asking', 'q1', false, 2]);
+    // The owner's answer turns the buttons off until the agent says it settled; one that did not send leaves them on.
+    assert.equal(thread(asked, answered).ask.answered, true);
+    assert.equal(threadsOf([request, asked, answered], ME, AGENT, { [answered.clientId]: 'failed' }, 100)[0].ask.answered, false);
+    // Settled, the thread works on; a stale answer leaves the question open, with the buttons back.
+    for (const outcome of ['allowed', 'allowedForRun', 'denied', 'expired', 'stopped']) assert.deepEqual([thread(asked, answered, settled(outcome)).state, thread(asked, answered, settled(outcome)).ask], ['working', undefined]);
+    assert.deepEqual([thread(asked, answered, settled('stale')).state, thread(asked, answered, settled('stale')).ask.answered], ['asking', false]);
+    // Any later word of the run clears an orphaned question, such as after the agent restarted.
+    assert.deepEqual([thread(asked, sayRun(AGENT, { kind: 'failed', request: request.id })).state, thread(asked, sayRun(AGENT, { kind: 'failed', request: request.id })).ask], ['unfinished', undefined]);
+    // Only the thread's own agent asks, and only the owner answers.
+    assert.equal(thread(sayPermit(ME, { kind: 'question', request: request.id, what: 'run', detail: 'x', expires: 9 }, 'q2')).state, 'working');
+    assert.equal(thread(sayPermit(7, { kind: 'question', request: request.id, what: 'run', detail: 'x', expires: 9 }, 'q3')).state, 'working');
+    assert.equal(thread(asked, sayPermit(AGENT, { kind: 'answer', to: 'q1', decision: 'once', seen: 'h', sentAt: 1 }, 'a2')).ask.answered, false);
+    // A conversation asks too, by its prompt's client id, and a question left a day still asks, until 7 days.
+    const prompt = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'p1', 1_000);
+    const converse = sayPermit(AGENT, { kind: 'question', to: 'p1', what: 'edit', detail: 'Write x', expires: 9 }, 'q9', 2_000);
+    const [chat] = threadsOf([prompt, converse], ME, AGENT, {}, 2_000 + THREAD_TTL_MS + 1);
+    assert.deepEqual([chat.kind, chat.state], ['question', 'asking']);
+    assert.equal(threadsOf([prompt, converse], ME, AGENT, {}, 2_000 + ASK_WAIT_MS + 1)[0].state, 'ended');
+  });
+
   test('conversations come newest first, and one left for a day has ended', () => {
     const old = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'old', 1_000);
     const fresh = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 2 }, 'fresh', 5_000);
@@ -154,5 +184,16 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.equal(agentOf(state, direct(3)), undefined, "someone else's agent");
     assert.equal(agentOf(state, direct(5)), undefined, 'a removed agent');
     assert.equal(agentOf(state, { type: 'group', members: [{ userId: 1 }, { userId: 2 }] }), undefined);
+  });
+});
+
+describe('A harness row in shared/types.ts (docs/decisions/harness-linking.md)', () => {
+  test('each harness is linked, linked and needing attention, found and not linked, or not found', () => {
+    const h = (rest: Partial<HarnessState>): HarnessState => ({ name: 'Codex', knobs: [], ...rest });
+    assert.equal(harnessRow(h({ linked: true, path: '/bin/codex' })), 'linked');
+    assert.equal(harnessRow(h({ linked: true, path: '/bin/codex', attention: 'Not signed in.' })), 'attention');
+    assert.equal(harnessRow(h({ linked: true, attention: 'I cannot find Codex on this laptop.' })), 'attention', 'linked, then uninstalled');
+    assert.equal(harnessRow(h({ linked: false, path: '/bin/codex', attention: 'ignored' })), 'found');
+    assert.equal(harnessRow(h({ linked: false })), 'missing');
   });
 });

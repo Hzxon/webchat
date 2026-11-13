@@ -24,8 +24,9 @@ Node host with an embedded PGlite database. The [README](README.md) explains it 
 
 Roadmap entries are R-items for features and other work, K-items for known issues and Q-items for
 open questions. Each says why it matters, what it covers and when it is done. A question that
-belongs to an item goes under that item. An item's status is one of Next, Planned, Idea, Blocked,
-In progress, Done, Fixed or Dropped. Numbers never change and are never reused. A dropped item
+belongs to an item goes under that item. An item's status is one of Ready, Idea, Blocked, Running,
+In review, Done, Fixed or Dropped. The board still reads Next and Planned as Ready, and In progress
+as Running. Numbers never change and are never reused. A dropped item
 keeps its number and says why.
 
 ## Commands
@@ -36,9 +37,10 @@ keeps its number and says why.
 | `npm run dev` | Runs the API on port 3000 and the Vite client on port 5173, with PGlite in `data/pglite`. |
 | `npm test` | Runs the integration and crypto tests with an in-memory database. |
 | `npm run typecheck` | Checks the server, client, service worker, and the tooling with the agent, each with its own tsconfig. |
-| `npm run build` | Typechecks, then builds the client, the service worker, the Claude Code plugin and the server. |
+| `npm run build` | Typechecks, then builds the client, the service worker and the server. |
 | `npm start` | Runs the built app in one Node process. |
-| `npm run agent -- pair\|watch …` | The agent daemon's command line (R-027, D-085, D-093). |
+| `npm run build:agent` | Builds the agent as one file for this laptop, `dist/agent/webchat-agent`, with Node inside. Needs Node from nodejs.org. |
+| `npm run agent -- keyholder\|runner\|dev …` | The agent's command line: the keyholder and the runner, which setup installs as services, and `dev`, both in one process for working on WebChat (R-027, docs/decisions/locked-room.md). |
 | `scripts/claim.sh -c "<checked>" K-12 "<title>" [D-077]` | Claims a roadmap item after the check that it still holds and, until the board is linked, reserves the decision number given as the third argument. |
 
 The server log prints the invite code. Set `INVITE_CODE` to choose one. To test with two accounts in
@@ -89,7 +91,7 @@ its own roadmap item. Nothing coordinates them except what is on GitHub (D-062).
    file that the owner numbers on the board (step 3). The script refuses an item that is finished or
    that an open pull request already names, prints what names the item, then pushes an empty commit
    and opens a draft pull request that records the check. Its body starts with `Claims K-12`; once
-   the board is linked, WebChat's agent reads that to mark the card In progress on the board. If it
+   the board is linked, WebChat's agent reads that to mark the card Running on the board. If it
    refuses, pick another item or number. Work that is not a roadmap item, such as a process change,
    claims the same way by hand: a draft first, with a title and body that say what it covers.
 2. **Work on that branch** and push to the same pull request. Do not merge or rebase on main to stay

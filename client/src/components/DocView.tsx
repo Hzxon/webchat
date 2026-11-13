@@ -1,6 +1,7 @@
 // A shared doc in a project: its sections as Markdown, who is editing which, and each section's
 // history (R-020). Editing a section locks it, so two people never write over each other.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { DocSection } from '../../../shared/board';
 import { LIMITS } from '../../../shared/types';
 import { ApiError } from '../api';
 import { holdReloadWhile } from '../build';
@@ -17,7 +18,6 @@ import {
   sectionHistory,
   stopEditing,
   wordCount,
-  type DocSection,
   type Editing,
 } from '../docs';
 import type { ChatDoc } from '../e2ee/keyring';
@@ -169,8 +169,24 @@ export function DocView({ doc }: { doc: ChatDoc }) {
   );
 }
 
-/** Edits one section, for a doc or a board card. Done shows it rendered, so there is no preview. */
-export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing: Editing; onClose: (message?: string) => void }) {
+/**
+ * Edits one section, for a doc or a board card. Done shows it rendered, so there is no preview. A
+ * card with an owner offers Delete only to its owner (the card-owner decision).
+ */
+export function SectionEditor({
+  doc,
+  editing,
+  onClose,
+  canDelete = true,
+  toSave,
+}: {
+  doc: ChatDoc;
+  editing: Editing;
+  onClose: (message?: string) => void;
+  canDelete?: boolean;
+  /** What a save writes for the text typed, as a board card keeps the review lines that stand. */
+  toSave?: (text: string) => string;
+}) {
   const [text, setText] = useState(editing.text);
   const [status, setStatus] = useState('');
   const latest = useRef(text);
@@ -190,7 +206,7 @@ export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing
       const content = latest.current;
       if (dropped.current || content === saved.current) return;
       setStatus('Saving…');
-      await saveSection(doc, editing.id, { text: content, pos: editing.pos });
+      await saveSection(doc, editing.id, { text: toSave ? toSave(content) : content, pos: editing.pos });
       stored.current = true;
       saved.current = content;
       if (latest.current === content) {
@@ -290,9 +306,11 @@ export function SectionEditor({ doc, editing, onClose }: { doc: ChatDoc; editing
             Cancel
           </button>
         ) : (
-          <button className="button-danger" onClick={() => void remove()}>
-            Delete
-          </button>
+          canDelete && (
+            <button className="button-danger" onClick={() => void remove()}>
+              Delete
+            </button>
+          )
         )}
         <button className="button-primary" onClick={() => void done()}>
           Done

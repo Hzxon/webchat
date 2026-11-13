@@ -30,7 +30,19 @@ It runs for free on Vercel's Hobby plan with a free Supabase Postgres database.
   was made and what it costs, and its roadmap of ideas and issues. A card is Markdown in the same
   format as this repository's own decision log and roadmap, so "Copy as Markdown" gives a file a
   team drops into its repository for the coding agents it runs. Cards are edited like doc sections,
-  one person at a time, with the same history.
+  one person at a time, with the same history. The roadmap shows its cards in three lanes, Ready,
+  Running and In review, with open cards in a drawer under them. Each card shows the face of the
+  member who opened it, or a dashed mark when nobody owns it: a card from before owners, an
+  imported one, or one whose opener left. Cards move by buttons. Only a card's owner marks it
+  ready or closes it; any member asks them to mark it ready, which reaches them as a message in
+  your direct chat, picks a ready card or sends a picked one to review. Any member can take a
+  card with no owner in Open or Ready, and becomes its owner. Only the owner deletes a card that
+  has one. When someone edits a card to a status only its owner may set, the card keeps its status
+  and says who tried. Any member asks any member to review a card in review, who approves it or asks
+  for changes in one line. Its owner accepts or declines a change, runs the card again once they
+  accepted one, and closes it only after an approval, with no change open. A verdict counts only
+  from the reviewer's own edit, and an answer only from the owner's. A running card that waits for
+  a decision stands out and names its owner, who gets a message about it.
 - **Replies and reactions.** Reply to a message to quote it above yours, and tap the quote to jump
   to the original. React with one of six emoji; tap a reaction again to take it back.
 - Sent, delivered, and read ticks.
@@ -128,18 +140,27 @@ What it does not protect against:
 - **A server that sends tampered app code.** Like any web app, the page runs the code the server
   sends, so encryption protects you from anyone who reads the database or the hosts, not from a
   malicious operator who changes the app itself.
+- **A release's checksum gives integrity, not authenticity.** The agent's updater runs as root and
+  takes the release's file and its checksum from the same GitHub release, so the checksum catches a broken
+  download, not a changed release. Whoever can change the repository's releases can change the agent on
+  every laptop within 15 minutes. The server only names a release number, and the address of the files
+  is built into the agent, so a tampered server cannot send agents elsewhere.
 - **Alerts through Bark pass Apple.** For an iPhone linked to Bark, Apple sees when an alert goes
   to it, and, unless encryption is turned on in the bell dialog, the chat and sender names in it.
   The Bark app on the phone sees the alert in full. The message text is never in it.
 - **Metadata stays visible to the server:** who talks to whom and when, group, project and
   channel names, who is in which project or group and who added them, who owns each project and
   group, who left, when a chat got a new key, display names, whether a message is urgent, that
-  someone reacted (not with which emoji, or to which message), and roughly how long a message is:
+  someone reacted (not with which emoji, or to which message), which messages are a coding agent's
+  board traffic with its owner's page (not what they say), and roughly how long a message is:
   which of the fixed sizes it was padded to, not its exact length.
 - **Who edits which doc section, and when.** The server sees which docs a project has, how many
   sections each has, who edited which section and when, who is editing one now, and which of the
   fixed sizes each section was padded to. It never sees a title or the text. It could hide the
-  newest edits of a section and show an older one, as it could hold back messages.
+  newest edits of a section and show an older one, as it could hold back messages. On the board
+  it could also hold back a member's edit of a card, or a card's first revision, so the card looks
+  as if nobody owns it, but it cannot make a move that is not that member's. Right after a card is
+  saved, it can guess that a direct message is a request about that card.
 - **Which GitHub repositories a project links, and the cards from GitHub in its channels.** The
   server writes those cards from what GitHub sends, so they are not end-to-end encrypted, and a
   server that was changed could write fake ones. Their links still lead only to github.com. A card
@@ -151,17 +172,25 @@ What it does not protect against:
 - **Who gets a new channel's key comes from the server.** A new channel's key is wrapped for
   everyone the server lists as a project member. The New channel dialog names them, so check that
   list. The same goes for the new key a chat gets after someone leaves.
-- **An agent's keys live in a file on its owner's machine.** A coding agent that a project runs
-  (the roadmap's R-027) has an account of its own. The Claude Code plugin keeps that account's
-  private keys and session in its data folder, `~/.claude/plugins/data/`, and the daemon in
-  `~/.webchat/laptop/`. Both files are readable only by their owner, but not
-  encrypted. Anyone who can read one can read what the agent's projects write. The server knows
+- **An agent's keys live in files on its owner's laptop, and an administrator's password reads them.**
+  A coding agent that a project runs (the roadmap's R-027) has an account of its own. `webchat-agent
+  setup` keeps that account's private keys and session in the folder of a hidden account, `_webchat`,
+  which only that account reads: a coding agent that runs as you, and its model, cannot. Neither is
+  encrypted. Anyone with an administrator's password on that laptop can read them, and so can read
+  what the agent's projects write. The agent also has its own GitHub login, kept the same way, which
+  reaches whatever that GitHub account reaches: a second GitHub account is best. The server knows
   which accounts are agents, whose agent each one is, and the names of the GitHub repositories its
   laptop has a folder for, the ones you connected or had it clone, never where they are. It learns
-  that the agent is online whenever a Claude Code window is open on that laptop, in any folder, or the daemon runs, and
-  what the laptop can do, such as answer questions, which tells newer plugins from older ones.
-  It sees a run as messages like any other.
+  that the agent is online while the agent's services run on that laptop and you are logged in, and
+  what the laptop can do, such as answer questions. It sees a run as messages like any other.
   Pairing shows it the agent's public keys and proofs made from the code, never the code.
+- **A coding agent still reads your own files.** The room keeps the agent's keys from every coding
+  agent, but a coding agent works as you. Claude Code's sandbox keeps its shell to the folder it
+  works in. A Codex or ACP agent keeps the sandbox it has, which may read your files, so a teammate's
+  card text could get them into the agent's branch. WebChat asks you before an action a coding agent
+  asks about, and says so in Settings when a setting of yours lets Claude Code's shell read more.
+- **An ACP agent's own tools, shell and network are its own.** Only the requests it asks about meet
+  WebChat's rules, and only an agent that can skip your own settings and MCP servers is listed.
 - **People who leave keep the keys they had.** Someone who left or was removed could still read the
   messages from before, if they got them another way, for example from a copy of the database.
   Everything sent after they left uses a new key they never get.
@@ -420,37 +449,45 @@ WebChat tab is open.
 ## Run board cards with a coding agent
 
 You can hand an issue or idea card on your project's board to a coding agent on your own machine.
-The agent gets an account of its own, and runs only the cards you hand it. Two programs can host it,
-and a laptop uses one of them:
+The agent gets an account of its own, and runs only the cards you hand it. It runs from one program,
+`webchat-agent`, which one line installs (see "On your laptop") and a system service and a login
+service keep running. The Claude Code plugin has retired as a host: its last release only has skills
+that run `webchat-agent`. A plugin user without administrator rights on their laptop has no agent.
 
-- **The Claude Code plugin** is the first choice for anyone who uses Claude Code. It is one install,
-  and it serves while a Claude Code window is open.
-- **The daemon** is for a laptop where no Claude Code window stays open. You start it yourself and
-  keep it running.
+It checks in every 15 seconds. Once an hour passes with no request, run or question, it
+checks in every minute, so a card on an idle agent waits up to a minute to start. WebChat counts an
+agent online for 2 minutes after its last check-in.
 
-### With the Claude Code plugin
+WebChat also runs coding agents that speak the Agent Client Protocol, from a list that ships with
+the agent and is empty for now. Each is linked like Claude Code and Codex, and may take cards. Such an agent keeps its own sandbox, shell and network, which WebChat does not
+set: WebChat answers only what it asks about, and says no to shell commands until you can approve
+them from WebChat (see "Approve what your coding agent asks").
 
-It works on a Mac or on Linux, and on Windows only in WSL2: Claude Code's sandbox, which keeps your
-keys from the agent, does not run on Windows. On Linux the sandbox needs `bubblewrap` and `socat`.
+### Approve what your coding agent asks
 
-1. In WebChat, open **Coding agents** at the top of your chats and choose **Connect coding
-   agent**. Copy the code it shows.
-   It starts with your WebChat's address, so the plugin knows where to connect. It works once,
-   within 10 minutes.
-2. In Claude Code, type `/plugin install webchat --marketplace Hzxon/webchat#plugin` (Claude Code
-   2.1.275 or later). Paste the code when it asks for one. To pair again later, type
-   `/plugin configure webchat@webchat` and paste a new code. The old agent stays, asleep, until you
-   remove it under the **+** button in **Coding agents**.
-3. Open Claude Code on that laptop, in any folder, in the terminal or the Claude desktop app. Back
-   in WebChat, approve the agent, name it, and pick the projects it joins. Keep one Claude Code
-   window open: it serves every repository the agent works in, and a second window waits, and takes
-   over when the first closes. Background jobs never serve.
-4. Hand the agent a card, or ask it about a repository. When the laptop has no copy of the
-   repository, the agent says so and offers **Clone it**. On your click it clones the repository
-   into `~/WebChat/<owner>/<name>` with your GitHub login, and goes on. It clones only a repository
-   one of your projects links. To use a copy you already have instead, open Claude Code in it and
-   type `/webchat:connect`, then approve the `connect` tool: Claude Code asks about it on every
-   call. To undo that, ask Claude there to disconnect WebChat. The files stay.
+When a coding agent would ask before an action, such as writing to Claude Code's own settings file or
+running a command outside its sandbox, your agent asks you in **Coding agents**: **Allow**, **Allow
+for this run** or **Deny**. Your phone is told only that your agent asks your permission, never what.
+Your answer counts once, within 10 minutes of when you gave it, and **Allow for this run** covers
+exactly the same action until the run ends, never any other. A question left 7 days ends the run.
+WebChat's rules answer first: a read outside the working folder, or of your agent's secrets, is a no
+that you are never asked about. Nothing is allowed for you. A coding agent is a process per session,
+which your laptop ends 10 minutes after a turn and starts again when a later turn needs it. Your own
+Codex `.rules` files keep applying to it. A page or agent
+from before this feature never asks: the action is refused, as it was.
+
+### The Claude Code plugin, and your repositories
+
+The plugin no longer hosts the agent. Its last release is a manifest and three skills that run
+`webchat-agent connect`, `sleep` and `wake`, and say to run `webchat-agent setup`. A plugin user
+runs setup once: it moves the plugin's account into the agent's own folder without pairing again.
+Setup needs administrator rights on the laptop, so a plugin user without them has no agent.
+
+Hand the agent a card, or ask it about a repository. When the laptop has no copy of the
+repository, the agent says so and offers **Clone it**. On your click it clones the repository
+into `~/WebChat/<owner>/<name>` with its own GitHub login, and goes on. It clones only a repository
+one of your projects links. To use a copy you already have instead, run `webchat-agent connect` in
+it and approve the request under **Coding agents**. **Forget** there undoes it. The files stay.
 
 Under **Coding agents**, the pane lists your projects. Each shows its repositories and whether your
 agent has them on the laptop, with **Forget** to drop a folder, which leaves its files. Then come
@@ -472,24 +509,18 @@ the board has not changed for 10 minutes, the agent pushes its changes to the `a
 in one draft pull request that the owner merges. It pushes only that branch, and never forces a
 push. Nobody edits a copy by hand: a pull request in the repository proposes a change as a file
 under `docs/roadmap/` or `docs/decisions/`, and once that file is on the default branch, it reaches
-the owner as a draft. An open pull request whose body starts with `Claims K-12` marks that card In
-progress on the board. One repository holds the copy of one board.
+the owner as a draft. An open pull request whose body starts with `Claims K-12` marks that card
+`Running: repo#N` on the board, unless it has an owner who has not marked it ready. One repository holds the copy of one board.
 
-Cards and clones also need GitHub on that laptop: the GitHub CLI signed in with `gh auth login`, and
-git using it after `gh auth setup-git`. `/webchat:connect`, typed in any folder, says when they are
-missing, and Claude Code can set them up with you. Questions about a repository the laptop has need
-neither.
-
-On Linux without a desktop keyring, Claude Code keeps the pairing code in
-`~/.claude/.credentials.json`, readable only by you. The code works once, so it is useless after
-pairing.
+Cards and clones also need the agent's own GitHub login, which setup offers to make. `webchat-agent
+doctor` says when it is missing. Questions about a repository the laptop has need no login.
 
 On a roadmap card, the play button opens the card's brief under **Coding agents**: the card and the
 decisions it follows, as your agent will get them, with each passage a teammate wrote marked. Pick
 the repository and press **Start**. When it cannot start, the brief says why: the laptop is asleep,
-Claude Code there needs a GitHub sign-in, or someone is editing the card. Your agent runs several
+the agent there needs a GitHub sign-in, or someone is editing the card. Your agent runs several
 cards at once, each in a worktree of its own, and refuses only a second start of a card it runs.
-When you start a card, the plugin checks that you sent it and that its brief is still the one you
+When you start a card, the agent checks that you sent it and that its brief is still the one you
 saw, adds a git worktree inside the repository's folder, and starts a background Claude there. It runs apart from your own sessions,
 which keep their settings. It reads none of your Claude Code settings and none of the repository's
 hooks or `.mcp.json`.
@@ -500,24 +531,37 @@ and no AI attribution lines in its commits and pull requests. Each run gets a co
 it never edits yours. Your settings, hooks, MCP servers, plugins and permission rules stay off,
 since a run follows cards your teammates wrote. Settings shows what the last run loaded.
 
+Settings also lists the coding agents WebChat supports, Claude Code and Codex, one row each with its
+path and version: linked, linked and needing attention (not signed in, too old or missing), found
+but not linked, or not found. **Link** and **Unlink** apply at once. Only a linked coding agent runs
+anything, and a question or card that names none runs on the first one you linked. A row also says
+when a setting of yours lets Claude Code's shell read more than the agent allows. In a terminal on the
+laptop, `webchat-agent link codex` asks you to approve the link under **Coding agents**, within 10
+minutes; any other name fails with the supported list. An agent paired before you could link
+anything keeps running the coding agents it found then, and one installed later stays unlinked until
+you link it. Setup asks which to link when you pair the agent, and you can link others here.
+
 The background Claude runs in a sandbox that fails closed: if the sandbox cannot start, the run
-does not. Its shell reaches only the npm registry. It cannot read the plugin's keys, the folder of
-`gh`, the macOS keychain, Claude Code's `session-env` folder or the rest of your home folder. The
+does not. Its shell reaches only the npm registry. It cannot read your home folder's secrets: the agent's
+keys and its `gh` login are another account's, and the sandbox also keeps out the macOS keychain and
+Claude Code's `session-env` folder. The
 `session-env` folder is where SessionStart hooks leave the environment, tokens included. The shell
-can read the repository, its `.git` and temporary folders. So the plugin refuses a run when
+can read the repository, its `.git` and temporary folders. So the agent refuses a run when
 origin's https address holds a login. The shell gets no environment variable named like a token,
 secret, password, API key, access key, private key, credential or auth. It gets none that holds a
 known token prefix or a password in a URL. It can search the web and read pages, so a page it reads
 could make it leak the repository's code. The card goes in on stdin, and the turn ends with a JSON answer.
 
-A run takes the steps a session in this repository takes. The plugin first refuses a card that an
+A run takes the steps a session in this repository takes. The agent first refuses a card that an
 open pull request claims, and names that pull request. The background Claude's first turn checks
 that the card still holds, against the code, the decisions and the other cards, and changes
 nothing. When the card no longer holds, the run ends there and pushes nothing, and the card's
 conversation offers its new status, Done or Dropped with the reason, for you to add. Otherwise the
-plugin pushes an empty commit on the `agent/*` branch, never forced, and opens a draft pull request
-with your `gh` login and the check in its body. That claims the card before any code. The same
-session then does the work, and the plugin pushes it and gives the draft its title and body. It
+agent pushes an empty commit on the `agent/*` branch, never forced, and opens a draft pull request
+with its own `gh` login and the check in its body. That claims the card before any code. The same
+session then does the work, and the agent pushes it and gives the draft its title and body. A
+coding agent that cannot commit, such as Codex, leaves its changes, and your laptop commits them
+for it. The keyholder pushes only what arrives as a bundle of that one branch. It
 never pushes anywhere else and never merges.
 
 When the work needs a decision nobody made, the run stops and drafts it, and the card shows `Waiting
@@ -528,46 +572,116 @@ keeps the branch. The finished work drafts its changes to decisions and a card f
 found. They wait in the conversation until you add them. The sandbox cannot listen on localhost, so
 tests that need a server run only in CI, and the draft's body says which.
 
-The plugin then watches the draft: when CI
+The agent then watches the draft: when CI
 fails, it conflicts, or you review it, the same background Claude session gets another round, at
 most three. A review by anyone else waits for you: the card's conversation shows the comments, and
 **Let the agent fix it** starts the round. A reply there asks for changes in your own words.
 Watching goes on after the draft is marked ready, and stops when someone else pushes to it, or it
 is closed or merged.
 
-After you update the plugin, quit every Claude Code session and start new ones. A session that
-keeps running can keep the old plugin's server.
-
-To turn the agent off, choose **Put to sleep** under **Coding agents**, or type `/webchat:sleep` in
-Claude Code. It finishes the cards and questions it runs, then takes no new ones in any window, new
-ones included. Only `/webchat:wake` in Claude Code on the laptop wakes it.
+To turn the agent off, choose **Put to sleep** under **Coding agents**, or run `webchat-agent sleep`.
+It finishes the cards and questions it runs, then takes no new ones. Only `webchat-agent wake` on the
+laptop wakes it. Any program of yours can run those commands: they carry no authority.
 
 The request and the agent's reports show in the card's conversation under **Coding agents**, where
-you can stop a run. The card's status line tells your team: `In progress: Ann's agent` while it
+you can stop a run. The card's status line tells your team: `Running: Ann's agent` while it
 works, `Waiting for a decision` while it waits for one, `In review: repo#12` once its work is in the
 draft, `Done in repo#12` or `Fixed in repo#12` once that is merged, and what it was before if the
-run fails, the card no longer holds or the draft is closed without a merge. A merge also sets the decisions the work made true to
-Accepted. Your page writes these while it is open. The agent reads the card as it is on the board,
+run fails, the card no longer holds or the draft is closed without a merge. A card with an owner
+runs only once its owner marked it ready. A merge also sets the decisions the work made true to
+Accepted. A card that waits for a decision messages its owner. Your page writes these while it is
+open. The agent reads the card as it is on the board,
 whoever wrote it, and the board's decisions. It works with your git and GitHub credentials, so run
 only cards you would do yourself.
 
-### With the daemon
+### On your laptop
 
-The daemon serves the same agent as the plugin, with the same sandbox and the same checks, from a
-program you start instead of a Claude Code window. Today its only coding agent is Claude Code, so
-the `claude` command must be installed and signed in on the laptop, but no window has to be open.
-The plugin and the daemon keep separate accounts: never run both on one laptop for the same agent,
-and pair each with its own code.
+The agent runs from programs that start with the laptop and when you log in, so no window has to
+stay open. It runs Claude Code and Codex, whichever you link. Setup keeps the agent's keys in a
+locked room: an account of its own that no program of yours can read. An administrator's password
+still reads them.
 
-1. In WebChat, choose **Connect coding agent** and copy the code, as above.
-2. In a copy of this repository, run `npm install`, then `npm run agent -- serve '<code>'`. Approve
-   the agent in WebChat. It keeps its account in `~/.webchat/laptop`, so later you run only
-   `npm run agent -- serve`.
-3. Keep it running, in a terminal or as a launchd or systemd service, the way the plugin needs one
-   window open. The agent is offline while the daemon is not.
-4. In a folder you already have, run `npm run agent -- connect` to point the agent at it instead of
-   cloning. `npm run agent -- sleep` and `npm run agent -- wake` do what `/webchat:sleep` and
-   `/webchat:wake` do.
+It works on a Mac with Apple silicon or on Linux on an x64 processor, and on Windows only in Ubuntu
+on WSL2. The account you run it in must be an administrator: in the `admin` group on a Mac, in
+`sudo`, `wheel` or `admin` on Linux, since setup makes an account and installs a system service with your password. For any other account it
+says so and changes nothing. A laptop without an administrator cannot run the agent. One laptop has
+one owner: only you can be in the group that opens the agent's socket.
+
+1. In WebChat, choose **Connect coding agent** and copy the line it shows. It names your WebChat's
+   release and holds the pairing code, which works once, within 10 minutes.
+2. Run it in a terminal on that laptop. It downloads that release's `webchat-agent` from GitHub,
+   checks it against the release's checksum, puts it in `~/.local/bin` and runs `webchat-agent setup`.
+3. Setup checks the laptop and changes nothing yet: the system, your administrator rights, the login
+   service (launchd on a Mac, `systemd --user` on Linux), git, whether your WebChat answers and runs
+   the same release, disk space, Claude Code and Codex with their sign-in, an account called
+   `_webchat` that someone else made, and a plugin account to move. Then
+   it shows one summary and asks once. The question lists the coding agents it found, with the
+   signed-in ones ticked, to link: answer `y` for the ticked ones, or type the ones to link, such as
+   `claude codex`, or `none`. WebChat shows your picks before you approve the agent, and Codex, when
+   you pick it and it is missing, installs with its own installer. The question also lists what setup would do, with your
+   administrator's password: make the hidden account `_webchat` and the group `_webchatipc`, which only you are in;
+   install the agent and a GitHub CLI whose SHA-256 WebChat pins, both owned by root, in `/Library/WebChat`
+   on a Mac or `/opt/webchat` on Linux; run the keyholder from there as `_webchat`, as a LaunchDaemon or a
+   systemd service; install git, and on
+   Linux `bubblewrap` and `socat`, which Claude Code's sandbox needs, with `apt-get` or `dnf` through
+   `sudo`; on a Mac, Apple's command line tools for git; Claude Code, with its own installer, when it
+   is missing; pair; and install the login service for the runner, which works in your folders. Setup never
+   changes a security setting. Where one
+   stops the agent, it prints the fix: WSL2 without systemd, and Ubuntu's AppArmor rule on user
+   namespaces, which Claude Code's sandbox needs.
+4. Approve the agent in WebChat. The agent's account is made as `_webchat`, never in your folder. Setup
+   then starts the keyholder, which holds the keys and talks to GitHub, and a login service for the runner,
+   which starts your coding agents. They talk over a socket in `/var/webchat-ipc` that carries no secret, and
+   only you can open. A LaunchAgent in `~/Library/LaunchAgents` or a unit in `~/.config/systemd/user` starts the
+   runner at login. On Linux, log out and in again once: your session joins the socket's group only then,
+   and `webchat-agent doctor` says so until it has. On a Mac, if System Settings shows the agent
+   under General, Login Items, Allow in the Background, keep it on.
+5. Setup offers to sign the agent in to GitHub, by GitHub's device sign-in as `_webchat`, with no
+   `workflow` scope. Use a second GitHub account if you have one: whatever the agent's login reaches, the agent
+   reaches. A pull request the agent opens is then the agent's, so your own reviews wait for your go, as a
+   teammate's do. Press Enter to skip, and `webchat-agent doctor` reminds you. Cards, clones and private
+   repositories need it.
+
+A laptop that already has a plugin's or the daemon's account does not pair again: with no code,
+`webchat-agent setup` moves the account into the agent's folder, the one that saw more if both are
+there, and deletes your copy once the keyholder runs it. It refuses while a Claude Code window runs
+the plugin: quit every one first.
+
+Then:
+
+- `webchat-agent doctor` repeats the checks. It names what is missing, such as a harness that is not
+  signed in: "Claude Code is not signed in. Run `claude` once and sign in."
+- `webchat-agent status` says whether both services run, what the updater last found, whether the runner is connected, whether the agent is
+  paired and signed in to GitHub, and whether it is asleep. `doctor` and `status` need no password.
+- The agent follows its server's release by itself. Setup installs a small job that runs as root every 15
+  minutes (a LaunchDaemon on a Mac, a systemd timer on Linux). It asks your server which release it runs
+  and, when that is newer than the agent, downloads that release's file from GitHub, checks it against the
+  release's checksum, and starts the agent's services from it, once no card is running (after a day it goes
+  ahead anyway, and the running card fails). It moves forward only: an older release is refused, and going
+  back takes the line in the Connect dialog. A file that fails its checksum or its `--version` is dropped and
+  the old agent keeps running. If the new keyholder does not answer within 2 minutes, the old agent comes back
+  and that release is skipped. While a repository's release files are private, GitHub refuses the download:
+  the agent stays as it is and `doctor` warns after a day.
+- `webchat-agent uninstall` asks, then stops and removes the services and the updater, signs the agent out of GitHub, and removes
+  the account `_webchat` and its folders, only if setup made them. The agent stays in
+  WebChat until you remove it under **Coding agents**. The clones in `~/WebChat` stay. The agent's GitHub
+  login stays valid on GitHub until you revoke it. Revoking "GitHub CLI" under Authorized OAuth Apps
+  at github.com/settings/applications revokes every `gh` login of that GitHub account, including your own on
+  your laptop: if the agent used your own account, run `gh auth login` again afterwards.
+- In a folder you already have, run `webchat-agent connect` to ask to point the agent at it instead of
+  cloning. It returns at once and changes nothing: the request shows under **Coding agents** with the
+  repository and the folder, and the folder is connected only when you approve it there, within 10
+  minutes. The agent must be paired and running. `webchat-agent sleep` and `webchat-agent wake` put
+  the agent to sleep and wake it.
+
+The keyholder runs from boot, and the runner while you are logged in; the agent shows offline while
+the runner is down. Cards and clones need the agent's own GitHub login: `doctor` warns when it is
+not signed in. The keys stay in `/var/webchat` on a Mac or `/var/lib/webchat` on Linux, and the agent pushes
+with its own `gh`, never yours.
+
+From a copy of this repository, `npm run agent -- dev '<code>'` runs both halves in one process, as
+you, with a socket of its own and no room, with Node 26. It is for working on WebChat: `setup`
+installs only the single file a release ships.
 
 ## Self-hosting instead
 
@@ -582,7 +696,8 @@ version starts with 0, and any release may change how it runs. Each release has 
 `v0.1.0` and a GitHub release, and `CHANGELOG.md` lists what it changed. Before you upgrade a server
 you host yourself, read the breaking changes of each release you skip. They say what you must
 change, such as a new setting. A Vercel deployment of main runs the newest code, which can be ahead
-of the latest release.
+of the latest release. A coding agent on a laptop follows the release of its server by itself, forward
+only (see the agent section above), so update the server first.
 
 ## Tests
 
@@ -620,8 +735,8 @@ api/      Vercel function entry point (wraps the Express app)
 server/   Express API, Postgres queries, Web Push sender, alerts through Bark
 client/   React app (Vite), the service worker (client/src/sw.ts), and the key store (client/src/e2ee)
 shared/   Types and the end-to-end encryption code shared by server, client, and service worker
-agent/    The coding agent's account, daemon (npm run agent) and Claude Code plugin server
-plugin/   The Claude Code plugin: manifest, guard hook and connect skill, around agent/mcp.ts
+agent/    The coding agent: its keyholder and runner services and setup (npm run agent)
+plugin/   The Claude Code plugin's last release: a manifest and skills that run webchat-agent
 test/     Integration tests (node:test)
 scripts/  Icon generator (npm run icons) and the Vercel build skip for release commits
 docs/     Decisions and roadmap, the source of truth for anyone changing the code

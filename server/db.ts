@@ -129,6 +129,8 @@ const statements = (sql: string) =>
 
 /** A user counts as online while their app checked in within this window. */
 const ONLINE_WINDOW_MS = 60_000;
+/** An agent checks in every 60 seconds once it has been idle for an hour, so it counts as online for twice that. */
+const AGENT_ONLINE_WINDOW_MS = 2 * 60_000;
 /** How long an "I am looking" check-in lasts. Attentive tabs check in more often than this. */
 export const ATTENTION_TTL_MS = 45_000;
 /** Sync re-sends recent messages too, in case a slow insert committed after a newer one. */
@@ -168,6 +170,7 @@ interface PairingRow {
   expires_at: number;
   agent_id: number | null;
   owner_proof: string | null;
+  picks: string | null;
 }
 
 
@@ -404,16 +407,17 @@ function toMemberState(row: MemberRow): MemberState {
 }
 
 export function toUserDTO(row: UserRow, now = Date.now()): UserDTO {
+  const span = row.agent_owner === null ? ONLINE_WINDOW_MS : AGENT_ONLINE_WINDOW_MS;
   return {
     id: row.id,
     username: row.username,
     displayName: row.display_name,
-    online: row.last_active_at !== null && now - row.last_active_at < ONLINE_WINDOW_MS,
+    online: row.last_active_at !== null && now - row.last_active_at < span,
     lastSeen: row.last_active_at,
     keys: row.dh_public && row.sign_public ? { dh: row.dh_public, sign: row.sign_public } : null,
     agentOwner: row.agent_owner,
     protocol: row.protocol,
-    agentRepos: (row.repos ?? []).map((r) => ({ repo: r.repo, online: now - r.last_seen < ONLINE_WINDOW_MS, lastSeen: r.last_seen, protocol: r.protocol })),
+    agentRepos: (row.repos ?? []).map((r) => ({ repo: r.repo, online: now - r.last_seen < AGENT_ONLINE_WINDOW_MS, lastSeen: r.last_seen, protocol: r.protocol })),
     deleted: row.deleted_at !== null,
   };
 }
@@ -482,7 +486,7 @@ export async function openDb(sql: Sql) {
            k.wrapped_by AS my_wrapped_by, k.iv AS my_iv, k.wrapped AS my_wrapped,
            (SELECT COUNT(*)::int FROM webchat.messages x
              WHERE x.conversation_id = c.id AND x.id > m.last_read_id AND x.sender_id IS DISTINCT FROM m.user_id
-               AND x.kind <> 'reaction') AS unread
+               AND x.kind NOT IN ('reaction', 'sync')) AS unread
          FROM webchat.conversations c JOIN webchat.members m ON m.conversation_id = c.id
          LEFT JOIN webchat.conversation_keys k ON k.conversation_id = c.id AND k.user_id = m.user_id
          WHERE m.user_id = $1 AND ($2::int IS NULL OR c.id = $2)
@@ -883,9 +887,9 @@ export async function openDb(sql: Sql) {
     createPairing: async (input: PairingInput, loginHash: string) =>
       (
         await sql.query(
-          `INSERT INTO webchat.pairings (id, dh_public, sign_public, proof, login_hash, expires_at)
-           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING RETURNING id`,
-          [input.id, input.keys.dh, input.keys.sign, input.proof, loginHash, Date.now() + PAIRING_TTL_MS],
+          `INSERT INTO webchat.pairings (id, dh_public, sign_public, proof, login_hash, expires_at, picks)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING RETURNING id`,
+          [input.id, input.keys.dh, input.keys.sign, input.proof, loginHash, Date.now() + PAIRING_TTL_MS, input.picks ?? null],
         )
       ).length > 0,
     /** A pairing while it lasts, with the agent's account and its owner's keys once approved. */
@@ -898,7 +902,7 @@ export async function openDb(sql: Sql) {
         agent && owner?.dh_public && owner.sign_public && row.owner_proof
           ? { user: toUserDTO(agent), owner: { id: owner.id, keys: { dh: owner.dh_public, sign: owner.sign_public } }, proof: row.owner_proof }
           : null;
-      return { keys: { dh: row.dh_public, sign: row.sign_public }, proof: row.proof, approved };
+      return { keys: { dh: row.dh_public, sign: row.sign_public }, proof: row.proof, approved, ...(row.picks && { picks: row.picks }) };
     },
     /**
      * Makes the agent's account for the owner who approves, once, while the pairing lasts. Nobody but
@@ -1139,6 +1143,8 @@ export async function openDb(sql: Sql) {
     ): Promise<number | ProjectChangeRefusal> {
       return sql.transaction(async (tx) => {
         const { memberIds } = await lockProject(tx, projectId);
+        // Removed since the route checked: the copies would come from someone outside the project.
+        if (!memberIds.includes(createdBy)) return 'stale';
         if (!sameIds(memberIds, key.wrappedKeys.map((k) => k.userId))) return 'stale';
         if (key.conversationId < Math.min(...(await projectChannels(tx, projectId)).map((c) => c.id))) return 'stale';
         return (await insertChannel(tx, projectId, title, memberIds, { ...key, wrappedBy: createdBy })) ?? 'name_taken';
@@ -1655,7 +1661,7 @@ export async function openDb(sql: Sql) {
           sql.query<{ total: number }>(
             `SELECT COUNT(*)::int AS total FROM webchat.messages x
              JOIN webchat.members m ON m.conversation_id = x.conversation_id
-             WHERE m.user_id = $1 AND x.id > m.last_read_id AND x.sender_id IS DISTINCT FROM $1 AND x.kind <> 'reaction'`,
+             WHERE m.user_id = $1 AND x.id > m.last_read_id AND x.sender_id IS DISTINCT FROM $1 AND x.kind NOT IN ('reaction', 'sync')`,
             [userId],
           ),
         )
@@ -1711,11 +1717,12 @@ export async function openDb(sql: Sql) {
                  JOIN webchat.project_members pm ON pm.project_id = p.id WHERE pm.user_id = $1
              ) owned) AS owners,
              (SELECT COUNT(*)::int FROM webchat.users) AS people,
-             (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE last_active_at > $2) AS online,
+             (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users
+               WHERE last_active_at > CASE WHEN agent_owner IS NULL THEN $2::bigint ELSE $4::bigint END) AS online,
              -- Agents with their owners, so the board offers each owner theirs (K-45), and what their laptops can do (R-036).
              (SELECT md5(string_agg(id || ':' || agent_owner || ':' || protocol, ',' ORDER BY id)) FROM webchat.users WHERE agent_owner IS NOT NULL) AS agents,
              -- Each agent's sessions by repository: which exist, which are online, and what they can do (D-094, D-103).
-             (SELECT md5(string_agg(user_id || ':' || repo || ':' || protocol || ':' || (last_seen > $2), ',' ORDER BY user_id, repo))
+             (SELECT md5(string_agg(user_id || ':' || repo || ':' || protocol || ':' || (last_seen > $4), ',' ORDER BY user_id, repo))
                FROM webchat.agent_repos) AS repos,
              -- Every save grows a doc's version, and a doc deleted leaves the list.
              (SELECT md5(COALESCE(string_agg(id || ':' || version, ',' ORDER BY id), '')) FROM webchat.docs
@@ -1724,7 +1731,7 @@ export async function openDb(sql: Sql) {
              (SELECT md5(COALESCE(string_agg(l.doc_id || ':' || l.section || ':' || l.user_id, ',' ORDER BY l.doc_id, l.section), ''))
                FROM webchat.doc_locks l JOIN webchat.docs d ON d.id = l.doc_id
                WHERE d.conversation_id IN (SELECT * FROM mine) AND l.expires_at > $3) AS locks`,
-          [userId, Date.now() - ONLINE_WINDOW_MS, Date.now()],
+          [userId, Date.now() - ONLINE_WINDOW_MS, Date.now(), Date.now() - AGENT_ONLINE_WINDOW_MS],
         ),
       );
       return row
@@ -1813,6 +1820,17 @@ export async function openDb(sql: Sql) {
       (
         await sql.query<DocRevisionRow>(
           'SELECT DISTINCT ON (section) * FROM webchat.doc_revisions WHERE doc_id = $1 ORDER BY section, id DESC',
+          [docId],
+        )
+      ).map(toDocRevisionDTO),
+
+    /** Each section's oldest revision and each author's newest of it, in id order: a card's opener and its members' words. */
+    docWords: async (docId: string) =>
+      (
+        await sql.query<DocRevisionRow>(
+          `SELECT * FROM webchat.doc_revisions WHERE doc_id = $1 AND id IN (
+             SELECT MAX(id) FROM webchat.doc_revisions WHERE doc_id = $1 GROUP BY section, author_id
+             UNION SELECT MIN(id) FROM webchat.doc_revisions WHERE doc_id = $1 GROUP BY section) ORDER BY id`,
           [docId],
         )
       ).map(toDocRevisionDTO),
@@ -1910,12 +1928,19 @@ export async function openDb(sql: Sql) {
       await sql.query('DELETE FROM webchat.docs WHERE id = $1', [docId]);
     },
 
+    /** Saves the subscription; false when another account holds the endpoint under other keys. */
     savePushSubscription: async (userId: number, endpoint: string, p256dh: string, auth: string) => {
-      await sql.query(
+      const saved = await sql.query(
         `INSERT INTO webchat.push_subscriptions (endpoint, user_id, p256dh, auth, created_at) VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
+         ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth
+         -- Another account takes an endpoint only with its keys, as the same browser signed in to it
+         -- sends them; the endpoint alone would let anyone who learned it take someone's pushes.
+         WHERE push_subscriptions.user_id = EXCLUDED.user_id
+            OR (push_subscriptions.p256dh = EXCLUDED.p256dh AND push_subscriptions.auth = EXCLUDED.auth)
+         RETURNING endpoint`,
         [endpoint, userId, p256dh, auth, Date.now()],
       );
+      return saved.length > 0;
     },
     deletePushSubscription: async (endpoint: string) => {
       await sql.query('DELETE FROM webchat.push_subscriptions WHERE endpoint = $1', [endpoint]);

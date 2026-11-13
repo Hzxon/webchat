@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { AGENT_LEVEL, LIMITS, type RunRequest } from '../../../shared/types';
 import { asleep, blockedBy, ownAgents, seatFor, short, THREAD_STATE, threadProject, useAgentThreads, WAKE, type Seat, type Thread } from '../agents';
-import { addProjectMembers, askAgent, askClone, askFix, cancelRun, discardMessage, forgetFolder, loadChat, loadOlder, putToSleep, retryMessage, saveDraft, tellAgent } from '../chat';
+import { addProjectMembers, answerPermit, askAgent, askClone, askFix, cancelRun, discardMessage, forgetFolder, loadChat, loadOlder, putToSleep, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { useLinkedRepos } from '../linkedRepos';
 import { actions, useAppState } from '../store';
@@ -15,6 +15,7 @@ import { AlertIcon, BackIcon, PlusIcon, SendIcon, SlidersIcon, TerminalIcon } fr
 import { AgentBrief } from './AgentBrief';
 import { AgentDialog } from './AgentDialog';
 import { AgentDraft } from './AgentDraft';
+import { AgentAsks } from './AgentAsks';
 import { AgentSetup } from './AgentSetup';
 import { HarnessPicker, useHarnessPick } from './HarnessPicker';
 import { Markdown } from './Markdown';
@@ -127,7 +128,10 @@ export function AgentsView() {
           </button>
         </div>
       ) : (
-        <ProjectList threads={threads} chats={chats} />
+        <>
+          <AgentAsks />
+          <ProjectList threads={threads} chats={chats} />
+        </>
       )}
       {connecting && <AgentDialog onClose={() => setConnecting(false)} />}
       {setting && <AgentSetup onClose={() => setSetting(false)} />}
@@ -211,7 +215,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
   const repos = project ? choicesOf(project.id) : [];
   const repo = repos.find((r) => r === picked.repo) ?? repos[0];
   const agent = project && agentIn(project.id);
-  const { list, harness, pick } = useHarnessPick(agent);
+  const { list, harness, pick } = useHarnessPick(agent, true);
   // With no repository, the agent answers from the board alone, on its laptop (R-038).
   const blocked = !agent ? 'Add your agent to one of your projects first: Add it, below.' : blockedBy(seatFor(agent, repo ?? ''));
   const loading = !!project && !linked[project.id];
@@ -347,10 +351,11 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
   const list = useRef<HTMLDivElement>(null);
   const [notNow, setNotNow] = useState(false);
   const working = thread.state === 'working';
+  const asking = thread.state === 'asking';
   const paused = thread.state === 'paused';
   const planned = thread.state === 'planned';
   const last = thread.messages.at(-1)!;
-  const stopping = (working || paused || planned) && isCancel(last) && pending[last.clientId ?? ''] !== 'failed';
+  const stopping = (working || asking || paused || planned) && isCancel(last) && pending[last.clientId ?? ''] !== 'failed';
   // A card's conversation: its request, which a stop and the owner's go name (D-105).
   const request = thread.kind === 'card' ? (thread.messages[0] as ChatMessage & { run: RunRequest }) : undefined;
   const review = thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'review') : undefined;
@@ -419,7 +424,7 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
               <div className="bubble-line">
                 <div className={`bubble ${message.prompt?.kind === 'failed' || message.run?.kind === 'failed' ? 'agents-failed' : ''}`}>
                   {/* A review is teammates' text that would run with the owner's login, so nothing of it hides in Markdown. */}
-                  {mine || message.run?.kind === 'review' ? (
+                  {mine || message.run?.kind === 'review' || message.permit?.kind === 'question' ? (
                     <span className="bubble-text">{message.text}</span>
                   ) : message.prompt?.kind === 'answer' && message.prompt.card ? (
                     <AgentDraft message={message} draft={message.prompt.card} thread={thread} agentId={agentId} />
@@ -456,6 +461,20 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
                   <button className="button-primary" disabled={!!blocked} onClick={() => void askFix(thread.conversationId, request!.id, `I added the decision as ${decided}. Go on with the work.`)}>
                     Go on with {decided}
                   </button>
+                </div>
+              )}
+              {message === thread.ask?.message && (
+                <div className="agents-draft-actions">
+                  <button className="button-primary" disabled={!!blocked || thread.ask.answered} onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'once')}>
+                    Allow
+                  </button>
+                  <button className="button-secondary" disabled={!!blocked || thread.ask.answered} onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'run')}>
+                    Allow for this run
+                  </button>
+                  <button className="button-secondary" disabled={!!blocked || thread.ask.answered} onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'deny')}>
+                    Deny
+                  </button>
+                  <p className="agents-note">Your agent waits for you. It ends in {Math.max(1, Math.round((thread.ask.message.permit.expires - now) / 86_400_000))} days if you do not answer.</p>
                 </div>
               )}
               {message === nocopy && (
@@ -516,10 +535,10 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
             <Box
               name={`agents:${thread.root}`}
               placeholder={request ? 'Ask for changes to the draft' : 'Reply'}
-              canSend={!blocked && !working}
+              canSend={!blocked && !working && !asking}
               // While a review waits, a reply is the go for it too, unless the owner said Not now.
               onSend={(text) => (request ? askFix(thread.conversationId, request.id, text, notNow ? undefined : review?.id) : tellAgent(thread.conversationId, thread.root, 'reply', text))}
-              stop={working ? { stopping, onStop: stop } : undefined}
+              stop={working || asking ? { stopping, onStop: stop } : undefined}
             />
           </>
         )}

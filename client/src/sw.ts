@@ -48,7 +48,7 @@ function preview(text: string, length = 180): string {
  * Decrypts a pushed message with this device's chat key and checks the sender's signature. If
  * the key is not on this device yet, or the check fails, the notification says so without text.
  */
-async function notificationBody(payload: PushPayload): Promise<{ body: string; progress?: boolean }> {
+async function notificationBody(payload: PushPayload): Promise<{ body: string; progress?: boolean; ask?: string }> {
   if (payload.kind !== 'message' || !payload.envelope) {
     return { body: payload.body || (payload.urgent ? 'Urgent message. Open the chat to read it.' : 'New message') };
   }
@@ -59,7 +59,8 @@ async function notificationBody(payload: PushPayload): Promise<{ body: string; p
     const senderKeys = directory?.[senderId];
     if (!key || !senderKeys) throw new Error('Keys are not on this device yet.');
     const content = await decryptContent(key, senderKeys.sign, { conversationId, senderId, urgent: payload.urgent, clientId }, envelope);
-    return { body: payload.bodyPrefix + preview(previewOf(content)), progress: content.run?.kind === 'progress' };
+    // A question stays until its owner answers; the server's tag is replaced by the next message in the chat, so only the page can name it (docs/decisions/harness-approvals.md).
+    return { body: payload.bodyPrefix + preview(previewOf(content)), progress: content.run?.kind === 'progress' || content.permit?.kind === 'settled', ask: content.permit?.kind === 'question' ? clientId : undefined };
   } catch {
     return { body: payload.bodyPrefix + (payload.urgent ? 'Urgent message. Open the chat to read it.' : 'New encrypted message') };
   }
@@ -92,9 +93,10 @@ self.addEventListener('push', (event) => {
     (async () => {
       const clients = await windowClients();
       for (const client of clients) post(client, { type: 'push', payload });
-      // A reaction notifies nobody; its push only wakes the page (D-030). The server can still think
-      // the user is looking when nobody is, such as after a laptop slept, so check here (D-070).
-      if (payload.kind === 'reaction') return;
+      // A reaction or an agent's board sync notifies nobody; its push only wakes the page (D-030, K-69).
+      // The server can still think the user is looking when nobody is, such as after a laptop slept,
+      // so check here (D-070).
+      if (payload.kind === 'reaction' || payload.kind === 'sync') return;
 
       // Lets the sender see "delivered" even while every tab here is closed.
       if (payload.conversationId !== null && payload.messageId !== null) {
@@ -121,14 +123,14 @@ self.addEventListener('push', (event) => {
 
       // A run's progress line, every half minute, is for the pane, not the lock screen; only Safari
       // shows it, since it revokes a subscription after pushes that show nothing (D-047).
-      const { body, progress } = await notificationBody(payload);
+      const { body, progress, ask } = await notificationBody(payload);
       if (progress && !(await showsEveryPushHere())) return;
 
       const options: ExtendedNotificationOptions = {
         body,
-        tag: payload.tag,
+        tag: ask ? `ask-${ask}` : payload.tag,
         renotify: true,
-        requireInteraction: payload.urgent,
+        requireInteraction: payload.urgent || !!ask,
         icon: '/icons/icon-192.png',
         badge: '/icons/badge-72.png',
         timestamp: payload.sentAt,

@@ -4,9 +4,9 @@
 // also lists the owner's agents, so one can be removed (R-033).
 import { useEffect, useMemo, useState } from 'react';
 import { newPairingCode } from '../../../shared/e2ee';
-import { LIMITS, PAIRING_TTL_MS, type PublicKeysDTO, type UserDTO } from '../../../shared/types';
+import { AGENT_RELEASES, LIMITS, PAIRING_TTL_MS, type PairingPick, type PublicKeysDTO, type UserDTO } from '../../../shared/types';
 import { ownAgents } from '../agents';
-import { ApiError } from '../api';
+import { api, ApiError } from '../api';
 import { holdReloadWhile } from '../build';
 import { connectAgent, pairingKeys, removeAgent } from '../chat';
 import { useAppState } from '../store';
@@ -14,8 +14,8 @@ import { Dialog } from './Dialog';
 import { presenceText } from './format';
 import { CopyRow } from './NotificationDialog';
 
-/** Adds the plugin's marketplace and installs it in one step, from Claude Code 2.1.275 on. */
-const INSTALL = '/plugin install webchat --marketplace Hzxon/webchat#plugin';
+/** The release's own installer, which checks the agent file against the release's checksum before it installs it (docs/decisions/agent-install.md). */
+const installLine = (release: string, pasted: string) => `curl -fsSL ${AGENT_RELEASES}/v${release}/install.sh | sh -s -- '${pasted}'`;
 
 export function AgentDialog({ onClose }: { onClose: () => void }) {
   const projects = useAppState((s) => s.projects);
@@ -24,13 +24,21 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
   const mine = useMemo(() => ownAgents(users, meId), [users, meId]);
   const [code] = useState(newPairingCode);
   const [keys, setKeys] = useState<PublicKeysDTO | null>(null);
+  // The harnesses the agent asks to link, which its code opens: shown before the owner approves.
+  const [picks, setPicks] = useState<PairingPick[]>([]);
   const [name, setName] = useState('Claude Code');
   const [picked, setPicked] = useState<Set<number>>(() => new Set());
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState('');
   const [note, setNote] = useState('');
+  // The server's release names the files the line fetches. Without it, the line is left out.
+  const [release, setRelease] = useState('');
   const sorted = useMemo(() => Object.values(projects).sort((a, b) => a.name.localeCompare(b.name)), [projects]);
+
+  useEffect(() => {
+    void api.config().then(({ release: found }) => setRelease(found), () => undefined);
+  }, []);
 
   // The code lives only in this page. A reload after a deploy would lose it while the agent waits
   // on it, and the owner leaves the tab for Claude Code, so it would go hidden or idle (D-040).
@@ -50,7 +58,8 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
         if (failed) setError('');
         failed = false;
         if (found) {
-          setKeys(found);
+          setKeys(found.keys);
+          setPicks(found.picks);
           return;
         }
       } catch (err) {
@@ -115,29 +124,23 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
       ) : !keys ? (
         <>
           <p className="dialog-intro">
-            Your coding agent is Claude Code on your laptop, with the WebChat plugin. It answers your questions about
-            your team’s code and works on the cards you hand it, and nobody else’s. It needs a Mac or Linux for now.
+            Your coding agent runs on your laptop, with Claude Code or Codex. It answers your questions about your
+            team’s code and works on the cards you hand it, and nobody else’s. It needs a Mac or Linux for now.
           </p>
-          <ol className="dialog-steps">
-            <li>
-              In <a href="https://claude.com/claude-code" target="_blank" rel="noreferrer">Claude Code</a>, type this line:
-              <CopyRow value={INSTALL} onCopied={setNote} />
-              {mine.length > 0 && (
-                <>
-                  Already have the plugin? Type this instead:
-                  <CopyRow value="/plugin configure webchat@webchat" onCopied={setNote} />
-                </>
-              )}
-            </li>
-            <li>
-              When it asks for a pairing code, paste this one. It works once, within 10 minutes.
-              {/* The address rides along so nobody types it (R-031). After `#`, a browser would never send the code. */}
-              <CopyRow value={`${location.origin}#${code}`} onCopied={setNote} />
-            </li>
-            <li>
-              Open Claude Code in your team’s repository and type <code>/webchat:connect</code>.
-            </li>
-          </ol>
+          {release && (
+            <>
+              <p className="dialog-intro">
+                In a terminal on your laptop, run this line. It installs the agent, asks before it installs anything
+                else, and keeps the agent running whenever you are logged in. It needs an account that can use sudo, or
+                an administrator on a Mac.
+                {/windows/i.test(navigator.userAgent) && ' On Windows, open Ubuntu on WSL2 and run it there.'}
+              </p>
+              <CopyRow value={installLine(release, `${location.origin}#${code}`)} onCopied={setNote} />
+            </>
+          )}
+          <p className="dialog-intro">
+            Then run <code>webchat-agent connect</code> in your team’s repository, and approve it here.
+          </p>
           {!error && <p className="dialog-note">{note || 'Waiting for the agent…'}</p>}
           {mine.length > 0 && <p className="dialog-intro">Your agents:</p>}
           <ul className="people-list">
@@ -165,6 +168,22 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
           }}
         >
           <p className="dialog-intro">The agent sent the code. Name it, and pick the projects it joins: it reads their channels.</p>
+          {/* Display only: Unlink in Agent settings takes one back. */}
+          {picks.length > 0 && (
+            <>
+              <p className="dialog-intro">It links these coding agents on its laptop, and runs your questions and cards with them:</p>
+              <ul className="people-list">
+                {picks.map((p) => (
+                  <li key={p.name} className="member">
+                    <span className="member-name">
+                      <strong>{p.name}</strong>
+                      <small>{[p.version, p.signedIn !== undefined && (p.signedIn ? 'signed in' : 'not signed in')].filter(Boolean).join(', ') || 'not installed yet'}</small>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <label className="field">
             Name
             <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} maxLength={LIMITS.displayNameLength} />

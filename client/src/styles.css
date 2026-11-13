@@ -1480,6 +1480,38 @@ a {
   accent-color: var(--accent);
 }
 
+.harness-row {
+  flex-wrap: wrap;
+}
+
+/* The name and path take a line of their own on a phone, so a long path does not wrap letter by letter. */
+.harness-row > span {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agents-link-asks {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.agents-link-ask {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.agents-link-ask p {
+  margin: 0 0 8px;
+}
+
+.agents-link-buttons {
+  display: flex;
+  gap: 8px;
+}
+
 .people-list {
   display: grid;
   max-height: 340px;
@@ -2064,6 +2096,17 @@ a {
   .pull-card:hover {
     background: var(--quote-hover);
   }
+}
+
+/* A request about a board card: one line, whose click opens the card. */
+.card-note {
+  display: block;
+  width: 100%;
+  border: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pull-card-head {
@@ -2740,14 +2783,14 @@ a {
   }
 }
 
-/* Project board (R-021): two columns of cards, which become tabs at phone width. */
+/* Project board (R-021): two columns of cards, one at a time behind tabs. The Roadmap's lanes stack at phone width. */
 
 .board-view {
   background: var(--panel);
 }
 
 .board-tabs {
-  display: none;
+  display: flex;
   margin-left: auto;
 }
 
@@ -2772,7 +2815,6 @@ a {
 .board-columns {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 1fr;
   min-height: 0;
 }
 
@@ -2783,11 +2825,12 @@ a {
   min-height: 0;
 }
 
-.board-column + .board-column {
-  border-left: 1px solid var(--line);
+/* Both columns stay mounted, so a card being edited in one keeps its editor and its lock. */
+.board-columns.shows-decisions .board-roadmap,
+.board-columns.shows-roadmap .board-decisions {
+  display: none;
 }
 
-/* Both heads hold only the title and the copy button, so their bottom lines meet. */
 .board-column-head {
   display: flex;
   align-items: center;
@@ -2844,6 +2887,16 @@ a {
   margin-bottom: 12px;
 }
 
+/* Ready, Running and In review side by side, above the Open drawer and the Done fold. */
+.board-lanes {
+  display: grid;
+  /* Lanes stack when the board is too narrow for three, as beside a wide sidebar. */
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 12px;
+  margin-bottom: 8px;
+}
+
+.board-lane h3,
 .board-group summary {
   margin: 10px 0 6px;
   color: var(--muted);
@@ -2851,9 +2904,13 @@ a {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.board-group summary {
   cursor: pointer;
 }
 
+.board-lane small,
 .board-group small {
   font-weight: 400;
 }
@@ -2883,6 +2940,42 @@ a {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+/* A Roadmap card's face: its owner, its title and whose move it is. */
+.board-face {
+  align-items: center;
+}
+
+/* Narrower than a row's title, so it stays beside the owner's face when Pick takes part of the lane. */
+.board-card-head.board-face strong {
+  flex-basis: 6em;
+}
+
+/* A Ready card's face, with Pick beside it rather than inside the button that opens the card. */
+.board-face-row {
+  display: flex;
+  align-items: center;
+}
+
+.board-face-row .board-card-head {
+  flex: 1;
+  min-width: 0;
+}
+
+.board-pick {
+  flex: none;
+  margin-right: 10px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.board-no-owner {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 1px dashed var(--muted);
+  border-radius: var(--radius);
 }
 
 /* The title keeps a few words' width, so a long status wraps to its own line instead of squeezing it. */
@@ -2958,24 +3051,45 @@ a {
   }
 }
 
+/* A card in review shows its reviewers at its right, each in the color of their verdict's tag. */
+.board-reviewers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.board-reviewer {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--radius);
+}
+
+.board-review-note {
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.board-review-input {
+  flex: 1 1 12em;
+  width: auto;
+  min-width: 0;
+  padding: 5px 10px;
+}
+
+/* A run that waits for a decision, which its owner was pushed to make (R-042). */
+.board-card.is-waiting {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.board-card.is-waiting .board-card-status {
+  color: var(--warn);
+  font-weight: 600;
+}
+
 @media (max-width: 760px) {
-  .board-tabs {
-    display: flex;
-  }
-
-  .board-columns {
-    grid-template-columns: 1fr;
-  }
-
-  .board-column + .board-column {
-    border-left: 0;
-  }
-
-  .board-columns.shows-decisions .board-roadmap,
-  .board-columns.shows-roadmap .board-decisions {
-    display: none;
-  }
-
   .board-column-head,
   .board-cards {
     padding-inline: 10px;
@@ -3061,11 +3175,14 @@ a {
 
 /* The harness picker beside the repository, on the same line. */
 .agents-repo .agents-repo {
+  max-width: 100%;
   margin: 0;
 }
 
+/* A long reason on a greyed option would widen the select past its card. */
 .agents-repo select {
   min-width: 0;
+  max-width: 100%;
   padding: 4px 6px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -3245,6 +3362,12 @@ a {
   align-items: center;
   gap: 8px;
   margin-top: 4px;
+}
+
+.agents-draft-actions .agents-note {
+  flex-basis: 100%;
+  margin: 0;
+  text-align: left;
 }
 
 .agents-draft-actions select {
