@@ -5,13 +5,14 @@
 // message goes on stdin, since arguments show in `ps`, and the turn ends with a JSON answer. This
 // is the plugin's harness adapter for Claude Code (harness.ts).
 import { execFile } from 'node:child_process';
-import { constants, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { constants, readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { olderThan, secretDirs, type Harness } from './harness.ts';
+import { isCredential, olderThan, secretDirs, type Harness } from './harness.ts';
 import { line } from './plugin.ts';
+import { real, within } from './rulebook.ts';
 import { start, type Final } from './runner.ts';
 
 const exec = promisify(execFile);
@@ -21,11 +22,6 @@ const REGISTRY = 'registry.npmjs.org';
 
 /** Its tools. A restricted run has only those it names, and keeps its file tools in its folder. */
 const TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch'];
-
-/** Whether a variable holds a credential: by its name, by a known token's prefix, or by a password in a URL. */
-const isCredential = ([name, value = '']: [string, string | undefined]) =>
-  /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL|AUTH/i.test(name) ||
-  /^(gh[opsur]_|github_pat_|npm_|sk-|xox[abprs]-|glpat-|AKIA)|:\/\/[^/\s:@]+:[^/\s@]+@/.test(value);
 
 /**
  * The plugin's settings file for it. The shell never runs outside the sandbox, not even where the
@@ -228,37 +224,6 @@ export async function onPath(name: string, dirs = pathDirs()) {
     if (await fs.access(file, constants.X_OK).then(() => true, () => false)) return file;
   }
   return '';
-}
-
-const within = (file: string, dir: string) => {
-  const rel = path.relative(dir, file);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-};
-
-/**
- * The real path of a file that may not exist yet: its nearest existing folder's, then the rest. A
- * link to a file not made yet counts as its target, where a write through it lands (K-55).
- */
-function real(file: string, hops = 0): string {
-  try {
-    // Unlike Node's own, the native call resolves as the kernel does: `..` after a link goes up from
-    // the link's target, and on macOS a name in other letter case is the same folder.
-    return realpathSync.native(file);
-  } catch {
-    const parent = path.dirname(file);
-    if (parent === file) return file;
-    const dir = real(parent, hops);
-    const here = path.join(dir, path.basename(file));
-    let target: string;
-    try {
-      target = readlinkSync(here);
-    } catch {
-      return here;
-    }
-    // Not path.resolve, which applies `..` before the links. A kernel follows at most 40 links, so
-    // this stops there too, which also ends a loop.
-    return hops < 40 ? real(path.isAbsolute(target) ? target : `${dir}${path.sep}${target}`, hops + 1) : here;
-  }
 }
 
 interface Settings {

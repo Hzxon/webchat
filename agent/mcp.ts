@@ -3,13 +3,15 @@
 // one message per line. One window on a laptop serves every folder its owner connected or had
 // cloned, wherever it is open (R-036). With
 // "guard" it is the PreToolUse hook: it reads the tool call on stdin and prints a denial, or nothing.
+// With "answer" it is the MCP server that gives an ACP agent its `submit_answer` tool (answer.ts).
 import os from 'node:os';
 import path from 'node:path';
-import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { runAnswerServer } from './answer.ts';
 import { claudeSession, runGuard } from './claude.ts';
 import { harnessFinder } from './harnesses.ts';
 import { Plugin } from './plugin.ts';
+import { mcpInit, Peer } from './rpc.ts';
 import { messageOf } from './runs.ts';
 
 const none = { type: 'object', properties: {} };
@@ -71,11 +73,10 @@ async function serve() {
       console.error(plugin.problem);
     });
 
-  const send = (message: object) => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
   async function answer(method: string, params: { protocolVersion?: string; name?: string; arguments?: Record<string, unknown> } = {}) {
     switch (method) {
       case 'initialize':
-        return { protocolVersion: params.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'webchat', version: '1' } };
+        return mcpInit(params);
       case 'ping':
         return {};
       case 'tools/list':
@@ -90,24 +91,10 @@ async function serve() {
         throw new Error(`Unknown method ${method}.`);
     }
   }
-  const lines = readline.createInterface({ input: process.stdin });
-  lines.on('line', (line) => {
-    let request: { id?: number | string; method: string; params?: Parameters<typeof answer>[1] };
-    try {
-      request = JSON.parse(line) as typeof request;
-    } catch {
-      return;
-    }
-    // A notification, such as notifications/initialized, needs no answer.
-    if (request.id === undefined) return;
-    answer(request.method, request.params).then(
-      (result) => send({ id: request.id, result }),
-      (error: unknown) => send({ id: request.id, error: { code: -32601, message: messageOf(error) } }),
-    );
-  });
   // Claude Code closes stdin when the session ends.
-  lines.on('close', quit);
+  new Peer({ input: process.stdin, output: process.stdout, handle: answer, closed: quit });
 }
 
 if (process.argv[2] === 'guard') runGuard(process.argv[3] ?? process.env.CLAUDE_PLUGIN_DATA ?? '');
+else if (process.argv[2] === 'answer') runAnswerServer();
 else await serve();

@@ -13,3 +13,7 @@ what it enforces.
 
 Cost: with a harness whose sandbox reads the owner's files, a teammate's text can get them into the
 agent's branch; the README says so. Approvals cover only what a harness asks about.
+
+An ACP agent (docs/decisions/acp-adapter.md) gets the rulebook through its permission answers
+alone: it has no switch for the sandbox, the folders or the network, so `agent/rulebook.ts` judges
+only what it asks about. Ask means no until docs/roadmap/new-harness-approvals.md lands.

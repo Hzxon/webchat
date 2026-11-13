@@ -20,7 +20,7 @@ export interface Final {
 }
 
 /** An agent that prints nothing for this long is stuck, and its run fails. */
-const IDLE_MS = 2 * 60 * 60_000;
+export const IDLE_MS = 2 *60 * 60_000;
 
 const slugOf = (text: string) =>
   text
