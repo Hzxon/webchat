@@ -2257,6 +2257,13 @@ describe('agent client (R-027)', () => {
       assert.ok(!said.includes('Approve the agent in WebChat, in the window that shows the code.'));
       assert.ok((await commands()).length > first.length);
 
+      // A run that fails after it stopped the updater starts it again, so the agent still follows the server's release.
+      const before = room.log.length;
+      await assert.rejects(setup(undefined, { ...options, ghArchive: async () => Promise.reject(new Error('offline')) }), /offline/);
+      const failed = room.log.slice(before);
+      const stopped = failed.findIndex((cmd) => cmd.soft === true && cmd.argv.some((word) => word.includes(layout.updaterLabel)));
+      assert.ok(stopped >= 0 && failed.findIndex((cmd, i) => i > stopped && cmd.argv.at(-1) === layout.updaterUnit) > stopped, 'started again');
+
       // Declined, uninstall removes nothing; agreed, it leaves no service, no folder and no account.
       const gone = { layout, root: room.root, read: room.read };
       await assert.rejects(uninstall(agentHome, async () => false, gone), /Nothing was removed/);

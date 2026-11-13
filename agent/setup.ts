@@ -543,6 +543,7 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
 
   const stopSudo = given ? () => undefined : await openSudo();
   const root = given ?? realRoot;
+  let updating = false;
   try {
     await fs.mkdir(home, { recursive: true, mode: 0o700 });
     // A check must not swap the program under setup, which may install an older one on purpose: that is how going back works.
@@ -563,6 +564,7 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
     }
     await runAll(root, servicePlan(layout, programOf(layout)));
     await runAll(root, updaterPlan(layout, programOf(layout), server ? { server } : undefined));
+    updating = true;
     if (await root(signedInPlan(layout)).then(() => false, () => true)) {
       const reply = await ask('\nThe agent needs its own GitHub login for cards and clones. A second GitHub account is best: whatever its login reaches, the agent reaches. Sign it in now? GitHub shows a code to enter at github.com/login/device. [y/N] ');
       if (yes(reply)) await root(loginPlan(layout));
@@ -587,6 +589,8 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
     await finishMove(moved);
     if (moved.length) console.log('The agent’s account is in its own folder now, and your copy is deleted.');
   } finally {
+    // A run that fails after it stopped the updater starts the one there again, or the agent would stop following the server.
+    if (!updating && existsSync(layout.updaterUnit)) await runAll(root, updaterPlan(layout, programOf(layout))).catch(() => undefined);
     stopSudo();
   }
   console.log('The agent runs as a system service and a login service, and shows as online in WebChat within a minute.');
