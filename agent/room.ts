@@ -209,7 +209,11 @@ export class Room {
     const take = (chunk: Buffer) => {
       got += chunk.length;
       if (got > size) return fail();
-      out.write(chunk);
+      // Waits for the disk, so a bundle of up to 512 MiB never sits whole in memory.
+      if (!out.write(chunk)) {
+        socket.pause();
+        out.once('drain', () => socket.resume());
+      }
       if (got === size) {
         socket.off('data', take);
         out.end(() => socket.end('ok\n'));
