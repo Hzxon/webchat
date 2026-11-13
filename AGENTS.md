@@ -119,6 +119,10 @@ its own roadmap item. Nothing coordinates them except what is on GitHub (D-062).
      hands it to the owner as a card draft, and the owner adds it on the board, which numbers a new
      card. The next `agent/board` pull request deletes the file and writes the card into the copy.
      A session that needs a new decision proposes it and waits for the owner to add it.
+   - On a laptop with the owner's agent, a session with no card runs `webchat-agent card <file>`
+     instead of merging the file. The agent checks it and sends it to the owner as a draft. Once
+     they add it, the command prints the number, which the session claims. Leave the file out of
+     the pull request: the board holds the card.
 
    Name scratch files outside the repository after the item, such as `k12-body.md`, because
    sessions share the scratch directory.
