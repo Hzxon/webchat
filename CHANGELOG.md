@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/Hzxon/webchat/compare/v0.11.0...v0.11.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **push:** Hide iOS 16.4 banner after Bark link ([#228](https://github.com/Hzxon/webchat/issues/228)) ([040ba5d](https://github.com/Hzxon/webchat/commit/040ba5dc81469c26e4f7c6143621fb109ff70c33))
+
 ## [0.11.0](https://github.com/Hzxon/webchat/compare/v0.10.0...v0.11.0) (2026-11-13)
 
 
