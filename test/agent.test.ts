@@ -18,10 +18,12 @@ import { CODEX_GAP, codexHarness } from '../agent/codex.ts';
 import type { Harness } from '../agent/harness.ts';
 import { Conversations, parts, type Answerer } from '../agent/conversations.ts';
 import { worktreeGit } from '../agent/plugin.ts';
+import { setup, uninstall } from '../agent/setup.ts';
 import { addWorktree, start, type Final } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
+import { openDb, toUserDTO } from '../server/db.ts';
 import { keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, textHash, wrapChatKey } from '../shared/e2ee.ts';
 import { briefText, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
 import { copyOf, readCard } from '../shared/board.ts';
@@ -1617,6 +1619,119 @@ describe('agent client (R-027)', () => {
     // Its session ends, and it cannot sign in again.
     await assert.rejects(agent.sync(), { status: 401 });
     await assert.rejects(alice.request('DELETE', `/agents/${spare.id}`), { status: 404 });
+  });
+
+  test('counts an agent online for 2 minutes after its check-in, a person for 1, on the page and in the sync fingerprint (docs/roadmap/new-agent-setup.md)', async () => {
+    const db = await openDb(instance.sql);
+    const seen = (id: number, ms: number) => instance.sql.query('UPDATE webchat.users SET last_active_at = $2 WHERE id = $1', [id, Date.now() - ms]);
+    // The fingerprint's online part names the ids, and its repositories part hashes who is online by folder.
+    const parts = async () => (await db.stamp(alice.id)).split('.');
+    const onlineIds = async () => ((await parts())[9] ?? '').split(',');
+    const dto = async (id: number) => toUserDTO((await db.listUsers()).find((row) => row.id === id)!);
+    await instance.sql.query(`INSERT INTO webchat.agent_repos (user_id, repo, last_seen, protocol) VALUES ($1, 'acme/window', $2, 5)`, [bot.id, Date.now() - 90_000]);
+    try {
+      await seen(alice.id, 90_000);
+      await seen(bot.id, 90_000);
+      assert.deepEqual([(await dto(alice.id)).online, (await dto(bot.id)).online, (await dto(bot.id)).agentRepos[0]?.online], [false, true, true]);
+      assert.deepEqual([(await onlineIds()).includes(String(alice.id)), (await onlineIds()).includes(String(bot.id))], [false, true]);
+      const before = (await parts())[11];
+      await seen(bot.id, 150_000);
+      await instance.sql.query(`UPDATE webchat.agent_repos SET last_seen = $2 WHERE user_id = $1 AND repo = 'acme/window'`, [bot.id, Date.now() - 150_000]);
+      assert.deepEqual([(await dto(bot.id)).online, (await dto(bot.id)).agentRepos[0]?.online], [false, false]);
+      assert.equal((await onlineIds()).includes(String(bot.id)), false);
+      assert.notEqual((await parts())[11], before, 'the page learns when a folder goes offline');
+    } finally {
+      await instance.sql.query(`DELETE FROM webchat.agent_repos WHERE repo = 'acme/window'`);
+      await alice.sync();
+    }
+  });
+
+  test('waits for the interval it is asked for before each check-in', async () => {
+    const stop = new AbortController();
+    let rounds = 0;
+    for await (const message of alice.watch(stop.signal, () => (++rounds === 3 && stop.abort(), 5))) assert.ok(message);
+    assert.equal(rounds, 3);
+  });
+
+  test('tells its owner to wake it in the words of its host', async () => {
+    const dataDir = path.join(home, 'wake-words');
+    const options = { claude: '', guard: 'true', cloneRoot: path.join(home, 'WebChat'), dataDir, projectDir: home, code: '' };
+    assert.match(await new Plugin({ ...options, wake: 'run webchat-agent wake in a terminal' }).call('sleep'), /To wake it, run webchat-agent wake in a terminal\.$/);
+    assert.match(await new Plugin(options).call('sleep'), /To wake it, type \/webchat:wake in Claude Code on your laptop\.$/);
+  });
+
+  test('sets an agent up with one command: pairs it, installs its login service, replaces it on a second run, and removes it (docs/roadmap/new-agent-setup.md)', { timeout: 30_000 }, async () => {
+    const dir = await fs.mkdtemp(path.join(home, 'setup-'));
+    const [bin, laptopHome, agentHome, log, ghState] = ['bin', 'home', 'home/.webchat', 'services.log', 'gh.json'].map((name) => path.join(dir, name));
+    await fs.mkdir(bin);
+    await fs.mkdir(laptopHome);
+    await fs.writeFile(ghState, JSON.stringify({ pulls: [] }));
+    const fake = (name: string, body: string) => fs.writeFile(path.join(bin, name), body, { mode: 0o755 });
+    // One script stands in for launchctl and systemctl: it logs what it was asked and says the service runs.
+    const service = `#!/bin/sh\necho "$(basename "$0") $*" >> "${log}"\ncase "$*" in *"print "*) echo "state = running";; *is-active*) echo active;; esac\n`;
+    for (const name of ['launchctl', 'systemctl']) await fake(name, service);
+    // Everything the laptop would need is there, so setup installs nothing and runs no sudo.
+    for (const name of ['git', 'xcode-select', 'bwrap', 'socat']) await fake(name, '#!/bin/sh\n');
+    await fake('id', '#!/bin/sh\necho "$FAKE_GROUPS"\n');
+    await fake('gh', FAKE_GH);
+    await fake('claude', FAKE_CLAUDE);
+    await fake('codex', FAKE_CODEX);
+    await fake('shell', `#!/bin/sh\nprintf '%s%s%s' __webchat_path__ "$PATH" __webchat_path__\n`);
+    const restore = setEnv({
+      HOME: laptopHome,
+      XDG_CONFIG_HOME: path.join(laptopHome, '.config'),
+      SHELL: path.join(bin, 'shell'),
+      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      FAKE_GH_STATE: ghState,
+      FAKE_GROUPS: 'staff admin sudo',
+    });
+    const said: string[] = [];
+    const print = console.log;
+    console.log = (...words: unknown[]) => void said.push(words.join(' '));
+    const asked: string[] = [];
+    const options = { home: agentHome, program: '/opt/webchat-agent', ask: async (question: string) => (asked.push(question), true) };
+    const unitFile = process.platform === 'darwin' ? path.join(laptopHome, 'Library/LaunchAgents/webchat-agent.plist') : path.join(laptopHome, '.config/systemd/user/webchat-agent.service');
+    const commands = async () => (await fs.readFile(log, 'utf8')).trim().split('\n');
+    try {
+      // Not an administrator: it says so alone, asks nothing and changes nothing.
+      process.env.FAKE_GROUPS = 'staff';
+      await assert.rejects(setup(`${baseUrl}#${newPairingCode()}`, options), /Nothing was changed/);
+      // Only the read-only check that `systemctl --user` runs, on Linux, reaches the services.
+      const ran = existsSync(log) ? (await commands()).filter((line) => line !== 'systemctl --user show-environment') : [];
+      assert.deepEqual([asked.length, existsSync(unitFile), ran, said.filter((line) => /Administrator/.test(line)).length], [0, false, [], 1]);
+      process.env.FAKE_GROUPS = 'staff admin sudo';
+
+      const code = newPairingCode();
+      const [agent] = await Promise.all([approve(alice, code, 'Laptop'), setup(`${baseUrl}#${code}`, options)]);
+      assert.match(asked[0]!, /pair with .* you approve the agent in WebChat[\s\S]*login service[\s\S]*changes no security setting/);
+      assert.ok(said.some((line) => /^ {2}ok {2,}Claude Code 2\.1\.0, signed in$/.test(line)), said.join('\n'));
+      assert.ok(said.includes('Paired with Alice.'));
+      // The account is where `serve` reads it, and the service runs the installed program, with the login shell's PATH.
+      const account = JSON.parse(await fs.readFile(path.join(agentHome, 'laptop', 'account.json'), 'utf8')) as { userId: number; owner: number };
+      assert.deepEqual([account.userId, account.owner], [agent.id, alice.id]);
+      const unit = await fs.readFile(unitFile, 'utf8');
+      assert.ok(unit.includes('/opt/webchat-agent') && unit.includes(bin), unit);
+      const first = await commands();
+      assert.ok(first.some((line) => (process.platform === 'darwin' ? line.startsWith(`launchctl bootstrap gui/${process.getuid!()} ${unitFile}`) : line === 'systemctl --user restart webchat-agent')), first.join('\n'));
+
+      // A second run, with no code, pairs nothing again and replaces the service.
+      said.length = 0;
+      await setup(undefined, options);
+      assert.equal(asked.length, 2);
+      assert.doesNotMatch(asked[1]!, /pair with/);
+      assert.ok(!said.includes('Approve the agent in WebChat, in the window that shows the code.'));
+      assert.ok((await commands()).length > first.length);
+
+      // Declined, uninstall removes nothing; agreed, it leaves no service and no account.
+      await assert.rejects(uninstall(agentHome, async () => false), /Nothing was removed/);
+      assert.equal(existsSync(unitFile), true);
+      await uninstall(agentHome, async () => true);
+      assert.deepEqual([existsSync(unitFile), existsSync(path.join(agentHome, 'laptop'))], [false, false]);
+      assert.match((await commands()).at(-1) ?? '', process.platform === 'darwin' ? /^launchctl bootout|^launchctl bootstrap/ : /^systemctl --user daemon-reload/);
+    } finally {
+      console.log = print;
+      restore();
+    }
   });
 
   test('keeps the file tools away from the secrets, even through a link (R-030)', async () => {

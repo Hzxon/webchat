@@ -129,6 +129,8 @@ const statements = (sql: string) =>
 
 /** A user counts as online while their app checked in within this window. */
 const ONLINE_WINDOW_MS = 60_000;
+/** An agent checks in every 60 seconds once it has been idle for an hour, so it counts as online for twice that. */
+const AGENT_ONLINE_WINDOW_MS = 2 * 60_000;
 /** How long an "I am looking" check-in lasts. Attentive tabs check in more often than this. */
 export const ATTENTION_TTL_MS = 45_000;
 /** Sync re-sends recent messages too, in case a slow insert committed after a newer one. */
@@ -404,16 +406,17 @@ function toMemberState(row: MemberRow): MemberState {
 }
 
 export function toUserDTO(row: UserRow, now = Date.now()): UserDTO {
+  const span = row.agent_owner === null ? ONLINE_WINDOW_MS : AGENT_ONLINE_WINDOW_MS;
   return {
     id: row.id,
     username: row.username,
     displayName: row.display_name,
-    online: row.last_active_at !== null && now - row.last_active_at < ONLINE_WINDOW_MS,
+    online: row.last_active_at !== null && now - row.last_active_at < span,
     lastSeen: row.last_active_at,
     keys: row.dh_public && row.sign_public ? { dh: row.dh_public, sign: row.sign_public } : null,
     agentOwner: row.agent_owner,
     protocol: row.protocol,
-    agentRepos: (row.repos ?? []).map((r) => ({ repo: r.repo, online: now - r.last_seen < ONLINE_WINDOW_MS, lastSeen: r.last_seen, protocol: r.protocol })),
+    agentRepos: (row.repos ?? []).map((r) => ({ repo: r.repo, online: now - r.last_seen < AGENT_ONLINE_WINDOW_MS, lastSeen: r.last_seen, protocol: r.protocol })),
     deleted: row.deleted_at !== null,
   };
 }
@@ -1713,11 +1716,12 @@ export async function openDb(sql: Sql) {
                  JOIN webchat.project_members pm ON pm.project_id = p.id WHERE pm.user_id = $1
              ) owned) AS owners,
              (SELECT COUNT(*)::int FROM webchat.users) AS people,
-             (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users WHERE last_active_at > $2) AS online,
+             (SELECT string_agg(id::text, ',' ORDER BY id) FROM webchat.users
+               WHERE last_active_at > CASE WHEN agent_owner IS NULL THEN $2::bigint ELSE $4::bigint END) AS online,
              -- Agents with their owners, so the board offers each owner theirs (K-45), and what their laptops can do (R-036).
              (SELECT md5(string_agg(id || ':' || agent_owner || ':' || protocol, ',' ORDER BY id)) FROM webchat.users WHERE agent_owner IS NOT NULL) AS agents,
              -- Each agent's sessions by repository: which exist, which are online, and what they can do (D-094, D-103).
-             (SELECT md5(string_agg(user_id || ':' || repo || ':' || protocol || ':' || (last_seen > $2), ',' ORDER BY user_id, repo))
+             (SELECT md5(string_agg(user_id || ':' || repo || ':' || protocol || ':' || (last_seen > $4), ',' ORDER BY user_id, repo))
                FROM webchat.agent_repos) AS repos,
              -- Every save grows a doc's version, and a doc deleted leaves the list.
              (SELECT md5(COALESCE(string_agg(id || ':' || version, ',' ORDER BY id), '')) FROM webchat.docs
@@ -1726,7 +1730,7 @@ export async function openDb(sql: Sql) {
              (SELECT md5(COALESCE(string_agg(l.doc_id || ':' || l.section || ':' || l.user_id, ',' ORDER BY l.doc_id, l.section), ''))
                FROM webchat.doc_locks l JOIN webchat.docs d ON d.id = l.doc_id
                WHERE d.conversation_id IN (SELECT * FROM mine) AND l.expires_at > $3) AS locks`,
-          [userId, Date.now() - ONLINE_WINDOW_MS, Date.now()],
+          [userId, Date.now() - ONLINE_WINDOW_MS, Date.now(), Date.now() - AGENT_ONLINE_WINDOW_MS],
         ),
       );
       return row

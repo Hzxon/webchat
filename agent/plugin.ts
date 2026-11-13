@@ -19,7 +19,7 @@ import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
 import { cardsOf, copyOf, entriesOf, proposalOf, readCard, usernamesOf } from '../shared/board.ts';
 import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, SKILL_NAME, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
-import { AgentClient, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
+import { AgentClient, checkInEvery, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
 import type { Harness } from './harness.ts';
 import { addWorktree, fetchOrigin } from './runner.ts';
@@ -85,6 +85,8 @@ export interface PluginOptions {
   harnesses: Harness[];
   /** A background job of Claude Code: it never serves, so closing the window you work in puts the agent to sleep (K-66). */
   job?: boolean;
+  /** What the owner does to wake the agent, in the host's words, for "To wake me, …". The plugin's: a Claude Code skill. */
+  wake?: string;
 }
 
 /** The branch a board's copy goes to, in one draft pull request (R-040, D-117). */
@@ -101,9 +103,6 @@ interface BoardCopy {
   /** The cards open pull requests claim, as last sent. */
   claims?: string;
 }
-
-/** Why a window serves nothing while the owner has the agent asleep (K-66, D-113). */
-const ASLEEP = 'Your agent is asleep: it takes no cards and answers no questions. Type /webchat:wake to wake it.';
 
 /** A folder the laptop has for a repository, as its mark names it (R-036, D-101). */
 interface Folder {
@@ -309,6 +308,8 @@ export class Plugin {
   private watched: Watched[] = [];
   private plans: Planned[] = [];
   private polling = false;
+  /** When a request came or a run or turn last went, which sets how often it checks in. */
+  private lastWork = Date.now();
   /** The owner's GitHub login, whose own reviews start a round on their own (D-105). */
   private login?: string;
   /** Whether a GitHub login may push to a repository, by "repo login". */
@@ -333,6 +334,16 @@ export class Plugin {
 
   private file(name: string) {
     return path.join(this.home, name);
+  }
+
+  /** How the owner wakes the agent, in the words of the host that runs it. */
+  private get wakeWords() {
+    return this.options.wake ?? 'type /webchat:wake in Claude Code on your laptop';
+  }
+
+  /** Why a window serves nothing while the owner has the agent asleep (K-66, D-113). */
+  private get asleepWords() {
+    return `Your agent is asleep: it takes no cards and answers no questions. To wake it, ${this.wakeWords}.`;
   }
 
   /** The one switch for every window and the pane: while it exists, nothing serves (K-66, D-113). */
@@ -373,7 +384,7 @@ export class Plugin {
     for (;;) {
       const asleep = existsSync(this.asleep);
       if (!asleep && (await takeLock(path.join(dataDir, 'watch.lock')))) break;
-      this.problem = asleep ? ASLEEP : 'Another Claude Code window on this laptop serves your agent. This one takes over when that one closes.';
+      this.problem = asleep ? this.asleepWords : 'Another Claude Code window on this laptop serves your agent. This one takes over when that one closes.';
       this.nudge = new AbortController();
       await sleep(60_000, undefined, { ref: false, signal: this.nudge.signal }).catch(() => undefined);
     }
@@ -435,7 +446,7 @@ export class Plugin {
   /** Why every question, run and fix fails before it starts, or undefined. */
   private async refusal() {
     // Going to sleep: what runs finishes, and nothing new starts (K-66, D-113).
-    if (existsSync(this.asleep)) return 'I am going to sleep, so I start nothing new. To wake me, type /webchat:wake in Claude Code on your laptop.';
+    if (existsSync(this.asleep)) return `I am going to sleep, so I start nothing new. To wake me, ${this.wakeWords}.`;
     return this.noHarness();
   }
 
@@ -537,10 +548,11 @@ export class Plugin {
     this.waiting.delete(key);
   }
 
-  /** Checks in every 15 seconds and looks at the pull requests every minute, until the session ends the process or the agent goes to sleep. */
+  /** Checks in every 15 seconds, every minute once an hour passed with nothing to do, and looks at the pull requests every minute, until the session ends the process or the agent goes to sleep. */
   async loop() {
     // First, so a sleep among the messages missed while away ends the loop too.
     this.stop = new AbortController();
+    this.lastWork = Date.now();
     const missed = await this.client!.sync().catch((error: unknown) => (log(error), []));
     await this.endStrandedDrafts().catch(log);
     await this.runs!.recover().catch(log);
@@ -561,7 +573,11 @@ export class Plugin {
         void this.syncBoards().catch(log);
       }, 60_000),
     ];
-    for await (const message of this.client!.watch(this.stop.signal)) this.handle(message);
+    const every = () => {
+      if (this.busy().length) this.lastWork = Date.now();
+      return checkInEvery(Date.now() - this.lastWork);
+    };
+    for await (const message of this.client!.watch(this.stop.signal, every)) this.handle(message);
     timers.forEach(clearInterval);
   }
 
@@ -578,7 +594,7 @@ export class Plugin {
     if (!this.stop || this.stop.signal.aborted || !existsSync(this.asleep) || this.busy().length) return;
     this.stop.abort();
     freeLock(path.join(this.options.dataDir, 'watch.lock'));
-    this.problem = ASLEEP;
+    this.problem = this.asleepWords;
   }
 
   /** Turns the switch on, and says what still runs before the agent sleeps. */
@@ -603,7 +619,7 @@ export class Plugin {
     if (!this.fromOwner(message, message.content!.sleep!.sentAt)) return;
     const busy = await this.sleep();
     const when = busy.length ? `once I finish ${busy.join(' and ')}` : 'now';
-    await this.client!.send(message.conversationId, { text: `I go to sleep ${when}. To wake me, type /webchat:wake in Claude Code on your laptop.` });
+    await this.client!.send(message.conversationId, { text: `I go to sleep ${when}. To wake me, ${this.wakeWords}.` });
   }
 
   private saveCopies() {
@@ -809,6 +825,7 @@ export class Plugin {
 
   /** Acts on one message. A turn takes long, so the loop does not wait for it: check-ins go on meanwhile. */
   handle(message: OpenedMessage) {
+    this.lastWork = Date.now();
     const { run, prompt } = message.content ?? {};
     if (run?.kind === 'fix') return this.go(message, run).catch(log);
     if (run?.kind === 'clone' || prompt?.kind === 'clone') return this.clone(message).catch(log);
@@ -1264,7 +1281,7 @@ export class Plugin {
         return this.disconnect();
       case 'sleep': {
         const busy = await this.sleep();
-        return `Your agent goes to sleep ${busy.length ? `once it finishes ${busy.join(' and ')}` : 'within 15 seconds, once nothing runs'}. Type /webchat:wake to wake it.`;
+        return `Your agent goes to sleep ${busy.length ? `once it finishes ${busy.join(' and ')}` : 'within 15 seconds, once nothing runs'}. To wake it, ${this.wakeWords}.`;
       }
       case 'wake':
         return this.wake();
@@ -1303,7 +1320,7 @@ export class Plugin {
 
   private async status() {
     // A waiting window looks at the switch only once a minute, so the status reads it now.
-    if (this.problem) return !this.options.job && existsSync(this.asleep) ? ASLEEP : this.problem;
+    if (this.problem) return !this.options.job && existsSync(this.asleep) ? this.asleepWords : this.problem;
     const owner = this.client!.users.get(this.client!.owner!)?.displayName;
     const sandbox = await this.cardRefusal();
     const folders = [...this.folders.values()].map((f) => `${f.repo} in ${shown(f.dir)}`);

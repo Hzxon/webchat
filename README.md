@@ -440,8 +440,12 @@ and a laptop uses one of them:
 
 - **The Claude Code plugin** is the first choice for anyone who uses Claude Code. It is one install,
   and it serves while a Claude Code window is open.
-- **The daemon** is for a laptop where no Claude Code window stays open. You start it yourself and
-  keep it running.
+- **The daemon** is for a laptop without Claude Code, or where no window stays open. One line in a
+  terminal installs it, and a login service keeps it running.
+
+Either one checks in every 15 seconds. Once an hour passes with no request, run or question, it
+checks in every minute, so a card on an idle agent waits up to a minute to start. WebChat counts an
+agent online for 2 minutes after its last check-in.
 
 ### With the Claude Code plugin
 
@@ -571,20 +575,54 @@ only cards you would do yourself.
 ### With the daemon
 
 The daemon serves the same agent as the plugin, with the same sandbox and the same checks, from a
-program you start instead of a Claude Code window. Today its only coding agent is Claude Code, so
-the `claude` command must be installed and signed in on the laptop, but no window has to be open.
-The plugin and the daemon keep separate accounts: never run both on one laptop for the same agent,
-and pair each with its own code.
+program that starts when you log in, so no Claude Code window has to stay open. Today its only coding
+agent is Claude Code. The plugin and the daemon keep separate accounts: never run both on one laptop
+for the same agent, and pair each with its own code.
 
-1. In WebChat, choose **Connect coding agent** and copy the code, as above.
-2. In a copy of this repository, run `npm install`, then `npm run agent -- serve '<code>'`. Approve
-   the agent in WebChat. It keeps its account in `~/.webchat/laptop`, so later you run only
-   `npm run agent -- serve`.
-3. Keep it running, in a terminal or as a launchd or systemd service, the way the plugin needs one
-   window open. The agent is offline while the daemon is not.
-4. In a folder you already have, run `npm run agent -- connect` to point the agent at it instead of
-   cloning. `npm run agent -- sleep` and `npm run agent -- wake` do what `/webchat:sleep` and
-   `/webchat:wake` do.
+It works on a Mac or on Linux, and on Windows only in Ubuntu on WSL2. The account you run it in must
+be an administrator: in the `admin` group on a Mac, in `sudo`, `wheel` or `admin` on Linux. Setup
+installs software and, later, keeps the agent's keys under an account of its own. For any other
+account it says so and changes nothing.
+
+1. In WebChat, choose **Connect coding agent**. Under the plugin steps, copy the line for laptops
+   without Claude Code. It names your WebChat's release and holds the pairing code, which works once,
+   within 10 minutes.
+2. Run it in a terminal on that laptop. It downloads that release's `webchat-agent` from GitHub,
+   checks it against the release's checksum, puts it in `~/.local/bin` and runs `webchat-agent setup`.
+3. Setup checks the laptop and changes nothing yet: the system, your administrator rights, the login
+   service (launchd on a Mac, `systemd --user` on Linux), git, whether your WebChat answers and runs
+   the same release, disk space, Claude Code and Codex with their sign-in, and the GitHub CLI. Then
+   it shows one summary and asks once. The question lists what setup would do: install git, and on
+   Linux `bubblewrap` and `socat`, which Claude Code's sandbox needs, with `apt-get` or `dnf` through
+   `sudo`; on a Mac, Apple's command line tools for git; Claude Code, with its own installer, when it
+   is missing; pair; and install the login service. Setup never changes a security setting. Where one
+   stops the agent, it prints the fix: WSL2 without systemd, and Ubuntu's AppArmor rule on user
+   namespaces, which Claude Code's sandbox needs.
+4. Approve the agent in WebChat. Setup then installs the service, which runs
+   `webchat-agent serve` with the PATH your login shell has. A LaunchAgent in
+   `~/Library/LaunchAgents` or a unit in `~/.config/systemd/user` starts it at login and again after
+   a failure. The agent keeps its account in `~/.webchat/laptop`, readable only by you, and the
+   service logs to `~/.webchat/agent.log` on a Mac and to the user journal on Linux. Run the line
+   again, or `webchat-agent setup` with no code, to replace the service.
+
+Then:
+
+- `webchat-agent doctor` repeats the checks. It names what is missing, such as a harness that is not
+  signed in: "Claude Code is not signed in. Run `claude` once and sign in."
+- `webchat-agent status` says whether the service runs, whether the agent is paired and whether it is
+  asleep.
+- `webchat-agent uninstall` asks, then removes the service and `~/.webchat/laptop`. The agent stays in
+  WebChat until you remove it under **Coding agents**. The program and the clones in `~/WebChat` stay.
+- In a folder you already have, run `webchat-agent connect` to point the agent at it instead of
+  cloning. `webchat-agent sleep` and `webchat-agent wake` do what `/webchat:sleep` and `/webchat:wake`
+  do.
+
+The service runs while you are logged in. Cards and clones need the GitHub CLI signed in, as for the
+plugin: setup warns when it is not. The keys stay in `~/.webchat/laptop` and the agent pushes with
+your own `gh`, as the plugin does.
+
+From a copy of this repository, `npm run agent -- serve '<code>'` runs the daemon with Node 26. It
+is for working on WebChat: `setup` installs only the single file a release ships.
 
 ## Self-hosting instead
 

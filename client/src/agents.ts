@@ -91,8 +91,9 @@ export function seatFor(agent: UserDTO, repo: string): Seat | undefined {
 
 const UPDATE = 'Your agent’s WebChat plugin is too old for this. In Claude Code, type /plugin, open Installed, choose webchat, then Update now.';
 
-/** What wakes the agent: one window serves every folder on the laptop (R-036). */
-export const WAKE = 'Keep one Claude Code window open on your laptop, and the laptop awake. If you put your agent to sleep, type /webchat:wake there.';
+/** What wakes the agent: one window or one service serves every folder on the laptop (R-036). */
+export const WAKE =
+  'Your laptop must be awake, with one Claude Code window open or the webchat-agent service running. If you put your agent to sleep, type /webchat:wake in Claude Code there, or run webchat-agent wake in a terminal.';
 
 export const asleep = (lastSeen: number | null) => `Your agent is asleep${lastSeen ? ` since ${formatSince(lastSeen)}` : ''}`;
 

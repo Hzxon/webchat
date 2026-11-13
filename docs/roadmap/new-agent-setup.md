@@ -1,6 +1,6 @@
 ### R: Set up the agent with one command
 
-Status: Idea. Proposed 2026-11-12 from the agent host design.
+Status: Done in #200. Proposed 2026-11-12 from the agent host design.
 
 Order: second, after docs/roadmap/new-agent-build.md. It may run beside
 docs/roadmap/new-harness-linking.md, which owns the harness pick that setup shows.
