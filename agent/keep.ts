@@ -25,6 +25,23 @@ export const sha256 = (file: string) =>
     createReadStream(file).on('data', (chunk) => hash.update(chunk)).on('error', reject).on('end', () => resolve(hash.digest('hex')));
   });
 
+/** Where a bundle's pack starts: after its header, which ends at its first empty line. */
+async function packStart(file: string) {
+  const handle = await fs.open(file);
+  try {
+    let header = Buffer.alloc(0);
+    for (;;) {
+      const { bytesRead, buffer } = await handle.read({ buffer: Buffer.alloc(65536), position: header.length });
+      if (!bytesRead) throw new Error('The work holds no objects.');
+      header = Buffer.concat([header, buffer.subarray(0, bytesRead)]);
+      const end = header.indexOf('\n\n');
+      if (end >= 0) return end + 2;
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
 export interface KeepOptions {
   /** The agent's own folder. */
   dataDir: string;
@@ -61,13 +78,15 @@ export class Keep {
    * Git in the clone, with hooks off and the credentials only from `gh`: no other helper, and no
    * prompt. A repository's own files never run anything here, as nothing is checked out.
    */
-  private async git(repo: string, args: string[], { input, env }: { input?: string; env?: NodeJS.ProcessEnv } = {}) {
+  private async git(repo: string, args: string[], { input, env }: { input?: string | NodeJS.ReadableStream; env?: NodeJS.ProcessEnv } = {}) {
     const helper = `!${this.options.gh ?? 'gh'} auth git-credential`;
     const run = exec('git', ['--git-dir', this.dir(repo), '-c', 'core.hooksPath=/dev/null', '-c', 'credential.helper=', '-c', `credential.https://github.com.helper=${helper}`, ...args], {
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...env },
       maxBuffer: 32 * 1024 * 1024,
     });
-    if (input !== undefined) run.child.stdin!.end(input);
+    if (typeof input === 'string') run.child.stdin!.end(input);
+    // A git that stops reading fails with its own exit code, which the broken pipe would only hide.
+    else if (input) input.pipe(run.child.stdin!).on('error', () => {});
     return (await run).stdout.trim();
   }
 
@@ -123,23 +142,20 @@ export class Keep {
       if (size > (this.options.maxBundle ?? MAX_BUNDLE)) throw new Error('The work is too large to push.');
       if (reported && (reported.bytes !== size || reported.sha256 !== (await sha256(file)))) throw new Error('The work changed on its way here.');
       if (!branch.startsWith('agent/') || !(await this.can(repo, ['check-ref-format', ref]))) throw new Error(`${branch} is no branch an agent may push.`);
-      const heads = (await this.git(repo, ['bundle', 'list-heads', file])).split('\n').map((l) => l.split(' ')[1]);
-      if (heads.length !== 1 || heads[0] !== ref) throw new Error(`The work holds more than ${ref}, or another branch than it.`);
+      const heads = (await this.git(repo, ['bundle', 'list-heads', file])).split('\n').map((l) => l.split(' '));
+      if (heads.length !== 1 || heads[0]![1] !== ref) throw new Error(`The work holds more than ${ref}, or another branch than it.`);
+      const head = heads[0]![0]!;
       await this.git(repo, ['bundle', 'verify', '-q', file]);
-      // Into a ref of its own first, so a bundle that fails a check below moves nothing. Forced, since a keyholder stopped mid-accept leaves the last one there.
-      const incoming = 'refs/webchat/incoming';
-      await this.git(repo, ['-c', 'transfer.fsckObjects=true', 'fetch', '-q', '--no-tags', file, `+${ref}:${incoming}`]);
-      try {
-        const head = await this.git(repo, ['rev-parse', incoming]);
-        const old = await this.git(repo, ['rev-parse', '--verify', '-q', ref]).catch(() => '');
-        if (!(await this.can(repo, ['merge-base', '--is-ancestor', since, head]))) throw new Error(`The work does not start from ${since}.`);
-        // Never a rewind: what the branch had stays in it.
-        if (old && !(await this.can(repo, ['merge-base', '--is-ancestor', old, head]))) throw new Error(`The work would drop commits of ${branch}.`);
-        await this.git(repo, ['update-ref', ref, head, old || ZERO]);
-        return head;
-      } finally {
-        await this.git(repo, ['update-ref', '-d', incoming]);
-      }
+      // The bundle's pack is indexed here, not fetched: git before 2.46 ignores transfer.fsckObjects
+      // for a fetch from a bundle, while `--strict` fscks its objects and their links on every git.
+      // Only objects land, which no ref names, so a bundle that fails a check below moves nothing.
+      await this.git(repo, ['index-pack', '--stdin', '--fix-thin', '--strict'], { input: createReadStream(file, { start: await packStart(file) }) });
+      const old = await this.git(repo, ['rev-parse', '--verify', '-q', ref]).catch(() => '');
+      if (!(await this.can(repo, ['merge-base', '--is-ancestor', since, head]))) throw new Error(`The work does not start from ${since}.`);
+      // Never a rewind: what the branch had stays in it.
+      if (old && !(await this.can(repo, ['merge-base', '--is-ancestor', old, head]))) throw new Error(`The work would drop commits of ${branch}.`);
+      await this.git(repo, ['update-ref', ref, head, old || ZERO]);
+      return head;
     });
   }
 
