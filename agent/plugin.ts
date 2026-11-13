@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
 import { cardsOf, copyOf, entriesOf, proposalOf, readCard, usernamesOf } from '../shared/board.ts';
 import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type AskDTO, type PairingPick, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
+import { ApiError } from './api.ts';
 import { AgentClient, checkInEvery, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
 import { LocalBench, NO_RUNNER, PrerequisitesMissing, type Bench, type Folder, type HarnessInfo } from './bench.ts';
@@ -82,6 +83,8 @@ export interface PluginOptions {
 
 /** The branch a board's copy goes to, in one draft pull request (R-040, D-117). */
 const BOARD_BRANCH = 'agent/board';
+/** The pause between two proposal drafts: 25 in 10 seconds, under the server's 30 sends, with room for the rest (K-71). */
+const PROPOSAL_GAP_MS = 400;
 
 /** A linked board's copy in its repository, as the agent keeps it on disk (R-040). */
 interface BoardCopy {
@@ -861,12 +864,13 @@ export class Plugin {
         this.looked.set(project.id, now);
         const { roadmap, decisions } = await this.columns(project, versions, docs);
         const { ref } = await this.keep.fetch(repo);
-        await this.sendProposals(project.id, copy, ref, [...roadmap, ...decisions], chat);
         await this.sendClaims(project.id, copy, roadmap, chat);
         if (due) {
           await this.pushCopy(copy, ref, { roadmap: copyOf('roadmap', roadmap.map((c) => c.stands)), decisions: copyOf('decisions', decisions.map((c) => c.text)) });
           copy.moved = 0;
         }
+        // Last, as a backlog of them can take the round long and run into the send limit (K-71).
+        await this.sendProposals(project.id, copy, ref, [...roadmap, ...decisions], chat);
       }
     } finally {
       this.copying = false;
@@ -903,15 +907,20 @@ export class Plugin {
   /**
    * Sends each proposal file the default branch gained under `docs/roadmap/` or `docs/decisions/` as
    * a card draft, once per version of the file (R-040). A change names its card on the board, with
-   * the hash of its text, as an agent's draft does (D-104).
+   * the hash of its text, as an agent's draft does (D-104). A new card whose title the board has
+   * already came to the board, though this laptop's record may not know it (K-71). The sends are
+   * paced under the server's limit, and one it refuses anyway leaves the rest to the next round.
    */
   private async sendProposals(project: number, copy: BoardCopy, base: string, cards: Array<{ doc: string; section: string; text: string }>, chat: number) {
+    const titleOf = (title: string) => title.trim().toLowerCase();
+    const titles = new Set(cards.flatMap((c) => readCard(c.text)?.title ?? []).map(titleOf));
+    let sent = 0;
     for (const { path: file, blob } of await this.keep.docFiles(copy.repo, base)) {
       if (/\/(roadmap|decisions)\.md$/.test(file) || copy.proposals[file]?.blob === blob || this.skipped.has(`${file}:${blob}`)) continue;
       const proposal = proposalOf(file, await this.keep.show(copy.repo, blob));
       const card = proposal?.id ? cards.find((c) => readCard(c.text)?.id === proposal.id) : undefined;
       // A change to a card the board does not have stays a file, as nothing could take it.
-      if (!proposal || (proposal.id && !card)) {
+      if (!proposal || (proposal.id && !card) || (!proposal.id && titles.has(titleOf(proposal.title)))) {
         this.skipped.add(`${file}:${blob}`);
         continue;
       }
@@ -922,8 +931,14 @@ export class Plugin {
         ...(card && { replaces: { card: proposal.id!, doc: card.doc, section: card.section, seen: await textHash(card.text) } }),
         ...(card && proposal.status && { status: proposal.status }),
       };
-      const sent = await this.client!.send(chat, { text: `Proposed in ${copy.repo}: ${file}`, board: { kind: 'proposal', project, repo: copy.repo, card: draft } });
-      copy.proposals[file] = { blob, draft: sent.clientId! };
+      if (sent++) await sleep(PROPOSAL_GAP_MS);
+      try {
+        const message = await this.client!.send(chat, { text: `Proposed in ${copy.repo}: ${file}`, board: { kind: 'proposal', project, repo: copy.repo, card: draft } });
+        copy.proposals[file] = { blob, draft: message.clientId! };
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 429) throw error;
+        return log(error);
+      }
     }
   }
 
