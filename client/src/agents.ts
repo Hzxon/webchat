@@ -258,6 +258,9 @@ export function useAgentChats() {
   return useMemo(() => agentChats({ users, me, conversations }), [users, me, conversations]);
 }
 
+/** The proposals whose draft the owner has not added yet, in every project, for the Coding agents row (D-117, R-045). */
+export const proposalsWaiting = (threads: Thread[]) => threads.filter((t) => t.kind === 'proposal' && t.state === 'draft').length;
+
 /** The user's chats with their agents, and every conversation in them, newest first. */
 export function useAgentThreads() {
   const chats = useAgentChats();
