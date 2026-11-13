@@ -1752,6 +1752,16 @@ workflow every session follows (#159).
 Cost: a failed run leaves a closed draft. A paused run holds its card and worktree for up to 7
 days. Server tests fail only in CI, since the sandbox cannot listen on localhost.
 
+### D-119: The owner names the harness in each request
+
+Status: Proposed.
+
+Checked: 2026-11-09. 2026-11-10: read D-119 on the board, docs/decisions/new-harness-pick.md, new-harness-isolation-proof.md, new-daemon-host.md and CHANGELOG 0.9.0 (#179, #180) on main at 6a95ad6; agent/plugin.ts (host, pick, loop level), agent/index.ts, agent/mcp.ts, HarnessPicker.tsx, test/agent.test.ts; D-093, D-097, D-115 to D-117 and R-043. No open pull requests.
+
+An agent runs every harness its laptop has that the owner has not turned off in Settings (D-115) and that can run there; one may answer questions yet take no cards (`refusal(dir, purpose)` in `agent/harness.ts`, #180). The owner names one, signed, in each card run and each prompt, as the repository is named (D-093): a line under the repository in the card's brief, and a picker beside it in the Ask box (`HarnessPicker`). Both list the harnesses of the agent's sealed setup answer, those that take no cards greyed with the reason, and preselect the last pick this browser remembers, else the first that takes cards. There is no stored or per-project default. A session keeps the harness that started it, so replies and fix rounds resume with it; another harness is a new conversation, never a switch. A request that names none, from a page before the pick or a turn nobody picks for (Check again, D-116; a proposal's draft, D-117), runs on the host harness: Claude Code, the first adapter in both the plugin and the daemon (`host` in `agent/plugin.ts`). A request naming a harness the laptop lacks or the owner turned off fails with the reason. The server learns nothing: the name travels sealed, and the check-in's level names none; it claims cards while `gh` is signed in and any harness takes turns. Why: a team on Codex or OpenCode could not run an agent (R-043), and a pick per request keeps the server out of it.
+
+Cost: a page that never opened Settings asks each agent for its setup once per load, a sealed message in the direct chat. A reply after the owner turns the session's harness off fails instead of moving on, and so does every unpicked turn while Claude Code is off. The Ask box greys a harness that only answers, such as Codex, so a prompt cannot pick it yet. With only such a harness on, the level still claims cards, and the card request then fails with the reason.
+
 ## Superseded
 
 ### D-028: No leaving or removal before key rotation

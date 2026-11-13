@@ -2,23 +2,128 @@
 
 This file is a copy of the Roadmap column of the project's board in WebChat, which its owner's agent writes. Do not edit it by hand: a pull request proposes a new entry as a file under `docs/roadmap/`, named by a short name such as `new-bark-banner.md`, or a change to one as `docs/roadmap/K-12.md`.
 
-## In progress
+## Running
+
+### R-044: Make and number a card from the terminal
+
+Status: In review: Hzxon/webchat#225.
+
+Why: a session in the owner's own harness that starts from an idea has no card to claim. Today it
+writes a proposal file, the file must reach main, the agent hands it to the owner as a draft, and
+the owner adds it on the board, which numbers it (D-117). Only then can `scripts/claim.sh` name the
+card. That is one merge and one visit to the board before any work, so the owner skips the card,
+and the board never learns of the work. On 2026-11-13 main held 37 proposal files that waited this
+way.
+
+Scope: one command of the agent, such as `webchat-agent card docs/roadmap/new-bark-banner.md`,
+that sends the file as a card draft to the owner's page, the way an answer's drafts go (D-104).
+The owner presses the draft's button, on any device, and the board numbers the card under its lock
+(D-116). The command waits, then prints the number, so the session claims it with
+`scripts/claim.sh` right away. The draft goes through the agent's check first, as every draft does
+(D-116). A decision goes the same way. The proposal file stays the way for a session that has no
+agent, such as a teammate's. Nothing new reaches the server: the draft is a sealed message.
+
+Not in scope: showing a card run's diff and turns in the pane. A card run stays the way to work
+while away from the laptop.
+
+The terminal never adds a card itself. The owner approves every draft with its button, so the agent
+gets no way to write the board and nothing lands unseen (D-104).
+
+Done when: in a linked repository, a session with no card runs the command, the owner adds the
+draft, the command prints the new number, `scripts/claim.sh` claims it, and the board shows the
+card Running, with no pull request merged in between.
+
+### R-045: The Coding agents row's name says nothing of board work
+
+Status: In review: Hzxon/webchat#227.
+
+Checked: 2026-11-13. Read K-72 and its fix on this branch (waitingProposals, BoardView), AgentsView.tsx thread subtitles, D-103, D-104 and D-117, and the cards K-69, K-70, K-71 and R-044 at 8f66355. Open pull requests not read: gh cannot run in this sandbox.
+
+Why: proposal drafts from a linked repository (D-117) sit in threads under Chats, in the row "Coding agents", named `Proposed in <repo>: <file>`. An owner who looks for board work does not think of that row. K-72 points the owner's board at the drafts, but the row itself still reads as chats with an agent only.
+
+Scope: make the row's subtitle, or its badge, say when proposals wait, such as "3 proposals wait", using the same count the board shows (`waitingProposals` in `client/src/agents.ts`). Nothing new reaches the server.
+
+Done when: with a proposal draft not yet added, the Coding agents row says so, and it stops once the draft is added.
 
 ### K-1: The iOS 16.4 banner stays after Bark is linked
 
 Status: In review: Hzxon/webchat#159.
 
-Status: Open. Found by the owner on an iPhone before iOS 16.4.
+Checked: 2026-11-09. Read the board's K-1, docs/roadmap/K-1.md and two-status-lines.md on main at 6a95ad6, CHANGELOG 0.9.0, and cardText in client/src/board.ts. No open pull requests.
+
+Found by the owner on an iPhone before iOS 16.4. #159 fixed it and was reverted in #169, so the card is open again. Set its status line to `Open` by hand: a draft can't change it.
 
 On iOS before 16.4 the sidebar always shows "Notifications on iPhone need iOS 16.4. Tap to get alerts through the Bark app instead." It stays after the user links Bark and their alerts already arrive through it. A warning that never goes away teaches people to ignore the banner, and it suggests that their alerts are broken when they are not.
 
 Cause: `AlertSetupBanner` in `client/src/components/Sidebar.tsx` shows the warning while `push.permission !== 'granted'`. That can never change on these phones, which have no Web Push (`oldIos` in `client/src/push.ts`). The page never asks whether Bark is linked. Only `NotificationDialog` fetches `GET /api/bark` (`BarkDTO`), and only while the dialog is open (D-054).
 
-Fix: on iOS before 16.4, the page fetches the Bark state, or keeps the dialog's answer in the store, and hides the warning once `link.devices` has at least one phone. While Bark is linked but no phone has registered, the warning stays, since nothing reaches the user yet. Other browsers keep their banner, and the alert sound banner is unchanged.
+Fix: on iOS before 16.4, the page fetches the Bark state, or keeps the dialog's answer in the store, and hides the warning once `link.devices` has at least one phone. While Bark is linked but no phone has registered, the warning stays, since nothing reaches the user yet. Other browsers keep their banner, and the alert sound banner is unchanged. Find out why #169 reverted #159 before taking it again.
 
 Done when: an iOS 15 user agent with a linked Bark device shows no notification warning, one without a link or device still shows it, and a test proves both.
 
-## Next
+### K-70: The pane says "No copy yet" for a repository the agent works in
+
+Status: In review: Hzxon/webchat#223.
+
+Under Coding agents, the project WebChat Server showed `webchat` with the tag "No copy yet", while
+the agent was online. On the same laptop `webchat-agent status` said "Working in Hzxon/webchat in
+its folder", and the agent sent that repository's proposal drafts minutes
+later. The tag tells the owner the agent must clone first, which is false, and it made the board's
+sync look dead.
+
+What is known: `repoState` in `client/src/components/AgentsView.tsx` shows the tag when `seatFor`
+in `client/src/agents.ts` finds no seat for the repository that is online, on an agent that is. A
+seat is a row of `agent_repos`, which each check-in of the agent names and which counts as online
+for 2 minutes (`server/db.ts`). So either the check-ins did not name the repository, or the page
+held an older list. The second fits rule 4 if a new or renewed row does not change `db.stamp`: check
+that first.
+
+Done when: the cause is found and has a test, and a page that is open while the agent connects a
+folder shows "Ready" for it without a reload.
+
+### K-71: A backlog of proposal files hits the send limit, and a new install sends them all again
+
+Status: In review: Hzxon/webchat#224.
+
+`sendProposals` in `agent/plugin.ts` sends one message for each proposal file, in a loop with no
+pause. The server takes 30 sends per 10 seconds from one account and answers the next with 429
+"Slow down a little." On 2026-11-13 main held 37 files, and `/Library/Logs/WebChat/keyholder.log`
+got that line twice at 22:16. The round saves what it sent, so the rest follow 5 minutes later, but
+the failed round also skips the claims and the copy that come after the proposals.
+
+The agent knows a file was sent only from `copies` in its own data folder. A new install starts
+with none, so it sends every file on main again, also one whose card the owner already added,
+since the file stays until the next copy is merged. A new card's draft is not compared with the
+board, so the owner can add the same card twice.
+
+Fix: pace the sends below the server's limit, and let a round that hits the limit go on to the
+claims and the copy. Before it drafts a new card, the agent skips a file whose title a card on the
+board already has.
+
+Done when: a test with 40 proposal files sends them all with no 429, and the same round still reads
+the claims; and an agent with an empty record sends no draft for a file whose card the board has.
+
+### K-72: The board does not show the proposals that wait for it
+
+Status: In review: Hzxon/webchat#222.
+
+A proposal file on main reaches the owner as a card draft (D-117). The draft and its button sit in a
+thread under Chats, in the row "Coding agents", named `Proposed in <repo>: <file>`. The board says
+nothing about them. On 2026-11-13 main held 37 such files, and the linked board showed Ready 4,
+Running 0 and In review 1, with no sign that 37 cards and changes waited for the owner's go. The
+board is the source (D-117), so an owner looks there first, finds nothing, and takes the board for
+stale. The row's name also says nothing of board work.
+
+Fix: the board of a linked repository shows how many proposals wait, such as "37 proposals wait",
+to the owner only, since only they hold the drafts. A click opens the agent pane on those threads.
+The owner still approves each draft with its button (D-104). Nothing new reaches the server: the
+page counts the threads it already has.
+
+Done when: with a proposal draft not yet added, the owner's board shows the count and a click opens
+its thread; the count drops when the draft is added; a teammate's board shows no count; and a board
+with no linked repository shows none.
+
+## Ready
 
 ### R-005: Photos and files
 
@@ -62,23 +167,6 @@ report a comment by someone else when two comments arrive between polls and the 
 user's own (`comparePulls` only looks at the last commenter).
 
 Done when: a comment-only review on the fake GitHub becomes an event, and a test proves it.
-
-### R-016: Link a project to repositories
-
-Status: Planned. Started in #14. Since #17 (D-050), a project links repositories through a GitHub App, and its webhooks post a card into the channel for every pull request that opens, is ready for review, is reopened, merged or closed. Still to do: the Projects tab list, reviewers shown by their WebChat names instead of GitHub logins, and cards that show a pull request's current checks and review decision instead of a snapshot.
-
-Why: the pane lists one person's pull requests across every repository, with no grouping. A team
-wants to see every open pull request of its repositories, by any member, next to its channels. Only
-pull requests are watched today: pushes and commits are not, and teams that push to main see
-nothing.
-
-Scope: a project names one or more repositories. The Projects tab shows their open pull requests,
-grouped by repository. Reading them needs the GitHub App's installation token, which needs the
-app's private key on the server (D-050 keeps no token).
-
-Settled in D-050: every pull request in a linked repository goes to the channel, whoever opens it.
-Everyone in the project sees its title, even without access to the repository, so the list here
-would show the same to the whole project.
 
 ### R-029: Hand a card to a teammate's agent
 
@@ -174,6 +262,27 @@ D-043). The other members see it only in the member count and the member list. W
 "Alice added Carol" in the chat, and Slack shows "Carol joined #general". A note in the message
 list would tell everyone who can read along. The server already knows when each member joined, so
 the notes would show it nothing new. They should not count as unread.
+
+### R-043: Run cards through a harness adapter, picked per session
+
+Status: Idea.
+
+Checked: 2026-11-09. Read docs/roadmap/new-harness-adapter.md, agent/harness.ts, agent/claude.ts, agent/codex.ts and CHANGELOG 0.9.0 (#176, #179) on main at 6a95ad6, and the board's cards and decisions. No open pull requests.
+
+Shipped in #174 (the seam), #176 (the sealed per-harness state and the Settings rows) and #179 (the harness named in each signed request). Proposed 2026-11-09 from the harness audit.
+
+Why: the agent's turn, its isolation proof and the setup it loads were Claude Code's command line, settings files and hook format, in `agent/claude.ts` and `agent/plugin.ts`. The sealed protocol, `Runs`, `Conversations` and the workflow in the plugin know no harness. A student whose team uses Codex or OpenCode could not run an agent at all.
+
+Scope:
+
+- One `Harness` interface in `agent/harness.ts`. `turn` runs one turn in a folder with the brief on stdin and a JSON answer for a schema. `refusal` says why this laptop cannot run cards with it. `offers` names the instructions file, the skills folder and the few knobs it can honor. The Claude adapter is the old code moved behind it, so a Claude Code owner sees no change.
+- Each harness the laptop found goes to the owner sealed in `SetupState`, with its state and knobs. Settings shows one row per harness with an enable toggle.
+- The owner names the harness, signed, in each card run and each conversation, as the repository is named (D-093). A session keeps the harness that started it. Turns nobody picked for run on the host harness.
+- The seam's pull request rewrote the "background Claude" lines of `.claude/rules/projects.md` to "the harness's turn": an adapter owns the turn, the isolation proof and the setup it offers, and `plugin.ts` never names a harness.
+
+Constraints: a knob is offered only when the adapter honors it without running code outside the sandbox and without changing permission or sandbox mode. Model, caps, the instructions file, skills and attribution pass. Permission mode, plugins, hooks and MCP servers never do, for any harness (D-097, D-115). The server learns nothing new: per-harness state is sealed to the owner, and `claudeMd` keeps its wire name. A request from an old page names no harness and runs on the host harness. A request naming a harness that is not enabled fails with the reason. No switching mid-session. `test/agent.test.ts` has a fixture per adapter.
+
+Done when: a Claude Code agent behaves as before and the tests pass; Settings lists the harnesses the laptop has, each with its state and knobs; a card run and a conversation each show the harness the owner picked; a request from an old page runs on the host harness; a request naming a harness that is not enabled fails with the reason.
 
 ## Known issues
 
