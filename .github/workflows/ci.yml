@@ -13,9 +13,9 @@ permissions:
 
 jobs:
   checks:
-    # The owner's own Linux server, since the account's Actions minutes ran out (docs/decisions/self-hosted-ci.md).
-    runs-on: [self-hosted, linux]
-    # A test that leaves a process behind once held a run for hours, and the one runner takes one job at a time.
+    # Either of the owner's runners, a Linux server or a Mac, since the account's Actions minutes ran out (docs/decisions/self-hosted-ci.md).
+    runs-on: self-hosted
+    # A test that leaves a process behind once held a run for hours, and each runner takes one job at a time.
     timeout-minutes: 15
     steps:
       # Pinned to commits, like the actions in release-please.yml and doc-ids.yml.

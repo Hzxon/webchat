@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   unique-ids:
-    runs-on: [self-hosted, linux]
+    runs-on: self-hosted
     steps:
       # Pinned to a commit, like the action in release-please.yml.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,7 +45,7 @@ jobs:
   # the board is linked this fails nothing (R-040, D-117).
   board-copy:
     if: github.event_name == 'pull_request' && github.head_ref != 'agent/board'
-    runs-on: [self-hosted, linux]
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
