@@ -18,12 +18,13 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
 import { cardsOf, copyOf, entriesOf, proposalOf, readCard, usernamesOf } from '../shared/board.ts';
-import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, SKILL_NAME, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type AskDTO, type PairingPick, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
+import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type AskDTO, type PairingPick, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
 import { AgentClient, checkInEvery, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
+import { LocalBench, PrerequisitesMissing, type Bench, type Folder, type HarnessInfo } from './bench.ts';
 import { secretDirs, type Harness } from './harness.ts';
+import { Keep, repoHome } from './keep.ts';
 import { Permits } from './permits.ts';
-import { addWorktree, fetchOrigin } from './runner.ts';
 import { messageOf, REQUEST_TTL_MS, Runs, type Runner, type RunResult } from './runs.ts';
 
 const exec = promisify(execFile);
@@ -41,34 +42,6 @@ const MAX_FIXES = 3;
 /** Check results that mean the code broke, not that someone stopped or held the check. */
 const FAILED = new Set(['FAILURE', 'TIMED_OUT', 'STARTUP_FAILURE', 'ERROR']);
 const PULL_FIELDS = 'state,isDraft,headRefOid,mergeable,statusCheckRollup,reviews,comments,updatedAt';
-/** For this server's git in a worktree: its files, hooks and all, are what the model wrote. */
-const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null'];
-
-/**
- * This server's git in a worktree under `<checkout>/.claude/worktrees`, with hooks off. It names
- * the worktree's git folder from the checkout's list, never from the worktree's `.git` file, which
- * the model could point at a folder whose config runs a command, such as `core.fsmonitor`. A
- * submodule the model stages has such a `.git` file too: status and diff skip submodules here,
- * and `git add` of a whole folder still opens them, so the plugin adds files by name only.
- */
-export async function worktreeGit(worktree: string, ...args: string[]) {
-  const checkout = path.resolve(worktree, '..', '..', '..');
-  const common = path.resolve(checkout, (await exec('git', ['-C', checkout, 'rev-parse', '--git-common-dir'])).stdout.trim());
-  const dotGit = path.join(await fs.realpath(worktree), '.git');
-  const admins = path.join(common, 'worktrees');
-  let gitDir: string | undefined;
-  for (const name of await fs.readdir(admins)) {
-    const pointer = await fs.readFile(path.join(admins, name, 'gitdir'), 'utf8').catch(() => '');
-    // A relative pointer goes through the checkout's path as given, which can hold a link.
-    const target = path.resolve(admins, name, pointer.trim());
-    if (pointer && path.join(await fs.realpath(path.dirname(target)).catch(() => ''), '.git') === dotGit) {
-      gitDir = path.join(admins, name);
-      break;
-    }
-  }
-  if (!gitDir) throw new Error(`${worktree} is no worktree of ${checkout}.`);
-  return (await exec('git', [`--git-dir=${gitDir}`, `--work-tree=${worktree}`, ...NO_HOOKS, '-c', 'diff.ignoreSubmodules=all', ...args])).stdout.trim();
-}
 
 export interface PluginOptions {
   /** The pairing code from the plugin's settings, after WebChat's address. */
@@ -110,21 +83,14 @@ interface BoardCopy {
   claims?: string;
 }
 
-/** A folder the laptop has for a repository, as its mark names it (R-036, D-101). */
-interface Folder {
-  /** As origin names it, such as "acme/app". */
-  repo: string;
-  dir: string;
-  /** Origin's address as configured, which the background Claude's shell can read in `.git`. */
-  origin: string;
-}
-
 /** Where a run's work happens. */
 interface Place {
   branch: string;
   worktree: string;
-  /** What publish compares with: origin's default branch for a run, the last pushed commit for a fix. */
+  /** Origin's default branch, such as `origin/main`, which the briefs and the draft name. */
   base: string;
+  /** The commit of it the run began from, which what the run pushes is checked to build on. */
+  tip: string;
   pull?: { repo: string; number: number };
 }
 
@@ -263,6 +229,14 @@ const OWNER = 'Your owner wrote the text between the marks: change the work as i
 
 type Pull = { number: number; title: string; body?: string; headRefName?: string };
 
+/** A run's branch name from its card, as `agent/<slug>`. */
+const slugOf = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 40);
+
 /** A card's id with its number unpadded, such as K-5 for K-005, as ids from the page and from GitHub compare. */
 const cardKey = (id: string) => id.replace(/-0+(?=\d)/, '-');
 
@@ -347,7 +321,13 @@ export class Plugin {
   private nudge?: AbortController;
   /** What runs and turns load from the owner's Claude setup, as they chose, and what the last one loaded (R-039). Kept on disk. */
   private setup: { choice: SetupChoice; applied?: SetupChoice & { at: number }; asks?: Record<string, Asked> } = { choice: { claudeMd: false, skills: [], noAttribution: false } };
-  private harnesses: Harness[];
+  /** The harnesses as the laptop last had them, found again every minute. */
+  private harnesses: HarnessInfo[] = [];
+  private readonly bench: Bench;
+  /** Its own clone of each repository, which holds the keys: nothing else here fetches or pushes. */
+  private readonly keep: Keep;
+  /** The commit of each folder's default branch that was last sent into it, so only what is new goes next. */
+  private readonly sent = new Map<string, string>();
   /** Each linked board's copy, by project. Kept on disk. */
   private copies: Record<number, BoardCopy> = {};
   private copying = false;
@@ -358,7 +338,8 @@ export class Plugin {
 
   constructor(private readonly options: PluginOptions) {
     this.home = path.join(options.dataDir, 'laptop');
-    this.harnesses = options.harnesses;
+    this.bench = new LocalBench(options.harnesses, options.find);
+    this.keep = new Keep({ dataDir: options.dataDir });
   }
 
   private file(name: string) {
@@ -396,7 +377,7 @@ export class Plugin {
       return false;
     }
     // A mark from before R-036 names no folder; the checkout a window opens in names it (D-101).
-    const here = await originOf(projectDir);
+    const here = (await this.bench.checkout(projectDir)).repo;
     const mark = here && markOf(dataDir, here);
     if (mark && (await fs.readFile(mark, 'utf8').catch(() => undefined)) === '') await fs.writeFile(mark, projectDir);
     this.problem = 'Connecting to WebChat.';
@@ -433,10 +414,10 @@ export class Plugin {
     // Only an approved pairing links anything, and a new one replaces the list. An agent paired before
     // linking runs what it found, minus what its owner turned off, and a harness installed later stays unlinked.
     if (fresh && paired!.picked) this.setup.choice.linked = paired!.picked;
-    else if (!this.setup.choice.linked) this.setup.choice.linked = (await Promise.all(this.harnesses.map(async (h) => ((await h.found()).path ? [h.name] : [])))).flat().filter((n) => !this.setup.choice.off?.includes(n));
+    else if (!this.setup.choice.linked) this.setup.choice.linked = this.harnesses.filter((h) => h.path && !this.setup.choice.off?.includes(h.name)).map((h) => h.name);
     await this.saveSetup();
     this.runs = new Runs(client, (job) => this.run(job), (run) => this.cardRefusal(run), (taken, why) => this.abandon(taken, why));
-    this.conversations = new Conversations(client, this.file('conversations.json'), (job) => this.converse(job), (conversation) => this.endSession(conversation.session));
+    this.conversations = new Conversations(client, this.file('conversations.json'), (job) => this.converse(job), (conversation) => this.endSession(conversation.session), (scratch) => this.bench.drop(scratch));
     this.permits = new Permits(client, (message) => this.ownersOwn(message), () => secretDirs(this.options.dataDir));
     await this.conversations.load();
     this.watched = JSON.parse(await fs.readFile(this.file('pulls.json'), 'utf8').catch(() => '[]')) as Watched[];
@@ -459,16 +440,9 @@ export class Plugin {
   async scan() {
     const { dataDir } = this.options;
     const names = await fs.readdir(path.join(dataDir, 'repos')).catch(() => [] as string[]);
-    const found = await Promise.all(
-      names.map(async (name): Promise<Folder | null> => {
-        const dir = await fs.readFile(path.join(dataDir, 'repos', name, 'connected'), 'utf8').catch(() => '');
-        const origin = dir && (await originUrl(dir));
-        const repo = repoOfUrl(origin);
-        // A folder moved, deleted, or now pushing to another repository serves nothing.
-        return repo && path.basename(repoHome(dataDir, repo)).toLowerCase() === name.toLowerCase() ? { repo, dir, origin } : null;
-      }),
-    );
-    this.folders = new Map(found.flatMap((f) => (f ? [[f.repo.toLowerCase(), f] as const] : [])));
+    const marks = await Promise.all(names.map(async (name) => ({ repo: name.replace('__', '/'), dir: await fs.readFile(path.join(dataDir, 'repos', name, 'connected'), 'utf8').catch(() => '') })));
+    const found = await this.bench.folders(marks.filter((m) => m.dir));
+    this.folders = new Map(found.map((f) => [f.repo.toLowerCase(), f] as const));
     this.client!.repos = [...this.folders.keys()];
     // A folder the owner connected in another window lets the runs and turns that wait for it go on.
     for (const key of this.waiting.keys()) if (this.folders.has(key)) this.settle(key);
@@ -486,24 +460,20 @@ export class Plugin {
     return this.noHarness();
   }
 
-  /** Looks for the harnesses again, and hands a new adapter the owner's choice. */
+  /** Looks for the harnesses again, which hands a new adapter the owner's choice. */
   private async refreshHarnesses() {
-    if (!this.options.find) return;
-    const next = await this.options.find();
-    const fresh = next.filter((h) => !this.harnesses.includes(h));
-    this.harnesses = next;
-    await Promise.all(fresh.map((h) => h.apply(this.setup.choice)));
+    this.harnesses = await this.bench.harnesses();
   }
 
   /** The harnesses a new pairing asks to link, for the owner's approval: those named, or every one the laptop has that is not known to be signed out. */
   private async offered(): Promise<PairingPick[]> {
     const { picks } = this.options;
-    const found = await Promise.all(this.harnesses.map(async (h) => ({ name: h.name, ...(await h.found()) })));
-    return found.flatMap(({ name, path: where, version, signedIn }) => (where && (picks ? picks.includes(name) : signedIn !== false) ? [{ name, ...(version && { version }), ...(signedIn !== undefined && { signedIn }) }] : []));
+    await this.refreshHarnesses();
+    return this.harnesses.flatMap(({ name, path: where, version, signedIn }) => (where && (picks ? picks.includes(name) : signedIn !== false) ? [{ name, ...(version && { version }), ...(signedIn !== undefined && { signedIn }) }] : []));
   }
 
   /** Whether the owner linked a harness and has not turned it off, as an older page does. */
-  private isLinked(harness: Harness) {
+  private isLinked(harness: HarnessInfo) {
     const { linked = [], off = [] } = this.setup.choice;
     return linked.includes(harness.name) && !off.includes(harness.name);
   }
@@ -514,10 +484,10 @@ export class Plugin {
   }
 
   /** Why a harness starts nothing: the owner turned it off or never linked it, or its laptop cannot run it. */
-  private harnessRefusal(harness: Harness) {
+  private harnessRefusal(harness: HarnessInfo) {
     if (this.setup.choice.off?.includes(harness.name)) return `You turned ${harness.name} off, so I start nothing with it. Link it in my settings under Coding agents.`;
     if (!this.isLinked(harness)) return `You have not linked ${harness.name}, so I start nothing with it. Link it in my settings under Coding agents.`;
-    return harness.refusal();
+    return this.bench.refusal(harness.name);
   }
 
   /** Why no linked harness takes turns, or undefined while one does. With none linked, `every` would say all is well. */
@@ -531,23 +501,23 @@ export class Plugin {
   /** Why the harness a request names takes no cards: not linked, missing, or no isolation proof in the folder it would work in. */
   private async noCardsWith(run: RunRequest) {
     const { harness, refused } = await this.pick(run.harness);
-    return refused ?? harness!.refusal(this.folderOf(run.repo!)?.dir ?? this.options.cloneRoot);
+    return refused ?? this.bench.refusal(harness!.name, this.folderOf(run.repo!)?.dir ?? this.options.cloneRoot);
   }
 
   /** Why no linked harness takes cards, or undefined while one does: a harness that answers may still lack the isolation proof a folder needs. */
   private async noCards() {
     const linked = this.linkedHarnesses();
     if (!linked.length) return NONE_LINKED;
-    const refusals = await Promise.all(linked.map(async (h) => (await this.harnessRefusal(h)) ?? h.refusal(this.options.cloneRoot)));
+    const refusals = await Promise.all(linked.map(async (h) => (await this.harnessRefusal(h)) ?? this.bench.refusal(h.name, this.options.cloneRoot)));
     return refusals.every(Boolean) ? refusals[0] : undefined;
   }
 
   /**
    * The harness a request names, or the first linked for one from before the pick, such as a Check
    * again or a proposal's draft, and why it starts nothing, when it does. Picked once per run or
-   * turn, and the harness goes on as an object from there.
+   * turn, and the harness goes on by name from there.
    */
-  private async pick(name?: string): Promise<{ harness?: Harness; refused?: string }> {
+  private async pick(name?: string): Promise<{ harness?: HarnessInfo; refused?: string }> {
     const harness = name === undefined ? this.linkedHarnesses()[0] : this.harnesses.find((h) => h.name === name);
     if (!harness) return { refused: name === undefined ? NONE_LINKED : `I have no ${name} on this laptop. Pick another coding agent.` };
     return { harness, refused: await this.harnessRefusal(harness) };
@@ -566,10 +536,10 @@ export class Plugin {
   }
 
   /** Why the work in one folder fails before it starts, or undefined (D-097). */
-  private folderRefusal(folder: Folder, harness: Harness, purpose?: 'cards' | 'answers') {
+  private folderRefusal(folder: Folder, harness: HarnessInfo, purpose?: 'cards' | 'answers') {
     // The background Claude's shell reads the repository's .git, where an https address can hold a login.
     if (/^https?:\/\/[^/]*@/i.test(folder.origin)) return `The address of ${folder.repo} on this laptop holds a password, which I must not see. Ask Claude Code there to take the login out of the address of origin.`;
-    return harness.refusal(folder.dir, purpose);
+    return this.bench.refusal(harness.name, folder.dir, purpose);
   }
 
   /** Why its runs fail before they start, which Runs asks before each claim: they also push and open drafts with this laptop's GitHub login (D-092). */
@@ -590,7 +560,7 @@ export class Plugin {
    * The folder of a repository. When the laptop has none, says so with `offer`, which the owner
    * answers by having it cloned, and waits for that: at most 30 minutes, or until a cancel (R-036).
    */
-  private async folderFor(repo: string, harness: Harness, signal: AbortSignal, offer: () => Promise<unknown>, purpose?: 'cards' | 'answers') {
+  private async folderFor(repo: string, harness: HarnessInfo, signal: AbortSignal, offer: () => Promise<unknown>, purpose?: 'cards' | 'answers') {
     if (!this.folderOf(repo)) {
       await offer();
       const key = repo.toLowerCase();
@@ -719,14 +689,14 @@ export class Plugin {
       const text = `${noCopy(ask.repo)} Ask me about it under Coding agents, and I offer to clone it.`;
       return void (await this.client!.send(message.conversationId, { text, board: { kind: 'failed', to } }));
     }
-    const base = await fetchOrigin(folder.dir);
+    const { ref } = await this.keep.fetch(ask.repo);
     const entries = new Map<string, string>();
     const handled: BoardCopy['proposals'] = {};
-    for (const { path: file, blob } of await docFiles(folder.dir, base)) {
+    for (const { path: file, blob } of await this.keep.docFiles(ask.repo, ref)) {
       // A proposal named by a short name stays one; an entry not folded in yet is named by its id (D-106).
       const pending = !/\/(roadmap|decisions)\.md$/.test(file);
       if (pending && !/\/[DRKQ]-\d+\.md$/.test(file)) continue;
-      for (const entry of entriesOf(file.startsWith('docs/decisions') ? 'decisions' : 'roadmap', await show(folder.dir, blob))) entries.set(readCard(entry)!.id, entry);
+      for (const entry of entriesOf(file.startsWith('docs/decisions') ? 'decisions' : 'roadmap', await this.keep.show(ask.repo, blob))) entries.set(readCard(entry)!.id, entry);
       if (pending) handled[file] = { blob, draft: '', added: true };
     }
     this.copies[ask.project] = { repo: ask.repo, seen: '', moved: Date.now(), proposals: handled };
@@ -767,7 +737,7 @@ export class Plugin {
    */
   async requestConnect() {
     const { dataDir, projectDir } = this.options;
-    const repo = await originOf(projectDir);
+    const { repo } = await this.bench.checkout(projectDir);
     if (!repo) return NO_REPOSITORY;
     if (!existsSync(path.join(dataDir, 'account.json'))) return 'This agent is not paired, so there is no owner to ask. Pair first: see `webchat-agent setup`.';
     if ((await fs.readFile(markOf(dataDir, repo), 'utf8').catch(() => '')) === projectDir) return `${repo} is connected to this folder already.`;
@@ -809,7 +779,7 @@ export class Plugin {
 
   /** The repository a connect request names, when its folder is still a checkout of it and not marked yet. */
   private async connectable(filed: Extract<Filed, { kind: 'connect' }>) {
-    const repo = await originOf(filed.dir);
+    const { repo } = await this.bench.checkout(filed.dir);
     if (repo?.toLowerCase() !== String(filed.repo).toLowerCase()) return;
     return (await fs.readFile(markOf(this.options.dataDir, repo), 'utf8').catch(() => '')) === filed.dir ? undefined : repo;
   }
@@ -845,7 +815,7 @@ export class Plugin {
       await this.sendSetupState(message.conversationId, message.clientId);
     } else if (approved && asked.kind === 'connect') {
       // The folder may have moved or changed its origin since it asked.
-      if ((await originOf(dir))?.toLowerCase() !== asked.what.toLowerCase()) return void (await send(`${shown(dir)} is no longer a checkout of ${asked.what}, so I connect nothing. ${again}`, 'failed'));
+      if ((await this.bench.checkout(dir)).repo?.toLowerCase() !== asked.what.toLowerCase()) return void (await send(`${shown(dir)} is no longer a checkout of ${asked.what}, so I connect nothing. ${again}`, 'failed'));
       await this.mark(asked.what, dir);
       await send(`Connected ${asked.what}: I work in ${shown(dir)}.`, 'done');
     }
@@ -895,11 +865,11 @@ export class Plugin {
         if (!folder || !(await this.hostFor(folder)) || !(await signedIn())) continue;
         this.looked.set(project.id, now);
         const { roadmap, decisions } = await this.columns(project, versions, docs);
-        const base = await fetchOrigin(folder.dir);
-        await this.sendProposals(project.id, copy, folder, base, [...roadmap, ...decisions], chat);
+        const { ref } = await this.keep.fetch(repo);
+        await this.sendProposals(project.id, copy, ref, [...roadmap, ...decisions], chat);
         await this.sendClaims(project.id, copy, roadmap, chat);
         if (due) {
-          await this.pushCopy(copy, folder, base, { roadmap: copyOf('roadmap', roadmap.map((c) => c.stands)), decisions: copyOf('decisions', decisions.map((c) => c.text)) });
+          await this.pushCopy(copy, ref, { roadmap: copyOf('roadmap', roadmap.map((c) => c.stands)), decisions: copyOf('decisions', decisions.map((c) => c.text)) });
           copy.moved = 0;
         }
       }
@@ -940,10 +910,10 @@ export class Plugin {
    * a card draft, once per version of the file (R-040). A change names its card on the board, with
    * the hash of its text, as an agent's draft does (D-104).
    */
-  private async sendProposals(project: number, copy: BoardCopy, folder: Folder, base: string, cards: Array<{ doc: string; section: string; text: string }>, chat: number) {
-    for (const { path: file, blob } of await docFiles(folder.dir, base)) {
+  private async sendProposals(project: number, copy: BoardCopy, base: string, cards: Array<{ doc: string; section: string; text: string }>, chat: number) {
+    for (const { path: file, blob } of await this.keep.docFiles(copy.repo, base)) {
       if (/\/(roadmap|decisions)\.md$/.test(file) || copy.proposals[file]?.blob === blob || this.skipped.has(`${file}:${blob}`)) continue;
-      const proposal = proposalOf(file, await show(folder.dir, blob));
+      const proposal = proposalOf(file, await this.keep.show(copy.repo, blob));
       const card = proposal?.id ? cards.find((c) => readCard(c.text)?.id === proposal.id) : undefined;
       // A change to a card the board does not have stays a file, as nothing could take it.
       if (!proposal || (proposal.id && !card)) {
@@ -990,29 +960,16 @@ export class Plugin {
    * Writes the board's copy on `agent/board`: from the branch as origin has it, with the default
    * branch merged in, so the push never forces (D-092). The files of proposals the owner added go,
    * as the board holds them now. Keeps one draft pull request open on it, which the owner merges.
+   * It is made in the agent's own clone with no checkout: the repository's files never run or write here.
    */
-  private async pushCopy(copy: BoardCopy, folder: Folder, base: string, files: { roadmap: string; decisions: string }) {
-    const dir = path.join(folder.dir, '.claude', 'worktrees', 'agent-board');
-    const git = (...args: string[]) => worktreeGit(dir, ...args);
-    const remote = await exec('git', ['-C', folder.dir, 'rev-parse', '--verify', '-q', `refs/remotes/origin/${BOARD_BRANCH}`]).then((r) => r.stdout.trim(), () => '');
-    if (!existsSync(dir)) await exec('git', ['-C', folder.dir, ...NO_HOOKS, 'worktree', 'add', '-q', '--detach', dir, remote || base]);
-    await git('checkout', '-q', '-f', '-B', BOARD_BRANCH, remote || base);
-    // The copy is written over both files next, so a conflict there keeps either side.
-    if (remote) await git('merge', '-q', '--no-edit', '-X', 'ours', base);
-    await fs.mkdir(path.join(dir, 'docs'), { recursive: true });
-    await fs.writeFile(path.join(dir, 'docs', 'roadmap.md'), files.roadmap);
-    await fs.writeFile(path.join(dir, 'docs', 'decisions.md'), files.decisions);
-    for (const [file, proposal] of Object.entries(copy.proposals)) if (proposal.added && existsSync(path.join(dir, file))) await git('rm', '-q', '--', file);
-    await git('add', '--', 'docs/roadmap.md', 'docs/decisions.md');
-    const place: Place = { branch: BOARD_BRANCH, worktree: dir, base };
-    if (await git('diff', '--cached', '--quiet').then(() => false, () => true)) {
-      await git('commit', '-q', '-m', 'docs: Copy the board');
-      await this.push(place);
-    }
+  private async pushCopy(copy: BoardCopy, base: string, files: { roadmap: string; decisions: string }) {
+    const remove = Object.entries(copy.proposals).flatMap(([file, proposal]) => (proposal.added ? [file] : []));
+    const made = await this.keep.commitFiles(copy.repo, { branch: BOARD_BRANCH, base, files: { 'docs/roadmap.md': files.roadmap, 'docs/decisions.md': files.decisions }, remove, message: 'docs: Copy the board' });
+    if (made) await this.keep.push(copy.repo, BOARD_BRANCH);
     const open = JSON.parse(await gh(['pr', 'list', '--repo', copy.repo, '--head', BOARD_BRANCH, '--state', 'open', '--json', 'number'])) as unknown[];
-    if (open.length || (await git('rev-list', '--count', `${base}..HEAD`)) === '0') return;
+    if (open.length || !(await this.keep.ahead(copy.repo, base, BOARD_BRANCH))) return;
     const body = 'The board of this project in WebChat, which its owner’s agent copies here. Merge it to update `docs/roadmap.md` and `docs/decisions.md`. The agent pushes each later change of the board to this branch.';
-    await this.openDraft(place, 'docs: Copy the board', body, copy.repo);
+    await this.openDraft(BOARD_BRANCH, base, 'docs: Copy the board', body, copy.repo);
   }
 
   /** Acts on one message. A turn takes long, so the loop does not wait for it: check-ins go on meanwhile. */
@@ -1052,8 +1009,8 @@ export class Plugin {
   /** Answers a `setup` with what the laptop offers, the choice it keeps, and what its last run or turn loaded. */
   private async sendSetupState(chat: number, to: string) {
     const { choice, applied } = this.setup;
-    // One choice serves every harness (D-115), so the first supported adapter's files stand for what the laptop offers: they depend on paths only.
-    const [owner, ...states] = await Promise.all([ownerSetup(this.harnesses[0]!.offers()), ...this.harnesses.map((h) => this.stateOf(h))]);
+    await this.refreshHarnesses();
+    const [owner, ...states] = await Promise.all([this.bench.ownerSetup(), ...this.harnesses.map((h) => this.stateOf(h))]);
     await this.client!.send(chat, {
       text: `My runs load ${setupWords(choice)}.`,
       setupState: { to, ...owner, choice, ...(applied && { applied }), harnesses: states },
@@ -1066,48 +1023,22 @@ export class Plugin {
    * harness that answers but cannot keep its shell from the secrets says so for a folder of
    * `cloneRoot`, where cards run. `refusal` names not-linked too, so a page from before linking greys it.
    */
-  private async stateOf(harness: Harness): Promise<HarnessState> {
-    const { instructions, skills, knobs } = harness.offers();
+  private async stateOf(harness: HarnessInfo): Promise<HarnessState> {
+    const { instructions, skills, knobs } = harness.offers;
     const linked = this.isLinked(harness);
-    const [{ path: where, ...found }, own, cards, refused] = await Promise.all([harness.found(), harness.refusal(), harness.refusal(this.options.cloneRoot), this.harnessRefusal(harness)]);
-    const attention = linked ? own ?? (found.signedIn === false ? `${harness.name} is not signed in.` : undefined) : undefined;
-    return { name: harness.name, ...found, ...(where && { path: shown(where) }), linked, ...(attention && { attention }), answers: refused, refusal: refused ?? cards, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
+    const [own, cards, refused] = await Promise.all([this.bench.refusal(harness.name), this.bench.refusal(harness.name, this.options.cloneRoot), this.harnessRefusal(harness)]);
+    const attention = linked ? own ?? (harness.signedIn === false ? `${harness.name} is not signed in.` : undefined) : undefined;
+    return { name: harness.name, ...(harness.version && { version: harness.version }), ...(harness.signedIn !== undefined && { signedIn: harness.signedIn }), ...(harness.path && { path: shown(harness.path) }), linked, ...(attention && { attention }), answers: refused, refusal: refused ?? cards, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
   }
 
   /** Keeps the setup on disk, and hands each harness its choice. */
   private async saveSetup() {
-    await Promise.all(this.harnesses.map((h) => h.apply(this.setup.choice)));
+    await this.bench.apply(this.setup.choice);
     await this.keepSetup();
   }
 
   private keepSetup() {
     return fs.writeFile(this.file('setup.json'), JSON.stringify(this.setup));
-  }
-
-  /**
-   * What a run or turn loads of the owner's setup, as they chose (R-039): the instructions file the
-   * harness reads, and copies of their chosen skills in a folder made for it, `owner/skills`.
-   * Copies, since a run edits the files of its folders. A skill gone since is left out, and what
-   * was loaded is kept for the owner's next look.
-   */
-  private async loadSetup(session: string, harness: Harness) {
-    const offer = harness.offers();
-    const { choice } = this.setup;
-    const instructions = choice.claudeMd && offer.instructions && existsSync(offer.instructions) ? offer.instructions : undefined;
-    // The same folder for every turn of a session, which the system prompt names as a working
-    // directory, and named "owner", so a skill shows to the model as owner:<name>.
-    const folder = path.join(os.tmpdir(), 'webchat-skills', session, 'owner', 'skills');
-    const skills: string[] = [];
-    for (const name of offer.skills ? choice.skills : []) {
-      const from = path.join(offer.skills!, name);
-      if (!existsSync(path.join(from, 'SKILL.md'))) continue;
-      // Through a link to the skill's folder, but not through links in it, which could lead to secrets.
-      await fs.cp(await fs.realpath(from), path.join(folder, name), { recursive: true, filter: async (file) => !(await fs.lstat(file)).isSymbolicLink() });
-      skills.push(name);
-    }
-    this.setup.applied = { claudeMd: !!instructions, skills, noAttribution: choice.noAttribution, at: Date.now() };
-    await fs.writeFile(this.file('setup.json'), JSON.stringify(this.setup));
-    return { instructions, skills: skills.length ? folder : undefined };
   }
 
   /**
@@ -1141,15 +1072,20 @@ export class Plugin {
     this.cloning.add(key);
     try {
       // A folder there already is used only when it is a checkout of this repository.
-      if (existsSync(dir)) {
-        if ((await originOf(dir))?.toLowerCase() !== key) return await fail(`${shown(dir)} holds something else. Move it away, then ask again.`);
+      const have = await this.bench.checkout(dir);
+      if (have.exists) {
+        if (have.repo?.toLowerCase() !== key) return await fail(`${shown(dir)} holds something else. Move it away, then ask again.`);
       } else {
         await say(`Cloning ${asked.repo} into ${shown(dir)}. This can take a while.`);
-        await fs.mkdir(path.dirname(dir), { recursive: true });
-        // Blobless, so a course repository's history comes without every old file.
-        await gh(['repo', 'clone', asked.repo, dir, '--', '--filter=blob:none']).catch((error: unknown) => {
-          throw new Error(`I could not clone ${asked.repo}: ${messageOf(error).split('\n').find((l) => l.trim()) ?? 'gh failed'}`);
+        // The agent's own clone is made first, and the folder from a bundle of it: the owner's account never fetches from GitHub.
+        const { ref, tip } = await this.keep.fetch(asked.repo).catch((error: unknown) => {
+          throw new Error(`I could not clone ${asked.repo}: ${messageOf(error).split('\n').find((l) => l.trim()) ?? 'git failed'}`);
         });
+        await this.bundled(async (file) => {
+          await this.keep.baseBundle(asked.repo, file, ref);
+          await this.bench.clone(dir, asked.repo, file, ref);
+        });
+        this.sent.set(dir, tip);
       }
       const mark = markOf(this.options.dataDir, asked.repo);
       await fs.mkdir(path.dirname(mark), { recursive: true, mode: 0o700 });
@@ -1232,10 +1168,12 @@ export class Plugin {
     const text = noCopy(request.repo!);
     const harness = await this.harnessFor(request.harness);
     const folder = await this.folderFor(request.repo!, harness, signal, () => this.runs!.report(taken, { kind: 'nocopy', note: text }, text));
-    const { branch, dir, base } = await addWorktree(folder.dir, request, path.join(folder.dir, '.claude', 'worktrees'));
-    const place: Place = { branch, worktree: dir, base };
+    const base = await this.fetchBase(folder);
+    // A card run again gets a branch of its own, next to the one its earlier run left, here or on origin.
+    const { branch, worktree } = await this.bench.prepare({ dir: folder.dir, slug: slugOf(`${request.card}-${request.title}`), taken: await this.keep.branches(folder.repo), tip: base.tip });
+    const place: Place = { branch, worktree, base: base.ref, tip: base.tip };
     const session = randomUUID();
-    const check = (await this.ask(dir, session, false, checkBrief(request.card, place, card, decisions, cards), CHECK, signal, harness, { taken, asks: request.asks })) as Record<string, unknown>;
+    const check = (await this.ask(worktree, session, false, checkBrief(request.card, place, card, decisions, cards), CHECK, signal, harness, { taken, asks: request.asks })) as Record<string, unknown>;
     const date = new Date().toISOString().slice(0, 10);
     if (check.outcome === 'stale') {
       this.endSession(session);
@@ -1248,7 +1186,7 @@ export class Plugin {
     }
     const held: Planned = { ...place, taken, request, session, harness: harness.name, repo: folder.repo, body: `Claims ${request.card}. Checked ${date}: ${line(check.checked, 500)}`, at: Date.now() };
     // The plan gate, on unless the owner turned off the knob its harness declares (docs/decisions/redirect-plan-gate.md).
-    if (!(this.setup.choice.noPlan && harness.offers().knobs.includes('noPlan'))) {
+    if (!(this.setup.choice.noPlan && harness.offers.knobs.includes('noPlan'))) {
       this.plans.push(held);
       await this.savePlans();
       const plan = typeof check.plan === 'string' ? check.plan.trim().slice(0, LIMITS.runNoteLength) : '';
@@ -1259,9 +1197,10 @@ export class Plugin {
 
   /** An empty commit and the draft claim the card before any code (D-062), then the work goes on in the check's session. */
   private async claim({ taken, request, session, harness, repo, body, at, ...place }: Planned, brief: (pull: { repo: string; number: number }) => string, signal: AbortSignal) {
-    await worktreeGit(place.worktree, 'commit', '-q', '--allow-empty', '-m', `chore: Claim ${request.card}`);
-    const head = await this.push(place);
-    const pull = await this.openDraft(place, `${request.card}: ${request.title}`, body, repo);
+    await this.bench.commit({ worktree: place.worktree, message: `chore: Claim ${request.card}`, allowEmpty: true });
+    // A plan kept from before the bundles has no tip: the default branch as it is now stands in.
+    const head = (await this.publish(repo, place, place.tip ?? (await this.keep.fetch(repo)).tip))!;
+    const pull = await this.openDraft(place.branch, place.base, `${request.card}: ${request.title}`, body, repo);
     // By name, so every round resumes with the harness that started the session.
     const watched: Watched = { ...place, taken, request, pull, head, session, harness, fixes: 0, seenHead: '', seenNote: new Date().toISOString(), unfinished: {} };
     this.watched.push(watched);
@@ -1288,17 +1227,17 @@ export class Plugin {
     const { seen } = await seenOf(named ? await this.board(this.projectOf(pull.request)) : undefined);
     // A few drafts at most, since each is a message of its own.
     const drafts = draftsOf(answer.drafts, seen, new Set(Object.keys(seen))).slice(0, 5);
+    await this.leftovers(pull, answer.title);
     // Only what this turn added: the claim, or the last round, is pushed already.
-    const place: Place = { ...pull, base: pull.head };
     if (answer.outcome === 'decision') {
       const decision = drafts.find((d) => d.kind === 'D');
       if (!decision) throw new Error(answer.note || 'I stopped for a decision, but drafted none.');
-      if (await newCommits(place)) pull.head = await this.push(place);
+      pull.head = (await this.publish(pull.pull.repo, pull, pull.head, false)) ?? pull.head;
       pull.unfinished = { paused: Date.now() };
       await this.saveWatched();
       return { kind: 'decision', branch: pull.branch, pull: pull.pull, note: answer.note || undefined, card: decision };
     }
-    pull.head = await this.push(place);
+    pull.head = (await this.publish(pull.pull.repo, pull, pull.head))!;
     delete pull.unfinished;
     const made = (Array.isArray(answer.decisions) ? answer.decisions : []).filter((d): d is string => typeof d === 'string' && d.startsWith('D-') && d in seen);
     if (made.length) pull.decisions = [...new Set([...(pull.decisions ?? []), ...made])];
@@ -1315,8 +1254,8 @@ export class Plugin {
    * closes the draft (docs/decisions/stop-pauses-run.md). The process is dead already.
    */
   private async pause(pull: Watched): Promise<RunResult> {
-    const place: Place = { ...pull, base: pull.head };
-    if (await newCommits(place)) pull.head = await this.push(place);
+    await this.leftovers(pull);
+    pull.head = (await this.publish(pull.pull.repo, pull, pull.head, false)) ?? pull.head;
     pull.unfinished = { paused: Date.now(), stopped: true };
     await this.saveWatched();
     // The stop is answered; the next one ends the run.
@@ -1365,36 +1304,37 @@ export class Plugin {
   }
 
   /** One turn of `harness` in `cwd`: the message on stdin, the JSON answer `schema` asks for (D-097). A card's turn reports its progress to `taken`. */
-  private async ask(cwd: string, session: string, resume: boolean, message: string, schema: object, signal: AbortSignal, harness: Harness, who: Who) {
-    const setup = await this.loadSetup(session, harness);
+  private async ask(cwd: string, session: string, resume: boolean, message: string, schema: object, signal: AbortSignal, harness: HarnessInfo, who: Who) {
     const taken = 'taken' in who ? who.taken : undefined;
     const progress = taken && this.progress(taken);
     // A page from before questions sets no flag, and gets no question: its harness refuses what it would ask (docs/decisions/harness-approvals.md).
     const permit = who.asks
-      ? this.permits!.forTurn({
-          session,
-          // The owner's direct chat, which is where a card's request is too.
-          chat: this.ownerChat() ?? ('taken' in who ? who.taken.conversation : who.chat),
-          thread: 'taken' in who ? { request: who.taken.message } : { to: who.to },
-          roots: [cwd, ...(setup.skills ? [setup.skills] : [])],
-        })
+      ? (roots: string[]) =>
+          this.permits!.forTurn({
+            session,
+            // The owner's direct chat, which is where a card's request is too.
+            chat: this.ownerChat() ?? ('taken' in who ? who.taken.conversation : who.chat),
+            thread: 'taken' in who ? { request: who.taken.message } : { to: who.to },
+            roots,
+          })
       : undefined;
     // One process takes every turn of a session, so it gets every schema the session's turns use.
     const schemas = schema === CHECK || schema === ANSWER ? [CHECK, ANSWER] : [schema];
-    const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup, signal, progress: progress?.line, ask: permit?.ask, quiet: permit?.quiet }).finally(() => {
+    const { answer, applied } = await this.bench.turn({ harness: harness.name, cwd, session, resume, message, schema, schemas, setup: this.setup.choice }, { signal, progress: progress?.line, permit }).finally(() => {
       progress?.end();
-      permit?.done();
       // A conversation's run is its turn.
       if (!taken) this.permits!.drop(session);
-      return setup.skills && fs.rm(path.join(os.tmpdir(), 'webchat-skills', session), { recursive: true, force: true });
     });
+    // What the pane learns this turn loaded of the owner's setup.
+    this.setup.applied = { ...applied, at: Date.now() };
+    await this.keepSetup();
     // The owner may cancel while the turn ends; nothing is pushed or posted then.
     if (signal.aborted) throw new Error('the owner cancelled the run.');
     return answer;
   }
 
   /** A turn on a card: done or paused with a note, or failed with what blocks it. */
-  private async work(pull: Watched, session: string, resume: boolean, message: string, signal: AbortSignal, harness: Harness) {
+  private async work(pull: Watched, session: string, resume: boolean, message: string, signal: AbortSignal, harness: HarnessInfo) {
     const answer = (await this.ask(pull.worktree, session, resume, message, ANSWER, signal, harness, { taken: pull.taken, asks: pull.request.asks })) as Answer;
     const note = answer.note.trim().slice(0, 500);
     if (answer.outcome !== 'done' && answer.outcome !== 'decision') throw new Error(note || 'I gave up.');
@@ -1419,33 +1359,19 @@ export class Plugin {
     const listing = folder && openPulls(folder.repo);
     const board = await this.board(conversation.project);
     if (!folder && !board) throw new Error('I am not in that project, so I cannot read its board. Add me to it, then ask again.');
-    // A link swapped in for the folder would lead the turn elsewhere, so only a real folder counts.
-    if (!conversation.scratch || !(await fs.lstat(conversation.scratch).then((s) => s.isDirectory(), () => false))) {
-      const dir = path.join(os.tmpdir(), 'webchat-scratch', randomUUID());
-      await fs.mkdir(dir, { recursive: true });
-      if (folder) await exec('git', ['init', '-q', dir]);
-      conversation.scratch = dir;
-      delete conversation.fetched;
-    }
     // Every turn fetches, so a reply after a merge reads the merged code, not the first turn's.
+    const base = folder && (await this.fetchBase(folder).catch(() => {
+      throw new Error('The laptop could not get your team’s code from GitHub. Check that it is online, then ask again.');
+    }));
+    const { scratch, fetched } = await this.bench.scratch({ scratch: conversation.scratch, dir: folder?.dir, base: base?.ref, tip: base?.tip, fetched: conversation.fetched });
+    // A new copy starts at the tip, so nothing moved under it.
+    const was = scratch === conversation.scratch ? conversation.fetched : undefined;
+    conversation.scratch = scratch;
+    conversation.fetched = fetched;
     let moved = '';
-    if (folder) {
-      const base = await fetchOrigin(folder.dir).catch(() => {
-        throw new Error('The laptop could not get your team’s code from GitHub. Check that it is online, then ask again.');
-      });
-      const now = (await exec('git', ['-C', folder.dir, 'rev-parse', `refs/remotes/${base}`])).stdout.trim();
-      const was = conversation.fetched;
-      if (now !== was) {
-        const dir = conversation.scratch;
-        await exec('git', ['-C', dir, 'fetch', '-q', '--depth', '1', folder.dir, `refs/remotes/${base}`]);
-        // Forced: the copy's changes are never kept, and the brief said so.
-        await exec('git', ['-C', dir, ...NO_HOOKS, 'checkout', '-q', '-f', '--detach', 'FETCH_HEAD']);
-        conversation.fetched = now;
-        if (was) {
-          const [a, b, branch] = [was.slice(0, 7), now.slice(0, 7), base.replace(/^origin\//, '')];
-          moved = `Since your last turn, ${branch} moved from ${a} to ${b}. Your scratch copy now holds ${b}, and anything you changed in it is gone. \`git diff ${a} ${b}\` shows what changed: reread what your answer relies on.`;
-        }
-      }
+    if (base && was && fetched !== was) {
+      const [a, b, branch] = [was.slice(0, 7), fetched!.slice(0, 7), base.ref.replace(/^origin\//, '')];
+      moved = `Since your last turn, ${branch} moved from ${a} to ${b}. Your scratch copy now holds ${b}, and anything you changed in it is gone. \`git diff ${a} ${b}\` shows what changed: reread what your answer relies on.`;
     }
     const pulls = await listing;
     const { items, seen } = await seenOf(board);
@@ -1460,7 +1386,7 @@ export class Plugin {
           ...(listed !== (conversation.pulls ?? '') ? ['', listed] : []),
         ].join('\n')
       : promptBrief(input, board, folder?.repo, listed);
-    const answer = (await this.ask(conversation.scratch, conversation.session, resume, message, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks })) as { reply?: unknown; drafts?: unknown };
+    const answer = (await this.ask(scratch, conversation.session, resume, message, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks })) as { reply?: unknown; drafts?: unknown };
     // Only once the turn read them, so a turn cut short tells the next one again.
     conversation.seen = seen;
     conversation.pulls = listed;
@@ -1483,22 +1409,64 @@ export class Plugin {
     return { project: project.name, cards, decisions: decisions.filter((d) => isHeld(d.text)) };
   }
 
-  /** Pushes the worktree's branch, never forced, and returns the commit it pushed. */
-  private async push(place: Place) {
-    const git = (...args: string[]) => worktreeGit(place.worktree, ...args);
-    if ((await git('symbolic-ref', '--short', 'HEAD').catch(() => '')) !== place.branch) {
-      throw new Error(`The work is not on ${place.branch}, the branch the worktree started on.`);
+  /**
+   * Pushes what a run committed after `since`, never forced: the worktree makes a bundle of its
+   * branch alone, the agent's own clone takes it only if it passes its checks, and that pushes.
+   * Returns the commit pushed, or undefined for no new commits when `required` is false.
+   */
+  private async publish(repo: string, place: Place, since: string, required = true) {
+    const head = await this.bundled(async (file) => {
+      const made = await this.bench.bundle({ worktree: place.worktree, branch: place.branch, since, file });
+      return made && this.keep.acceptBundle(repo, file, { branch: place.branch, since, reported: made });
+    });
+    if (!head) {
+      if (required) throw new Error('I left no new commits.');
+      return;
     }
-    if (!(await newCommits(place))) throw new Error('I left no new commits.');
-    // Only this branch, and never forced: a push that would drop someone's commits fails.
-    await git('push', '-q', 'origin', `refs/heads/${place.branch}:refs/heads/${place.branch}`);
-    return git('rev-parse', 'HEAD');
+    await this.keep.push(repo, place.branch);
+    return head;
+  }
+
+  /** Commits what a harness that cannot commit left in its worktree, titled with the work's own title. */
+  private async leftovers(pull: Place & { harness?: string; request: RunRequest }, title?: string) {
+    if (this.harnesses.find((h) => h.name === pull.harness)?.commits === false) await this.bench.commit({ worktree: pull.worktree, message: title?.trim() || `chore: Work on ${pull.request.card}`, leftovers: true });
+  }
+
+  /** Runs `work` with the path of a bundle in the agent's own folder, which goes afterwards. */
+  private async bundled<T>(work: (file: string) => Promise<T>) {
+    const dir = path.join(this.options.dataDir, 'bundles');
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    const file = path.join(dir, `${randomUUID()}.bundle`);
+    try {
+      return await work(file);
+    } finally {
+      await fs.rm(file, { force: true });
+    }
+  }
+
+  /**
+   * Fetches a repository into the agent's clone, and sends what is new of its default branch into
+   * the folder as a bundle, whole when the folder lacks what the last one built on. A worktree or a
+   * scratch copy starts from it.
+   */
+  private async fetchBase(folder: Folder) {
+    const base = await this.keep.fetch(folder.repo);
+    const since = this.sent.get(folder.dir);
+    if (since !== base.tip) {
+      const take = (from?: string) =>
+        this.bundled(async (file) => {
+          await this.keep.baseBundle(folder.repo, file, base.ref, from);
+          await this.bench.take(folder.dir, file, base.ref);
+        });
+      await take(since).catch((error: unknown) => (since && error instanceof PrerequisitesMissing ? take() : Promise.reject(error)));
+      this.sent.set(folder.dir, base.tip);
+    }
+    return base;
   }
 
   /** Opens the run's draft pull request, with the title and body the answer gave. */
-  private async openDraft(place: Place, title: string, body: string, repo: string) {
-    const base = place.base.replace(/^origin\//, '');
-    const opened = await gh(['pr', 'create', '--draft', '--repo', repo, '--base', base, '--head', place.branch, '--title', title, '--body', body]);
+  private async openDraft(branch: string, base: string, title: string, body: string, repo: string) {
+    const opened = await gh(['pr', 'create', '--draft', '--repo', repo, '--base', base.replace(/^origin\//, ''), '--head', branch, '--title', title, '--body', body]);
     const number = Number(/\/pull\/(\d+)/.exec(opened)?.[1]);
     if (!number) throw new Error(`gh opened no pull request: ${opened}`);
     return { repo, number };
@@ -1531,7 +1499,7 @@ export class Plugin {
   private async connect() {
     // Questions need no GitHub login, so connecting does not wait for one.
     const github = (await signedIn()) ? '' : ` ${GITHUB}`;
-    const repo = await originOf(this.options.projectDir);
+    const { repo } = await this.bench.checkout(this.options.projectDir);
     if (!repo) return `${NO_REPOSITORY}${github}`;
     await this.mark(repo, this.options.projectDir);
     const paired = existsSync(path.join(this.options.dataDir, 'account.json'));
@@ -1550,7 +1518,7 @@ export class Plugin {
 
   /** Removes the folder's mark, never its files. */
   private async disconnect() {
-    const repo = await originOf(this.options.projectDir);
+    const { repo } = await this.bench.checkout(this.options.projectDir);
     if (!repo) throw new Error('This folder is no GitHub repository, so it was never connected.');
     await fs.rm(markOf(this.options.dataDir, repo), { force: true });
     if (this.client) await this.scan();
@@ -1771,9 +1739,9 @@ export class Plugin {
   private async fix(pull: Watched, why: { line: string; details: string }, signal: AbortSignal): Promise<RunResult> {
     const folder = this.folderOf(pull.pull.repo);
     if (!folder) throw new Error(noCopy(pull.pull.repo));
-    await fetchOrigin(folder.dir);
+    await this.fetchBase(folder);
     // With hooks off: the branch the worktree checks out is the model's.
-    if (!existsSync(pull.worktree)) await exec('git', ['-C', folder.dir, ...NO_HOOKS, 'worktree', 'add', '-q', pull.worktree, pull.branch]);
+    await this.bench.reopen({ dir: folder.dir, worktree: pull.worktree, branch: pull.branch });
     // A draft from before R-035 has no session to resume, so its first round starts one.
     const resume = pull.session !== undefined;
     pull.session ??= randomUUID();
@@ -1782,7 +1750,7 @@ export class Plugin {
 
   /** Ends what a harness keeps running for a session that is over: its process. */
   private endSession(session?: string) {
-    if (session) for (const harness of this.harnesses) void harness.end?.(session).catch(log);
+    if (session) void this.bench.end(session).catch(log);
   }
 
   private async unwatch(pull: Watched) {
@@ -1922,9 +1890,6 @@ export const line = (value: unknown, max: number) => (typeof value === 'string' 
 const draftsOf = (raw: unknown, seen: NonNullable<Conversation['seen']>, held: Set<string>) =>
   (Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : []).flatMap((d) => draftOf(d, seen, held) ?? []);
 
-/** The commits of a place's branch since its base, a line each, or '' when there are none. */
-const newCommits = (place: Place) => worktreeGit(place.worktree, 'log', '--oneline', `${place.base}..HEAD`);
-
 /**
  * A draft in a turn's answer, if it has the right shape (D-104). A change names a card or decision
  * the brief held, with the hash of its text there; a draft naming another becomes a new one. It
@@ -1999,18 +1964,6 @@ function steerBrief(pull: Watched, why: { details: string }) {
   ].join('\n');
 }
 
-/** The files under `docs/` that a board's copy and its proposals use, on a commit, with their blobs (R-040). */
-async function docFiles(dir: string, commit: string) {
-  const out = (await exec('git', ['-C', dir, 'ls-tree', '-r', commit, '--', 'docs/roadmap.md', 'docs/decisions.md', 'docs/roadmap', 'docs/decisions'])).stdout;
-  return out.split('\n').flatMap((line) => {
-    const found = /^\d+ blob ([0-9a-f]+)\t(.+\.md)$/.exec(line);
-    return found && !found[2]!.endsWith('/README.md') ? [{ path: found[2]!, blob: found[1]! }] : [];
-  });
-}
-
-/** A blob's text, as git holds it. */
-const show = (dir: string, blob: string) => exec('git', ['-C', dir, 'cat-file', '-p', blob], { maxBuffer: 32 * 1024 * 1024 }).then((r) => r.stdout);
-
 /** Texts in parts of at most 20 KB as JSON, so each part fits one message; one part when there are none. */
 function inParts(texts: string[]) {
   const parts: string[][] = [[]];
@@ -2026,18 +1979,6 @@ function inParts(texts: string[]) {
   }
   return parts;
 }
-
-/** Origin's address as a checkout configures it, or '' for none. */
-const originUrl = (dir: string) => exec('git', ['-C', dir, 'config', '--get', 'remote.origin.url']).then((r) => r.stdout.trim(), () => '');
-
-/** The GitHub repository an address names, as "owner/name", or null. */
-function repoOfUrl(url: string) {
-  const name = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(url)?.[1];
-  return name && isRepoName(name) ? name : null;
-}
-
-/** The GitHub repository a checkout pushes to, from origin's address as configured. */
-export const originOf = async (dir: string) => repoOfUrl(await originUrl(dir));
 
 /** The mark that names a repository's folder on this laptop, which only the owner's connect or clone writes (D-101, D-108). */
 const markOf = (dataDir: string, repo: string) => path.join(repoHome(dataDir, repo), 'connected');
@@ -2086,28 +2027,4 @@ async function takeLock(file: string) {
     }
   }
   return false;
-}
-
-/** A repository's folder in the plugin's, such as `repos/acme__app` (D-094). */
-export const repoHome = (dataDir: string, repo: string) => path.join(dataDir, 'repos', repo.replace('/', '__'));
-
-/** What the owner's setup on this laptop offers a run (R-039): whether the instructions file is there, and each skill with its description. */
-async function ownerSetup({ instructions, skills: dir }: ReturnType<Harness['offers']>) {
-  const names = (dir ? await fs.readdir(dir).catch(() => [] as string[]) : []).filter((name) => SKILL_NAME.test(name)).sort();
-  const skills: Array<{ name: string; description: string }> = [];
-  for (const name of names.slice(0, LIMITS.setupSkills)) {
-    const text = await fs.readFile(path.join(dir!, name, 'SKILL.md'), 'utf8').catch(() => undefined);
-    if (text === undefined) continue;
-    const description = skillDescription(text);
-    const max = LIMITS.skillDescriptionLength;
-    skills.push({ name, description: description.length > max ? `${description.slice(0, max - 1)}…` : description });
-  }
-  return { claudeMd: !!instructions && existsSync(instructions), skills };
-}
-
-/** A SKILL.md's description, from its front matter: one line, or the indented lines a block scalar folds. */
-function skillDescription(text: string) {
-  const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? '';
-  const value = /^description:[ \t]*(?:[>|][+-]?[ \t]*$)?(.*(?:\r?\n[ \t]+.*)*)/m.exec(front)?.[1] ?? '';
-  return value.replace(/\s+/g, ' ').trim().replace(/^(["'])(.*)\1$/, '$2');
 }

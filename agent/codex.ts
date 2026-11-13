@@ -218,6 +218,8 @@ export function codexHarness(program: string, dataDir: string): Harness {
   return {
     name: 'Codex',
     asks: true,
+    // Its workspace-write sandbox keeps `.git` and the git folder read-only (codex-rs/core/README.md).
+    commits: false,
     async refusal(dir, purpose) {
       if (!program) return 'I cannot find Codex on this laptop.';
       if (dir && purpose !== 'answers') return CODEX_GAP;
