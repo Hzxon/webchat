@@ -1,29 +1,9 @@
 {
   "name": "webchat",
-  "version": "0.9.0",
-  "description": "Runs the WebChat board cards you hand to Claude Code in a sandboxed background Claude, and fixes their draft pull requests.",
+  "version": "0.10.0",
+  "description": "The last release of the WebChat plugin: skills that run webchat-agent. The agent itself runs from webchat-agent setup, and the plugin hosts nothing.",
   "author": {
     "name": "Hzxon"
   },
-  "repository": "https://github.com/Hzxon/webchat",
-  "userConfig": {
-    "pairing_code": {
-      "type": "string",
-      "title": "Pairing code",
-      "description": "In WebChat, choose Connect coding agent and paste the code it shows. It works once, within 10 minutes. Paste a new one to pair again.",
-      "sensitive": true,
-      "required": true
-    }
-  },
-  "mcpServers": {
-    "webchat": {
-      "command": "node",
-      "args": [
-        "${CLAUDE_PLUGIN_ROOT}/server.mjs"
-      ],
-      "env": {
-        "WEBCHAT_PAIRING_CODE": "${user_config.pairing_code}"
-      }
-    }
-  }
+  "repository": "https://github.com/Hzxon/webchat"
 }
