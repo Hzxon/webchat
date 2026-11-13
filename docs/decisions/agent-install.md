@@ -11,5 +11,5 @@ for `_webchat`, and a missing harness's own installer. It never changes a securi
 follows the server's release, forward only. `doctor` reruns the checks. Why: one line, one
 password and two approvals in the browser.
 
-Cost: four builds in every release. A tampered server could show a different line, as it could
-change the page (README). Going back to an older release takes running the line again.
+Cost: a build per OS and processor in every release, two for now (docs/decisions/self-hosted-ci.md).
+A tampered server could show a different line, as it could change the page (README). Going back to an older release takes running the line again.

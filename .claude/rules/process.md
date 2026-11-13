@@ -32,7 +32,7 @@ docs/decisions.md that explains it. The process itself is in AGENTS.md.
 - A constraint that people editing an area must hold gets one line in that area's file under `.claude/rules/` (D-090).
 - The `doc-ids` check fails duplicate `### D-0xx:`, `K-n`, `R-nnn` and `Q-n` headings; until the board is linked, the later pull request renumbers (D-063).
 - CI runs typecheck, tests and build, and `doc-ids` its id check, on pull requests and on main. Main has no branch protection and no merge queue, so nothing checks a pull request again after main moves (D-076).
-- CI and `doc-ids` run on either of the owner's self-hosted runners (`runs-on: self-hosted`), the Linux server or the Mac, and Release Please on the Linux one only (`[self-hosted, linux]`); none spends Actions minutes, and only the agent's release builds use GitHub's machines (docs/decisions/self-hosted-ci.md).
+- CI and `doc-ids` run on either of the owner's self-hosted runners (`runs-on: self-hosted`), the Linux server or the Mac, and Release Please on the Linux one only (`[self-hosted, linux]`); none spends Actions minutes, nor do the agent's release builds, which run on the Mac (`[self-hosted, macos, arm64]`) and the Linux server (`[self-hosted, linux, x64]`) (docs/decisions/self-hosted-ci.md).
 - The pull request title type sets the version: `fix` patch, `feat` minor, `!` or `BREAKING CHANGE:` also minor below 1.0.0 (D-055).
 - Never edit the version or `CHANGELOG.md` by hand; Release Please owns them, and needs "Allow GitHub Actions to create and approve pull requests" on (D-055).
 - A Release Please commit deploys, since `GET /api/config` names the version it sets; the ignore script skips only commits that change none of the app (D-058).

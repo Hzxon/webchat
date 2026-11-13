@@ -601,9 +601,9 @@ stay open. It runs Claude Code and Codex, whichever you link. Setup keeps the ag
 locked room: an account of its own that no program of yours can read. An administrator's password
 still reads them.
 
-It works on a Mac or on Linux, and on Windows only in Ubuntu on WSL2. The account you run it in must
-be an administrator: in the `admin` group on a Mac, in `sudo`, `wheel` or `admin` on Linux, since
-setup makes an account and installs a system service with your password. For any other account it
+It works on a Mac with Apple silicon or on Linux on an x64 processor, and on Windows only in Ubuntu
+on WSL2. The account you run it in must be an administrator: in the `admin` group on a Mac, in
+`sudo`, `wheel` or `admin` on Linux, since setup makes an account and installs a system service with your password. For any other account it
 says so and changes nothing. A laptop without an administrator cannot run the agent. One laptop has
 one owner: only you can be in the group that opens the agent's socket.
 
