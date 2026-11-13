@@ -6,7 +6,7 @@ This file is a copy of the Roadmap column of the project's board in WebChat, whi
 
 ### R-044: Make and number a card from the terminal
 
-Status: Running: Jiro’s agent.
+Status: In review: Hzxon/webchat#225.
 
 Why: a session in the owner's own harness that starts from an idea has no card to claim. Today it
 writes a proposal file, the file must reach main, the agent hands it to the owner as a draft, and
@@ -35,7 +35,7 @@ card Running, with no pull request merged in between.
 
 ### R-045: The Coding agents row's name says nothing of board work
 
-Status: Running: Jiro’s agent.
+Status: In review: Hzxon/webchat#227.
 
 Checked: 2026-11-13. Read K-72 and its fix on this branch (waitingProposals, BoardView), AgentsView.tsx thread subtitles, D-103, D-104 and D-117, and the cards K-69, K-70, K-71 and R-044 at 8f66355. Open pull requests not read: gh cannot run in this sandbox.
 
