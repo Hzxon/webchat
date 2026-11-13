@@ -6,6 +6,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 /** What marks an account or group as setup's own, in its full name or comment: uninstall deletes only these. */
 export const MARK = 'WebChat agent (made by webchat-agent setup)';
@@ -96,13 +97,29 @@ export interface Cmd {
   stdio?: 'show' | 'tty';
   /** A failure is fine: the thing may not be there. */
   soft?: true;
+  /** A failure is tried again, up to 10 times half a second apart. */
+  again?: true;
 }
 export type Root = (cmd: Cmd) => Promise<string>;
 
 /** Runs each command, and stops at the first that fails unless it is soft. */
 export async function runAll(root: Root, cmds: Cmd[]) {
-  for (const cmd of cmds) await root(cmd).catch((error: unknown) => (cmd.soft ? undefined : Promise.reject(error)));
+  for (const cmd of cmds) {
+    for (let tries = 1; ; tries++) {
+      try {
+        await root(cmd);
+        break;
+      } catch (error) {
+        if (cmd.again && tries < 10) await sleep(500);
+        else if (cmd.soft) break;
+        else throw error;
+      }
+    }
+  }
 }
+
+/** `launchctl bootout` returns before launchd lets go of a running service, and a `bootstrap` right after fails with error 5, so it is tried again. */
+export const bootstrap = (domain: string, file: string): Cmd => ({ argv: ['launchctl', 'bootstrap', domain, file], again: true });
 
 /** Runs commands as the process that owns them, with `wrap` saying what to execute. Output is captured unless the command shows it. */
 const rootVia =
@@ -341,7 +358,7 @@ export const unitText = (l: Layout, program: string) => (l.platform === 'darwin'
 
 /** Writes the service's file and starts it, replacing one that runs. */
 export function servicePlan(l: Layout, program: string): Cmd[] {
-  if (l.platform === 'darwin') return [put(l.unit, '644', unitText(l, program)), { argv: ['launchctl', 'bootout', `system/${l.label}`], soft: true }, { argv: ['launchctl', 'bootstrap', 'system', l.unit] }];
+  if (l.platform === 'darwin') return [put(l.unit, '644', unitText(l, program)), { argv: ['launchctl', 'bootout', `system/${l.label}`], soft: true }, bootstrap('system', l.unit)];
   return [put(l.unit, '644', unitText(l, program)), { argv: ['systemctl', 'daemon-reload'] }, { argv: ['systemctl', 'enable', l.label] }, { argv: ['systemctl', 'restart', l.label] }];
 }
 
@@ -417,7 +434,7 @@ WantedBy=timers.target
 /** Installs the updater and starts it, replacing one that runs. `config` is what it reads of this laptop; left out, the one there stays. */
 export function updaterPlan(l: Layout, program: string, config?: { server?: string; releases?: string; suffix?: string }): Cmd[] {
   const configure = config ? [put(updateConfigOf(l), '644', JSON.stringify(config))] : [];
-  if (l.platform === 'darwin') return [...configure, put(l.updaterUnit, '644', updaterPlist(l, program)), ...stopUpdaterPlan(l), { argv: ['launchctl', 'bootstrap', 'system', l.updaterUnit] }];
+  if (l.platform === 'darwin') return [...configure, put(l.updaterUnit, '644', updaterPlist(l, program)), ...stopUpdaterPlan(l), bootstrap('system', l.updaterUnit)];
   return [...configure, put(l.updaterUnit, '644', updaterService(l, program)), put(l.updaterTimer, '644', updaterTimerUnit()), { argv: ['systemctl', 'daemon-reload'] }, { argv: ['systemctl', 'enable', '--now', `${l.updaterLabel}.timer`] }];
 }
 
