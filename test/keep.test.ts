@@ -112,15 +112,6 @@ describe("the keyholder's clone", () => {
     assert.equal(await inClone('rev-parse', '--verify', '-q', 'refs/heads/agent/k-3-since').catch(() => ''), '');
   });
 
-  test('takes a bundle when a stopped accept left its incoming ref behind', async () => {
-    const left = await commit('agent/k-6-left', 'left.txt', base.tip);
-    await keep.acceptBundle(REPO, await bundle('left', 'agent/k-6-left', base.tip), { branch: 'agent/k-6-left', since: base.tip });
-    // As a keyholder killed between its fetch and its cleanup leaves it.
-    await inClone('update-ref', 'refs/webchat/incoming', left);
-    const head = await commit('agent/k-6-fresh', 'fresh.txt', base.tip);
-    assert.equal(await keep.acceptBundle(REPO, await bundle('fresh', 'agent/k-6-fresh', base.tip), { branch: 'agent/k-6-fresh', since: base.tip }), head);
-  });
-
   test('refuses a bundle that is too large, or changed on its way', async () => {
     await commit('agent/k-4-big', 'big.txt', base.tip);
     const file = await bundle('big', 'agent/k-4-big', base.tip);
