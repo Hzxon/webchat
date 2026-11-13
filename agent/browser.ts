@@ -16,6 +16,7 @@ import { isSea } from 'node:sea';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import vm from 'node:vm';
+import { onPath } from './claude.ts';
 import { isCredential } from './harness.ts';
 import { layoutFor } from './lockroom.ts';
 import { onRunPort, real } from './rulebook.ts';
@@ -92,10 +93,12 @@ function proxy(ports: number[]) {
 
 /**
  * The Seatbelt profile of a dev server: no network but its ports, so no other loopback port or
- * socket of the laptop, no DNS and no internet; writes only in `writable`; no secret folder; no
- * Mach service, which would let it open a URL in another app; no signal outside the sandbox.
+ * socket of the laptop, no DNS and no internet; writes only in `writable`; reads no file under a
+ * home folder, a volume or a temp folder but in `readable`, as the shell reads only its working
+ * folders, since the tool returns the server's output to the model; no secret folder; no Mach
+ * service, which would let it open a URL in another app; no signal outside the sandbox.
  */
-export function devProfile({ ports, writable, secrets }: { ports: number[]; writable: string[]; secrets: string[] }) {
+export function devProfile({ ports, writable, readable, secrets }: { ports: number[]; writable: string[]; readable: string[]; secrets: string[] }) {
   const paths = (dirs: string[]) => dirs.map((dir) => `(subpath ${JSON.stringify(real(dir))})`).join(' ');
   return [
     '(version 1)',
@@ -108,6 +111,9 @@ export function devProfile({ ports, writable, secrets }: { ports: number[]; writ
     ...writable.map((dir) => `(allow network* (local unix-socket ${paths([dir])}) (remote unix-socket ${paths([dir])}))`),
     '(deny file-write*)',
     `(allow file-write* ${paths(writable)} (literal "/dev/null") (literal "/dev/tty"))`,
+    // File contents only: a path's lookup and a stat still work, which Node needs to resolve one.
+    `(deny file-read-data ${paths(['/Users', '/Volumes', '/private/tmp', '/private/var/folders', os.homedir()])})`,
+    `(allow file-read-data ${paths(readable)})`,
     ...(secrets.length ? [`(deny file-read* ${paths(secrets)})`] : []),
     '(deny mach-lookup)',
     '(deny signal)',
@@ -169,8 +175,11 @@ export class Lab {
   async start(command: string, cwd: string) {
     this.stop();
     const [port, port2] = this.ports as [number, number];
-    const env = { ...Object.fromEntries(Object.entries(process.env).filter((entry) => !isCredential(entry))), PORT: String(port), PORT_2: String(port2), TMPDIR: this.tmp, npm_config_cache: path.join(this.tmp, 'npm'), BROWSER: 'none' };
-    const profile = devProfile({ ports: this.ports, writable: [cwd, this.tmp], secrets: this.secrets });
+    const env = { ...Object.fromEntries(Object.entries(process.env).filter((entry) => !isCredential(entry))), PORT: String(port), PORT_2: String(port2), TMPDIR: this.tmp, npm_config_cache: path.join(this.tmp, 'npm'), npm_config_userconfig: '/dev/null', BROWSER: 'none' };
+    // Node's own folder, which nvm keeps in the home folder: its `lib` holds npm and npx.
+    const node = await onPath('node');
+    const readable = [cwd, this.tmp, ...(node ? [path.dirname(path.dirname(await fs.realpath(node)))] : [])];
+    const profile = devProfile({ ports: this.ports, writable: [cwd, this.tmp], readable, secrets: this.secrets });
     const child = (this.dev = spawn('/usr/bin/sandbox-exec', ['-p', profile, '/bin/sh', '-c', command], { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }));
     let output = '';
     const take = (chunk: Buffer) => (output = (output + chunk.toString()).slice(-TAIL));

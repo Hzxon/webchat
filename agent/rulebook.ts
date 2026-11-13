@@ -79,7 +79,11 @@ export type Verdict = { allow: true } | { allow: false; why: string; ask?: true 
  */
 export const BROWSER_TOOLS = ['click', 'click_at', 'drag', 'fill', 'fill_form', 'handle_dialog', 'hover', 'press_key', 'type_text', 'upload_file', 'close_page', 'list_pages', 'navigate_page', 'new_page', 'select_page', 'wait_for', 'emulate', 'resize_page', 'list_network_requests', 'get_network_request', 'list_console_messages', 'get_console_message', 'evaluate_script', 'take_snapshot', 'take_screenshot', 'get_css_styles'];
 
-/** Whether an address is the run's dev server: a `localhost` name or a loopback address, on a run port (R-046). */
+/**
+ * Whether an address is the run's dev server: a `localhost` name or a loopback address, on a run
+ * port (R-046). The browser's proxy is the boundary, since a page can redirect or fetch anywhere;
+ * `judge` uses this only to refuse early an argument named `url` that the proxy would refuse.
+ */
 export function onRunPort(address: string, ports: number[]) {
   if (address === 'about:blank') return true;
   const url = URL.parse(address);

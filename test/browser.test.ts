@@ -52,6 +52,7 @@ describe('the lab of a run that browses (R-046)', darwin, () => {
     await fs.mkdir(work);
     await fs.mkdir(keys);
     await fs.writeFile(path.join(keys, 'account.json'), 'secret');
+    await fs.writeFile(path.join(root, 'elsewhere.txt'), 'the owner\'s');
     lab = (await Lab.open([keys]))!;
     own = await serve(lab.ports[0]);
     other = await serve();
@@ -87,10 +88,13 @@ const listen = (port) => new Promise((r) => net.createServer().once('error', (e)
 tryIt('write here', () => fs.writeFileSync('here.txt', '1'));
 tryIt('write outside', () => fs.writeFileSync(${JSON.stringify(path.join(root, 'outside.txt'))}, '1'));
 tryIt('read secret', () => fs.readFileSync(${JSON.stringify(path.join(keys, 'account.json'))}));
+tryIt('read here', () => fs.readFileSync('probe.mjs'));
+tryIt('read outside', () => fs.readFileSync(${JSON.stringify(path.join(root, 'elsewhere.txt'))}));
+tryIt('list home', () => fs.readdirSync(${JSON.stringify(os.homedir())}));
 console.log('other port', await connect(${otherPort}));
 console.log('bind other', await listen(${otherPort + 1}));
 console.log('the internet', await connect(443, '1.1.1.1'));
-net.createServer((c) => c.end('dev')).listen(process.env.PORT, '127.0.0.1');
+net.createServer((c) => c.on('error', () => undefined).end('dev')).listen(process.env.PORT, '127.0.0.1');
 `,
     );
     const said = await lab.start(`"${process.execPath}" probe.mjs`, work);
@@ -98,6 +102,10 @@ net.createServer((c) => c.end('dev')).listen(process.env.PORT, '127.0.0.1');
     assert.match(said, /write here ok/);
     assert.match(said, /write outside EPERM/);
     assert.match(said, /read secret EPERM/);
+    // Reads stop at the working folders, as the shell's do, or the tool's output would carry the owner's files.
+    assert.match(said, /read here ok/);
+    assert.match(said, /read outside EPERM/);
+    assert.match(said, /list home EPERM/);
     assert.match(said, /other port EPERM/);
     assert.match(said, /bind other EPERM/);
     assert.match(said, /the internet EPERM/);
