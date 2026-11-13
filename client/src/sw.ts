@@ -93,9 +93,10 @@ self.addEventListener('push', (event) => {
     (async () => {
       const clients = await windowClients();
       for (const client of clients) post(client, { type: 'push', payload });
-      // A reaction notifies nobody; its push only wakes the page (D-030). The server can still think
-      // the user is looking when nobody is, such as after a laptop slept, so check here (D-070).
-      if (payload.kind === 'reaction') return;
+      // A reaction or an agent's board sync notifies nobody; its push only wakes the page (D-030, K-69).
+      // The server can still think the user is looking when nobody is, such as after a laptop slept,
+      // so check here (D-070).
+      if (payload.kind === 'reaction' || payload.kind === 'sync') return;
 
       // Lets the sender see "delivered" even while every tab here is closed.
       if (payload.conversationId !== null && payload.messageId !== null) {

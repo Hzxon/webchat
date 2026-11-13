@@ -151,7 +151,8 @@ What it does not protect against:
 - **Metadata stays visible to the server:** who talks to whom and when, group, project and
   channel names, who is in which project or group and who added them, who owns each project and
   group, who left, when a chat got a new key, display names, whether a message is urgent, that
-  someone reacted (not with which emoji, or to which message), and roughly how long a message is:
+  someone reacted (not with which emoji, or to which message), which messages are a coding agent's
+  board traffic with its owner's page (not what they say), and roughly how long a message is:
   which of the fixed sizes it was padded to, not its exact length.
 - **Who edits which doc section, and when.** The server sees which docs a project has, how many
   sections each has, who edited which section and when, who is editing one now, and which of the

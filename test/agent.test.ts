@@ -663,7 +663,8 @@ describe('agent client (R-027)', () => {
       const turns = async () =>
         (await fs.readFile(claudeLog, 'utf8').catch(() => ''))
           .split('\n')
-          .filter(Boolean)
+          // The fake Claude may be mid-write: a line counts once its newline is there.
+          .slice(0, -1)
           .map((line) => JSON.parse(line) as { args: string[]; input: string; cwd: string; plugin?: string[]; session: string; resumed: boolean; turn: number; pid: number; mcp?: { mcpServers: { webchat: { url: string; headers: { Authorization: string } } } } });
       try {
         const code = newPairingCode();
@@ -1210,9 +1211,10 @@ describe('agent client (R-027)', () => {
         });
         const link = (await alice.send(direct, { text: 'Link the board to acme/app', board: { kind: 'link', project: app.project.id, repo: 'acme/app', sentAt: Date.now() } })).clientId!;
         await (await checkIn()).handled;
-        const fromAgent = async () => (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.board).map((m) => ({ ...m.content!.board!, clientId: m.clientId! }));
+        const fromAgent = async () => (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.board).map((m) => ({ ...m.content!.board!, clientId: m.clientId!, sentAs: m.kind }));
         const [entries] = await fromAgent();
         assert.deepEqual(entries?.kind === 'entries' && [entries.to, entries.part, entries.parts, entries.entries.map((e) => readCard(e)!.id)], [link, 1, 1, ['D-001', 'K-3', 'K-9']], "the repository's entries, with one not folded in yet, and no proposal");
+        assert.equal(entries.sentAs, 'sync', 'entries are quiet traffic with the page (K-69)');
         // Alice's page imports them, then names the repository in the Roadmap's title; a teammate's naming counts for nothing.
         await alice.sync();
         const roadmapDoc = (await alice.boardDocs(app.project.id)).roadmap!;
@@ -1233,7 +1235,8 @@ describe('agent client (R-027)', () => {
         const sent = await fromAgent();
         const proposal = sent.find((m) => m.kind === 'proposal');
         assert.deepEqual(proposal?.kind === 'proposal' && proposal.card, { kind: 'R', title: 'A new thing', body: 'Why: tests.' }, 'a proposal on main comes as a draft');
-        assert.deepEqual(sent.find((m) => m.kind === 'claims'), { kind: 'claims', project: app.project.id, repo: 'acme/app', claims: [{ card: 'K-7', pull: 8 }], clientId: sent.find((m) => m.kind === 'claims')!.clientId }, 'an open pull request claims K-7');
+        assert.equal(proposal?.sentAs, 'message', 'a proposal is news to the owner');
+        assert.deepEqual(sent.find((m) => m.kind === 'claims'), { kind: 'claims', project: app.project.id, repo: 'acme/app', claims: [{ card: 'K-7', pull: 8 }], clientId: sent.find((m) => m.kind === 'claims')!.clientId, sentAs: 'sync' }, 'an open pull request claims K-7, quietly');
         await plugin.syncBoards(start + 11 * 60_000);
         const cards = (await alice.sections(roadmapDoc)).map((s) => s.text);
         assert.equal(await atBoard('docs/roadmap.md'), copyOf('roadmap', cards), 'the copy is what Copy as Markdown gives');
