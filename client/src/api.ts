@@ -31,6 +31,7 @@ import type {
   SendMessageInput,
   SyncRequest,
   SyncResponse,
+  UploadDTO,
   UserDTO,
 } from '../../shared/types';
 import { noteBuild } from './build';
@@ -161,6 +162,8 @@ export const api = {
     request<MessageDTO[]>('GET', `/conversations/${conversationId}/messages${before ? `?before=${before}` : ''}`),
   sendMessage: (conversationId: number, input: SendMessageInput) =>
     request<MessageDTO>('POST', `/conversations/${conversationId}/messages`, input),
+  uploadAddress: (conversationId: number, size: number) => request<UploadDTO>('POST', `/conversations/${conversationId}/files`, { size }),
+  fileAddress: (fileId: string) => request<{ url: string }>('GET', `/files/${fileId}`),
   markRead: (conversationId: number, messageId: number) =>
     request<void>('POST', `/conversations/${conversationId}/read`, { messageId }),
   subscribePush: (subscription: PushSubscriptionJSON) => request<void>('POST', '/push/subscribe', subscription),
