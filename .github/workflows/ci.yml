@@ -32,14 +32,11 @@ jobs:
       - run: npm run build:agent && dist/agent/webchat-agent --version
 
   # Builds the locked room for real (docs/decisions/locked-room.md): a role account, its groups,
-  # folders and system service, which needs the passwordless sudo that GitHub's runners have. It runs
+  # folders and system service, which needs passwordless sudo on the owner's Linux server
+  # (docs/decisions/self-hosted-ci.md). macOS's room is checked by unit tests and by hand. It runs
   # only when the agent, this test or this file changes, so most pull requests skip its steps.
   room:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-latest]
+    runs-on: [self-hosted, linux]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
