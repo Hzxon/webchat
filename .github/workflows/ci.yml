@@ -11,10 +11,12 @@ on:
 permissions:
   contents: read
 
-# A newer push to a pull request cancels its older run, which would hold a runner for nothing. Runs on main are never cancelled.
+# A newer push to a pull request or to main cancels its older run, which would hold a runner for
+# nothing. On main, a burst of merges then tests only the newest commit: a break still shows, but
+# finding the merge that caused it takes a bisect.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
   checks:
