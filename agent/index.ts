@@ -107,7 +107,7 @@ async function main([command, ...args]: string[]) {
     case 'status':
       await status(home);
       // What the running keyholder says, when it runs.
-      return callRoom<RoomStatus>(socketFile(), 'status', {}, pkg.version).then(({ text, runner }) => console.log(`Runner: ${runner ? 'connected' : 'not connected'}\n${text}`), () => undefined);
+      return callRoom<RoomStatus>(socketFile(), 'status', {}, pkg.version).then(({ text, runner, paired }) => console.log(`Runner: ${runner ? 'connected' : 'not connected'}\nPaired: ${paired ? 'yes' : 'no'}\n${text}`), () => undefined);
     case 'uninstall':
       return uninstall(home);
     // The login service of a laptop from before the room still runs this: it says so and idles, rather than restart in a loop.

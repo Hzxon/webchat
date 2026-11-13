@@ -553,7 +553,7 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
     }
     // Asked as the owner, in the ipc group, since a session that began before setup is not in it yet.
     const paired = { argv: ['env', `WEBCHAT_SOCKET=${socketOf(layout)}`, programOf(layout), 'status'], as: owner, group: layout.ipcGroup };
-    for (let tries = 0; !/Taking the cards/.test(await root(paired).catch(() => '')); tries++) {
+    for (let tries = 0; !/^Paired: yes$/m.test(await root(paired).catch(() => '')); tries++) {
       if (tries === 20) throw new Error(`The keyholder does not take the agent’s account. ${keyholderLog(layout)}`);
       await sleep(2000);
     }

@@ -37,7 +37,7 @@ export function fakeRoom(layout: Layout): Fake {
     log: [],
     system: { made: false, members: [] },
     signedIn: true,
-    status: 'Runner: connected\nTaking the cards that Alice hands to this agent, on http://x.\n',
+    status: 'Runner: connected\nPaired: yes\nTaking the cards that Alice hands to this agent, on http://x.\n',
     root: async (cmd) => {
       fake.log.push(cmd);
       const { argv, stdin } = cmd;
