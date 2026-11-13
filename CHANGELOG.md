@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.0](https://github.com/Hzxon/webchat/compare/v0.11.1...v0.12.0) (2026-11-13)
+
+
+### Features
+
+* **agent:** Let a run check its work in a browser ([#235](https://github.com/Hzxon/webchat/issues/235)) ([b98b38b](https://github.com/Hzxon/webchat/commit/b98b38bfc8d11b03aadcef8ec02d3d5bc03a8970))
+
+
+### Bug Fixes
+
+* **agent:** Let a sandboxed shell run unasked ([#233](https://github.com/Hzxon/webchat/issues/233)) ([8240882](https://github.com/Hzxon/webchat/commit/8240882afe651305c1b39909c68d4d0b587f2593))
+
 ## [0.11.1](https://github.com/Hzxon/webchat/compare/v0.11.0...v0.11.1) (2026-11-13)
 
 
