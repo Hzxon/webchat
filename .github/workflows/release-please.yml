@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   release-please:
-    # The owner's own server, as CI's checks (docs/decisions/self-hosted-ci.md). The agent's builds stay on GitHub's machines, one per OS and processor.
+    # The owner's Linux server, which holds nothing else of value (docs/decisions/self-hosted-ci.md). The agent's builds stay on GitHub's machines, one per OS and processor.
     runs-on: [self-hosted, linux]
     steps:
       # Pinned to a commit, because a moved tag would run other code with
