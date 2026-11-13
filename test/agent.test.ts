@@ -2497,6 +2497,11 @@ describe('agent client (R-027)', () => {
     const managed = path.join(dir, 'managed.json');
     await fs.writeFile(managed, JSON.stringify({ sandbox: { filesystem: { allowRead: [path.join(data, 'keys')] } } }));
     assert.match((await sandboxProblem(project, [path.join(data, 'keys')], [[managed, dir], [file, dir]])) ?? '', /could read/, 'a narrower allow wins');
+    // A command outside the sandbox is one the rulebook no longer asks the owner about.
+    for (const sandbox of [{ allowUnsandboxedCommands: true }, { excludedCommands: ['docker'] }]) {
+      await fs.writeFile(managed, JSON.stringify({ sandbox }));
+      assert.match((await sandboxProblem(project, [data], [[managed, dir], [file, dir]])) ?? '', /outside its sandbox/);
+    }
     // Its shell gets no variable that holds a credential, by its name or by a password in a URL.
     const env = { GH_TOKEN: 'x', DATABASE_URL: 'postgres://me:pw@db/app', SSH_AUTH_SOCK: '/tmp/agent', MY_VAR: 'ghp_abc', PATH: '/bin', HOME: '/home/me' };
     const denied = claudeSettings({ secrets: [], npmCache: '', env }).sandbox.credentials.envVars.map((v) => v.name);

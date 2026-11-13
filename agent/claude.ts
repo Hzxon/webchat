@@ -335,6 +335,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
     // The settings are the plugin's own, so a managed setting is all that can undo them: a warning only, since the room keeps the secrets from the shell (docs/decisions/locked-room.md).
     // Nothing to check before the first `apply` writes the file.
     warning: async () => ((await fs.access(settings).then(() => true, () => false)) ? sandboxProblem(path.join(os.homedir(), 'WebChat'), secrets, restrictedSettings(settings)) : undefined),
+    sandboxed: async () => !(await sandboxProblem(path.join(os.homedir(), 'WebChat'), secrets, restrictedSettings(settings))),
     offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution', 'noPlan'] }),
     async found() {
       if (!program) return {};
@@ -389,7 +390,7 @@ export async function onPath(name: string, dirs = pathDirs()) {
 }
 
 interface Settings {
-  sandbox?: { enabled?: boolean; failIfUnavailable?: boolean; filesystem?: { denyRead?: string[]; allowRead?: string[] } };
+  sandbox?: { enabled?: boolean; failIfUnavailable?: boolean; allowUnsandboxedCommands?: boolean; excludedCommands?: string[]; filesystem?: { denyRead?: string[]; allowRead?: string[] } };
   permissions?: { blockReadsOutsideWorkingDirectories?: boolean };
 }
 
@@ -435,4 +436,6 @@ export async function sandboxProblem(projectDir: string, secrets: string[], sour
   }
   // Where the sandbox cannot start, Claude Code would run the shell without it (K-53).
   if (first((s) => s.sandbox?.failIfUnavailable) !== true) return 'Claude Code’s managed settings would let my shell run unsandboxed if its sandbox failed to start.';
+  // The owner is not asked about a sandboxed command, so none may leave the sandbox (docs/decisions/harness-rulebook.md).
+  if (first((s) => s.sandbox?.allowUnsandboxedCommands) !== false || settings.some((s) => s.json.sandbox?.excludedCommands?.length)) return 'Claude Code’s managed settings let my shell run commands outside its sandbox.';
 }
