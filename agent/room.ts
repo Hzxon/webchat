@@ -48,6 +48,7 @@ export interface Handlers {
   working(): Promise<string[]>;
   requestLink(harness: string): Promise<string>;
   requestConnect(dir: string, repo: string): Promise<string>;
+  requestCard(repo: string, file: string, text: string): Promise<{ text: string; card?: string }>;
 }
 
 /** What `status` answers: the agent's own, and whether a runner is connected. */
@@ -309,7 +310,11 @@ export class Room {
     const handlers = this.handlers!;
     switch (method) {
       case 'request': {
-        const { kind, harness, repo, dir } = params;
+        const { kind, harness, repo, dir, file, text: card } = params;
+        if (kind === 'card') {
+          if (typeof repo !== 'string' || !isRepoName(repo) || typeof file !== 'string' || !/^docs\/(roadmap|decisions)\/[^/]+\.md$/.test(file) || typeof card !== 'string') throw new Error('Name a repository and a file under docs/roadmap/ or docs/decisions/.');
+          return handlers.requestCard(repo, file, card);
+        }
         if (kind === 'link') {
           const named = SUPPORTED.find((s) => s.name === harness);
           if (!named) throw new Error('That is no harness WebChat supports.');

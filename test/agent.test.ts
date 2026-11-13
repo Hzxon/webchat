@@ -1258,6 +1258,27 @@ describe('agent client (R-027)', () => {
         assert.equal(await atBoard('docs/roadmap/new-thing.md'), null, 'the added proposal leaves its file');
         assert.ok((await atBoard('docs/roadmap.md'))?.includes('### R-1: A new thing'));
         assert.equal(JSON.parse(await fs.readFile(ghState, 'utf8')).pulls.length, pullsBefore + 1, 'still one draft');
+        // A session with no card sends one from its working tree, checked, and gets the number Alice's page gives it (R-044).
+        const typed = '### R: From the terminal\n\nStatus: Idea.\n\nWhy: no merge first.\n';
+        const checkedDraft = { kind: 'idea', title: 'From the terminal', body: 'Why: no merge first.', checked: 'Read the board and the code.' };
+        const fromTerminal = (waitMs?: number) => plugin.requestCard('acme/app', 'docs/roadmap/new-terminal.md', typed, waitMs);
+        const typedCard = withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ reply: 'No card covers it.', drafts: [checkedDraft] }) }, () => fromTerminal());
+        let drafted: Awaited<ReturnType<typeof fromAgent>>[number] | undefined;
+        while (!(drafted = (await fromAgent()).find((m) => m.kind === 'proposal'))) await sleep(50);
+        assert.deepEqual(drafted.kind === 'proposal' && [drafted.card, drafted.project, drafted.sentAs], [{ ...checkedDraft, kind: 'R' }, app.project.id, 'message'], 'the checked draft goes to the owner, as a proposal does');
+        await alice.send(direct, { text: 'Added R-2 to the board.', added: { to: drafted.clientId, draft: drafted.clientId, card: 'R-2' } });
+        await (await checkIn()).handled;
+        const added = await typedCard;
+        assert.equal(added.card, 'R-2', 'the command gets the number the board gave');
+        assert.match(added.text, /No card covers it/, "it shows the agent's check");
+        // A draft nobody adds in time leaves the command without a number; the draft stays in the pane.
+        assert.equal((await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ reply: 'Fine.', drafts: [checkedDraft] }) }, () => fromTerminal(10))).card, undefined);
+        // A check that drafts nothing sends nothing, and says why.
+        await fromAgent();
+        await assert.rejects(withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ reply: 'R-1 covers it.' }) }, () => fromTerminal()), /R-1 covers it/);
+        await assert.rejects(plugin.requestCard('acme/app', 'docs/roadmap/K-3.md', '### K-3: Totals lag\n\nStatus: Open.'), /has its number/);
+        await assert.rejects(plugin.requestCard('acme/web', 'docs/roadmap/new-x.md', typed), /no copy|Connect it/i);
+        assert.equal((await fromAgent()).filter((m) => m.kind === 'proposal').length, 0, 'nothing refused reaches the owner');
         // On cards Alice opened, Carol's Ready and Carol's removal do not stand, so the copy shows neither, as the board does (the card-owner decision).
         const [owned, unremoved] = [newKeyId().slice(0, 11), newKeyId().slice(0, 11)];
         await alice.editSection(roadmapDoc, owned, () => ({ text: '### K-10: Owned\n\nStatus: Open.', pos: 10, opened: true }));
