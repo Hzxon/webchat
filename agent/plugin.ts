@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
 import { cardsOf, copyOf, entriesOf, proposalOf, readCard, usernamesOf } from '../shared/board.ts';
 import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type AskDTO, type PairingPick, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
+import { ApiError } from './api.ts';
 import { AgentClient, checkInEvery, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
 import { LocalBench, NO_RUNNER, PrerequisitesMissing, type Bench, type Folder, type HarnessInfo } from './bench.ts';
@@ -82,6 +83,8 @@ export interface PluginOptions {
 
 /** The branch a board's copy goes to, in one draft pull request (R-040, D-117). */
 const BOARD_BRANCH = 'agent/board';
+/** The pause between two proposal drafts: 25 in 10 seconds, under the server's 30 sends, with room for the rest (K-71). */
+const PROPOSAL_GAP_MS = 400;
 
 /** A linked board's copy in its repository, as the agent keeps it on disk (R-040). */
 interface BoardCopy {
@@ -301,6 +304,9 @@ type Who = { taken: TakenRequest; asks?: true } | { chat: number; to: string; as
 /** Why every request fails until the owner links a harness. */
 const NONE_LINKED = 'You have linked no coding agent on this laptop, so I start nothing. Link one in my settings under Coding agents.';
 
+/** How long `webchat-agent card` waits for its owner to add the draft; it stays in the pane after. */
+const CARD_WAIT_MS = 30 * 60_000;
+
 // Never the content of a message: this lands in Claude Code's log files.
 const log = (error: unknown) => console.error(`webchat: ${messageOf(error)}`);
 
@@ -349,6 +355,8 @@ export class Plugin {
   private readonly cards = new Map<number, { versions: string; roadmap: Array<{ doc: string; section: string; text: string; stands: string }>; decisions: Array<{ doc: string; section: string; text: string }> }>();
   private readonly looked = new Map<number, number>();
   private readonly skipped = new Set<string>();
+  /** Each `webchat-agent card` that waits for its owner to add its draft, by the draft's client id (R-044). */
+  private readonly adding = new Map<string, (card: string) => void>();
 
   constructor(private readonly options: PluginOptions) {
     this.home = path.join(options.dataDir, 'laptop');
@@ -820,8 +828,54 @@ export class Plugin {
   private async proposalAdded(message: OpenedMessage) {
     if (!this.ownersOwn(message)) return;
     const proposals = Object.values(this.copies).flatMap((c) => Object.values(c.proposals));
-    for (const proposal of proposals) if (proposal.draft === message.content!.added!.draft) proposal.added = true;
+    const { draft, card } = message.content!.added!;
+    for (const proposal of proposals) if (proposal.draft === draft) proposal.added = true;
+    this.adding.get(draft)?.(card);
     await this.saveCopies();
+  }
+
+  /**
+   * Sends a proposal from a session's working tree as a card draft, for `webchat-agent card`, and
+   * waits for the number the board gives it (R-044). The draft goes through the agent's check first,
+   * as every draft does (D-116), and only the owner's click adds it (D-104). The command sends the
+   * file's text, since the keyholder may not read the owner's folders.
+   */
+  async requestCard(repo: string, file: string, text: string, waitMs = CARD_WAIT_MS): Promise<{ text: string; card?: string }> {
+    const client = this.client;
+    const chat = this.ownerChat();
+    if (!client || !this.runs || chat === undefined) throw new Error(`Your agent is not serving, so it cannot send the draft. ${this.problem}`);
+    const folder = this.folderOf(repo);
+    if (!folder || !this.usable(folder)) throw new Error(`${noCopy(repo)} Connect it first: see \`webchat-agent connect\`.`);
+    const project = Number(Object.entries(this.copies).find(([, c]) => c.repo.toLowerCase() === repo.toLowerCase())?.[0]);
+    if (!project) throw new Error(`No board in WebChat is linked to ${repo}, so nothing can number a card. Merge the file as a proposal instead.`);
+    const proposal = proposalOf(file, text);
+    if (!proposal) throw new Error('That file holds no card: it starts with a heading such as `### R: Title`.');
+    if (proposal.id) throw new Error(`That file changes ${proposal.id}, which has its number: merge it as a proposal.`);
+    // A draft is an idea, an issue or a decision; a question has no draft (D-104).
+    const kind = ({ R: 'idea', K: 'issue', D: 'decision' } as const)[proposal.kind as 'R' | 'K' | 'D'];
+    if (!kind) throw new Error('A question goes on the board as a file: merge it as a proposal.');
+    const conversation: Conversation = { root: randomUUID(), chat, repo, project, session: randomUUID(), answered: false, last: Date.now() };
+    const input = [
+      `Your owner wrote this card in a terminal session and wants it on the board. Check it, then put it in drafts as one new ${kind},`,
+      'with its title and body as written: change them only where the check finds something wrong, and say what in reply. When it should',
+      'not go on the board, as it repeats an open card, goes against a decision or asks for what the code does, draft nothing and say why in reply.',
+      '',
+      fence('The card', [text.trim()], [OWNER, "OWNER'S WORDS"]),
+    ].join('\n');
+    const answer = await this.converse({ conversation, input, resume: false, signal: new AbortController().signal }).finally(() => {
+      this.endSession(conversation.session);
+      if (conversation.scratch) void this.bench.drop(conversation.scratch).catch(log);
+    });
+    const draft = answer.drafts?.find((d) => !d.replaces);
+    if (!draft) throw new Error(`Your agent drafted no card: ${answer.reply.trim() || 'it gave no reason.'}`);
+    const sent = await client.send(chat, { text: `Proposed in ${repo}: ${file}`, board: { kind: 'proposal', project, repo, card: draft } });
+    const card = await new Promise<string | undefined>((resolve) => {
+      this.adding.set(sent.clientId!, resolve);
+      setTimeout(() => resolve(undefined), waitMs).unref();
+    }).finally(() => this.adding.delete(sent.clientId!));
+    const said = answer.reply.trim() ? `\n\nYour agent's check: ${answer.reply.trim()}` : '';
+    if (!card) return { text: `The draft waits in WebChat under Coding agents; once your owner adds it, the board shows its number.${said}` };
+    return { text: `Your owner added ${card}. Claim it with scripts/claim.sh, and leave ${file} out of the pull request.${said}`, card };
   }
 
   /**
@@ -861,12 +915,13 @@ export class Plugin {
         this.looked.set(project.id, now);
         const { roadmap, decisions } = await this.columns(project, versions, docs);
         const { ref } = await this.keep.fetch(repo);
-        await this.sendProposals(project.id, copy, ref, [...roadmap, ...decisions], chat);
         await this.sendClaims(project.id, copy, roadmap, chat);
         if (due) {
           await this.pushCopy(copy, ref, { roadmap: copyOf('roadmap', roadmap.map((c) => c.stands)), decisions: copyOf('decisions', decisions.map((c) => c.text)) });
           copy.moved = 0;
         }
+        // Last, as a backlog of them can take the round long and run into the send limit (K-71).
+        await this.sendProposals(project.id, copy, ref, [...roadmap, ...decisions], chat);
       }
     } finally {
       this.copying = false;
@@ -903,15 +958,20 @@ export class Plugin {
   /**
    * Sends each proposal file the default branch gained under `docs/roadmap/` or `docs/decisions/` as
    * a card draft, once per version of the file (R-040). A change names its card on the board, with
-   * the hash of its text, as an agent's draft does (D-104).
+   * the hash of its text, as an agent's draft does (D-104). A new card whose title the board has
+   * already came to the board, though this laptop's record may not know it (K-71). The sends are
+   * paced under the server's limit, and one it refuses anyway leaves the rest to the next round.
    */
   private async sendProposals(project: number, copy: BoardCopy, base: string, cards: Array<{ doc: string; section: string; text: string }>, chat: number) {
+    const titleOf = (title: string) => title.trim().toLowerCase();
+    const titles = new Set(cards.flatMap((c) => readCard(c.text)?.title ?? []).map(titleOf));
+    let sent = 0;
     for (const { path: file, blob } of await this.keep.docFiles(copy.repo, base)) {
       if (/\/(roadmap|decisions)\.md$/.test(file) || copy.proposals[file]?.blob === blob || this.skipped.has(`${file}:${blob}`)) continue;
       const proposal = proposalOf(file, await this.keep.show(copy.repo, blob));
       const card = proposal?.id ? cards.find((c) => readCard(c.text)?.id === proposal.id) : undefined;
       // A change to a card the board does not have stays a file, as nothing could take it.
-      if (!proposal || (proposal.id && !card)) {
+      if (!proposal || (proposal.id && !card) || (!proposal.id && titles.has(titleOf(proposal.title)))) {
         this.skipped.add(`${file}:${blob}`);
         continue;
       }
@@ -922,8 +982,14 @@ export class Plugin {
         ...(card && { replaces: { card: proposal.id!, doc: card.doc, section: card.section, seen: await textHash(card.text) } }),
         ...(card && proposal.status && { status: proposal.status }),
       };
-      const sent = await this.client!.send(chat, { text: `Proposed in ${copy.repo}: ${file}`, board: { kind: 'proposal', project, repo: copy.repo, card: draft } });
-      copy.proposals[file] = { blob, draft: sent.clientId! };
+      if (sent++) await sleep(PROPOSAL_GAP_MS);
+      try {
+        const message = await this.client!.send(chat, { text: `Proposed in ${copy.repo}: ${file}`, board: { kind: 'proposal', project, repo: copy.repo, card: draft } });
+        copy.proposals[file] = { blob, draft: message.clientId! };
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 429) throw error;
+        return log(error);
+      }
     }
   }
 

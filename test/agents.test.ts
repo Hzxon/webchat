@@ -4,7 +4,7 @@ import { ASK_WAIT_MS, harnessRow, type HarnessState } from '../shared/types.ts';
 
 // In a variable, so the tools tsconfig, which has no DOM types, does not typecheck the client module.
 const clientAgents = '../client/src/agents.ts';
-const { agentOf, proposalsWaiting, seatFor, threadsOf, THREAD_TTL_MS } = await import(clientAgents);
+const { agentOf, proposalsWaiting, seatFor, threadsOf, THREAD_TTL_MS, waitingProposals } = await import(clientAgents);
 
 const ME = 1;
 const AGENT = 2;
@@ -124,6 +124,15 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
   test('a question names its project, and one about the board alone names no repository (R-038)', () => {
     const [thread] = threadsOf([say(ME, { kind: 'prompt', sentAt: 1, project: 4 }, 'b1')], ME, AGENT, {}, 100);
     assert.deepEqual([thread.project, thread.repo], [4, '']);
+  });
+
+  test("a board counts the proposals for it and its repository that wait for the owner's go (K-72)", () => {
+    const propose = (clientId: string, project: number, repo: string) => ({ ...say(AGENT, {}, clientId), prompt: null, board: { kind: 'proposal', project, repo, card: { kind: 'K', title: clientId, body: '' } } });
+    const proposals = [propose('a', 4, 'team/app'), propose('b', 4, 'Team/App'), propose('c', 5, 'team/app'), propose('d', 4, 'team/web')];
+    const waiting = (...rest: object[]) => waitingProposals(threadsOf([...proposals, ...rest], ME, AGENT, {}, 100), 4, 'team/app').map((t: { root: string }) => t.root).sort();
+    assert.deepEqual(waiting(), ['a', 'b'], 'its project and repository, whatever the case');
+    assert.deepEqual(waiting({ ...say(ME, {}), prompt: null, added: { to: 'a', draft: 'a', card: 'K-9' } }), ['b'], 'an added draft no longer waits');
+    assert.deepEqual(waiting({ ...say(AGENT, {}), prompt: null, added: { to: 'b', draft: 'b', card: 'K-9' } }), ['a', 'b'], 'only the owner adds');
   });
 
   test('a laptop that serves every folder takes a repository it has no folder of, and offers to clone it (R-036)', () => {

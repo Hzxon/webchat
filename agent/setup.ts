@@ -22,7 +22,7 @@ import { GH_VERSION, ghArchive, ghAsset } from './gh.ts';
 import { harnessFinder, SUPPORTED, supported } from './harnesses.ts';
 import { sha256 } from './keep.ts';
 import {
-  createPlan, foldersPlan, freeIds, ghOf, ghPlan, idsOf, inspectRoom, layoutFor, loginPlan, pairPlan, programOf, programPlan, quoted, realRoot, refusals, RELEASE, runAll, servicePlan, signedInPlan, socketOf, stopUpdaterPlan, uninstallPlan, updaterPlan, xml,
+  bootstrap, createPlan, foldersPlan, freeIds, ghOf, ghPlan, idsOf, inspectRoom, layoutFor, loginPlan, pairPlan, programOf, programPlan, quoted, realRoot, refusals, RELEASE, runAll, servicePlan, signedInPlan, socketOf, stopUpdaterPlan, uninstallPlan, updaterPlan, xml,
   type Layout, type Read, type Root,
 } from './lockroom.ts';
 import { finishMove, moveAccount, newest, sources } from './move.ts';
@@ -129,8 +129,7 @@ async function installService(program: string, pathEnv: string, home: string) {
     const file = plistFile();
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, launchdPlist(program, pathEnv, path.join(home, 'agent.log')));
-    await run('launchctl', ['bootout', `${domain()}/${NAME}`]).catch(() => undefined);
-    await run('launchctl', ['bootstrap', domain(), file]);
+    await runAll((cmd) => run(cmd.argv[0]!, cmd.argv.slice(1)), [{ argv: ['launchctl', 'bootout', `${domain()}/${NAME}`], soft: true }, bootstrap(domain(), file)]);
     return;
   }
   const file = unitFile();

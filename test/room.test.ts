@@ -63,6 +63,7 @@ describe('the room', () => {
     working: async () => running,
     requestLink: async (harness) => (calls.push(`link ${harness}`), `Asked to link ${harness}.`),
     requestConnect: async (dir, repo) => (calls.push(`connect ${repo} ${dir}`), `Asked to connect ${repo}.`),
+    requestCard: async (repo, file) => (calls.push(`card ${repo} ${file}`), { text: 'Added.', card: 'R-7' }),
   };
   const harness = {
     name: 'Claude Code',
@@ -205,18 +206,19 @@ describe('the room', () => {
     assert.ok(signal.aborted, 'what waits on the runner learns it is gone');
   });
 
-  test('the command line asks through the socket: connect, link, sleep, wake and status', async () => {
+  test('the command line asks through the socket: connect, link, card, sleep, wake and status', async () => {
     assert.deepEqual(await callRoom(file, 'request', { kind: 'connect', repo: 'acme/app', dir: '/home/o/app' }, VERSION), { text: 'Asked to connect acme/app.' });
+    assert.deepEqual(await callRoom(file, 'request', { kind: 'card', repo: 'acme/app', file: 'docs/roadmap/new-x.md', text: '### R: X' }, VERSION), { text: 'Added.', card: 'R-7' });
     assert.deepEqual(await callRoom(file, 'request', { kind: 'link', harness: 'Codex' }, VERSION), { text: 'Asked to link Codex.' });
     assert.deepEqual(await callRoom(file, 'sleep', {}, VERSION), { text: 'sleep done' });
     assert.deepEqual(await callRoom(file, 'wake', {}, VERSION), { text: 'wake done' });
     assert.deepEqual(await callRoom(file, 'status', {}, VERSION), { text: 'status done', paired: true, asleep: false, runner: false });
-    assert.deepEqual(calls, ['connect acme/app /home/o/app', 'link Codex', 'sleep', 'wake', 'status']);
-    for (const bad of [{ kind: 'link', harness: 'Mystery' }, { kind: 'connect', repo: 'not a repo', dir: '/x' }, { kind: 'connect', repo: 'acme/app', dir: 'relative' }, { kind: 'other' }]) {
+    assert.deepEqual(calls, ['connect acme/app /home/o/app', 'card acme/app docs/roadmap/new-x.md', 'link Codex', 'sleep', 'wake', 'status']);
+    for (const bad of [{ kind: 'card', repo: 'acme/app', file: '../secret.md', text: '' }, { kind: 'card', repo: 'acme/app', file: 'docs/roadmap/x.md' }, { kind: 'link', harness: 'Mystery' }, { kind: 'connect', repo: 'not a repo', dir: '/x' }, { kind: 'connect', repo: 'acme/app', dir: 'relative' }, { kind: 'other' }]) {
       await assert.rejects(callRoom(file, 'request', bad, VERSION), /./, JSON.stringify(bad));
     }
     await assert.rejects(callRoom(file, 'turn', {}, VERSION), /Unknown command/);
-    assert.equal(calls.length, 5, 'what was refused did nothing');
+    assert.equal(calls.length, 6, 'what was refused did nothing');
   });
 
   test('a command may not use a runner\'s calls, and nobody speaks before hello, though lines come in one read', async () => {
