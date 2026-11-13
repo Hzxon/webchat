@@ -382,7 +382,7 @@ export const updaterPlist = (l: Layout, program: string) => `<?xml version="1.0"
 </plist>
 `;
 
-/** The updater as a oneshot: root, but with the disk read-only except its own folder. The timer starts it. */
+/** The updater as a oneshot: root, but with the disk read-only except its own folder and the keyholder's unit, which a release may change. The timer starts it. */
 export const updaterService = (l: Layout, program: string) => `[Unit]
 Description=WebChat agent updater
 After=network-online.target
@@ -394,7 +394,7 @@ ExecStart=${quoted(program, true)} update
 UMask=0022
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=${l.programDir}
+ReadWritePaths=${l.programDir} ${path.dirname(l.unit)}
 PrivateTmp=yes
 Environment=${quoted(`PATH=${updaterPath}`)}
 `;
@@ -453,8 +453,8 @@ export function swapPlan(l: Layout, release: string): Cmd[] {
 /** The keyholder, started again from whatever the program's file is now. */
 export const restartPlan = (l: Layout): Cmd[] => [l.platform === 'darwin' ? { argv: ['launchctl', 'kickstart', '-k', `system/${l.label}`] } : { argv: ['systemctl', 'restart', l.label] }];
 
-/** Puts the kept program back, if the swap got as far as replacing it, and restarts the keyholder from it. */
-export const rollbackPlan = (l: Layout): Cmd[] => [{ argv: ['sh', '-c', 'p="$1/webchat-agent.previous"; [ ! -e "$p" ] || [ "$p" -ef "$1/webchat-agent" ] || mv -f "$p" "$1/webchat-agent"', 'sh', l.programDir] }, ...restartPlan(l)];
+/** Puts the kept program back, if the swap got as far as replacing it, drops the staged file of the release it skips, and restarts the keyholder. */
+export const rollbackPlan = (l: Layout): Cmd[] => [{ argv: ['sh', '-c', 'p="$1/webchat-agent.previous"; [ ! -e "$p" ] || [ "$p" -ef "$1/webchat-agent" ] || mv -f "$p" "$1/webchat-agent"; rm -rf "$1/.staged"', 'sh', l.programDir] }, ...restartPlan(l)];
 
 /** What a finished swap leaves: the kept program and any staged file. */
 export const cleanupPlan = (l: Layout): Cmd[] => [{ argv: ['rm', '-rf', path.join(l.programDir, '.staged'), path.join(l.programDir, 'webchat-agent.previous')] }];

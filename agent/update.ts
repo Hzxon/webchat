@@ -13,7 +13,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import pkg from '../package.json' with { type: 'json' };
 import { AGENT_RELEASES, type ConfigDTO } from '../shared/types.ts';
 import { Api } from './api.ts';
-import { cleanupPlan, layoutFor, programOf, put, RELEASE, restartPlan, rollbackPlan, runAll, selfRoot, servicePlan, socketOf, stagedOf, stagePlan, stateOf, swapPlan, unitText, updateConfigOf, type Layout, type Root } from './lockroom.ts';
+import { cleanupPlan, layoutFor, programOf, put, RELEASE, restartPlan, rollbackPlan, runAll, selfRoot, servicePlan, socketOf, stagedOf, stagePlan, stateOf, swapPlan, unitText, updateConfigOf, type Cmd, type Layout, type Root } from './lockroom.ts';
 import { askUpdater } from './room.ts';
 import { messageOf } from './runs.ts';
 
@@ -23,7 +23,7 @@ const DOWNLOAD_MS = 10 * 60_000;
 const FILE_MAX = 256 * 1024 * 1024;
 const HEALTH_MS = 2 * 60_000;
 
-export type Outcome = 'no-server' | 'bad-config' | 'offline' | 'bad-release' | 'older' | 'current' | 'skipped' | 'refused' | 'bad-checksum' | 'bad-file' | 'waiting' | 'updated' | 'rolled-back';
+export type Outcome = 'no-server' | 'bad-config' | 'offline' | 'bad-release' | 'older' | 'current' | 'skipped' | 'refused' | 'bad-checksum' | 'bad-file' | 'waiting' | 'updated' | 'rolled-back' | 'stuck';
 
 /** What the last check found, in a file `doctor` and `status` read. */
 export interface UpdateState {
@@ -95,6 +95,7 @@ export function describeState(s: UpdateState, now: number): { text: string; fix?
     'bad-checksum': { text: `${line} did not match its checksum, so the agent keeps ${s.version}`, fix: 'Update with the line in WebChat’s Connect dialog, or wait for the next release.' },
     'bad-file': { text: `${line} would not start (${s.detail}), so the agent keeps ${s.version}`, fix: 'Update with the line in WebChat’s Connect dialog, or wait for the next release.', soon: true },
     skipped: { text: `${line} did not start before, so the agent keeps ${s.version} until a newer one`, fix: 'Update with the line in WebChat’s Connect dialog, or wait for the next release.', soon: true },
+    stuck: { text: `a command as root failed on ${line} (${s.detail})`, fix: 'Run `webchat-agent setup` again.', soon: true },
     'rolled-back': { text: `${line} did not start, so the agent went back to ${s.version} (${s.detail})`, fix: 'Update with the line in WebChat’s Connect dialog, or wait for the next release.', soon: true },
   };
   const { text, fix, soon } = table[s.outcome];
@@ -182,6 +183,9 @@ export async function tick({ layout: l, root, version = pkg.version, fetcher = f
     return state;
   };
 
+  // A root command that fails says why in the state, which `doctor` shows, not only in the log.
+  const asRoot = (cmds: Cmd[], release: string) => runAll(root, cmds).then(() => undefined, (error: unknown) => record('stuck', release, messageOf(error)));
+
   let config: Config;
   try {
     config = await readConfig(updateConfigOf(l), l.rootUid);
@@ -200,11 +204,12 @@ export async function tick({ layout: l, root, version = pkg.version, fetcher = f
   if (order < 0) return record('older', release);
   if (order === 0) {
     const left = await Promise.all(['.staged', 'webchat-agent.previous'].map((name) => exists(path.join(l.programDir, name))));
-    if (left.some(Boolean)) await runAll(root, cleanupPlan(l));
+    const failed = left.some(Boolean) && (await asRoot(cleanupPlan(l), release));
+    if (failed) return failed;
     // A release may change the keyholder's own service file: write it, when nothing runs, with the same plan setup uses.
     const wanted = unitText(l, programOf(l));
-    if ((await fs.readFile(l.unit, 'utf8').catch(() => wanted)) !== wanted && !(await askUpdater(socketOf(l)))?.busy.length) await runAll(root, servicePlan(l, programOf(l)));
-    return record('current', release);
+    const stale = (await fs.readFile(l.unit, 'utf8').catch(() => wanted)) !== wanted && !(await askUpdater(socketOf(l)))?.busy.length;
+    return (stale && (await asRoot(servicePlan(l, programOf(l)), release))) || record('current', release);
   }
   if (before?.bad.includes(release)) return record('skipped', release);
 
@@ -238,8 +243,7 @@ export async function tick({ layout: l, root, version = pkg.version, fetcher = f
     await runAll(root, rollbackPlan(l));
     return record('rolled-back', release, messageOf(error), [...(before?.bad ?? []), release]);
   }
-  await runAll(root, cleanupPlan(l));
-  return record('updated', release);
+  return (await asRoot(cleanupPlan(l), release)) || record('updated', release);
 }
 
 /** `webchat-agent update`: the layout comes from the settings file next to the program, which only root could have written. */

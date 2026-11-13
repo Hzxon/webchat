@@ -209,6 +209,27 @@ describe('the updater', () => {
     assert.equal(await installed(), '0.12.0');
   });
 
+  test('a swap that fails before the rename leaves no staged file behind', async () => {
+    publish('0.11.0');
+    release = '0.11.0';
+    const real = root;
+    root = async (cmd) => (cmd.argv[2]?.includes(' ln ') ? Promise.reject(new Error('ln: not here')) : real(cmd));
+    const state = await run();
+    assert.deepEqual([state.outcome, await installed()], ['rolled-back', '0.9.0']);
+    assert.equal(await fs.stat(path.join(layout().programDir, '.staged')).then(() => true, () => false), false);
+  });
+
+  test('records a root command that fails, rather than stop with nothing said', async () => {
+    const l = layout();
+    await fs.writeFile(l.unit, 'the unit of an older release');
+    const real = root;
+    root = async (cmd) => (cmd.argv.at(-1) === l.unit ? Promise.reject(new Error('Read-only file system')) : real(cmd));
+    const state = await run();
+    assert.deepEqual([state.outcome, state.release], ['stuck', '0.9.0']);
+    assert.match(state.detail ?? '', /Read-only file system/);
+    assert.equal((await readState(l))?.outcome, 'stuck');
+  });
+
   test('writes the keyholder’s service file again when a release changes it, and only while nothing runs', async () => {
     const l = layout();
     await fs.writeFile(l.unit, 'the unit of an older release');

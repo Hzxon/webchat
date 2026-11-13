@@ -169,7 +169,7 @@ test('the updater runs as root every 15 minutes: a LaunchDaemon on macOS, a ones
   assert.doesNotMatch(plist, /UserName/, 'no account named: launchd runs it as root');
   const unit = updaterService(linux, '/opt/we ird/100%/webchat-agent');
   assert.match(unit, /^ExecStart="\/opt\/we ird\/100%%\/webchat-agent" update$/m);
-  for (const line of ['Type=oneshot', 'ProtectSystem=strict', 'ReadWritePaths=/opt/webchat', 'ProtectHome=yes', 'PrivateTmp=yes']) assert.ok(unit.split('\n').includes(line), line);
+  for (const line of ['Type=oneshot', 'ProtectSystem=strict', 'ReadWritePaths=/opt/webchat /etc/systemd/system', 'ProtectHome=yes', 'PrivateTmp=yes']) assert.ok(unit.split('\n').includes(line), line);
   assert.doesNotMatch(unit, /^User=/m);
   const timer = updaterTimerUnit();
   for (const line of ['OnBootSec=2min', 'OnCalendar=*:0/15', 'RandomizedDelaySec=5min', 'Persistent=true', 'WantedBy=timers.target']) assert.ok(timer.split('\n').includes(line), line);
