@@ -8,35 +8,13 @@ This file is a copy of the Roadmap column of the project's board in WebChat, whi
 
 Status: In review: Hzxon/webchat#227.
 
-Checked: 2026-11-13. Read K-72 and its fix on this branch (waitingProposals, BoardView), AgentsView.tsx thread subtitles, D-103, D-104 and D-117, and the cards K-69, K-70, K-71 and R-044 at 8f66355. Open pull requests not read: gh cannot run in this sandbox.
+Checked: 2026-11-14. Read R-045, K-69, K-72 and the other cards, D-103, D-104, D-116 and D-117; Sidebar.tsx, agents.ts, AgentDraft.tsx, test/agents.test.ts and CHANGELOG 0.11.0 on main at e7bdfac, which has the change from #227; open pull requests #228 and #229 by title only. Tests not run.
 
-Why: proposal drafts from a linked repository (D-117) sit in threads under Chats, in the row "Coding agents", named `Proposed in <repo>: <file>`. An owner who looks for board work does not think of that row. K-72 points the owner's board at the drafts, but the row itself still reads as chats with an agent only.
+Why: proposal drafts from a linked repository (D-117) sit in threads under Chats, in the row "Coding agents", named `Proposed in <repo>: <file>`. An owner who looks for board work does not think of that row. K-72 points the owner's board at the drafts, but the row itself still read as chats with an agent only.
 
-Scope: make the row's subtitle, or its badge, say when proposals wait, such as "3 proposals wait", using the same count the board shows (`waitingProposals` in `client/src/agents.ts`). Nothing new reaches the server.
+Scope: the row's subtitle says when proposals wait, such as "3 proposals wait for the board" (`AgentsListItem` in `client/src/components/Sidebar.tsx`). The row is not tied to one project, so it counts the waiting drafts of every project with `proposalsWaiting` in `client/src/agents.ts`, while the board counts its own with `waitingProposals` (K-72). The unread badge stays the agents' chats' (D-103). Nothing new reaches the server.
 
-Done when: with a proposal draft not yet added, the Coding agents row says so, and it stops once the draft is added.
-
-### K-1: The iOS 16.4 banner stays after Bark is linked
-
-Status: Running: Jiro’s agent.
-
-Checked: 2026-11-13. Read the board's K-1, the other cards and the held decisions (D-004, D-021, D-054, D-100, D-118); Sidebar.tsx, NotificationDialog.tsx, push.ts, store.ts, AgentDraft.tsx, otherRun in client/src/board.ts, docs/roadmap/K-1.md and revert-reopens-card.md on main at eb8c3c4. Open pull requests #227, #226 and #184 read by title only.
-
-Found by the owner on an iPhone before iOS 16.4. #159 fixed it and #169 reverted it, so the card is open again and main still has the bug (checked at eb8c3c4).
-
-Before a run: set the status line to `Open` by hand. It still says `In review: Hzxon/webchat#159`, and the brief refuses any card whose status starts with `In review` (`otherRun` in `client/src/board.ts`). A draft cannot change it: a change keeps the status as written (`AgentDraft.tsx`). The general fix, a merged revert that reopens its card, is the proposal `docs/roadmap/revert-reopens-card.md`.
-
-On iOS before 16.4 the sidebar always shows "Notifications on iPhone need iOS 16.4. Tap to get alerts through the Bark app instead." It stays after the user links Bark and their alerts already arrive through it. A warning that never goes away teaches people to ignore the banner, and it suggests that their alerts are broken when they are not.
-
-Cause: `AlertSetupBanner` in `client/src/components/Sidebar.tsx` shows the warning while `push.permission !== 'granted'`. That can never change on these phones, which have no Web Push (`oldIos` in `client/src/push.ts`). The page never asks whether Bark is linked. Only `NotificationDialog` fetches `GET /api/bark` (`BarkDTO`), into its own state, and only while the dialog is open (D-054).
-
-Fix: on iOS before 16.4, the page keeps the Bark state in the store and hides the warning once `link.devices` has at least one phone. While Bark is linked but no phone has registered, the warning stays, since nothing reaches the user yet. Other browsers keep their banner, and the alert sound banner is unchanged.
-
-Constraint: Bark link state is not in the sync fingerprint (D-054, D-021), and a fetch on every check-in would go against D-004. So the page fetches `GET /api/bark` once at load, only on these phones, and the dialog writes each answer it gets into the store. A phone that registers in Bark while the page stays open hides the warning at the next load, or when the dialog is opened or refreshed.
-
-Why #169 reverted #159 is not recorded in the repository. R-039, R-040 and R-042 name process faults in #159: it took the board's K-1 while the repository used that number for another item, its body carried an AI attribution line, and 116 tests were cancelled. That suggests the revert was about process and not the fix, but it is an inference. Read #169 on GitHub before taking the card again.
-
-Done when: an iOS 15 user agent with a linked Bark device shows no notification warning, one without a link or device still shows it, and a test proves both. `npm test` has no DOM, so the choice of banner is a pure function that the test calls, as `iosVersion` in `client/src/ios.ts` is tested in `test/ios.test.ts`.
+Done when: with a proposal draft not yet added, the Coding agents row says so, and it stops once the draft is added. `test/agents.test.ts` proves the count.
 
 ## Ready
 
@@ -82,28 +60,6 @@ report a comment by someone else when two comments arrive between polls and the 
 user's own (`comparePulls` only looks at the last commenter).
 
 Done when: a comment-only review on the fake GitHub becomes an event, and a test proves it.
-
-### R-029: Hand a card to a teammate's agent
-
-Status: Planned. Set aside from K-45 (D-089) on 2026-11-05.
-
-Why: since D-089 an agent runs only the cards its owner hands it. A team with one agent and
-a teammate who has none cannot share it, and a student who runs an agent cannot let a teammate
-start a run while they are away.
-
-Scope:
-
-- The play button also lists teammates' agents that are online, named by owner, such as
-  "Bob's claude-code", and only those whose owner lets the viewer use them.
-- The owner lets a teammate in from the daemon, which stores the teammate's user id with their
-  pinned keys and prints the security code to compare (D-018). The check K-42 asked for holds: a
-  username alone never lets anyone in.
-- Decide what a teammate's request may put in the prompt: the card as the teammate saw it, pinned
-  by a hash in the signed request, and the decisions.
-- Maybe: the daemon writes the branch into the card's status line, and posts sparse progress notes.
-
-Done when: a teammate's request runs on the owner's machine only after the owner let them in, and a
-test covers a request from someone who was not let in.
 
 ## Ideas
 
@@ -205,18 +161,19 @@ Done when: a Claude Code agent behaves as before and the tests pass; Settings li
 
 Status: Open. Found on 2026-11-07 in the review of #167 (R-040).
 
-Seen: when the owner links a board, their agent sends the repository's entries in several messages.
-It also sends one each time the cards that open pull requests claim change. Each is an ordinary
-message in the owner's direct chat with the agent. The server pushes it and counts it as unread, so
-the Coding agents row shows a badge, and a phone whose tabs are closed buzzes. The page only keeps
-them from raising a toast (`shouldAlert` in `client/src/chat.ts`).
+Checked: 2026-11-14. Read K-69 and the other cards, the held decisions (D-016, D-020, D-030, D-117), docs/roadmap/K-69.md, docs/decisions/quiet-sync-messages.md and D-020.md, server/notify.ts, bark.ts, api.ts, db.ts, migration 23, agent/client.ts, sw.ts and the tests on main at 040ba5d; tests not run. Open pull request #229 read by title only.
 
-Cause: the server knows the message kinds message, reaction and github, and only a reaction stays
-quiet (`server/notify.ts`, and the unread counts in `server/db.ts`).
+Main has the fix since #198 (checked at 040ba5d). Set the status line to `Fixed in Hzxon/webchat#198` by hand, or add the proposal from `docs/roadmap/K-69.md`, which carries that status: a draft from a conversation keeps the status as written.
 
-Fix: a quiet message kind, such as `sync`, that the server pushes and counts as it does a reaction,
-and that the agent sends its entries and claims with. A message's kind is signed into its envelope,
-so rule 2 of AGENTS.md holds.
+Seen: when the owner links a board, their agent sends the repository's entries in several messages. It also sends one each time the cards that open pull requests claim change. Each was an ordinary message in the owner's direct chat with the agent. The server pushed it and counted it as unread, so the Coding agents row showed a badge, and a phone whose tabs were closed buzzed. The page only kept them from raising a toast (`shouldAlert` in `client/src/chat.ts`).
+
+Cause: the server knew the message kinds message, reaction and github, and only a reaction stayed quiet (`server/notify.ts`, and the unread counts in `server/db.ts`).
+
+Fix: a quiet message kind, `sync` (`MessageKind` in `shared/types.ts`, migration 23). The server pushes and counts it as it does a reaction (D-030): no push unless the owner looks at a tab, no Bark alert, never unread, and no new chat preview (`server/notify.ts`, `server/bark.ts`, `server/db.ts`, `client/src/sw.ts`). It refuses an urgent one (`server/api.ts`). The agent sends its entries, claims and failed links with it, and a proposal stays an ordinary message, since it is news to the owner (`send` in `agent/client.ts`). Against a server that answers `Unknown message kind.`, the agent sends the message as before. The kind is signed into the envelope (D-016), so rule 2 of AGENTS.md holds.
+
+Decision: the quiet-sync decision, Proposed in #198 as `docs/decisions/quiet-sync-messages.md`, is not on the board yet and has no number. The server now sees which messages are board traffic; `docs/decisions/D-020.md` adds that to D-020, and the board's D-020 does not have the line yet.
+
+Tests: `test/chat.test.ts` (no push, never unread, no new preview, never urgent) and `test/agent.test.ts` (entries and claims go as `sync`).
 
 ## Open questions
 
@@ -276,6 +233,10 @@ Status: Dropped on 2026-11-05. #78 built it and reached main, and the owner reve
 
 R-024 to R-026, the rest of the rebrand, were dropped on 2026-11-05. The owner does not want
 project-first navigation, new wording or a new name. The numbers stay taken.
+
+### R-029: Hand a card to a teammate's agent
+
+Status: Dropped on 2026-11-13. The owner no longer wants a teammate to run a card on someone else's agent. Since D-089 an agent runs only the cards its owner hands it, and that stays. The number stays taken.
 
 ## Done
 
@@ -368,3 +329,4 @@ project-first navigation, new wording or a new name. The numbers stay taken.
 | K-70: The pane says "No copy yet" for a repository the agent works in | #223 |
 | K-71: A backlog of proposal files hits the send limit, and a new install sends them all again | #224 |
 | R-044: Make and number a card from the terminal | #225 |
+| K-1: The iOS 16.4 banner stays after Bark is linked | #228 |

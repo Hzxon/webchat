@@ -1272,7 +1272,7 @@ brief holds the card as on the board and every decision. The run card in #genera
 status. Why: a username allow list trusts the server (K-42, K-45).
 
 Cost: the owner vouches for card and decisions by clicking; a teammate's text runs with the owner's
-credentials. The `agent` column of migration 13 is unused. A teammate's agent is R-029.
+credentials. The `agent` column of migration 13 is unused. A teammate's agent was R-029, which was dropped.
 
 ### D-090: Documents say the current state, and an area's rules load with its code
 
