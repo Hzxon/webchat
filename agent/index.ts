@@ -8,17 +8,25 @@
 //   npm run agent -- connect|sleep|wake
 //   npm run agent -- pair <code> <name>
 //
+// Each release also ships it as one file per OS, webchat-agent, with Node inside (agent/sea.json),
+// which takes the same commands and `--version`.
+//
 // The code comes from Connect coding agent in WebChat (R-030). Accounts live under
 // WEBCHAT_AGENT_HOME, by default ~/.webchat, one folder per name.
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { isSea } from 'node:sea';
 import { fileURLToPath } from 'node:url';
-import { ClaudePlugin, claudeProgram } from './claude.ts';
+import pkg from '../package.json' with { type: 'json' };
+import { ClaudePlugin, claudeProgram, runGuard } from './claude.ts';
 import { AgentClient, readPairing } from './client.ts';
 
 const home = process.env.WEBCHAT_AGENT_HOME ?? path.join(os.homedir(), '.webchat');
 const fileFor = (name: string) => path.join(home, name, 'account.json');
+const cli = isSea() ? 'webchat-agent' : 'npm run agent --';
+// The guard hook runs this program again: the single file, or this script through tsx.
+const self = isSea() ? `"${process.execPath}"` : `"${process.execPath}" --import "${import.meta.resolve('tsx')}" "${fileURLToPath(import.meta.url)}"`;
 
 /** The Plugin as this daemon hosts it, with the Claude adapter, in the folder only it uses (D-085). */
 async function laptop(code = '') {
@@ -30,8 +38,7 @@ async function laptop(code = '') {
     projectDir: process.env.INIT_CWD ?? process.cwd(),
     cloneRoot: path.join(os.homedir(), 'WebChat'),
     claude: await claudeProgram(),
-    // mcp.ts runs the hook, and the daemon has no bundle, so its TypeScript goes through tsx.
-    guard: `"${process.execPath}" --import "${import.meta.resolve('tsx')}" "${fileURLToPath(new URL('./mcp.ts', import.meta.url))}" guard "${dataDir}"`,
+    guard: `${self} guard "${dataDir}"`,
   });
 }
 
@@ -62,13 +69,17 @@ async function main([command, ...args]: string[]) {
     case 'sleep':
     case 'wake': {
       const said = await (await laptop()).call(command);
-      console.log(said.replace('/webchat:wake', 'npm run agent -- wake'));
+      console.log(said.replace('/webchat:wake', `${cli} wake`));
       return;
     }
+    case 'guard':
+      return runGuard(args[0] ?? '');
+    case '--version':
+      return console.log(pkg.version);
     case 'watch':
       throw new Error('Cards run from the Coding agents pane, which `serve` answers in its sandbox (D-105). See the README.');
     default:
-      throw new Error('usage: npm run agent -- serve|connect|sleep|wake|pair ...');
+      throw new Error(`usage: ${cli} serve|connect|sleep|wake|pair ...`);
   }
 }
 

@@ -230,6 +230,8 @@ export interface ConfigDTO {
   vapidPublicKey: string;
   /** Random per deployment; mixed into the password key derivation. */
   kdfSalt: string;
+  /** The release this server runs, such as 0.10.0, whose agent files the Connect dialog names. */
+  release: string;
 }
 
 /** A phone's Bark app that registered through the user's link. The key is what Bark shows for the device. */

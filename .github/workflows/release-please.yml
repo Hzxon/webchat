@@ -51,3 +51,43 @@ jobs:
           git add -A
           git commit -q -m "build(plugin): Ship $TAG"
           git push -q origin plugin
+
+  # Builds the agent as one file per OS and processor, with Node inside, each on its own kind of
+  # machine, where it must print the release before it ships with its checksum. One of them also
+  # adds the install script, with this release's address (docs/decisions/agent-install.md).
+  agent:
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    strategy:
+      matrix:
+        include:
+          - { runner: macos-latest, file: webchat-agent-darwin-arm64 }
+          - { runner: macos-15-intel, file: webchat-agent-darwin-x64 }
+          - { runner: ubuntu-24.04, file: webchat-agent-linux-x64 }
+          - { runner: ubuntu-24.04-arm, file: webchat-agent-linux-arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - run: npm run build:agent
+      - env:
+          TAG: ${{ needs.release-please.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(dist/agent/webchat-agent --version)" = "${TAG#v}"
+          gzip -c dist/agent/webchat-agent > ${{ matrix.file }}.gz
+          shasum -a 256 ${{ matrix.file }}.gz > ${{ matrix.file }}.gz.sha256
+          gh release upload "$TAG" ${{ matrix.file }}.gz ${{ matrix.file }}.gz.sha256
+      - if: matrix.runner == 'ubuntu-24.04'
+        env:
+          TAG: ${{ needs.release-please.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sed "s|@BASE@|https://github.com/${{ github.repository }}/releases/download/$TAG|g" agent/install.sh > install.sh
+          gh release upload "$TAG" install.sh
