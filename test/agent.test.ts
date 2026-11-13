@@ -663,7 +663,8 @@ describe('agent client (R-027)', () => {
       const turns = async () =>
         (await fs.readFile(claudeLog, 'utf8').catch(() => ''))
           .split('\n')
-          .filter(Boolean)
+          // The fake Claude may be mid-write: a line counts once its newline is there.
+          .slice(0, -1)
           .map((line) => JSON.parse(line) as { args: string[]; input: string; cwd: string; plugin?: string[]; session: string; resumed: boolean; turn: number; pid: number; mcp?: { mcpServers: { webchat: { url: string; headers: { Authorization: string } } } } });
       try {
         const code = newPairingCode();
