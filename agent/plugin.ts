@@ -1,7 +1,6 @@
-// The trusted half of the Claude Code plugin (R-030, D-092): the MCP server Claude Code starts with
-// each session. One window on a laptop, open in any folder, serves every folder the owner connected
-// or had it clone, and another waits (R-036, D-094, D-101). It holds the agent's keys and uses the
-// owner's `gh` login. It checks in once for all those folders, and takes their run requests,
+// The keyholder's half of the agent (R-030, D-092, docs/decisions/locked-room.md): it holds the agent's
+// keys and its own `gh` login, and serves every folder the owner connected or had it clone, while
+// a runner as the owner works in those folders. It checks in once for all those folders, and takes their run requests,
 // checked as the daemon checks them (D-089); a request for a repository with no folder waits for
 // the owner to have it cloned (D-108). For each run it adds a worktree inside the folder and runs a
 // background Claude there, restricted and sandboxed, with the card on stdin (D-097). The turn ends
@@ -30,7 +29,8 @@ import { messageOf, REQUEST_TTL_MS, Runs, type Runner, type RunResult } from './
 const exec = promisify(execFile);
 const gh = (args: string[]) => exec('gh', args, { maxBuffer: 32 * 1024 * 1024 }).then((r) => r.stdout.trim());
 const signedIn = () => gh(['auth', 'status', '--hostname', 'github.com']).then(() => true, () => false);
-const GITHUB = 'Cards need GitHub on this laptop: the GitHub CLI signed in with `gh auth login`, and git using it after `gh auth setup-git`.';
+/** How the owner wakes the agent, for "To wake me, …". */
+const WAKE = 'run webchat-agent wake in a terminal on your laptop';
 /** How long a run or a turn waits for its owner to have its repository cloned (R-036). */
 const CLONE_WAIT_MS = 30 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
@@ -43,13 +43,27 @@ const MAX_FIXES = 3;
 const FAILED = new Set(['FAILURE', 'TIMED_OUT', 'STARTUP_FAILURE', 'ERROR']);
 const PULL_FIELDS = 'state,isDraft,headRefOid,mergeable,statusCheckRollup,reviews,comments,updatedAt';
 
+/** What the agent says of itself over the socket (docs/decisions/locked-room.md); `text` is what `webchat-agent status` prints. */
+export interface AgentStatus {
+  text: string;
+  paired: boolean;
+  asleep: boolean;
+  /** The rest is left out while the agent is not serving: not paired, asleep or connecting. */
+  server?: string;
+  signedIn?: boolean;
+  /** The agent's own GitHub login, when it is signed in and GitHub answered. */
+  github?: string;
+  /** Why every card fails at once, when one does. */
+  refusal?: string;
+  linked?: string[];
+  folders?: string[];
+}
+
 export interface PluginOptions {
-  /** The pairing code from the plugin's settings, after WebChat's address. */
+  /** The pairing code, after WebChat's address, for `dev`; setup pairs the keyholder (docs/decisions/locked-room.md). */
   code: string;
-  /** The plugin's own folder: the account, the lock, its harness's settings. Neither the shell nor the file tools may read it. */
+  /** The agent's own folder: the account and the lock, which no harness can read. */
   dataDir: string;
-  /** The folder the window is open in: any folder, since one window serves them all (R-036). The keyholder has none. */
-  projectDir?: string;
   /** Where the agent clones a repository its owner asks for: `~/WebChat` (D-108). */
   cloneRoot: string;
   /**
@@ -64,12 +78,6 @@ export interface PluginOptions {
   runner?: { up(): Promise<AbortSignal> };
   /** Finds the harnesses again, which `harnesses` holds as found when the host started: every minute, so one installed later shows (docs/decisions/harness-linking.md). */
   find?: () => Promise<Harness[]>;
-  /** The names of the harnesses a pairing asks to link. Left out, every harness the laptop has that is not known to be signed out. */
-  picks?: string[];
-  /** A background job of Claude Code: it never serves, so closing the window you work in puts the agent to sleep (K-66). */
-  job?: boolean;
-  /** What the owner does to wake the agent, in the host's words, for "To wake me, …". The plugin's: a Claude Code skill. */
-  wake?: string;
 }
 
 /** The branch a board's copy goes to, in one draft pull request (R-040, D-117). */
@@ -298,7 +306,7 @@ const log = (error: unknown) => console.error(`webchat: ${messageOf(error)}`);
 
 export class Plugin {
   client: AgentClient | null = null;
-  /** Why this window serves nothing, for the status tool. Empty while it serves. */
+  /** Why this process serves nothing, for the status tool. Empty while it serves. */
   problem = 'Starting.';
   private runs: Runs | null = null;
   private conversations: Conversations | null = null;
@@ -315,7 +323,7 @@ export class Plugin {
   private polling = false;
   /** When a request came or a run or turn last went, which sets how often it checks in. */
   private lastWork = Date.now();
-  /** The owner's GitHub login, whose own reviews start a round on their own (D-105). */
+  /** The agent's GitHub login, whose own reviews start a round on their own; the owner's wait for their go when it is another account (D-105, docs/decisions/locked-room.md). */
   private login?: string;
   /** Whether a GitHub login may push to a repository, by "repo login". */
   private readonly writers = new Map<string, boolean>();
@@ -323,7 +331,7 @@ export class Plugin {
   private stop?: AbortController;
   /** Aborts when the runner goes, which ends the check-ins. */
   private lost?: AbortSignal;
-  /** Cuts short the minute a waiting window sleeps, so a wake here serves at once. */
+  /** Cuts short the minute a waiting process sleeps, so a wake here serves at once. */
   private nudge?: AbortController;
   /** What runs and turns load from the owner's Claude setup, as they chose, and what the last one loaded (R-039). Kept on disk. */
   private setup: { choice: SetupChoice; applied?: SetupChoice & { at: number }; asks?: Record<string, Asked> } = { choice: { claudeMd: false, skills: [], noAttribution: false } };
@@ -352,17 +360,12 @@ export class Plugin {
     return path.join(this.home, name);
   }
 
-  /** How the owner wakes the agent, in the words of the host that runs it. */
-  private get wakeWords() {
-    return this.options.wake ?? 'type /webchat:wake in Claude Code on your laptop';
-  }
-
-  /** Why a window serves nothing while the owner has the agent asleep (K-66, D-113). */
+  /** Why a process serves nothing while the owner has the agent asleep (K-66, D-113). */
   private get asleepWords() {
-    return `Your agent is asleep: it takes no cards and answers no questions. To wake it, ${this.wakeWords}.`;
+    return `Your agent is asleep: it takes no cards and answers no questions. To wake it, ${WAKE}.`;
   }
 
-  /** The one switch for every window and the pane: while it exists, nothing serves (K-66, D-113). */
+  /** The one switch for every process and the pane: while it exists, nothing serves (K-66, D-113). */
   private get asleep() {
     return path.join(this.options.dataDir, 'asleep');
   }
@@ -374,38 +377,30 @@ export class Plugin {
 
   /**
    * Takes the laptop's watch, pairs when a new code was pasted, and loads the laptop's copy of the
-   * account and the folders it has. False when this window serves nothing; `problem` says why.
+   * account and the folders it has. False when this process serves nothing; `problem` says why.
    */
   async start(): Promise<boolean> {
-    const { dataDir, projectDir } = this.options;
+    const { dataDir } = this.options;
     if (this.options.runner) {
       // Offline, with no check-ins, until a runner says hello; the loop ends when it goes (D-113).
       this.problem = NO_RUNNER;
       this.lost = await this.options.runner.up();
     }
-    if (this.options.job) {
-      this.problem = 'This is a background job, so it does not serve your agent. The window you work in does.';
-      return false;
-    }
-    // A mark from before R-036 names no folder; the checkout a window opens in names it (D-101).
-    const here = projectDir && (await this.bench.checkout(projectDir)).repo;
-    const mark = here && markOf(dataDir, here);
-    if (mark && (await fs.readFile(mark, 'utf8').catch(() => undefined)) === '') await fs.writeFile(mark, projectDir!);
     this.problem = 'Connecting to WebChat.';
     const { server, code } = this.options.code ? readPairing(this.options.code, '') : { server: '', code: '' };
     const pairedFile = path.join(dataDir, 'account.json');
     let paired = await AgentClient.load(pairedFile).catch(() => null);
     if (!paired && !code) {
-      this.problem = 'Not paired. In WebChat, choose Connect coding agent, paste its code with /plugin configure webchat@webchat, then start a new session.';
+      this.problem = 'Not paired. In WebChat, choose Connect coding agent, then run `webchat-agent setup` with its code.';
       return false;
     }
-    // Two windows would both claim the laptop's runs (D-085). The second takes over when the first closes.
+    // Two processes would both claim the laptop's runs (D-085). The second takes over when the first closes.
     await fs.mkdir(dataDir, { recursive: true, mode: 0o700 });
-    // An agent put to sleep stays asleep in every window, new ones included, until a wake.
+    // An agent put to sleep stays asleep in every process, new ones included, until a wake.
     for (;;) {
       const asleep = existsSync(this.asleep);
       if (!asleep && (await takeLock(path.join(dataDir, 'watch.lock')))) break;
-      this.problem = asleep ? this.asleepWords : 'Another Claude Code window on this laptop serves your agent. This one takes over when that one closes.';
+      this.problem = asleep ? this.asleepWords : 'Another process on this laptop serves your agent. This one takes over when that one closes.';
       this.nudge = new AbortController();
       await sleep(60_000, undefined, { ref: false, signal: this.nudge.signal }).catch(() => undefined);
     }
@@ -455,7 +450,7 @@ export class Plugin {
     const found = await this.bench.folders(marks.filter((m) => m.dir));
     this.folders = new Map(found.map((f) => [f.repo.toLowerCase(), f] as const));
     this.client!.repos = [...this.folders.keys()];
-    // A folder the owner connected in another window lets the runs and turns that wait for it go on.
+    // A folder the owner connected in another process lets the runs and turns that wait for it go on.
     for (const key of this.waiting.keys()) if (this.folders.has(key)) this.settle(key);
   }
 
@@ -467,7 +462,7 @@ export class Plugin {
   /** Why every question, run and fix fails before it starts, or undefined. */
   private async refusal() {
     // Going to sleep: what runs finishes, and nothing new starts (K-66, D-113).
-    if (existsSync(this.asleep)) return `I am going to sleep, so I start nothing new. To wake me, ${this.wakeWords}.`;
+    if (existsSync(this.asleep)) return `I am going to sleep, so I start nothing new. To wake me, ${WAKE}.`;
     return this.noHarness();
   }
 
@@ -476,11 +471,10 @@ export class Plugin {
     this.harnesses = await this.bench.harnesses();
   }
 
-  /** The harnesses a new pairing asks to link, for the owner's approval: those named, or every one the laptop has that is not known to be signed out. */
+  /** The harnesses a new pairing asks to link, for the owner's approval: every one the laptop has that is not known to be signed out. */
   private async offered(): Promise<PairingPick[]> {
-    const { picks } = this.options;
     await this.refreshHarnesses();
-    return this.harnesses.flatMap(({ name, path: where, version, signedIn }) => (where && (picks ? picks.includes(name) : signedIn !== false) ? [{ name, ...(version && { version }), ...(signedIn !== undefined && { signedIn }) }] : []));
+    return this.harnesses.flatMap(({ name, path: where, version, signedIn }) => (where && signedIn !== false ? [{ name, ...(version && { version }), ...(signedIn !== undefined && { signedIn }) }] : []));
   }
 
   /** Whether the owner linked a harness and has not turned it off, as an older page does. */
@@ -509,20 +503,6 @@ export class Plugin {
     return refusals.every(Boolean) ? refusals[0] : undefined;
   }
 
-  /** Why the harness a request names takes no cards: not linked, missing, or no isolation proof in the folder it would work in. */
-  private async noCardsWith(run: RunRequest) {
-    const { harness, refused } = await this.pick(run.harness);
-    return refused ?? this.bench.refusal(harness!.name, this.folderOf(run.repo!)?.dir ?? this.options.cloneRoot);
-  }
-
-  /** Why no linked harness takes cards, or undefined while one does: a harness that answers may still lack the isolation proof a folder needs. */
-  private async noCards() {
-    const linked = this.linkedHarnesses();
-    if (!linked.length) return NONE_LINKED;
-    const refusals = await Promise.all(linked.map(async (h) => (await this.harnessRefusal(h)) ?? this.bench.refusal(h.name, this.options.cloneRoot)));
-    return refusals.every(Boolean) ? refusals[0] : undefined;
-  }
-
   /**
    * The harness a request names, or the first linked for one from before the pick, such as a Check
    * again or a proposal's draft, and why it starts nothing, when it does. Picked once per run or
@@ -541,16 +521,15 @@ export class Plugin {
     return harness!;
   }
 
-  /** The first linked harness that may work in a folder, for what no request names one for, or undefined. */
-  private async hostFor(folder: Folder) {
-    for (const harness of this.linkedHarnesses()) if (!(await this.folderRefusal(folder, harness))) return harness;
+  /** Whether a folder is one the agent may work in, with a harness linked to work there. */
+  private usable(folder: Folder) {
+    return !this.folderRefusal(folder) && this.linkedHarnesses().length > 0;
   }
 
   /** Why the work in one folder fails before it starts, or undefined (D-097). */
-  private folderRefusal(folder: Folder, harness: HarnessInfo, purpose?: 'cards' | 'answers') {
-    // The background Claude's shell reads the repository's .git, where an https address can hold a login.
-    if (/^https?:\/\/[^/]*@/i.test(folder.origin)) return `The address of ${folder.repo} on this laptop holds a password, which I must not see. Ask Claude Code there to take the login out of the address of origin.`;
-    return this.bench.refusal(harness.name, folder.dir, purpose);
+  private folderRefusal(folder: Folder) {
+    // A harness's shell reads the repository's .git, where an https address can hold a login.
+    if (/^https?:\/\/[^/]*@/i.test(folder.origin)) return `The address of ${folder.repo} on this laptop holds a password, which I must not see. Take the login out of the address of origin there.`;
   }
 
   /** Why its runs fail before they start, which Runs asks before each claim: they also push and open drafts with this laptop's GitHub login (D-092). */
@@ -559,8 +538,8 @@ export class Plugin {
     if (run && !run.repo) return 'Reload WebChat, then open the card again and press Start.';
     const refused =
       (await this.refusal()) ??
-      (run ? await this.noCardsWith(run) : await this.noCards()) ??
-      ((await signedIn()) ? undefined : 'Cards need a GitHub sign-in on this laptop. In Claude Code there, type /webchat:connect, and it helps you sign in.');
+      (run && (await this.pick(run.harness)).refused) ??
+      ((await signedIn()) ? undefined : 'Cards need the agent’s GitHub sign-in. Run `webchat-agent setup` and answer yes to its GitHub question.');
     if (refused || !run) return refused;
     // A card that an open pull request claims is taken, as `scripts/claim.sh` refuses it (R-042).
     const claim = (await openPulls(run.repo!, 'number,title,body,headRefName'))?.find((p) => claimOf(p) === cardKey(run.card));
@@ -571,7 +550,7 @@ export class Plugin {
    * The folder of a repository. When the laptop has none, says so with `offer`, which the owner
    * answers by having it cloned, and waits for that: at most 30 minutes, or until a cancel (R-036).
    */
-  private async folderFor(repo: string, harness: HarnessInfo, signal: AbortSignal, offer: () => Promise<unknown>, purpose?: 'cards' | 'answers') {
+  private async folderFor(repo: string, signal: AbortSignal, offer: () => Promise<unknown>) {
     if (!this.folderOf(repo)) {
       await offer();
       const key = repo.toLowerCase();
@@ -586,7 +565,7 @@ export class Plugin {
       });
     }
     const folder = this.folderOf(repo)!;
-    const refused = await this.folderRefusal(folder, harness, purpose);
+    const refused = this.folderRefusal(folder);
     if (refused) throw new Error(refused);
     return folder;
   }
@@ -611,7 +590,7 @@ export class Plugin {
     await this.conversations!.recover().catch(log);
     missed.forEach((m) => this.handle(m));
     await this.updateLevel();
-    // Another window may connect a folder meanwhile, a folder may move, and another window may put the agent to sleep.
+    // Another process may connect a folder meanwhile, a folder may move, and another process may put the agent to sleep.
     const timers = [
       setInterval(() => {
         this.drowse();
@@ -640,7 +619,7 @@ export class Plugin {
    */
   private async updateLevel() {
     const asks = this.linkedHarnesses().some((h) => h.asks) ? AGENT_LEVEL.asks : 0;
-    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | asks | ((await signedIn()) && !(await this.noCards()) ? AGENT_LEVEL.cards : 0);
+    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | asks | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
   }
 
   /** The work that keeps an agent awake while it goes to sleep: its running cards and questions. */
@@ -650,7 +629,7 @@ export class Plugin {
 
   /**
    * Goes to sleep once the switch is on and nothing runs: the check-ins stop, so the page shows the
-   * agent asleep, and the watch is free for no window while the switch stays on (K-66, D-113).
+   * agent asleep, and the watch is free for no process while the switch stays on (K-66, D-113).
    */
   private drowse() {
     if (!this.stop || this.stop.signal.aborted || !existsSync(this.asleep) || this.busy().length) return;
@@ -664,12 +643,12 @@ export class Plugin {
     await fs.mkdir(this.options.dataDir, { recursive: true, mode: 0o700 });
     await fs.writeFile(this.asleep, '');
     this.drowse();
-    // Only the window that serves knows what runs; another one goes to sleep at its next check.
+    // Only the process that serves knows what runs; another one goes to sleep at its next check.
     return this.runs ? this.busy() : [];
   }
 
-  /** Turns the switch off; the window waiting here serves at once, any other within a minute. */
-  private async wake() {
+  /** Turns the switch off; the process waiting here serves at once, any other within a minute. */
+  async wake() {
     if (!existsSync(this.asleep)) return 'Your agent is not asleep.';
     await fs.rm(this.asleep, { force: true });
     this.nudge?.abort();
@@ -681,7 +660,7 @@ export class Plugin {
     if (!this.fromOwner(message, message.content!.sleep!.sentAt)) return;
     const busy = await this.sleep();
     const when = busy.length ? `once I finish ${busy.join(' and ')}` : 'now';
-    await this.client!.send(message.conversationId, { text: `I go to sleep ${when}. To wake me, ${this.wakeWords}.` });
+    await this.client!.send(message.conversationId, { text: `I go to sleep ${when}. To wake me, ${WAKE}.` });
   }
 
   private saveCopies() {
@@ -699,7 +678,7 @@ export class Plugin {
     if (!this.fromOwner(message, ask.sentAt)) return;
     const to = message.clientId!;
     const folder = this.folderOf(ask.repo);
-    if (!folder || !(await this.hostFor(folder))) {
+    if (!folder || !this.usable(folder)) {
       const text = `${noCopy(ask.repo)} Ask me about it under Coding agents, and I offer to clone it.`;
       return void (await this.client!.send(message.conversationId, { text, board: { kind: 'failed', to } }));
     }
@@ -749,10 +728,8 @@ export class Plugin {
    * Asks the owner to connect this folder, for `webchat-agent connect`: it marks nothing, and the
    * serving agent does when the owner approves in WebChat (docs/decisions/connect-approval.md).
    */
-  async requestConnect(dir = this.options.projectDir!, named?: string) {
+  async requestConnect(dir: string, repo: string) {
     const { dataDir } = this.options;
-    const repo = named ?? (await this.bench.checkout(dir)).repo;
-    if (!repo) return NO_REPOSITORY;
     if (!existsSync(path.join(dataDir, 'account.json'))) return 'This agent is not paired, so there is no owner to ask. Pair first: see `webchat-agent setup`.';
     if ((await fs.readFile(markOf(dataDir, repo), 'utf8').catch(() => '')) === dir) return `${repo} is connected to this folder already.`;
     await this.fileAsk({ kind: 'connect', repo, dir });
@@ -876,7 +853,7 @@ export class Plugin {
         // Origin and GitHub are looked at every 5 minutes, or when a copy is due.
         if (!due && now - (this.looked.get(project.id) ?? 0) < 5 * 60_000) continue;
         const folder = this.folderOf(repo);
-        if (!folder || !(await this.hostFor(folder)) || !(await signedIn())) continue;
+        if (!folder || !this.usable(folder) || !(await signedIn())) continue;
         this.looked.set(project.id, now);
         const { roadmap, decisions } = await this.columns(project, versions, docs);
         const { ref } = await this.keep.fetch(repo);
@@ -1033,16 +1010,16 @@ export class Plugin {
 
   /**
    * A harness as the owner's Settings shows it (D-115): where the laptop has it, whether it is
-   * linked, what needs the owner's attention, whether it takes cards, and what it offers. A
-   * harness that answers but cannot keep its shell from the secrets says so for a folder of
-   * `cloneRoot`, where cards run. `refusal` names not-linked too, so a page from before linking greys it.
+   * linked, what needs the owner's attention, whether it takes cards, and what it offers. A sandbox
+   * that lets its shell read the owner's secrets is a warning there. `refusal` names not-linked too,
+   * so a page from before linking greys it.
    */
   private async stateOf(harness: HarnessInfo): Promise<HarnessState> {
     const { instructions, skills, knobs } = harness.offers;
     const linked = this.isLinked(harness);
-    const [own, cards, refused] = await Promise.all([this.bench.refusal(harness.name), this.bench.refusal(harness.name, this.options.cloneRoot), this.harnessRefusal(harness)]);
-    const attention = linked ? own ?? (harness.signedIn === false ? `${harness.name} is not signed in.` : undefined) : undefined;
-    return { name: harness.name, ...(harness.version && { version: harness.version }), ...(harness.signedIn !== undefined && { signedIn: harness.signedIn }), ...(harness.path && { path: shown(harness.path) }), linked, ...(attention && { attention }), answers: refused, refusal: refused ?? cards, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
+    const [own, refused] = await Promise.all([this.bench.refusal(harness.name), this.harnessRefusal(harness)]);
+    const attention = linked ? own ?? (harness.signedIn === false ? `${harness.name} is not signed in.` : harness.warning) : undefined;
+    return { name: harness.name, ...(harness.version && { version: harness.version }), ...(harness.signedIn !== undefined && { signedIn: harness.signedIn }), ...(harness.path && { path: shown(harness.path) }), linked, ...(attention && { attention }), answers: refused, refusal: refused, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
   }
 
   /** Keeps the setup on disk, and hands each harness its choice. */
@@ -1080,7 +1057,7 @@ export class Plugin {
     if (this.folderOf(key)) return this.settle(key);
     if (this.cloning.has(key)) return;
     if (!isRepoName(asked.repo) || !(await this.linked(key))) return fail(`None of your projects links ${asked.repo}, so I do not clone it.`);
-    if (!(await signedIn())) return fail('Cloning needs GitHub on this laptop. In Claude Code there, type /webchat:connect, and it helps you sign in.');
+    if (!(await signedIn())) return fail('Cloning needs the agent’s GitHub sign-in. Run `webchat-agent setup` and answer yes to its GitHub question.');
     const [owner, name] = asked.repo.split('/') as [string, string];
     const dir = path.join(this.options.cloneRoot, owner, name);
     this.cloning.add(key);
@@ -1181,7 +1158,7 @@ export class Plugin {
   private async run({ request, taken, card, cards, decisions, signal }: Parameters<Runner>[0]): Promise<RunResult> {
     const text = noCopy(request.repo!);
     const harness = await this.harnessFor(request.harness);
-    const folder = await this.folderFor(request.repo!, harness, signal, () => this.runs!.report(taken, { kind: 'nocopy', note: text }, text));
+    const folder = await this.folderFor(request.repo!, signal, () => this.runs!.report(taken, { kind: 'nocopy', note: text }, text));
     const base = await this.fetchBase(folder);
     // A card run again gets a branch of its own, next to the one its earlier run left, here or on origin.
     const { branch, worktree } = await this.bench.prepare({ dir: folder.dir, slug: slugOf(`${request.card}-${request.title}`), taken: await this.keep.branches(folder.repo), tip: base.tip });
@@ -1367,7 +1344,7 @@ export class Plugin {
     conversation.harness = harness.name;
     // A project that links no repository asks about its board alone, in an empty folder (R-038).
     const { repo } = conversation;
-    const folder = repo ? await this.folderFor(repo, harness, signal, () => this.client!.send(conversation.chat, { text: noCopy(repo), prompt: { kind: 'nocopy', to: conversation.root } }), 'answers') : undefined;
+    const folder = repo ? await this.folderFor(repo, signal, () => this.client!.send(conversation.chat, { text: noCopy(repo), prompt: { kind: 'nocopy', to: conversation.root } })) : undefined;
     // Sessions outside WebChat claim with draft pull requests, which the sandboxed shell cannot list (R-041).
     const listing = folder && openPulls(folder.repo);
     const board = await this.board(conversation.project);
@@ -1485,43 +1462,7 @@ export class Plugin {
     return { repo, number };
   }
 
-  /** Runs a tool the session's model called. Returns what the model reads; throws what it reads as an error. */
-  async call(name: string): Promise<string> {
-    switch (name) {
-      case 'status':
-        return this.status();
-      case 'connect':
-        return this.connect();
-      case 'disconnect':
-        return this.disconnect();
-      case 'sleep': {
-        const busy = await this.sleep();
-        return `Your agent goes to sleep ${busy.length ? `once it finishes ${busy.join(' and ')}` : 'within 15 seconds, once nothing runs'}. To wake it, ${this.wakeWords}.`;
-      }
-      case 'wake':
-        return this.wake();
-      default:
-        throw new Error(`There is no tool ${name}.`);
-    }
-  }
-
-  /**
-   * Marks the window's folder as its repository's, so the agent works in a checkout the owner has
-   * already, rather than cloning one (D-101). The window that serves the laptop reads it.
-   */
-  private async connect() {
-    // Questions need no GitHub login, so connecting does not wait for one.
-    const github = (await signedIn()) ? '' : ` ${GITHUB}`;
-    const { repo } = await this.bench.checkout(this.options.projectDir!);
-    if (!repo) return `${NO_REPOSITORY}${github}`;
-    await this.mark(repo, this.options.projectDir!);
-    const paired = existsSync(path.join(this.options.dataDir, 'account.json'));
-    let next = paired ? ' Ask your agent about it in WebChat, or hand it cards on the board.' : ' Now approve the agent in WebChat, in the window that shows the code.';
-    if (!paired && !this.options.code) next = ' To pair the agent, choose Connect coding agent in WebChat, then type /plugin configure webchat@webchat here and paste the code.';
-    return `Connected ${repo}: your agent works in this folder.${next}${github}`;
-  }
-
-  /** Writes the mark that names a repository's folder, and reads the marks again when this window serves. */
+  /** Writes the mark that names a repository's folder, and reads the marks again when this process serves. */
   private async mark(repo: string, dir: string) {
     const mark = markOf(this.options.dataDir, repo);
     await fs.mkdir(path.dirname(mark), { recursive: true, mode: 0o700 });
@@ -1529,30 +1470,32 @@ export class Plugin {
     if (this.client) await this.scan();
   }
 
-  /** Removes the folder's mark, never its files. */
-  private async disconnect() {
-    const { repo } = await this.bench.checkout(this.options.projectDir!);
-    if (!repo) throw new Error('This folder is no GitHub repository, so it was never connected.');
-    await fs.rm(markOf(this.options.dataDir, repo), { force: true });
-    if (this.client) await this.scan();
-    return `Disconnected ${repo}. Your agent no longer works in this folder, and its files stay.`;
+  /** What `webchat-agent sleep` says, once the agent is told to go to sleep. */
+  async goToSleep() {
+    const busy = await this.sleep();
+    return `Your agent goes to sleep ${busy.length ? `once it finishes ${busy.join(' and ')}` : 'within 15 seconds, once nothing runs'}. To wake it, ${WAKE}.`;
   }
 
-  private async status() {
-    // A waiting window looks at the switch only once a minute, so the status reads it now.
-    if (this.problem) return !this.options.job && existsSync(this.asleep) ? this.asleepWords : this.problem;
-    const owner = this.client!.users.get(this.client!.owner!)?.displayName;
+  /** What the agent says of itself, for `webchat-agent status` and for `doctor` and setup, which read the fields (docs/decisions/locked-room.md). */
+  async status(): Promise<AgentStatus> {
+    const asleep = existsSync(this.asleep);
+    // A waiting loop looks at the switch only once a minute, so the status reads it now.
+    if (this.problem || !this.client) return { text: asleep ? this.asleepWords : this.problem, paired: !!this.client, asleep };
+    const owner = this.client.users.get(this.client.owner!)?.displayName;
     const sandbox = await this.cardRefusal();
     const folders = [...this.folders.values()].map((f) => `${f.repo} in ${shown(f.dir)}`);
-    return [
-      sandbox ? `Every card fails at once: ${sandbox}` : `Taking the cards that ${owner ?? 'your owner'} hands to this agent, on ${this.client!.api.baseUrl}.`,
+    const linked = this.linkedHarnesses().map((h) => h.name);
+    const signed = await signedIn();
+    const github = signed ? (this.login ??= await gh(['api', 'user', '--jq', '.login']).catch(() => undefined)) : undefined;
+    const text = [
+      sandbox ? `Every card fails at once: ${sandbox}` : `Taking the cards that ${owner ?? 'your owner'} hands to this agent, on ${this.client.api.baseUrl}.`,
       folders.length ? `Working in ${folders.join(', ')}.` : 'No folders yet: your agent offers to clone a repository when you ask it about one.',
       ...(this.runs!.running.length ? [`Working on ${this.runs!.running.map((r) => r.card).join(', ')}.`] : []),
       `Watching ${this.watched.length} draft pull requests.`,
-      `Linked: ${this.linkedHarnesses().map((h) => h.name).join(', ') || 'none'}.`,
-      // `doctor` reads this: the owner cannot read the agent's login, so only the keyholder can say.
-      (await signedIn()) ? 'GitHub: the agent is signed in.' : 'GitHub: the agent is not signed in.',
+      `Linked: ${linked.join(', ') || 'none'}.`,
+      signed ? `GitHub: the agent is signed in${github ? ` as ${github}` : ''}.` : 'GitHub: the agent is not signed in.',
     ].join('\n');
+    return { text, paired: true, server: this.client.api.baseUrl, signedIn: signed, ...(github && { github }), asleep, ...(sandbox && { refusal: sandbox }), linked, folders };
   }
 
   /**
@@ -1596,7 +1539,7 @@ export class Plugin {
         const folder = this.folderOf(pull.pull.repo);
         if (!folder) continue;
         const { harness, refused } = await this.pick(pull.harness);
-        if (!harness || refused || (await this.folderRefusal(folder, harness))) continue;
+        if (!harness || refused || this.folderRefusal(folder)) continue;
         // A run that waits for a decision needs only whether its draft ended.
         const fields = pull.unfinished?.paused ? 'state,headRefOid' : PULL_FIELDS;
         const view = JSON.parse(await gh(['pr', 'view', String(pull.pull.number), '--repo', pull.pull.repo, '--json', fields])) as PullView;

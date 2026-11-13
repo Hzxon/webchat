@@ -838,7 +838,7 @@ export async function answerPermit(conversationId: number, question: ChatMessage
   return sendContent(conversationId, { text, permit }, false);
 }
 
-/** Puts the user's agent to sleep after what it runs; only `/webchat:wake` on the laptop wakes it (K-66, D-113). */
+/** Puts the user's agent to sleep after what it runs; only `webchat-agent wake` on the laptop wakes it (K-66, D-113). */
 export async function putToSleep(agentId: number) {
   await sendContent(await startDirectChat(agentId), { text: 'Go to sleep', sleep: { sentAt: Date.now() } }, false);
 }

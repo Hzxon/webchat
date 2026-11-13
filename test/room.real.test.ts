@@ -83,7 +83,11 @@ test('builds the room for real: a harness cannot read the agent’s account, nob
     // The keyholder runs as the account and answers the owner on the socket.
     const status = async () => (await sh(...asOwner('status'), { timeout: 20_000 }).catch(() => ({ stdout: '' }))).stdout;
     for (let tries = 0; !/^Runner: /m.test(await status()); tries++) {
-      assert.ok(tries < 30, 'the keyholder never answered on its socket');
+      if (tries >= 30) {
+        // What the service said, for the log of a failed run.
+        const said = platform === 'darwin' ? await fs.readFile(layout.log, 'utf8').catch(() => '') : (await sh('journalctl', ['-u', layout.label, '--no-pager', '-n', '30']).catch(() => ({ stdout: '' }))).stdout;
+        assert.fail(`the keyholder never answered on its socket. ${said}`);
+      }
       await sleep(1000);
     }
     await sh('pgrep', ['-u', layout.user, '-f', 'keyholder']);
@@ -106,7 +110,7 @@ test('builds the room for real: a harness cannot read the agent’s account, nob
     await fs.mkdir(path.join(tmp, 'data', 'laptop'), { recursive: true });
     const claude = path.join(tmp, 'claude');
     await fs.writeFile(claude, fakeClaude(path.join(layout.data, 'laptop', 'account.json')), { mode: 0o755 });
-    const harness = claudeHarness(claude, '', path.join(tmp, 'data'));
+    const harness = claudeHarness(claude, path.join(tmp, 'data'));
     const schema = { type: 'object', properties: { note: { type: 'string' } }, required: ['note'] };
     const answer = (await harness.turn({ cwd: tmp, session: 's-1', resume: false, message: 'Read it', schema, setup: {}, signal: AbortSignal.timeout(30_000) })) as { note: string };
     await harness.end?.();

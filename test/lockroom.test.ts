@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { GH_VERSION, ghArchive, ghAsset } from '../agent/gh.ts';
 import {
-  createPlan, foldersPlan, freeIds, ghPlan, idsOf, inspectRoom, keyholderPlist, keyholderUnit, layoutFor, loginPlan, MARK, pairPlan, programOf, put, putAs, refusals, runAll, servicePlan, signedInPlan, uninstallPlan,
+  createPlan, foldersPlan, freeIds, ghPlan, idsOf, inspectRoom, keyholderPlist, keyholderUnit, layoutFor, loginPlan, MARK, pairPlan, programOf, put, putAs, refusals, runAll, selfProblem, servicePlan, signedInPlan, uninstallPlan,
   type Cmd, type Found,
 } from '../agent/lockroom.ts';
 import { uninstall, verifiedProgram } from '../agent/setup.ts';
@@ -246,4 +246,47 @@ test('uninstall refuses an account setup did not make and removes nothing', asyn
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+test('the keyholder starts only as the role account, in its own folder 700, running programs that only root writes, up every parent', async () => {
+  // A table of owners and modes stands in for the disk, since nothing here runs as root.
+  const table: Record<string, { uid: number; mode: number }> = {
+    '/': { uid: 0, mode: 0o755 },
+    '/opt': { uid: 0, mode: 0o755 },
+    '/opt/webchat': { uid: 0, mode: 0o755 },
+    '/opt/webchat/bin': { uid: 0, mode: 0o755 },
+    '/opt/webchat/webchat-agent': { uid: 0, mode: 0o755 },
+    '/opt/webchat/bin/gh': { uid: 0, mode: 0o755 },
+    '/usr': { uid: 0, mode: 0o755 },
+    '/usr/bin': { uid: 0, mode: 0o755 },
+    '/usr/bin/git': { uid: 0, mode: 0o755 },
+    '/usr/bin/git-link': { uid: 0, mode: 0o755 },
+    '/var/lib/webchat': { uid: 301, mode: 0o40700 },
+  };
+  const links: Record<string, string> = { '/usr/bin/git-link': '/usr/bin/git' };
+  const io = {
+    stat: async (file: string) => table[file] ?? Promise.reject(new Error('ENOENT')),
+    realpath: async (file: string) => (links[file] ?? (table[file] ? file : Promise.reject(new Error('ENOENT')))),
+  } as unknown as Parameters<typeof selfProblem>[0]['io'];
+  const programs = ['/opt/webchat/webchat-agent', '/usr/bin/git', '/opt/webchat/bin/gh'];
+  const check = (extra: Partial<Parameters<typeof selfProblem>[0]> = {}) => selfProblem({ user: '_webchat', uid: 301, data: '/var/lib/webchat', programs, io, ...extra });
+  assert.equal(await check(), undefined);
+  assert.match((await check({ user: 'alice' }))!, /role account only/);
+  assert.match((await check({ uid: 502 }))!, /not the keyholder's own folder/);
+  assert.match((await check({ data: '/var/lib/nowhere' }))!, /not the keyholder's own folder/);
+  table['/var/lib/webchat'] = { uid: 301, mode: 0o40750 };
+  assert.match((await check())!, /mode 700/);
+  table['/var/lib/webchat'] = { uid: 301, mode: 0o40700 };
+  assert.match((await check({ programs: ['/usr/bin/nowhere'] }))!, /\/usr\/bin\/nowhere is missing/);
+  // A program, or any folder above it, that another user owns or that group or others write is refused.
+  for (const [file, owned] of [['/opt/webchat/webchat-agent', { uid: 501, mode: 0o755 }], ['/opt/webchat', { uid: 0, mode: 0o775 }], ['/opt', { uid: 0, mode: 0o757 }], ['/', { uid: 501, mode: 0o755 }]] as const) {
+    const was = table[file]!;
+    table[file] = owned;
+    assert.match((await check())!, new RegExp(`${file === '/' ? '/' : file} is not owned by root alone`), file);
+    table[file] = was;
+  }
+  // A link is followed, and the folders the link itself lies in count too.
+  assert.equal(await check({ programs: ['/usr/bin/git-link'] }), undefined);
+  table['/usr/bin'] = { uid: 0, mode: 0o777 };
+  assert.match((await check({ programs: ['/usr/bin/git-link'] }))!, /\/usr\/bin is not owned by root alone/);
 });

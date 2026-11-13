@@ -1,4 +1,4 @@
-// JSON-RPC 2.0 over lines, which the plugin's MCP servers (mcp.ts, answer.ts) and the ACP client
+// JSON-RPC 2.0 over lines, which the MCP servers (answer.ts, approve.ts) and the ACP client
 // (acp.ts) all speak: each message is one line, and either side may ask.
 import type { Readable, Writable } from 'node:stream';
 import readline from 'node:readline';

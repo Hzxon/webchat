@@ -92,11 +92,10 @@ export function seatFor(agent: UserDTO, repo: string): Seat | undefined {
   return { repo, online: agent.online, lastSeen: agent.lastSeen ?? 0, protocol: agent.protocol, agent, noFolder: !seat || agent.online };
 }
 
-const UPDATE = 'Your agent’s WebChat plugin is too old for this. In Claude Code, type /plugin, open Installed, choose webchat, then Update now.';
+const UPDATE = 'Your agent is too old for this. Run webchat-agent setup in a terminal on your laptop to update it.';
 
-/** What wakes the agent: one window or one service serves every folder on the laptop (R-036). */
-export const WAKE =
-  'Your laptop must be awake, with one Claude Code window open or the webchat-agent service running. If you put your agent to sleep, type /webchat:wake in Claude Code there, or run webchat-agent wake in a terminal.';
+/** What wakes the agent: one service serves every folder on the laptop (R-036). */
+export const WAKE = 'Your laptop must be awake and logged in, with the webchat-agent services running. If you put your agent to sleep, run webchat-agent wake in a terminal there.';
 
 export const asleep = (lastSeen: number | null) => `Your agent is asleep${lastSeen ? ` since ${formatSince(lastSeen)}` : ''}`;
 
@@ -114,7 +113,7 @@ export const short = (repo: string) => repo.slice(repo.indexOf('/') + 1);
 /** The user's own coding agents (D-089). */
 export const ownAgents = (users: State['users'], meId: number | undefined) => Object.values(users).filter((u) => u.agentOwner === meId && !u.deleted);
 
-/** A session that takes a question now: online, on a plugin that answers questions (D-103). */
+/** A session that takes a question now: online, on an agent that answers questions (D-103). */
 export const ready = (seat: AgentRepoDTO) => seat.online && seat.protocol >= AGENT_LEVEL.answers;
 
 /** The agent a chat is the user's direct chat with, when the agent is theirs (D-089). */

@@ -73,6 +73,14 @@ jobs:
         run: npm ci
       - if: steps.changed.outputs.run == 'true'
         run: npm run build:agent
+      # The keyholder refuses a program under a folder that anyone but root writes. CI changes nothing
+      # on the owner's server, so a writable /opt fails here with the fix, not later in the test.
+      - if: steps.changed.outputs.run == 'true'
+        run: |
+          if [ "$(stat -c %u /opt)" != 0 ] || [ -n "$(find /opt -maxdepth 0 -perm /022)" ]; then
+            echo "::error::/opt must be root's alone. On the runner's server: sudo chown root:root /opt && sudo chmod 755 /opt"
+            exit 1
+          fi
       # The test lints the keyholder's unit with `systemd-analyze verify`, or its plist with `plutil -lint`.
       - if: steps.changed.outputs.run == 'true'
         run: WEBCHAT_REAL_ROOM=1 node --test --test-timeout=200000 --test-force-exit --import tsx test/room.real.test.ts

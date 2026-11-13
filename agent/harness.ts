@@ -1,5 +1,5 @@
-// What the plugin needs of a coding agent's command line to work for its owner (D-097). Each
-// harness has an adapter, such as claude.ts, that owns its turn, its isolation proof and the setup
+// What the agent needs of a coding agent's command line to work for its owner (D-097). Each
+// harness has an adapter, such as claude.ts, that owns its turn, its warning and the setup
 // it offers; plugin.ts calls only this and never names a harness.
 import os from 'node:os';
 import path from 'node:path';
@@ -49,13 +49,10 @@ export interface Harness {
   readonly asks: boolean;
   /** False for one whose sandbox keeps `.git` read-only, so it cannot commit; its leftovers are committed for it. Left out means it commits. */
   readonly commits?: boolean;
-  /**
-   * Why this laptop cannot run its turns, or undefined. With `dir`, why its shell could read a
-   * secret folder while it works there, or undefined when the adapter proves it cannot. A turn for
-   * `answers` runs in a scratch copy and pushes nothing, so an adapter whose only gap is the
-   * owner's login may allow it while it refuses `cards`, the default: answers only is the floor.
-   */
-  refusal(dir?: string, purpose?: 'cards' | 'answers'): Promise<string | undefined>;
+  /** Why this laptop cannot run its turns, or undefined. The locked room keeps the secrets from every harness, so this is not an isolation check (docs/decisions/locked-room.md). */
+  refusal(): Promise<string | undefined>;
+  /** What the owner should know about its sandbox while it runs: a managed setting that lets its shell read the owner's secrets. It stops nothing. */
+  warning?(): Promise<string | undefined>;
   /**
    * What of the owner's setup it can load: the instructions file and the skills folder it reads,
    * and the knobs it honors, named as in `SetupChoice`, such as `noAttribution`. It declares a knob

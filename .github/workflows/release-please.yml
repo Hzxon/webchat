@@ -26,7 +26,8 @@ jobs:
       tag: ${{ steps.release.outputs.tag_name }}
 
   # Ships the Claude Code plugin on the `plugin` branch, which is its marketplace: the plugin folder
-  # with its program built from the release's tag (R-030). Each release adds one commit there.
+  # as the release's tag has it. The plugin is skills only now, with no program to build, since the
+  # agent runs from `webchat-agent setup` (docs/decisions/locked-room.md). Each release adds one commit there.
   plugin:
     needs: release-please
     if: needs.release-please.outputs.created == 'true'
@@ -35,12 +36,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release-please.outputs.tag }}
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 26
-          cache: npm
-      - run: npm ci
-      - run: npm run build:plugin
       - env:
           TAG: ${{ needs.release-please.outputs.tag }}
         run: |

@@ -1,6 +1,6 @@
 ### D: A harness runs cards only when its adapter proves the shell cannot read the secrets
 
-Status: Proposed 2026-11-09 in #180, from "A Codex adapter, and a sandbox WebChat owns".
+Status: Superseded 2026-11-13 in #209 by docs/decisions/locked-room.md and docs/decisions/harness-rulebook.md: the keyholder's account keeps the secrets from every harness, so no adapter proves it, and `CODEX_GAP`, `acpGap` and `refusal(dir)` are gone. What it says of Codex's turns still holds. Proposed 2026-11-09 in #180, from "A Codex adapter, and a sandbox WebChat owns".
 
 A harness takes cards only when its adapter's `refusal(dir)` proves that its shell cannot read the
 secret folders: the plugin's data, gh's config and the macOS keychain. Without that proof it

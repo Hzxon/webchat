@@ -14,9 +14,6 @@ import { Dialog } from './Dialog';
 import { presenceText } from './format';
 import { CopyRow } from './NotificationDialog';
 
-/** Adds the plugin's marketplace and installs it in one step, from Claude Code 2.1.275 on. */
-const INSTALL = '/plugin install webchat --marketplace Hzxon/webchat#plugin';
-
 /** The release's own installer, which checks the agent file against the release's checksum before it installs it (docs/decisions/agent-install.md). */
 const installLine = (release: string, pasted: string) => `curl -fsSL https://github.com/Hzxon/webchat/releases/download/v${release}/install.sh | sh -s -- '${pasted}'`;
 
@@ -127,40 +124,23 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
       ) : !keys ? (
         <>
           <p className="dialog-intro">
-            Your coding agent is Claude Code on your laptop. It answers your questions about your team’s code and
-            works on the cards you hand it, and nobody else’s. It needs a Mac or Linux for now.
+            Your coding agent runs on your laptop, with Claude Code or Codex. It answers your questions about your
+            team’s code and works on the cards you hand it, and nobody else’s. It needs a Mac or Linux for now.
           </p>
-          <ol className="dialog-steps">
-            <li>
-              In <a href="https://claude.com/claude-code" target="_blank" rel="noreferrer">Claude Code</a>, type this line:
-              <CopyRow value={INSTALL} onCopied={setNote} />
-              {mine.length > 0 && (
-                <>
-                  Already have the plugin? Type this instead:
-                  <CopyRow value="/plugin configure webchat@webchat" onCopied={setNote} />
-                </>
-              )}
-            </li>
-            <li>
-              When it asks for a pairing code, paste this one. It works once, within 10 minutes.
-              {/* The address rides along so nobody types it (R-031). After `#`, a browser would never send the code. */}
-              <CopyRow value={`${location.origin}#${code}`} onCopied={setNote} />
-            </li>
-            <li>
-              Open Claude Code in your team’s repository and type <code>/webchat:connect</code>. With the webchat-agent service, run <code>webchat-agent connect</code> there, and approve it here.
-            </li>
-          </ol>
           {release && (
             <>
               <p className="dialog-intro">
-                No Claude Code window to keep open? In a terminal on your laptop, run this line instead. It installs
-                the agent, asks before it installs anything else, and keeps the agent running whenever you are logged
-                in. It needs an account that can use sudo, or an administrator on a Mac.
+                In a terminal on your laptop, run this line. It installs the agent, asks before it installs anything
+                else, and keeps the agent running whenever you are logged in. It needs an account that can use sudo, or
+                an administrator on a Mac.
                 {/windows/i.test(navigator.userAgent) && ' On Windows, open Ubuntu on WSL2 and run it there.'}
               </p>
               <CopyRow value={installLine(release, `${location.origin}#${code}`)} onCopied={setNote} />
             </>
           )}
+          <p className="dialog-intro">
+            Then run <code>webchat-agent connect</code> in your team’s repository, and approve it here.
+          </p>
           {!error && <p className="dialog-note">{note || 'Waiting for the agent…'}</p>}
           {mine.length > 0 && <p className="dialog-intro">Your agents:</p>}
           <ul className="people-list">

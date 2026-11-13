@@ -26,7 +26,7 @@ import {
   type Layout, type Read, type Root,
 } from './lockroom.ts';
 import { finishMove, moveAccount, newest, sources } from './move.ts';
-import { callRoom } from './room.ts';
+import { callRoom, type RoomStatus } from './room.ts';
 import { messageOf } from './runs.ts';
 
 const exec = promisify(execFile);
@@ -257,12 +257,11 @@ interface Found {
  * linked it, from the setup the agent keeps (docs/decisions/harness-linking.md). `Found` says what
  * the owner can pick; the rows are `harnessRow`'s four states.
  */
-async function harnessRows(home: string, said?: Said): Promise<{ rows: Row[]; found: Found[] }> {
+async function harnessRows(home: string, said?: RoomStatus): Promise<{ rows: Row[]; found: Found[] }> {
   const dataDir = path.join(home, 'laptop');
-  const adapters = await harnessFinder({ hook: '', dataDir })();
+  const adapters = await harnessFinder({ dataDir })();
   // The keyholder holds what the owner linked; a laptop from before the room still has it in a file the owner reads.
-  const told = said && /^Linked: (.*)\.$/m.exec(said.text)?.[1];
-  const stored: Partial<SetupChoice> | undefined = told ? { linked: told === 'none' ? [] : told.split(', ') } : (await fs.readFile(path.join(dataDir, 'laptop', 'setup.json'), 'utf8').then((t) => JSON.parse(t) as { choice?: SetupChoice }, () => null))?.choice;
+  const stored: Partial<SetupChoice> | undefined = said?.linked ? { linked: said.linked } : (await fs.readFile(path.join(dataDir, 'laptop', 'setup.json'), 'utf8').then((t) => JSON.parse(t) as { choice?: SetupChoice }, () => null))?.choice;
   const found: Found[] = await Promise.all(
     adapters.map(async (adapter, i) => {
       const { id, name, command } = SUPPORTED[i]!;
@@ -285,8 +284,7 @@ async function harnessRows(home: string, said?: Said): Promise<{ rows: Row[]; fo
 }
 
 /** What the running keyholder says about itself, or undefined when it does not answer. */
-type Said = { text: string; runner: boolean };
-const askRoom = (layout: Layout) => callRoom<Said>(socketOf(layout), 'status', {}, pkg.version).catch(() => undefined);
+const askRoom = (layout: Layout) => callRoom<RoomStatus>(socketOf(layout), 'status', {}, pkg.version).catch(() => undefined);
 
 /** Whether root owns a file that nobody else writes, by `stat`. */
 async function rootOwned(file: string, layout: Layout) {
@@ -305,7 +303,7 @@ async function keyholderState(layout: Layout): Promise<'running' | 'stopped' | '
 }
 
 /** The locked room: the account, what root owns, the service, the owner's group and the agent's own GitHub login. */
-async function roomRows(layout: Layout, home: string, said?: Said): Promise<Row[]> {
+async function roomRows(layout: Layout, home: string, said?: RoomStatus): Promise<Row[]> {
   const owner = os.userInfo().username;
   const found = await inspectRoom(layout, read);
   const refused = refusals(layout, owner, found);
@@ -323,7 +321,7 @@ async function roomRows(layout: Layout, home: string, said?: Said): Promise<Row[
   rows.push(state === 'running' ? ok(`Keyholder service: running${said ? (said.runner ? ', the runner is connected' : ', no runner connected') : ''}`) : { level: state === 'missing' ? 'todo' : 'warn', text: `Keyholder service: ${state === 'missing' ? 'not installed' : 'installed, but not running'}.`, ...(state === 'stopped' && { fix: mac() ? `macOS may have turned it off: look under System Settings > General > Login Items > Allow in the Background. Its log is ${layout.log}.` : `Its log is in \`journalctl -u ${layout.label}\`.` }) });
   if (!found.members.includes(owner)) rows.push({ level: 'todo', text: `Group: you are not in ${layout.ipcGroup}, which opens the agent’s socket.` });
   else if (!(await run('id', ['-Gn']).catch(() => '')).split(/\s+/).includes(layout.ipcGroup)) rows.push({ level: 'warn', text: `Group: you are in ${layout.ipcGroup}, but this session started before that.`, fix: 'Log out and log in again, so the commands and the runner can reach the keyholder.' });
-  if (said && state === 'running' && !/GitHub: the agent is signed in/.test(said.text) && /^Taking the cards/.test(said.text)) rows.push({ level: 'warn', text: 'GitHub: the agent is not signed in. Cards and clones need it.', fix: 'Run `webchat-agent setup` and answer yes to its GitHub sign-in. A second GitHub account is best: whatever the agent’s login reaches, the agent reaches.' });
+  if (said && state === 'running' && said.signedIn === false) rows.push({ level: 'warn', text: 'GitHub: the agent is not signed in. Cards and clones need it.', fix: 'Run `webchat-agent setup` and answer yes to its GitHub sign-in. A second GitHub account is best: whatever the agent’s login reaches, the agent reaches.' });
   return rows;
 }
 
@@ -341,7 +339,7 @@ async function checks(home: string, layout: Layout, server?: string) {
     gitRow(packager, layout),
     mac() ? [] : sandboxRows(packager),
     diskRow(),
-    networkRow(server ?? serverIn(said?.text)),
+    networkRow(server ?? said?.server),
     harnessRows(home, said),
     roomRows(layout, home, said),
   ]);
@@ -450,9 +448,6 @@ interface Options {
 
 const defaultLayout = () => layoutFor(mac() ? 'darwin' : 'linux');
 
-/** The address `status` names, which is where a laptop whose account only the keyholder reads pairs. */
-const serverIn = (text = '') => /, on (\S+)\.$/m.exec(text)?.[1];
-
 /** Asks for the administrator password once, and keeps sudo's cache warm while setup runs. Returns what stops that. */
 async function openSudo() {
   await inherit('sudo', ['-v']);
@@ -488,7 +483,7 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
   const account = await readAccount(home);
   const source = newest(await sources(daemon));
   const said = await askRoom(layout);
-  const server = pasted ? readPairing(pasted, '').server : (account ?? source)?.server ?? serverIn(said?.text);
+  const server = pasted ? readPairing(pasted, '').server : (account ?? source)?.server ?? said?.server;
   const built = (await inspectRoom(layout, look)).user === 'ours';
   if (!server && !built) throw new Error('Paste the whole code that WebChat shows: webchat-agent setup <code>.');
   const hash = await sha256(program);
@@ -507,7 +502,7 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
   const ticked = found.filter((f) => f.program && f.signedIn);
   const describe = (f: Found) => (f.program ? `${f.name}${f.version ? ` ${f.version}` : ''}, ${f.signedIn === undefined ? 'sign-in unknown' : f.signedIn ? 'signed in' : 'not signed in'}` : `${f.name}, not installed${f.id === 'codex' ? ': linking it installs it' : ''}`);
   const stepsFor = (picks: Found[]) => installSteps([...rows.flatMap((row) => row.needs ?? []), ...(picks.some((f) => f.id === 'codex' && !f.program) ? ['codex' as const] : [])], process.platform, packager);
-  const moves = !pasted && !!source && !/^Taking the cards/.test(said?.text ?? '');
+  const moves = !pasted && !!source && !said?.paired;
   const plan = [
     ...(pasted ? [`pair with ${server}: you approve the agent in WebChat`] : []),
     ...(built ? [] : [`make the hidden account ${layout.user}, which holds the agent’s keys where no program of yours can read them, and the group ${layout.ipcGroup} with only you in it: this needs your administrator password`]),
@@ -558,7 +553,7 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
     }
     // Asked as the owner, in the ipc group, since a session that began before setup is not in it yet.
     const paired = { argv: ['env', `WEBCHAT_SOCKET=${socketOf(layout)}`, programOf(layout), 'status'], as: owner, group: layout.ipcGroup };
-    for (let tries = 0; !/Taking the cards/.test(await root(paired).catch(() => '')); tries++) {
+    for (let tries = 0; !/^Paired: yes$/m.test(await root(paired).catch(() => '')); tries++) {
       if (tries === 20) throw new Error(`The keyholder does not take the agent’s account. ${keyholderLog(layout)}`);
       await sleep(2000);
     }

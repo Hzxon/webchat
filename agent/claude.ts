@@ -7,7 +7,7 @@
 // question, it asks before an action through its permission prompt tool (approve.ts). This is the
 // plugin's harness adapter for Claude Code (harness.ts).
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { constants, readFileSync } from 'node:fs';
+import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,7 +17,7 @@ import { fits } from './answer.ts';
 import { APPROVE_TOOL, openApprover, TOOL_TIMEOUT_MS, type Call } from './approve.ts';
 import { isCredential, olderThan, secretDirs, type Ask, type Harness, type Turn } from './harness.ts';
 import { line } from './plugin.ts';
-import { real, shellPaths, within } from './rulebook.ts';
+import { shellPaths, within } from './rulebook.ts';
 import { hold, IDLE_MS, keep, Quiet, watchdog, type Final } from './runner.ts';
 
 const exec = promisify(execFile);
@@ -36,11 +36,10 @@ const TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'We
  * sandbox cannot write the owner's, and a shared one would let it poison the owner's installs. Web
  * search and reading run outside the sandbox, as Claude Code's own tools. The shell gets no variable
  * of `env`, the environment it starts with, that holds a credential, while Claude Code keeps them for
- * its own login. The guard hook keeps the file tools from the secrets, and Claude Code refuses a
- * write through a link out of the folder. When the owner chose no AI attribution, empty lines hide
+ * its own login. Claude Code refuses a write through a link out of the folder. When the owner chose no AI attribution, empty lines hide
  * the ones Claude Code adds to commits and pull requests (R-039).
  */
-export function claudeSettings({ secrets, npmCache, guard, env, noAttribution }: { secrets: string[]; npmCache: string; guard: string; env: NodeJS.ProcessEnv; noAttribution?: boolean }) {
+export function claudeSettings({ secrets, npmCache, env, noAttribution }: { secrets: string[]; npmCache: string; env: NodeJS.ProcessEnv; noAttribution?: boolean }) {
   return {
     // Only the object form: older Claude Code rejects `false` here, and a -p run drops a whole
     // settings file that fails validation, the sandbox with it (D-097).
@@ -57,7 +56,6 @@ export function claudeSettings({ secrets, npmCache, guard, env, noAttribution }:
     },
     permissions: { allow: ['WebSearch', 'WebFetch'], blockReadsOutsideWorkingDirectories: true },
     env: { npm_config_cache: npmCache, npm_config_userconfig: '/dev/null' },
-    hooks: { PreToolUse: [{ matcher: '^(Read|Edit|Write|Glob|Grep)$', hooks: [{ type: 'command', command: guard }] }] },
   };
 }
 
@@ -219,8 +217,8 @@ export const claudeSecrets = (dataDir: string) => [...secretDirs(dataDir), path.
 /** The first release with `--permission-prompts`, which a turn with no way to ask passes (claude.ts `claudeArgs`; Claude Code's changelog, 2.1.259). */
 export const CLAUDE_MIN_VERSION = '2.1.259';
 
-/** The adapter: turns in `program`, restricted, under the plugin's settings file, which the guard hook `hook` completes. */
-export function claudeHarness(program: string, hook: string, dataDir: string): Harness {
+/** The adapter: turns in `program`, restricted, under the plugin's settings file. */
+export function claudeHarness(program: string, dataDir: string): Harness {
   const secrets = claudeSecrets(dataDir);
   // Beside the laptop's copy of the account, where it always was.
   const settings = path.join(dataDir, 'laptop', 'claude.json');
@@ -229,6 +227,11 @@ export function claudeHarness(program: string, hook: string, dataDir: string): H
   let version: Promise<string | undefined> | undefined;
   const versionOf = () => (version ??= exec(program, ['--version'], { timeout: 10_000 }).then((r) => /^\d[\w.-]*/.exec(r.stdout.trim())?.[0], () => undefined));
   const lives = new Map<string, Live>();
+  let attribution = false;
+  const writeSettings = async () => {
+    await fs.mkdir(path.dirname(settings), { recursive: true });
+    await fs.writeFile(settings, JSON.stringify(claudeSettings({ secrets, npmCache, env: process.env, noAttribution: attribution })));
+  };
   // The config files of the approval endpoint, which only the plugin reads (approve.ts).
   const approveDir = path.join(dataDir, 'laptop', 'approve');
 
@@ -324,12 +327,14 @@ export function claudeHarness(program: string, hook: string, dataDir: string): H
   return {
     name: 'Claude Code',
     asks: true,
-    async refusal(dir) {
-      if (dir) return sandboxProblem(dir, secrets, restrictedSettings(settings));
+    async refusal() {
       if (process.platform === 'win32') return 'Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.';
       if (!program) return 'I cannot find Claude Code on this laptop.';
       return olderThan('Claude Code', await versionOf(), CLAUDE_MIN_VERSION);
     },
+    // The settings are the plugin's own, so a managed setting is all that can undo them: a warning only, since the room keeps the secrets from the shell (docs/decisions/locked-room.md).
+    // Nothing to check before the first `apply` writes the file.
+    warning: async () => ((await fs.access(settings).then(() => true, () => false)) ? sandboxProblem(path.join(os.homedir(), 'WebChat'), secrets, restrictedSettings(settings)) : undefined),
     offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution', 'noPlan'] }),
     async found() {
       if (!program) return {};
@@ -340,10 +345,11 @@ export function claudeHarness(program: string, hook: string, dataDir: string): H
     },
     // The turn runs under the plugin's settings alone, so the owner's do not count (D-097).
     async apply({ noAttribution }) {
+      attribution = !!noAttribution;
       await fs.mkdir(npmCache, { recursive: true });
       // A crash leaves config files, each with a token that names nothing now.
       if (!lives.size) await fs.rm(approveDir, { recursive: true, force: true });
-      await fs.writeFile(settings, JSON.stringify(claudeSettings({ secrets, npmCache, guard: hook, env: process.env, noAttribution })));
+      await writeSettings();
     },
     async turn(t) {
       if (t.signal.aborted) throw new Error(CANCELLED);
@@ -357,25 +363,17 @@ export function claudeHarness(program: string, hook: string, dataDir: string): H
         live = undefined;
       }
       if (live) clearTimeout(live.timer);
-      else lives.set(t.session, (live = await open(t, schema, key)));
+      else {
+        // The file sits in the owner's folder now, which the model's shell may reach: write it again before each process starts.
+        await writeSettings();
+        lives.set(t.session, (live = await open(t, schema, key)));
+      }
       return converse(live, t);
     },
     async end(session) {
       await Promise.all([...[...lives].filter(([id]) => !session || id === session).map(([, live]) => close(live)), ...closing]);
     },
   };
-}
-
-/**
- * The session's own `claude`, by its absolute path: this server's parent, which the desktop app
- * keeps outside the PATH. Empty when the parent is no Claude Code (D-097).
- */
-export async function claudeSession() {
-  const parent =
-    process.platform === 'linux'
-      ? await fs.readlink(`/proc/${process.ppid}/exe`).catch(() => '')
-      : await promisify(execFile)('ps', ['-o', 'comm=', '-p', String(process.ppid)]).then((r) => r.stdout.trim(), () => '');
-  return path.isAbsolute(parent) && path.basename(parent) === 'claude' ? parent : '';
 }
 
 /** The absolute folders of the PATH only, since the background Claude starts in a worktree whose files the model writes. */
@@ -437,30 +435,4 @@ export async function sandboxProblem(projectDir: string, secrets: string[], sour
   }
   // Where the sandbox cannot start, Claude Code would run the shell without it (K-53).
   if (first((s) => s.sandbox?.failIfUnavailable) !== true) return 'Claude Code’s managed settings would let my shell run unsandboxed if its sandbox failed to start.';
-}
-
-/** A tool call, as Claude Code hands it to a PreToolUse hook. */
-export interface ToolUse {
-  tool_name: string;
-  tool_input: Record<string, unknown>;
-  cwd: string;
-}
-
-const FILE_TOOLS = new Set(['Read', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Glob', 'Grep']);
-
-/**
- * Why the guard hook denies a tool call, or undefined. File tools never touch the secret folders,
- * since they run outside the sandbox (D-092), in the background Claude and in every other session.
- */
-export function guard(use: ToolUse, secrets: string[]): string | undefined {
-  const input = use.tool_input;
-  const named = input.file_path ?? input.notebook_path ?? (use.tool_name === 'Glob' || use.tool_name === 'Grep' ? (input.path ?? use.cwd) : undefined);
-  const target = FILE_TOOLS.has(use.tool_name) && typeof named === 'string' ? real(path.resolve(use.cwd, named)) : undefined;
-  if (target && secrets.some((dir) => within(target, real(dir)))) return 'That folder holds secrets the WebChat plugin keeps from the model.';
-}
-
-/** The PreToolUse hook, for the plugin and the daemon alike: reads the tool call on stdin and prints a denial, or nothing. */
-export function runGuard(dataDir: string) {
-  const reason = guard(JSON.parse(readFileSync(0, 'utf8')) as ToolUse, claudeSecrets(dataDir));
-  if (reason) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }));
 }

@@ -381,7 +381,7 @@ export interface MessageContent {
    * page opens: a card's brief hashes the same on both sides (K-57, D-110).
    */
   trust?: { user: number; fingerprint: string; sentAt: number };
-  /** The owner puts their agent to sleep from the pane; only `/webchat:wake` on the laptop wakes it (K-66, D-113). */
+  /** The owner puts their agent to sleep from the pane; only `webchat-agent wake` on the laptop wakes it (K-66, D-113). */
   sleep?: { sentAt: number };
   /**
    * The owner asks their agent what its runs load from their Claude setup, and with a choice,

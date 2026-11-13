@@ -30,6 +30,8 @@ export interface HarnessInfo {
   offers: ReturnType<Harness['offers']>;
   /** Whether it asks the owner before an action. */
   asks: boolean;
+  /** What its sandbox lets its shell read of the owner's secrets, which the owner should know and which stops nothing. */
+  warning?: string;
   /** Whether it commits its own work: one that cannot, under a sandbox that keeps `.git` read-only, has its leftovers committed for it. */
   commits: boolean;
 }
@@ -63,8 +65,8 @@ export class PrerequisitesMissing extends Error {
 export interface Bench {
   /** The harnesses the laptop has, found again: each with what it is, offers and declares. */
   harnesses(): Promise<HarnessInfo[]>;
-  /** Why a harness cannot run its turns, or in `dir` cannot keep its shell from the secrets, or undefined (D-094, D-097). */
-  refusal(harness: string, dir?: string, purpose?: 'cards' | 'answers'): Promise<string | undefined>;
+  /** Why a harness cannot run its turns, or undefined. */
+  refusal(harness: string): Promise<string | undefined>;
   /** Hands every harness the owner's choice, and each one found later. */
   apply(choice: SetupChoice): Promise<void>;
   /** What the owner's setup offers a run (R-039): whether the instructions file is there, and each skill with its description. */
@@ -166,11 +168,16 @@ export class LocalBench implements Bench {
       this.list = next;
       if (this.choice) await Promise.all(fresh.map((h) => h.apply(this.choice!)));
     }
-    return Promise.all(this.list.map(async (h): Promise<HarnessInfo> => ({ name: h.name, ...(await h.found()), offers: h.offers(), asks: h.asks, commits: h.commits !== false })));
+    return Promise.all(
+      this.list.map(async (h): Promise<HarnessInfo> => {
+        const warning = await h.warning?.();
+        return { name: h.name, ...(await h.found()), offers: h.offers(), asks: h.asks, commits: h.commits !== false, ...(warning && { warning }) };
+      }),
+    );
   }
 
-  refusal(harness: string, dir?: string, purpose?: 'cards' | 'answers') {
-    return this.harness(harness).refusal(dir, purpose);
+  refusal(harness: string) {
+    return this.harness(harness).refusal();
   }
 
   async apply(choice: SetupChoice) {
