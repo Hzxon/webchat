@@ -245,6 +245,10 @@ export function threadProject(thread: Thread, docs: State['docs'], conversations
   return run?.kind === 'request' ? conversations[docs[run.docId]?.conversationId ?? 0]?.projectId : undefined;
 }
 
+/** The proposals for a board and its linked repository whose draft the owner has not added yet, newest first (D-117, K-72). */
+export const waitingProposals = (threads: Thread[], projectId: number, repo: string) =>
+  threads.filter((t) => t.kind === 'proposal' && t.state === 'draft' && t.project === projectId && t.repo.toLowerCase() === repo.toLowerCase());
+
 /** The user's chats with their agents. */
 /** The user's direct chat with one of their agents, where its sealed setup answers come (R-039). */
 export function useAgentChat(agent: UserDTO | undefined) {
@@ -257,6 +261,9 @@ export function useAgentChats() {
   const me = useAppState((s) => s.me);
   return useMemo(() => agentChats({ users, me, conversations }), [users, me, conversations]);
 }
+
+/** The proposals whose draft the owner has not added yet, in every project, for the Coding agents row (D-117, R-045). */
+export const proposalsWaiting = (threads: Thread[]) => threads.filter((t) => t.kind === 'proposal' && t.state === 'draft').length;
 
 /** The user's chats with their agents, and every conversation in them, newest first. */
 export function useAgentThreads() {

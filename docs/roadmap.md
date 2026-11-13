@@ -4,35 +4,6 @@ This file is a copy of the Roadmap column of the project's board in WebChat, whi
 
 ## Running
 
-### R-044: Make and number a card from the terminal
-
-Status: In review: Hzxon/webchat#225.
-
-Why: a session in the owner's own harness that starts from an idea has no card to claim. Today it
-writes a proposal file, the file must reach main, the agent hands it to the owner as a draft, and
-the owner adds it on the board, which numbers it (D-117). Only then can `scripts/claim.sh` name the
-card. That is one merge and one visit to the board before any work, so the owner skips the card,
-and the board never learns of the work. On 2026-11-13 main held 37 proposal files that waited this
-way.
-
-Scope: one command of the agent, such as `webchat-agent card docs/roadmap/new-bark-banner.md`,
-that sends the file as a card draft to the owner's page, the way an answer's drafts go (D-104).
-The owner presses the draft's button, on any device, and the board numbers the card under its lock
-(D-116). The command waits, then prints the number, so the session claims it with
-`scripts/claim.sh` right away. The draft goes through the agent's check first, as every draft does
-(D-116). A decision goes the same way. The proposal file stays the way for a session that has no
-agent, such as a teammate's. Nothing new reaches the server: the draft is a sealed message.
-
-Not in scope: showing a card run's diff and turns in the pane. A card run stays the way to work
-while away from the laptop.
-
-The terminal never adds a card itself. The owner approves every draft with its button, so the agent
-gets no way to write the board and nothing lands unseen (D-104).
-
-Done when: in a linked repository, a session with no card runs the command, the owner adds the
-draft, the command prints the new number, `scripts/claim.sh` claims it, and the board shows the
-card Running, with no pull request merged in between.
-
 ### R-045: The Coding agents row's name says nothing of board work
 
 Status: In review: Hzxon/webchat#227.
@@ -47,81 +18,25 @@ Done when: with a proposal draft not yet added, the Coding agents row says so, a
 
 ### K-1: The iOS 16.4 banner stays after Bark is linked
 
-Status: In review: Hzxon/webchat#159.
+Status: Running: Jiro’s agent.
 
-Checked: 2026-11-09. Read the board's K-1, docs/roadmap/K-1.md and two-status-lines.md on main at 6a95ad6, CHANGELOG 0.9.0, and cardText in client/src/board.ts. No open pull requests.
+Checked: 2026-11-13. Read the board's K-1, the other cards and the held decisions (D-004, D-021, D-054, D-100, D-118); Sidebar.tsx, NotificationDialog.tsx, push.ts, store.ts, AgentDraft.tsx, otherRun in client/src/board.ts, docs/roadmap/K-1.md and revert-reopens-card.md on main at eb8c3c4. Open pull requests #227, #226 and #184 read by title only.
 
-Found by the owner on an iPhone before iOS 16.4. #159 fixed it and was reverted in #169, so the card is open again. Set its status line to `Open` by hand: a draft can't change it.
+Found by the owner on an iPhone before iOS 16.4. #159 fixed it and #169 reverted it, so the card is open again and main still has the bug (checked at eb8c3c4).
+
+Before a run: set the status line to `Open` by hand. It still says `In review: Hzxon/webchat#159`, and the brief refuses any card whose status starts with `In review` (`otherRun` in `client/src/board.ts`). A draft cannot change it: a change keeps the status as written (`AgentDraft.tsx`). The general fix, a merged revert that reopens its card, is the proposal `docs/roadmap/revert-reopens-card.md`.
 
 On iOS before 16.4 the sidebar always shows "Notifications on iPhone need iOS 16.4. Tap to get alerts through the Bark app instead." It stays after the user links Bark and their alerts already arrive through it. A warning that never goes away teaches people to ignore the banner, and it suggests that their alerts are broken when they are not.
 
-Cause: `AlertSetupBanner` in `client/src/components/Sidebar.tsx` shows the warning while `push.permission !== 'granted'`. That can never change on these phones, which have no Web Push (`oldIos` in `client/src/push.ts`). The page never asks whether Bark is linked. Only `NotificationDialog` fetches `GET /api/bark` (`BarkDTO`), and only while the dialog is open (D-054).
+Cause: `AlertSetupBanner` in `client/src/components/Sidebar.tsx` shows the warning while `push.permission !== 'granted'`. That can never change on these phones, which have no Web Push (`oldIos` in `client/src/push.ts`). The page never asks whether Bark is linked. Only `NotificationDialog` fetches `GET /api/bark` (`BarkDTO`), into its own state, and only while the dialog is open (D-054).
 
-Fix: on iOS before 16.4, the page fetches the Bark state, or keeps the dialog's answer in the store, and hides the warning once `link.devices` has at least one phone. While Bark is linked but no phone has registered, the warning stays, since nothing reaches the user yet. Other browsers keep their banner, and the alert sound banner is unchanged. Find out why #169 reverted #159 before taking it again.
+Fix: on iOS before 16.4, the page keeps the Bark state in the store and hides the warning once `link.devices` has at least one phone. While Bark is linked but no phone has registered, the warning stays, since nothing reaches the user yet. Other browsers keep their banner, and the alert sound banner is unchanged.
 
-Done when: an iOS 15 user agent with a linked Bark device shows no notification warning, one without a link or device still shows it, and a test proves both.
+Constraint: Bark link state is not in the sync fingerprint (D-054, D-021), and a fetch on every check-in would go against D-004. So the page fetches `GET /api/bark` once at load, only on these phones, and the dialog writes each answer it gets into the store. A phone that registers in Bark while the page stays open hides the warning at the next load, or when the dialog is opened or refreshed.
 
-### K-70: The pane says "No copy yet" for a repository the agent works in
+Why #169 reverted #159 is not recorded in the repository. R-039, R-040 and R-042 name process faults in #159: it took the board's K-1 while the repository used that number for another item, its body carried an AI attribution line, and 116 tests were cancelled. That suggests the revert was about process and not the fix, but it is an inference. Read #169 on GitHub before taking the card again.
 
-Status: In review: Hzxon/webchat#223.
-
-Under Coding agents, the project WebChat Server showed `webchat` with the tag "No copy yet", while
-the agent was online. On the same laptop `webchat-agent status` said "Working in Hzxon/webchat in
-its folder", and the agent sent that repository's proposal drafts minutes
-later. The tag tells the owner the agent must clone first, which is false, and it made the board's
-sync look dead.
-
-What is known: `repoState` in `client/src/components/AgentsView.tsx` shows the tag when `seatFor`
-in `client/src/agents.ts` finds no seat for the repository that is online, on an agent that is. A
-seat is a row of `agent_repos`, which each check-in of the agent names and which counts as online
-for 2 minutes (`server/db.ts`). So either the check-ins did not name the repository, or the page
-held an older list. The second fits rule 4 if a new or renewed row does not change `db.stamp`: check
-that first.
-
-Done when: the cause is found and has a test, and a page that is open while the agent connects a
-folder shows "Ready" for it without a reload.
-
-### K-71: A backlog of proposal files hits the send limit, and a new install sends them all again
-
-Status: In review: Hzxon/webchat#224.
-
-`sendProposals` in `agent/plugin.ts` sends one message for each proposal file, in a loop with no
-pause. The server takes 30 sends per 10 seconds from one account and answers the next with 429
-"Slow down a little." On 2026-11-13 main held 37 files, and `/Library/Logs/WebChat/keyholder.log`
-got that line twice at 22:16. The round saves what it sent, so the rest follow 5 minutes later, but
-the failed round also skips the claims and the copy that come after the proposals.
-
-The agent knows a file was sent only from `copies` in its own data folder. A new install starts
-with none, so it sends every file on main again, also one whose card the owner already added,
-since the file stays until the next copy is merged. A new card's draft is not compared with the
-board, so the owner can add the same card twice.
-
-Fix: pace the sends below the server's limit, and let a round that hits the limit go on to the
-claims and the copy. Before it drafts a new card, the agent skips a file whose title a card on the
-board already has.
-
-Done when: a test with 40 proposal files sends them all with no 429, and the same round still reads
-the claims; and an agent with an empty record sends no draft for a file whose card the board has.
-
-### K-72: The board does not show the proposals that wait for it
-
-Status: In review: Hzxon/webchat#222.
-
-A proposal file on main reaches the owner as a card draft (D-117). The draft and its button sit in a
-thread under Chats, in the row "Coding agents", named `Proposed in <repo>: <file>`. The board says
-nothing about them. On 2026-11-13 main held 37 such files, and the linked board showed Ready 4,
-Running 0 and In review 1, with no sign that 37 cards and changes waited for the owner's go. The
-board is the source (D-117), so an owner looks there first, finds nothing, and takes the board for
-stale. The row's name also says nothing of board work.
-
-Fix: the board of a linked repository shows how many proposals wait, such as "37 proposals wait",
-to the owner only, since only they hold the drafts. A click opens the agent pane on those threads.
-The owner still approves each draft with its button (D-104). Nothing new reaches the server: the
-page counts the threads it already has.
-
-Done when: with a proposal draft not yet added, the owner's board shows the count and a click opens
-its thread; the count drops when the draft is added; a teammate's board shows no count; and a board
-with no linked repository shows none.
+Done when: an iOS 15 user agent with a linked Bark device shows no notification warning, one without a link or device still shows it, and a test proves both. `npm test` has no DOM, so the choice of banner is a pure function that the test calls, as `iosVersion` in `client/src/ios.ts` is tested in `test/ios.test.ts`.
 
 ## Ready
 
@@ -449,3 +364,7 @@ project-first navigation, new wording or a new name. The numbers stay taken.
 | R-041: The agent checks a new card, and the board numbers it | #166 |
 | R-040: The board is the source of truth, and the repository follows it | #167, #159 |
 | R-042: A card run follows the repository's workflow | #168 |
+| K-72: The board does not show the proposals that wait for it | #222 |
+| K-70: The pane says "No copy yet" for a repository the agent works in | #223 |
+| K-71: A backlog of proposal files hits the send limit, and a new install sends them all again | #224 |
+| R-044: Make and number a card from the terminal | #225 |

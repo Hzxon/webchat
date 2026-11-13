@@ -143,6 +143,21 @@ async function main([command, ...args]: string[]) {
       if (!repo) throw new Error(NO_REPOSITORY);
       return tell('request', { kind: 'connect', repo, dir });
     }
+    case 'card': {
+      // The keyholder runs as its own account and may not read the owner's folders, so the text goes with the request.
+      if (!args[0]) throw new Error('Name the proposal file, such as docs/roadmap/new-bark-banner.md.');
+      const file = path.resolve(process.env.INIT_CWD ?? process.cwd(), args[0]);
+      let root = path.dirname(file);
+      while (!statSync(path.join(root, '.git'), { throwIfNoEntry: false }) && path.dirname(root) !== root) root = path.dirname(root);
+      const { repo } = await new LocalBench([]).checkout(root);
+      if (!repo) throw new Error(NO_REPOSITORY);
+      console.error('Your agent checks the card, then sends it to your owner, and this waits until they add it.');
+      const { text, card } = await callRoom<{ text: string; card?: string }>(socketFile(), 'request', { kind: 'card', repo, file: path.relative(root, file).split(path.sep).join('/'), text: await fs.readFile(file, 'utf8') }, pkg.version);
+      console.error(text);
+      // The number alone on stdout, for a script.
+      if (!card) process.exit(1);
+      return console.log(card);
+    }
     case 'sleep':
     case 'wake':
       return tell(command);
@@ -157,7 +172,7 @@ async function main([command, ...args]: string[]) {
     case '--version':
       return console.log(pkg.version);
     default:
-      throw new Error(`usage: ${cli} setup|doctor|status|uninstall|update|keyholder|runner|dev|connect|sleep|wake|link ...`);
+      throw new Error(`usage: ${cli} setup|doctor|status|uninstall|update|keyholder|runner|dev|connect|card|sleep|wake|link ...`);
   }
 }
 
