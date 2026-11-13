@@ -14,6 +14,7 @@ import {
 } from './auth.js';
 import { newCipherKey, newDeviceKey, newLinkToken, type Bark } from './bark.js';
 import type { Config } from './config.js';
+import type { FileStore } from './files.js';
 import {
   keyBackupOf,
   toUserDTO,
@@ -23,6 +24,7 @@ import {
   type SharedChannelKey,
   type UserRow,
 } from './db.js';
+import { FILE_OVERHEAD, randomBytes, toBase64Url } from '../shared/e2ee.js';
 import { GithubError, type Github } from './github.js';
 import type { GithubApp } from './githubApp.js';
 import { notifyAddedToGroup, notifyAddedToProject, notifyNewMessage, ringUrgent } from './notify.js';
@@ -52,6 +54,7 @@ import {
   type RotatedKeyInput,
   type SyncRequest,
   type SyncResponse,
+  type UploadDTO,
 } from '../shared/types.js';
 
 declare global {
@@ -258,13 +261,28 @@ interface ApiDeps {
   bark: Bark;
   github: Github;
   githubApp: GithubApp;
+  /** Null when the server has no file store: then it offers no photos or files (R-005). */
+  files: FileStore | null;
   config: Config;
   inviteCode: string;
   kdfSalt: string;
 }
 
-export function createApiRouter({ db, push, bark, github, githubApp, config, inviteCode, kdfSalt }: ApiDeps) {
+export function createApiRouter({ db, push, bark, github, githubApp, files, config, inviteCode, kdfSalt }: ApiDeps) {
   const router = express.Router();
+
+  /**
+   * Deletes the ciphertext of files past their days, of uploads no message followed, and of deleted
+   * chats and accounts, then their rows. With no scheduler, it runs when someone asks for an upload
+   * address or deletes something (D-123).
+   */
+  async function sweepFiles() {
+    if (!files) return;
+    const ids = await db.sweepableFiles(Date.now());
+    if (ids.length === 0) return;
+    await files.delete(ids);
+    await db.deleteFiles(ids);
+  }
 
   function startSession(req: Request, res: Response, user: UserRow) {
     const { token, tokenHash } = newSessionToken();
@@ -408,7 +426,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
   }
 
   router.get('/config', (_req, res) => {
-    const body: ConfigDTO = { vapidPublicKey: push.publicKey, kdfSalt, release: pkg.version };
+    const body: ConfigDTO = { vapidPublicKey: push.publicKey, kdfSalt, release: pkg.version, files: files !== null };
     res.json(body);
   });
 
@@ -508,6 +526,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     res.clearCookie(SESSION_COOKIE, { path: '/' });
     // The device has no account any more, so it may sign up for one again (D-080).
     res.clearCookie(DEVICE_COOKIE, { path: '/' });
+    inBackground(sweepFiles(), config.logger);
     res.status(204).end();
   });
 
@@ -557,6 +576,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
   /** The owner removes one of their agents for good, such as the one left after pairing again (R-033). */
   router.delete('/agents/:id', requireAuth, async (req, res) => {
     if (!(await db.removeAgent(currentUser(res).id, positiveInt(req.params.id, 'Agent')))) throw new HttpError(404, 'Agent not found.');
+    inBackground(sweepFiles(), config.logger);
     res.status(204).end();
   });
 
@@ -687,6 +707,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const conversationId = positiveInt(req.params.id, 'Chat id');
     await requireGroupOwner(conversationId, me.id);
     await db.deleteConversation(conversationId);
+    inBackground(sweepFiles(), config.logger);
     res.status(204).end();
   });
 
@@ -805,6 +826,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const result = await db.deleteChannel(projectId, conversationId);
     if (result === 'not_found') throw new HttpError(404, 'Channel not found.');
     if (result === 'general') throw new HttpError(400, 'A project keeps its #general channel. Delete the project instead.');
+    inBackground(sweepFiles(), config.logger);
     res.status(204).end();
   });
 
@@ -926,6 +948,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const projectId = positiveInt(req.params.id, 'Project id');
     await requireProjectOwner(projectId, me.id);
     await db.deleteProject(projectId);
+    inBackground(sweepFiles(), config.logger);
     res.status(204).end();
   });
 
@@ -1048,6 +1071,14 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     await requireMember(conversationId, me.id);
     await requireCurrentKey(conversationId, sealed.kid);
     if (!(await db.takeRateLimit(`send:${me.id}`, 30, 10_000))) throw new HttpError(429, 'Slow down a little.');
+    // A message with a photo or file names its upload, which the server keeps from then on (R-005).
+    // What the file is stays sealed in the envelope.
+    if (req.body?.fileId !== undefined) {
+      const fileId = base64url(req.body.fileId, 'File id', 22);
+      if (!(await db.markFileSent(fileId, conversationId, me.id))) {
+        throw new HttpError(409, 'The file is no longer on the server. Attach it again.', 'file_gone');
+      }
+    }
 
     const urgent = req.body?.urgent === true;
     // The urgent flag is signed into the envelope, so it is refused rather than quietly dropped.
@@ -1056,6 +1087,45 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     // Answer the sender first; pushes go out after, while the function stays alive.
     if (!repeated) inBackground(notifyNewMessage(db, push, config, message, me), config.logger);
     res.status(repeated ? 200 : 201).json(message);
+  });
+
+  /**
+   * An address to upload one file's ciphertext to, for a member of the chat (R-005, D-123). Any
+   * member client can use it, a page or an agent. The limits keep a Hobby Blob store from being
+   * blocked: a month's uploads and the bytes stored.
+   */
+  router.post('/conversations/:id/files', requireAuth, async (req, res) => {
+    if (!files) throw new HttpError(404, 'This server keeps no files.', 'files_off');
+    const me = currentUser(res);
+    const conversationId = positiveInt(req.params.id, 'Chat id');
+    const size = Number(req.body?.size);
+    if (!Number.isInteger(size) || size <= FILE_OVERHEAD || size > LIMITS.fileBytes + FILE_OVERHEAD) {
+      throw new HttpError(400, 'A file is at most 10 MB.');
+    }
+    await requireMember(conversationId, me.id);
+    if (!(await db.takeRateLimit(`upload:${me.id}`, 20, 60_000))) throw new HttpError(429, 'Slow down a little.');
+    await sweepFiles();
+    if ((await db.storedFileBytes()) + size > LIMITS.storedBytes) {
+      throw new HttpError(507, 'The server is full of files. Try again when older ones expire.', 'storage_full');
+    }
+    if (!(await db.countUpload(new Date().toISOString().slice(0, 7)))) {
+      throw new HttpError(429, 'This server took all the files it can this month.', 'upload_limit');
+    }
+    const id = toBase64Url(randomBytes(16));
+    await db.insertFile(id, conversationId, me.id, size);
+    const body: UploadDTO = { id, url: await files.uploadUrl(id, size, Date.now() + 10 * 60_000) };
+    res.status(201).json(body);
+  });
+
+  /** An address to download a file's ciphertext, for a member of its chat, until it is 7 days old. */
+  router.get('/files/:id', requireAuth, async (req, res) => {
+    if (!files) throw new HttpError(404, 'This server keeps no files.', 'files_off');
+    const file = await db.getFile(base64url(req.params.id, 'File id', 22));
+    if (!file?.conversation_id) throw new HttpError(404, 'File not found.');
+    await requireMember(file.conversation_id, currentUser(res).id);
+    const expires = file.created_at + LIMITS.fileDays * 86_400_000;
+    if (expires <= Date.now()) throw new HttpError(410, 'No longer on the server.', 'expired');
+    res.json({ url: await files.downloadUrl(file.id, Math.min(expires, Date.now() + 3_600_000)) });
   });
 
   router.post('/conversations/:id/read', requireAuth, async (req, res) => {

@@ -8,6 +8,7 @@ import { randomBytes, toBase64Url } from '../shared/e2ee.js';
 import { BUILD_HEADER } from '../shared/types.js';
 import { randomInviteCode } from './auth.js';
 import { createBark } from './bark.js';
+import { blobStore, diskStore } from './files.js';
 import type { Config } from './config.js';
 import { openDb } from './db.js';
 import { createGithub } from './github.js';
@@ -18,8 +19,10 @@ import { connectPostgres, openPglite, type Sql } from './sql.js';
 
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "connect-src 'self'",
-  "img-src 'self' data:",
+  // A page uploads and downloads files at the addresses of a private Vercel Blob store (D-123).
+  "connect-src 'self' https://vercel.com/api/blob/ https://*.private.blob.vercel-storage.com",
+  // A photo shows from the bytes the page decrypted.
+  "img-src 'self' data: blob:",
   "style-src 'self' 'unsafe-inline'",
   "script-src 'self'",
   "worker-src 'self'",
@@ -77,6 +80,11 @@ export async function createApp(config: Config): Promise<WebChatApp> {
   const github = createGithub(db, push, config);
   await Promise.all([github.schedulePolls(), scheduleUrgentRings(db, config)]);
   const githubApp = createGithubApp(db, config);
+  const files = config.blobStore
+    ? blobStore()
+    : config.filesDir
+      ? diskStore(config.filesDir, await db.claimMeta('files_secret', toBase64Url(randomBytes(32))))
+      : null;
   const app = express();
   app.set('trust proxy', config.trustProxy);
   app.disable('x-powered-by');
@@ -96,11 +104,13 @@ export async function createApp(config: Config): Promise<WebChatApp> {
   // GitHub signs the webhook's exact bytes, so that route gets them unparsed. A pull request's
   // description alone can be 65,536 characters. The JSON parser below leaves a parsed body alone.
   app.use('/api/github/webhook', express.raw({ type: () => true, limit: '1mb' }));
+  // A self-hosted store's uploads are raw bytes, larger than any JSON body.
+  if (files?.router) app.use('/api', files.router);
   // Room for a project's wrapped channel keys and the longest encrypted message (D-011).
   app.use(
     '/api',
     express.json({ limit: '256kb' }),
-    createApiRouter({ db, push, bark, github, githubApp, config, inviteCode, kdfSalt }),
+    createApiRouter({ db, push, bark, github, githubApp, files, config, inviteCode, kdfSalt }),
   );
   // The body parser runs before the API router, so its errors never reach the router's handler.
   // Answer them as JSON too, which the page can show, and without Express's stack-trace page.
