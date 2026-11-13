@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactN
 import { AGENT_LEVEL, type ProjectDTO } from '../../../shared/types';
 import { agentOf, ownAgents, ready, THREAD_STATE, useAgentThreads } from '../agents';
 import { sound } from '../alerts';
+import { notificationWarning } from '../banner';
 import { deleteAccount, deleteChannel, openConversation, previewText, signOut } from '../chat';
 import { deleteDoc } from '../docs';
 import type { ChatConversation, ChatDoc } from '../e2ee/keyring';
@@ -414,17 +415,11 @@ function RowMenu(props: { name: string; question: string; onRename?: () => void;
 /** Nudges the user until alerts can reach them: notifications allowed and sound unlocked. */
 function AlertSetupBanner({ onOpen }: { onOpen: () => void }) {
   const push = useAppState((s) => s.push);
+  const bark = useAppState((s) => s.bark);
   const soundUnlocked = useSyncExternalStore(sound.subscribe, sound.unlocked);
 
-  if (push && push.permission !== 'granted') {
-    const text =
-      push.permission === 'denied'
-        ? 'Notifications are blocked for this site. Allow them in the browser’s site settings.'
-        : push.oldIos
-          ? 'Notifications on iPhone need iOS 16.4. Tap to get alerts through the Bark app instead.'
-          : push.needsInstall
-            ? 'On iPhone, add this site to your Home Screen to get notifications.'
-            : 'Turn on notifications so urgent messages reach you when this tab is closed.';
+  const text = push && notificationWarning(push, bark);
+  if (text) {
     return (
       <button className="banner banner-warn" onClick={onOpen}>
         <BellIcon width={18} height={18} />
