@@ -293,6 +293,18 @@ test('a failing command stops a run of them, unless it is one that may fail', as
   assert.deepEqual(seen, ['a', 'bad', 'b', 'bad']);
 });
 
+test('loading a service tries again while launchd still lets go of the one it replaces', async () => {
+  for (const cmds of [servicePlan(mac, programOf(mac)), updaterPlan(mac, programOf(mac))]) {
+    let refused = 2;
+    const root = async (cmd: Cmd) => {
+      if (cmd.argv[1] === 'bootstrap' && refused-- > 0) throw new Error('launchctl failed with code 5. Bootstrap failed: 5: Input/output error');
+      return '';
+    };
+    await runAll(root, cmds);
+    assert.equal(refused, -1, 'loaded on the third try');
+  }
+});
+
 test('uninstall refuses an account setup did not make and removes nothing', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-foreign-'));
   try {
