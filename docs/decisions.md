@@ -1385,28 +1385,26 @@ for short tasks, and only deleting the whole project took one away.
 Cost: a deleted channel cannot come back. A repository linked to it stops posting cards until the
 owner links it again. Whoever made a channel cannot delete it unless they own the project.
 
-### D-097: An agent works in conversations with its owner, each run by a background Claude
+### D-097: An agent works in conversations with its owner, each run by a harness the runner starts
 
-Status: Accepted 2026-11-06 in #117, proposed in #112 (R-035). Its spike in #114 checked it on Claude Code 2.1.318. Card runs moved to it in #117. Changed in #165 (R-039).
+Status: Accepted 2026-11-06 in #117, proposed in #112 (R-035). Its spike in #114 checked it on Claude Code 2.1.318. Card runs moved to it in #117. Changed in #165 (R-039) and #209 (docs/roadmap/new-locked-room.md).
 
-The owner talks with an agent in the Agents pane, in their direct chat. A prompt is an encrypted
-message whose signed field names the repository and, for a card, a hash of the brief the owner saw.
-The plugin answers each turn with `claude -p --restricted`, which reads only managed settings, the
-plugin's settings file, and what the owner chose of their CLAUDE.md and skills (D-115). That file
-requires the sandbox, blocks reads outside the working directories, keychain and `session-env`
-included, lets the shell reach only the npm registry, and denies each credential variable by name:
-Claude Code's own scrub makes every sandboxed command ask.
-The turn ends in a JSON answer that the plugin acts on; a reply resumes the session. A card's
-conversation works in a worktree and opens a draft; a prompt may only answer. A fix round from
-another's review waits for the owner, and a card the agent drafts reaches the board only when the
-owner adds it. Why: a plain `-p` run loads the repository's hooks, and with no doorbell or monitor
-the desktop app works, the owner edits no settings and can prompt from a phone, and `gh` stays
-usable.
+The owner talks with an agent in the Agents pane, in their direct chat. A prompt is an encrypted message
+whose signed field names the repository and, for a card, a hash of the brief the owner saw. The runner
+answers each turn with the harness the owner linked. Claude Code runs as `claude -p --restricted`, which
+reads only managed settings, a settings file the runner writes again before each turn, and what the owner
+chose of their CLAUDE.md and skills (D-115). That file requires the sandbox, blocks reads outside the
+working directories, lets the shell reach only the npm registry (the model reaches the run's own dev server
+through the browser alone, docs/decisions/new-dev-server-sandbox.md), and denies each credential variable by
+name. The turn ends in a JSON answer that the keyholder acts on; a reply resumes the session. A card's
+conversation works in a worktree and opens a draft; a prompt may only answer. A harness no longer proves
+that its shell cannot read the agent's secrets: the keyholder's account holds them
+(docs/decisions/locked-room.md), and a sandbox that lets the shell read more is a warning in Settings.
+Why: a plain `-p` run loads the repository's hooks, and the owner can prompt from a phone.
 
-Cost: nobody watches a run live, and a turn waits up to 15 seconds for a check-in. A page Claude
-reads could make it leak repository code, and a secret whose name and value do not look like one
-still reaches the shell. A settings value Claude Code stops accepting drops the sandbox without a
-word. It replaces D-092's doorbell and D-095's monitor mark.
+Cost: nobody watches a run live, and a turn waits up to 15 seconds for a check-in. A page a harness reads
+could make it leak repository code. A settings value Claude Code stops accepting drops the sandbox without
+a word. It replaces D-092's doorbell and D-095's monitor mark.
 
 ### D-099: An agent refuses a second request for the card it runs
 
@@ -1803,6 +1801,33 @@ agent's branch; the README says so. Approvals cover only what a harness asks abo
 An ACP agent (docs/decisions/acp-adapter.md) gets the rulebook through its permission answers
 alone: it has no switch for the sandbox, the folders or the network, so `agent/rulebook.ts` judges
 only what it asks about. What the rulebook cannot decide goes to the owner, as for any harness.
+
+### D-122: The runner starts a run's dev server in a sandbox it owns, and a browser reaches only that
+
+Status: Proposed.
+
+On macOS, a Claude Code turn that can ask the owner gets the browser `chrome-devtools-mcp` (pinned
+and installed root-owned by setup, never fetched by a run) and WebChat's `dev_server` tool. The
+runner starts the dev server under a Seatbelt profile of WebChat's own (`devProfile` in
+`agent/browser.ts`). The profile lets it bind and reach only two ports the runner picked, which it
+gets as `PORT` and `PORT_2`. It writes only the working folder and a temp folder of its own. It
+reads no file under a home folder, a volume or a temp folder but those two and the `node` on PATH's
+folder, as the shell reads only its working folders, and no secret folder. It has no DNS, no Mach
+service and no signal outside the sandbox. Chrome runs headless on a temporary profile, and every
+request goes through a proxy in the runner that passes only those ports on `localhost` names. The
+rulebook allows only a named list of the browser's tools, `url`s on those ports, and paths in the
+working folders. The model's shell keeps only the npm registry (D-097).
+
+Why: Claude Code's `allowLocalBinding` opens every loopback port on macOS and does nothing on
+Linux, and a dev server is the model's code, which must not run as a plain process of the owner.
+This revisits docs/decisions/new-sandbox-owned.md for the dev server alone. Linux has no browser
+yet: it needs a network namespace that the dev server and Chrome share.
+
+Cost: a sandbox WebChat owns, on `sandbox-exec`, which Apple marks deprecated. A toolchain kept in
+the home folder other than `node`'s does not run there. The ports are free when picked, so another
+local program could take one first, and the browser would reach it. chrome-devtools-mcp runs
+outside every sandbox, as any local MCP server does, so its tool list and path checks carry the
+weight. A release that changes the pin needs setup again.
 
 ## Superseded
 

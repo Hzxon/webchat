@@ -353,6 +353,21 @@ export const ghPlan = (l: Layout, archive: Buffer): Cmd => ({
   stdin: archive,
 });
 
+/**
+ * Installs the browser's MCP server, chrome-devtools-mcp, from its npm tarball, which setup checked
+ * against its pinned sum (R-046): the package replaces the one before, root-owned.
+ */
+export const browserPlan = (l: Layout, archive: Buffer): Cmd => ({
+  argv: [
+    'sh',
+    '-c',
+    'set -e; umask 022; d=$(mktemp -d "$1/.browser.XXXXXX"); trap \'rm -rf "$d"\' EXIT; cat > "$d/archive"; tar -xzof "$d/archive" -C "$d"; rm -rf "$1/chrome-devtools-mcp"; mv "$d/package" "$1/chrome-devtools-mcp"',
+    'sh',
+    l.programDir,
+  ],
+  stdin: archive,
+});
+
 /** What the keyholder's service file says: the updater compares it with the file on disk after a release. */
 export const unitText = (l: Layout, program: string) => (l.platform === 'darwin' ? keyholderPlist(l, program) : keyholderUnit(l, program));
 

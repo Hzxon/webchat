@@ -162,10 +162,15 @@ const ASK_KINDS: Record<string, Ask['kind']> = { Bash: 'execute', Edit: 'edit', 
 export function claudeAsk({ tool_name: tool, input }: Call, cwd: string): Ask {
   const kind = ASK_KINDS[tool] ?? 'other';
   const text = (name: string) => (typeof input[name] === 'string' ? (input[name] as string) : undefined);
-  const named = [text('file_path'), text('notebook_path'), text('path')].filter((p): p is string => !!p);
+  // Every argument named for a path, such as the browser's `filePath`, `filePaths` and `sourcePath` (R-046).
+  const named = Object.entries(input)
+    .filter(([name]) => /paths?$/i.test(name))
+    .flatMap(([, value]) => (Array.isArray(value) ? value : [value]))
+    .filter((p): p is string => typeof p === 'string' && !!p);
   const paths = [...named.map((p) => path.resolve(cwd, p)), ...shellPaths(text('command') ?? '', cwd)];
   const target = text('command') ?? named[0] ?? text('url') ?? text('query') ?? text('pattern') ?? '';
-  return { tool, kind, paths, detail: kind === 'execute' ? target : kind === 'other' ? `${tool} ${JSON.stringify(input)}` : `${tool} ${target}` };
+  const url = text('url');
+  return { tool, kind, paths, urls: url ? [url] : [], detail: kind === 'execute' ? target : kind === 'other' ? `${tool} ${JSON.stringify(input)}` : `${tool} ${target}` };
 }
 
 type Schema = { type?: string; properties?: Record<string, Schema>; required?: string[]; enum?: unknown[] };
@@ -259,7 +264,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
             turn.fail(error as Error);
             throw error;
           });
-        })
+        }, t.lab && { start: (command) => (live.turn ? t.lab!.start(command, live.turn.cwd) : Promise.reject(new Error('No turn runs.'))), server: t.lab.mcpServer(t.cwd) })
       : undefined;
     // The skills' copies load as a plugin, which holds only `skills/`.
     const args = claudeArgs({ settings, session: t.session, resume: t.resume, schema, claudeMd: t.setup.instructions, skills: t.setup.skills && path.dirname(t.setup.skills), mcp: live.approver?.file });
@@ -327,6 +332,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
   return {
     name: 'Claude Code',
     asks: true,
+    secrets,
     async refusal() {
       if (process.platform === 'win32') return 'Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.';
       if (!program) return 'I cannot find Claude Code on this laptop.';
@@ -355,7 +361,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
     async turn(t) {
       if (t.signal.aborted) throw new Error(CANCELLED);
       const schema = mergeSchemas((t.schemas ?? [t.schema]) as Schema[]);
-      const key = JSON.stringify([t.cwd, !!t.ask, t.setup, schema]);
+      const key = JSON.stringify([t.cwd, !!t.ask, t.setup, schema, t.lab?.proxy]);
       let live = lives.get(t.session);
       if (live?.turn) throw new Error('a turn of this session is running already.');
       // A session that starts over, or needs other arguments, cannot keep its process.
