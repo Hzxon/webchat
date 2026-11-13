@@ -128,7 +128,8 @@ const rootVia =
     new Promise((resolve, reject) => {
       const tty = cmd.stdio === 'tty';
       const [file, ...args] = wrap(cmd);
-      const child = spawn(file!, args, { stdio: [tty ? 'inherit' : 'pipe', cmd.stdio ? 'inherit' : 'pipe', cmd.stdio ? 'inherit' : 'pipe'] });
+      // In `/`: the role account cannot read the owner's folder, and `gh auth login` runs git, which fails in a folder it cannot read.
+      const child = spawn(file!, args, { cwd: '/', stdio:[tty ? 'inherit' : 'pipe', cmd.stdio ? 'inherit' : 'pipe', cmd.stdio ? 'inherit' : 'pipe'] });
       const out: Buffer[] = [];
       const err: Buffer[] = [];
       child.stdout?.on('data', (chunk: Buffer) => out.push(chunk)).on('error', () => undefined);
