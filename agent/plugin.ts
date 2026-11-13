@@ -21,8 +21,8 @@ import { cardsOf, copyOf, entriesOf, proposalOf, readCard, usernamesOf } from '.
 import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type AskDTO, type PairingPick, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
 import { AgentClient, checkInEvery, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
-import { LocalBench, PrerequisitesMissing, type Bench, type Folder, type HarnessInfo } from './bench.ts';
-import { secretDirs, type Harness } from './harness.ts';
+import { LocalBench, NO_RUNNER, PrerequisitesMissing, type Bench, type Folder, type HarnessInfo } from './bench.ts';
+import type { Harness } from './harness.ts';
 import { Keep, repoHome } from './keep.ts';
 import { Permits } from './permits.ts';
 import { messageOf, REQUEST_TTL_MS, Runs, type Runner, type RunResult } from './runs.ts';
@@ -48,16 +48,20 @@ export interface PluginOptions {
   code: string;
   /** The plugin's own folder: the account, the lock, its harness's settings. Neither the shell nor the file tools may read it. */
   dataDir: string;
-  /** The folder the window is open in: any folder, since one window serves them all (R-036). */
-  projectDir: string;
+  /** The folder the window is open in: any folder, since one window serves them all (R-036). The keyholder has none. */
+  projectDir?: string;
   /** Where the agent clones a repository its owner asks for: `~/WebChat` (D-108). */
   cloneRoot: string;
   /**
    * Every coding agent WebChat supports, as the laptop has it, with no program for one it lacks.
    * The owner links each, and names one in each request; a request that names none runs on the
-   * first linked.
+   * first linked. Left out when `bench` is.
    */
-  harnesses: Harness[];
+  harnesses?: Harness[];
+  /** What works in the owner's folders: a `LocalBench` over `harnesses` when left out, or the keyholder's `SocketBench` (docs/decisions/locked-room.md). */
+  bench?: Bench;
+  /** Set with a `SocketBench`: resolves with a signal that aborts when the runner goes, once one is connected. */
+  runner?: { up(): Promise<AbortSignal> };
   /** Finds the harnesses again, which `harnesses` holds as found when the host started: every minute, so one installed later shows (docs/decisions/harness-linking.md). */
   find?: () => Promise<Harness[]>;
   /** The names of the harnesses a pairing asks to link. Left out, every harness the laptop has that is not known to be signed out. */
@@ -270,7 +274,7 @@ interface PullView {
 }
 
 /** What `connect` says in a folder that is no GitHub repository. */
-const NO_REPOSITORY = 'This folder is no GitHub repository, so there is nothing to connect here. Your agent works in every folder it knows, and offers to clone the others when you ask it in WebChat.';
+export const NO_REPOSITORY = 'This folder is no GitHub repository, so there is nothing to connect here. Your agent works in every folder it knows, and offers to clone the others when you ask it in WebChat.';
 
 /** What a command filed for the serving agent to ask its owner: `at` is when the command ran. */
 type Filed = ({ kind: 'link'; harness: string } | { kind: 'connect'; repo: string; dir: string }) & { at?: number };
@@ -317,6 +321,8 @@ export class Plugin {
   private readonly writers = new Map<string, boolean>();
   /** Ends the check-ins when the agent goes to sleep. */
   private stop?: AbortController;
+  /** Aborts when the runner goes, which ends the check-ins. */
+  private lost?: AbortSignal;
   /** Cuts short the minute a waiting window sleeps, so a wake here serves at once. */
   private nudge?: AbortController;
   /** What runs and turns load from the owner's Claude setup, as they chose, and what the last one loaded (R-039). Kept on disk. */
@@ -338,7 +344,7 @@ export class Plugin {
 
   constructor(private readonly options: PluginOptions) {
     this.home = path.join(options.dataDir, 'laptop');
-    this.bench = new LocalBench(options.harnesses, options.find);
+    this.bench = options.bench ?? new LocalBench(options.harnesses!, options.find, options.dataDir);
     this.keep = new Keep({ dataDir: options.dataDir });
   }
 
@@ -372,14 +378,19 @@ export class Plugin {
    */
   async start(): Promise<boolean> {
     const { dataDir, projectDir } = this.options;
+    if (this.options.runner) {
+      // Offline, with no check-ins, until a runner says hello; the loop ends when it goes (D-113).
+      this.problem = NO_RUNNER;
+      this.lost = await this.options.runner.up();
+    }
     if (this.options.job) {
       this.problem = 'This is a background job, so it does not serve your agent. The window you work in does.';
       return false;
     }
     // A mark from before R-036 names no folder; the checkout a window opens in names it (D-101).
-    const here = (await this.bench.checkout(projectDir)).repo;
+    const here = projectDir && (await this.bench.checkout(projectDir)).repo;
     const mark = here && markOf(dataDir, here);
-    if (mark && (await fs.readFile(mark, 'utf8').catch(() => undefined)) === '') await fs.writeFile(mark, projectDir);
+    if (mark && (await fs.readFile(mark, 'utf8').catch(() => undefined)) === '') await fs.writeFile(mark, projectDir!);
     this.problem = 'Connecting to WebChat.';
     const { server, code } = this.options.code ? readPairing(this.options.code, '') : { server: '', code: '' };
     const pairedFile = path.join(dataDir, 'account.json');
@@ -418,7 +429,7 @@ export class Plugin {
     await this.saveSetup();
     this.runs = new Runs(client, (job) => this.run(job), (run) => this.cardRefusal(run), (taken, why) => this.abandon(taken, why));
     this.conversations = new Conversations(client, this.file('conversations.json'), (job) => this.converse(job), (conversation) => this.endSession(conversation.session), (scratch) => this.bench.drop(scratch));
-    this.permits = new Permits(client, (message) => this.ownersOwn(message), () => secretDirs(this.options.dataDir));
+    this.permits = new Permits(client, (message) => this.ownersOwn(message));
     await this.conversations.load();
     this.watched = JSON.parse(await fs.readFile(this.file('pulls.json'), 'utf8').catch(() => '[]')) as Watched[];
     this.plans = JSON.parse(await fs.readFile(this.file('plans.json'), 'utf8').catch(() => '[]')) as Planned[];
@@ -589,7 +600,10 @@ export class Plugin {
   /** Checks in every 15 seconds, every minute once an hour passed with nothing to do, and looks at the pull requests every minute, until the session ends the process or the agent goes to sleep. */
   async loop() {
     // First, so a sleep among the messages missed while away ends the loop too.
-    this.stop = new AbortController();
+    const stop = (this.stop = new AbortController());
+    // Without a runner the check-ins stop and the watch is free, until `start` finds one again.
+    const gone = () => (stop.abort(), freeLock(path.join(this.options.dataDir, 'watch.lock')));
+    this.lost?.aborted ? gone() : this.lost?.addEventListener('abort', gone, { once: true });
     this.lastWork = Date.now();
     const missed = await this.client!.sync().catch((error: unknown) => (log(error), []));
     await this.endStrandedDrafts().catch(log);
@@ -735,14 +749,14 @@ export class Plugin {
    * Asks the owner to connect this folder, for `webchat-agent connect`: it marks nothing, and the
    * serving agent does when the owner approves in WebChat (docs/decisions/connect-approval.md).
    */
-  async requestConnect() {
-    const { dataDir, projectDir } = this.options;
-    const { repo } = await this.bench.checkout(projectDir);
+  async requestConnect(dir = this.options.projectDir!, named?: string) {
+    const { dataDir } = this.options;
+    const repo = named ?? (await this.bench.checkout(dir)).repo;
     if (!repo) return NO_REPOSITORY;
     if (!existsSync(path.join(dataDir, 'account.json'))) return 'This agent is not paired, so there is no owner to ask. Pair first: see `webchat-agent setup`.';
-    if ((await fs.readFile(markOf(dataDir, repo), 'utf8').catch(() => '')) === projectDir) return `${repo} is connected to this folder already.`;
-    await this.fileAsk({ kind: 'connect', repo, dir: projectDir });
-    return `Asked your agent's owner to connect ${repo} in ${shown(projectDir)}. They approve it in WebChat under Coding agents, within 10 minutes; nothing changes until then. The agent must be running: see \`webchat-agent status\`.`;
+    if ((await fs.readFile(markOf(dataDir, repo), 'utf8').catch(() => '')) === dir) return `${repo} is connected to this folder already.`;
+    await this.fileAsk({ kind: 'connect', repo, dir });
+    return `Asked your agent's owner to connect ${repo} in ${shown(dir)}. They approve it in WebChat under Coding agents, within 10 minutes; nothing changes until then. The agent must be running: see \`webchat-agent status\`.`;
   }
 
   /**
@@ -1309,13 +1323,12 @@ export class Plugin {
     const progress = taken && this.progress(taken);
     // A page from before questions sets no flag, and gets no question: its harness refuses what it would ask (docs/decisions/harness-approvals.md).
     const permit = who.asks
-      ? (roots: string[]) =>
+      ? () =>
           this.permits!.forTurn({
             session,
             // The owner's direct chat, which is where a card's request is too.
             chat: this.ownerChat() ?? ('taken' in who ? who.taken.conversation : who.chat),
             thread: 'taken' in who ? { request: who.taken.message } : { to: who.to },
-            roots,
           })
       : undefined;
     // One process takes every turn of a session, so it gets every schema the session's turns use.
@@ -1499,9 +1512,9 @@ export class Plugin {
   private async connect() {
     // Questions need no GitHub login, so connecting does not wait for one.
     const github = (await signedIn()) ? '' : ` ${GITHUB}`;
-    const { repo } = await this.bench.checkout(this.options.projectDir);
+    const { repo } = await this.bench.checkout(this.options.projectDir!);
     if (!repo) return `${NO_REPOSITORY}${github}`;
-    await this.mark(repo, this.options.projectDir);
+    await this.mark(repo, this.options.projectDir!);
     const paired = existsSync(path.join(this.options.dataDir, 'account.json'));
     let next = paired ? ' Ask your agent about it in WebChat, or hand it cards on the board.' : ' Now approve the agent in WebChat, in the window that shows the code.';
     if (!paired && !this.options.code) next = ' To pair the agent, choose Connect coding agent in WebChat, then type /plugin configure webchat@webchat here and paste the code.';
@@ -1518,7 +1531,7 @@ export class Plugin {
 
   /** Removes the folder's mark, never its files. */
   private async disconnect() {
-    const { repo } = await this.bench.checkout(this.options.projectDir);
+    const { repo } = await this.bench.checkout(this.options.projectDir!);
     if (!repo) throw new Error('This folder is no GitHub repository, so it was never connected.');
     await fs.rm(markOf(this.options.dataDir, repo), { force: true });
     if (this.client) await this.scan();

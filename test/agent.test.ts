@@ -10,6 +10,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import pkg from '../package.json' with { type: 'json' };
 import { after, before, describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Api } from '../agent/api.ts';
@@ -20,6 +21,7 @@ import type { Ask, Harness, Reply, Turn } from '../agent/harness.ts';
 import { Conversations, parts, type Answerer } from '../agent/conversations.ts';
 import { LocalBench, worktreeGit } from '../agent/bench.ts';
 import { Plugin } from '../agent/plugin.ts';
+import { callRoom, connectRunner, Room } from '../agent/room.ts';
 import { doctor, linksFrom, setup, uninstall } from '../agent/setup.ts';
 import { harnessFinder, supported, supportedList } from '../agent/harnesses.ts';
 import { versionAtLeast } from '../agent/harness.ts';
@@ -1587,6 +1589,34 @@ describe('agent client (R-027)', () => {
     }
   });
 
+  test('shows offline while no runner is connected, serves once one says hello, and stops when it goes (docs/decisions/locked-room.md)', { timeout: 30_000 }, async () => {
+    const dataDir = path.join(home, 'roomy');
+    const room = new Room({ version: '1' });
+    const file = path.join(home, 'roomy.sock');
+    const code = newPairingCode();
+    const plugin = new Plugin({ bench: room.bench, runner: room, cloneRoot: path.join(home, 'WebChat'), dataDir, code: `${baseUrl}#${code}` });
+    await room.listen(file, plugin);
+    const bench = new LocalBench([claudeHarness('', 'true', dataDir)], undefined, dataDir);
+    const runners: Array<{ close: () => void }> = [];
+    void plugin.serve().catch(() => undefined);
+    try {
+      await waitFor('it shows offline', () => /not started the part of this agent/.test(plugin.problem));
+      assert.equal(plugin.client, null, 'it checked in nowhere');
+      runners.push(await connectRunner({ file, bench, version: '1' }));
+      await approve(alice, code, 'Roomy');
+      await waitFor('it serves', () => plugin.problem === '');
+      assert.equal((await callRoom<{ runner: boolean }>(file, 'status', {}, '1')).runner, true);
+      runners[0]!.close();
+      await waitFor('it is offline again', () => /not started the part of this agent/.test(plugin.problem));
+      runners.push(await connectRunner({ file, bench, version: '1' }));
+      await waitFor('it serves again', () => plugin.problem === '');
+    } finally {
+      runners.forEach((r) => r.close());
+      await plugin.call('sleep');
+      room.close();
+    }
+  });
+
   test('connects a folder only on its owner\'s signed approval, within 10 minutes and once (docs/decisions/connect-approval.md)', { timeout: 60_000 }, async () => {
     const dataDir = path.join(home, 'connector', 'laptop');
     const folder = path.join(home, 'connector-app');
@@ -1643,10 +1673,13 @@ describe('agent client (R-027)', () => {
     };
 
     // The real command, typed in a terminal, files a request and returns: nothing changes.
+    // It asks the keyholder over its socket, which here is the terminal's plugin.
+    const room = new Room({ version: pkg.version });
+    await room.listen(path.join(home, 'connector', 'keyholder.sock'), terminal);
     const run = await sh(process.execPath, ['--import', import.meta.resolve('tsx'), fileURLToPath(new URL('../agent/index.ts', import.meta.url)), 'connect'], {
       cwd: folder,
       env: { PATH: '/usr/bin:/bin', HOME: path.join(home, 'connector'), WEBCHAT_AGENT_HOME: path.join(home, 'connector') },
-    });
+    }).finally(() => room.close());
     assert.match(run.stdout, /Asked your agent's owner to connect acme\/app/);
     await nothing('a typed connect marks nothing');
     await plugin.sendAsks();
