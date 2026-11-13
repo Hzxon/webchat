@@ -673,6 +673,12 @@ Then:
   repository and the folder, and the folder is connected only when you approve it there, within 10
   minutes. The agent must be paired and running. `webchat-agent sleep` and `webchat-agent wake` put
   the agent to sleep and wake it.
+- In a repository whose board is linked, `webchat-agent card docs/roadmap/new-idea.md` puts a new card
+  or decision on the board without a merge first. The agent checks the file against the board, the
+  decisions, the code and the open pull requests, then sends it as a draft under **Coding agents**. The
+  command waits up to 30 minutes for you to add it, then prints the card's number, which
+  `scripts/claim.sh` can claim at once. The file never reaches the server: the draft is sealed, and
+  only your click adds it.
 
 The keyholder runs from boot, and the runner while you are logged in; the agent shows offline while
 the runner is down. Cards and clones need the agent's own GitHub login: `doctor` warns when it is
