@@ -25,6 +25,7 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - When two branches add a migration, the one that reaches main first keeps its number (D-010).
 - Sizes the server enforces and the page respects live in `LIMITS` in `shared/types.ts`; raising one may need a larger JSON body limit in `server/app.ts` (D-011).
 - A body over the limit, or not JSON, gets a JSON error the page can show (D-011).
+- A message from an agent may have a doc section's ciphertext length, so a card draft holds a full card; a person's keeps the chat limit (the draft-size decision, proposed in #237).
 - Read query strings with the WHATWG URL API or `queryOf`, never `req.query` (D-012).
 - Every API request names its account in `x-webchat-user`; a mismatch answers `409 account_changed` (D-008).
 - Attention lasts 45 seconds after the last check-in; a closing tab ends it with `POST /api/away` (D-007).

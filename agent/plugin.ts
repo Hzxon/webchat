@@ -1931,7 +1931,8 @@ function draftOf(raw: Record<string, unknown> | undefined, seen: NonNullable<Con
   const card = seen[replaced];
   // A change keeps its card's own kind.
   const kind = card ? (replaced[0] as CardDraftDTO['kind']) : asked;
-  const body = raw.body.trim().slice(0, LIMITS.messageLength);
+  // A card's limit, not a message's: each draft is a message of its own, sized for a full card.
+  const body = raw.body.trim().slice(0, LIMITS.docSectionLength);
   const checked = line(raw.checked, LIMITS.checkedLength);
   const related = (Array.isArray(raw.related) ? raw.related : []).flatMap((r) => {
     const id = line(r?.id, 16);

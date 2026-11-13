@@ -1040,7 +1040,9 @@ export function createApiRouter({ db, push, bark, github, githubApp, config, inv
     const me = currentUser(res);
     const conversationId = positiveInt(req.params.id, 'Chat id');
     // The server only ever receives ciphertext; it checks the shape, not the content.
-    const sealed = envelope(req.body?.envelope);
+    // An agent's card draft is a message of its own that holds a full card, so an agent's message
+    // may be as long as a doc section.
+    const sealed = envelope(req.body?.envelope, me.agent_owner === null ? LIMITS.ciphertextLength : LIMITS.docCiphertextLength);
     // Signed into the envelope, so it must stay exactly as the client sent it.
     const clientId = base64url(req.body?.clientId, 'clientId', 1, 64);
     const kind: Exclude<MessageKind, 'github'> = req.body?.kind === 'reaction' || req.body?.kind === 'sync' ? req.body.kind : 'message';

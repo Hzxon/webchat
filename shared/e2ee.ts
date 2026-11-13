@@ -582,7 +582,7 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
 /** A card draft in an agent's answer, if it has the right shape (D-104, D-116). */
 function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | undefined {
   const title = short(raw?.title, LIMITS.docTitleLength);
-  const body = short(raw?.body, LIMITS.messageLength);
+  const body = short(raw?.body, LIMITS.docSectionLength);
   // A line break in the title would write a status line of its own into the card.
   if (!raw || (raw.kind !== 'D' && raw.kind !== 'R' && raw.kind !== 'K' && raw.kind !== 'Q') || !title || /[\r\n]/.test(title) || body === undefined) return;
   // A line break in the check would end the card's Checked line, and one in a status would write a line of its own.
