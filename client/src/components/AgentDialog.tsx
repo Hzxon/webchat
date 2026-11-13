@@ -4,7 +4,7 @@
 // also lists the owner's agents, so one can be removed (R-033).
 import { useEffect, useMemo, useState } from 'react';
 import { newPairingCode } from '../../../shared/e2ee';
-import { LIMITS, PAIRING_TTL_MS, type PairingPick, type PublicKeysDTO, type UserDTO } from '../../../shared/types';
+import { AGENT_RELEASES, LIMITS, PAIRING_TTL_MS, type PairingPick, type PublicKeysDTO, type UserDTO } from '../../../shared/types';
 import { ownAgents } from '../agents';
 import { api, ApiError } from '../api';
 import { holdReloadWhile } from '../build';
@@ -15,7 +15,7 @@ import { presenceText } from './format';
 import { CopyRow } from './NotificationDialog';
 
 /** The release's own installer, which checks the agent file against the release's checksum before it installs it (docs/decisions/agent-install.md). */
-const installLine = (release: string, pasted: string) => `curl -fsSL https://github.com/Hzxon/webchat/releases/download/v${release}/install.sh | sh -s -- '${pasted}'`;
+const installLine = (release: string, pasted: string) => `curl -fsSL ${AGENT_RELEASES}/v${release}/install.sh | sh -s -- '${pasted}'`;
 
 export function AgentDialog({ onClose }: { onClose: () => void }) {
   const projects = useAppState((s) => s.projects);

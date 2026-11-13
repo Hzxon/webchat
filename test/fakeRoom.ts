@@ -3,7 +3,7 @@
 // answers the few reads setup makes, and records every command that would have run as root.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { layoutFor, MARK, type Cmd, type Layout, type Read, type Root } from '../agent/lockroom.ts';
+import { layoutFor, MARK, selfRoot, type Cmd, type Layout, type Read, type Root } from '../agent/lockroom.ts';
 
 /** A layout of names and folders that touch nothing real. `git` is a file the test made, owned by the test's user. */
 export const testLayout = (dir: string, git = path.join(dir, 'git')): Layout => ({
@@ -13,6 +13,9 @@ export const testLayout = (dir: string, git = path.join(dir, 'git')): Layout => 
   programDir: path.join(dir, 'program'),
   unit: path.join(dir, 'keyholder.unit'),
   log: process.platform === 'darwin' ? path.join(dir, 'logs', 'keyholder.log') : '',
+  updaterUnit: path.join(dir, 'updater.unit'),
+  updaterTimer: process.platform === 'darwin' ? '' : path.join(dir, 'updater.timer'),
+  updaterLog: process.platform === 'darwin' ? path.join(dir, 'logs', 'updater.log') : '',
   git,
   rootUid: process.getuid!(),
 });
@@ -68,4 +71,22 @@ export function fakeRoom(layout: Layout): Fake {
     },
   };
   return fake;
+}
+
+/**
+ * Stands in for the updater's root: the `sh` plans run for real in the test's folders, which need no
+ * root there, and `launchctl` and `systemctl` only record. A restart calls `onRestart`, as launchd or
+ * systemd would start the keyholder from whatever the program is by then.
+ */
+export function scriptRoot(onRestart: () => Promise<void>) {
+  const log: Cmd[] = [];
+  const root: Root = async (cmd) => {
+    log.push(cmd);
+    if (['launchctl', 'systemctl'].includes(cmd.argv[0]!)) {
+      if (cmd.argv.some((word) => ['kickstart', 'restart'].includes(word))) await onRestart();
+      return '';
+    }
+    return selfRoot(cmd);
+  };
+  return { root, log };
 }

@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { GH_VERSION, ghArchive, ghAsset } from '../agent/gh.ts';
 import {
-  createPlan, foldersPlan, freeIds, ghPlan, idsOf, inspectRoom, keyholderPlist, keyholderUnit, layoutFor, loginPlan, MARK, pairPlan, programOf, put, putAs, refusals, runAll, selfProblem, servicePlan, signedInPlan, uninstallPlan,
+  cleanupPlan, createPlan, foldersPlan, freeIds, ghPlan, idsOf, inspectRoom, keyholderPlist, keyholderUnit, layoutFor, loginPlan, MARK, pairPlan, programOf, put, putAs, refusals, restartPlan, rollbackPlan, runAll, selfProblem, servicePlan, signedInPlan, stagePlan, stopUpdaterPlan, swapPlan, uninstallPlan, updaterPlan, updaterPlist, updaterService, updaterTimerUnit,
   type Cmd, type Found,
 } from '../agent/lockroom.ts';
 import { uninstall, verifiedProgram } from '../agent/setup.ts';
@@ -160,6 +160,61 @@ test('starts the service from a file written through stdin, then loads it', () =
   assert.deepEqual(words(enable), ['systemctl daemon-reload', 'systemctl enable webchat-keyholder', 'systemctl restart webchat-keyholder']);
 });
 
+test('the updater runs as root every 15 minutes: a LaunchDaemon on macOS, a oneshot service and timer on Linux', async () => {
+  const plist = updaterPlist(mac, '/Library/WebChat/webchat-agent');
+  assert.match(plist, /<key>ProgramArguments<\/key>\s*<array>\s*<string>\/Library\/WebChat\/webchat-agent<\/string>\s*<string>update<\/string>/);
+  assert.match(plist, /<key>RunAtLoad<\/key>\s*<true\/>\s*<key>StartInterval<\/key>\s*<integer>900<\/integer>/);
+  assert.match(plist, /<key>PATH<\/key>\s*<string>\/usr\/bin:\/bin:\/usr\/sbin:\/sbin<\/string>/);
+  assert.match(plist, /<key>StandardErrorPath<\/key>\s*<string>\/Library\/Logs\/WebChat\/updater\.log<\/string>/);
+  assert.doesNotMatch(plist, /UserName/, 'no account named: launchd runs it as root');
+  const unit = updaterService(linux, '/opt/we ird/100%/webchat-agent');
+  assert.match(unit, /^ExecStart="\/opt\/we ird\/100%%\/webchat-agent" update$/m);
+  for (const line of ['Type=oneshot', 'ProtectSystem=strict', 'ReadWritePaths=/opt/webchat', 'ProtectHome=yes', 'PrivateTmp=yes']) assert.ok(unit.split('\n').includes(line), line);
+  assert.doesNotMatch(unit, /^User=/m);
+  const timer = updaterTimerUnit();
+  for (const line of ['OnBootSec=2min', 'OnCalendar=*:0/15', 'RandomizedDelaySec=5min', 'Persistent=true', 'WantedBy=timers.target']) assert.ok(timer.split('\n').includes(line), line);
+  if (process.platform === 'darwin') {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-plist-'));
+    try {
+      const file = path.join(dir, 'updater.plist');
+      await fs.writeFile(file, updaterPlist({ ...mac, updaterLabel: 'com.a&b' }, '/Library/We<b>&c/webchat-agent'));
+      await promisify(execFile)('plutil', ['-lint', file]);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test('installs the updater after its settings, and stops it by name', () => {
+  const [config, unit, ...load] = updaterPlan(mac, programOf(mac), { server: 'https://w.example' });
+  assert.deepEqual([config!.argv.at(-1), String(config!.stdin)], ['/Library/WebChat/update.json', '{"server":"https://w.example"}']);
+  assert.ok(unit!.argv.at(-1) === mac.updaterUnit && String(unit!.stdin).includes('<string>update</string>'));
+  assert.deepEqual(words(load), ['launchctl bootout system/com.webchat.updater', `launchctl bootstrap system ${mac.updaterUnit}`]);
+  const [service, timer, ...enable] = updaterPlan(linux, programOf(linux));
+  assert.deepEqual([service!.argv.at(-1), timer!.argv.at(-1)], [linux.updaterUnit, linux.updaterTimer], 'no settings given: the ones there stay');
+  assert.deepEqual(words(enable), ['systemctl daemon-reload', 'systemctl enable --now webchat-updater.timer']);
+  assert.deepEqual(words(stopUpdaterPlan(mac)), ['launchctl bootout system/com.webchat.updater']);
+  assert.deepEqual(words(stopUpdaterPlan(linux)), ['systemctl stop webchat-updater.timer webchat-updater.service']);
+});
+
+test('the swap plans carry the release only as an argument, in the program’s own folder, and refuse what is not three numbers', () => {
+  const gz = Buffer.from('bytes');
+  const stage = stagePlan(linux, '0.10.0', gz);
+  assert.deepEqual([stage.argv.slice(4), stage.stdin], [['/opt/webchat', '0.10.0'], gz]);
+  assert.match(stage.argv[2]!, /--version\)" = "\$2"/, 'the new file must print the release before it is moved');
+  const [swap] = swapPlan(linux, '0.10.0');
+  assert.deepEqual(swap!.argv.slice(4), ['/opt/webchat', '0.10.0']);
+  assert.match(swap!.argv[2]!, /mv -f "\$1\/\.staged\/webchat-agent-\$2" "\$1\/webchat-agent"/, 'a rename in the same folder');
+  assert.deepEqual(words(restartPlan(mac)), ['launchctl kickstart -k system/com.webchat.keyholder']);
+  assert.deepEqual(words(restartPlan(linux)), ['systemctl restart webchat-keyholder']);
+  assert.deepEqual(words(rollbackPlan(linux)).slice(1), ['systemctl restart webchat-keyholder']);
+  assert.deepEqual(words(cleanupPlan(linux)), ['rm -rf /opt/webchat/.staged /opt/webchat/webchat-agent.previous']);
+  for (const release of ['0.10.0; rm -rf /', 'v1.0.0', '1.0', '1.0.0\n', '../1.0.0', '']) {
+    assert.throws(() => stagePlan(linux, release, gz), /is not a release number/, release);
+    assert.throws(() => swapPlan(linux, release), /is not a release number/, release);
+  }
+});
+
 test('pins a sum for each archive, and installs nothing that does not match it', async () => {
   assert.equal(GH_VERSION, '2.104.0');
   const keys = [['linux', 'x64', 'linux_amd64.tar.gz'], ['linux', 'arm64', 'linux_arm64.tar.gz'], ['darwin', 'x64', 'macOS_amd64.zip'], ['darwin', 'arm64', 'macOS_arm64.zip']] as const;
@@ -191,8 +246,9 @@ test('installs the program only if it is the bytes setup hashed when it started'
 
 test('uninstall goes in order, deletes the account and groups only when setup made them, and keeps to its own folders', () => {
   assert.deepEqual(words(uninstallPlan(mac, true)).filter((line) => !line.includes('env -i')), [
+    'launchctl bootout system/com.webchat.updater',
     'launchctl bootout system/com.webchat.keyholder',
-    'rm -f /Library/LaunchDaemons/com.webchat.keyholder.plist',
+    'rm -f /Library/LaunchDaemons/com.webchat.keyholder.plist /Library/LaunchDaemons/com.webchat.updater.plist',
     'pkill -KILL -u _webchat',
     'rm -rf /var/webchat /var/webchat-ipc /Library/WebChat /Library/Logs/WebChat',
     'sysadminctl -deleteUser _webchat -secure',
@@ -205,8 +261,10 @@ test('uninstall goes in order, deletes the account and groups only when setup ma
   assert.deepEqual([logout.as, logout.soft], ['_webchat', true]);
   assert.deepEqual(logout.argv.slice(-5), ['/Library/WebChat/bin/gh', 'auth', 'logout', '--hostname', 'github.com']);
   assert.deepEqual(words(uninstallPlan(linux, true)).filter((line) => !line.includes('env -i')), [
+    'systemctl disable --now webchat-updater.timer',
+    'systemctl stop webchat-updater.timer webchat-updater.service',
     'systemctl disable --now webchat-keyholder',
-    'rm -f /etc/systemd/system/webchat-keyholder.service',
+    'rm -f /etc/systemd/system/webchat-keyholder.service /etc/systemd/system/webchat-updater.service /etc/systemd/system/webchat-updater.timer',
     'systemctl daemon-reload',
     'pkill -KILL -u _webchat',
     'rm -rf /var/lib/webchat /var/webchat-ipc /opt/webchat',
@@ -220,6 +278,7 @@ test('uninstall goes in order, deletes the account and groups only when setup ma
   assert.throws(() => uninstallPlan({ ...linux, programDir: '/opt' }, true), /Refusing to remove \/opt/);
   assert.throws(() => uninstallPlan({ ...linux, data: '/' }, true), /Refusing to remove/);
   assert.throws(() => uninstallPlan({ ...linux, ipc: 'var/x' }, true), /Refusing to remove/);
+  assert.throws(() => uninstallPlan({ ...linux, updaterTimer: '/etc' }, true), /Refusing to remove \/etc/);
 });
 
 test('a failing command stops a run of them, unless it is one that may fail', async () => {

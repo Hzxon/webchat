@@ -22,12 +22,13 @@ import { GH_VERSION, ghArchive, ghAsset } from './gh.ts';
 import { harnessFinder, SUPPORTED, supported } from './harnesses.ts';
 import { sha256 } from './keep.ts';
 import {
-  createPlan, foldersPlan, freeIds, ghOf, ghPlan, idsOf, inspectRoom, layoutFor, loginPlan, pairPlan, programOf, programPlan, quoted, realRoot, refusals, runAll, servicePlan, signedInPlan, socketOf, uninstallPlan, xml,
+  createPlan, foldersPlan, freeIds, ghOf, ghPlan, idsOf, inspectRoom, layoutFor, loginPlan, pairPlan, programOf, programPlan, quoted, realRoot, refusals, RELEASE, runAll, servicePlan, signedInPlan, socketOf, stopUpdaterPlan, uninstallPlan, updaterPlan, xml,
   type Layout, type Read, type Root,
 } from './lockroom.ts';
 import { finishMove, moveAccount, newest, sources } from './move.ts';
 import { callRoom, type RoomStatus } from './room.ts';
 import { messageOf } from './runs.ts';
+import { compareReleases, describeState, readState } from './update.ts';
 
 const exec = promisify(execFile);
 /** The service's name on both systems: webchat-agent.plist, webchat-agent.service. */
@@ -232,10 +233,11 @@ async function networkRow(server: string | undefined): Promise<Row> {
   try {
     const { release } = await new Api(server).request<ConfigDTO>('GET', '/config');
     if (release === pkg.version) return ok(`Network: ${server} answers, release ${release}`);
+    const ahead = RELEASE.test(release ?? '') && compareReleases(release, pkg.version) > 0;
     return {
       level: 'warn',
       text: `Network: ${server} runs release ${release ?? 'unknown'}, and this agent is ${pkg.version}.`,
-      fix: 'It works, but run the line in WebChat’s Connect dialog again to get the matching agent.',
+      fix: ahead ? 'It works. The updater moves the agent to that release within about 15 minutes, once no card runs.' : 'It works, but run the line in WebChat’s Connect dialog again to get the matching agent.',
     };
   } catch (error) {
     return { level: 'fail', text: `Network: ${server} did not answer. ${messageOf(error)}` };
@@ -302,6 +304,26 @@ async function keyholderState(layout: Layout): Promise<'running' | 'stopped' | '
   return (mac() ? /state = running/.test(said) : said.trim() === 'active') ? 'running' : 'stopped';
 }
 
+/** Whether the updater's job is loaded, as the system says it without sudo: a loaded LaunchDaemon, or an active timer. */
+async function updaterLoaded(layout: Layout) {
+  if (!existsSync(layout.updaterUnit)) return false;
+  return mac() ? works('launchctl', ['print', `system/${layout.updaterLabel}`]) : (await run('systemctl', ['is-active', `${layout.updaterLabel}.timer`]).catch(() => '')).trim() === 'active';
+}
+
+const updaterLog = (layout: Layout) => (mac() ? `Its log is ${layout.updaterLog}.` : `Its log is in \`journalctl -u ${layout.updaterLabel}\`.`);
+
+/** The updater: installed, loaded, and what its last check found, from the state file that root writes and anyone reads. */
+async function updaterRow(layout: Layout): Promise<Row> {
+  if (!existsSync(layout.updaterUnit)) return { level: 'todo', text: 'Updater: not installed. Setup installs it.' };
+  if (!(await updaterLoaded(layout))) return { level: 'warn', text: 'Updater: installed, but not loaded.', fix: mac() ? `macOS may have turned it off: look under System Settings > General > Login Items > Allow in the Background. ${updaterLog(layout)}` : updaterLog(layout) };
+  const state = await readState(layout);
+  if (!state) return ok('Updater: installed, and has not checked yet');
+  const now = Date.now();
+  const { text, fix } = describeState(state, now);
+  if (now - state.at > 24 * 60 * 60_000) return { level: 'warn', text: `Updater: no check for over a day. The last one: ${text}.`, fix: updaterLog(layout) };
+  return fix ? { level: 'warn', text: `Updater: ${text}.`, fix } : ok(`Updater: ${text}, checked ${Math.round((now - state.at) / 60_000)} min ago`);
+}
+
 /** The locked room: the account, what root owns, the service, the owner's group and the agent's own GitHub login. */
 async function roomRows(layout: Layout, home: string, said?: RoomStatus): Promise<Row[]> {
   const owner = os.userInfo().username;
@@ -319,6 +341,7 @@ async function roomRows(layout: Layout, home: string, said?: RoomStatus): Promis
   rows.push(installed.every(Boolean) ? ok(`Agent program and GitHub CLI: root-owned in ${layout.programDir}`) : { level: 'todo', text: `Agent program and GitHub CLI: missing, or not owned by root alone, in ${layout.programDir}.` });
   const state = await keyholderState(layout);
   rows.push(state === 'running' ? ok(`Keyholder service: running${said ? (said.runner ? ', the runner is connected' : ', no runner connected') : ''}`) : { level: state === 'missing' ? 'todo' : 'warn', text: `Keyholder service: ${state === 'missing' ? 'not installed' : 'installed, but not running'}.`, ...(state === 'stopped' && { fix: mac() ? `macOS may have turned it off: look under System Settings > General > Login Items > Allow in the Background. Its log is ${layout.log}.` : `Its log is in \`journalctl -u ${layout.label}\`.` }) });
+  rows.push(await updaterRow(layout));
   if (!found.members.includes(owner)) rows.push({ level: 'todo', text: `Group: you are not in ${layout.ipcGroup}, which opens the agent’s socket.` });
   else if (!(await run('id', ['-Gn']).catch(() => '')).split(/\s+/).includes(layout.ipcGroup)) rows.push({ level: 'warn', text: `Group: you are in ${layout.ipcGroup}, but this session started before that.`, fix: 'Log out and log in again, so the commands and the runner can reach the keyholder.' });
   if (said && state === 'running' && said.signedIn === false) rows.push({ level: 'warn', text: 'GitHub: the agent is not signed in. Cards and clones need it.', fix: 'Run `webchat-agent setup` and answer yes to its GitHub sign-in. A second GitHub account is best: whatever the agent’s login reaches, the agent reaches.' });
@@ -509,6 +532,7 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
     `install the agent and GitHub’s CLI ${GH_VERSION}, owned by root, in ${layout.programDir}, and run the keyholder from there as ${layout.user}: ${mac() ? 'a LaunchDaemon' : 'a systemd service'} in ${path.dirname(layout.unit)}`,
     ...(moves ? [`move the agent’s account from ${source.dir} into its own folder, without pairing again`] : []),
     ...stepsFor(ticked).map((step) => step.say),
+    `install an updater that moves the agent to ${server ?? 'its server'}’s release, forward only, whenever nothing runs: it runs as root, ${mac() ? 'a LaunchDaemon' : 'a systemd timer'} in ${path.dirname(layout.updaterUnit)}`,
     `install a login service that runs the agent’s runner as you, a ${mac() ? 'LaunchAgent' : 'systemd user unit'} in ${path.dirname(mac() ? plistFile() : unitFile())}`,
   ];
   const offer = pasted ? `\nCoding agents to link, which WebChat shows you before you approve:\n${found.map((f) => `  [${ticked.includes(f) ? 'x' : ' '}] ${describe(f)}`).join('\n')}\n` : '';
@@ -521,6 +545,8 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
   const root = given ?? realRoot;
   try {
     await fs.mkdir(home, { recursive: true, mode: 0o700 });
+    // A check must not swap the program under setup, which may install an older one on purpose: that is how going back works.
+    await runAll(root, stopUpdaterPlan(layout));
     await buildRoom(root, layout, { owner, program, hash, look, gh: fetchGh });
     // First, while the owner is at WebChat: the code lapses after 10 minutes, and Apple's installer can take longer.
     if (pasted) await root(pairPlan(layout, { code: pasted, picks: picks.map((f) => ({ name: f.name, ...(f.version && { version: f.version }), ...(f.signedIn !== undefined && { signedIn: f.signedIn }) })) }));
@@ -536,6 +562,7 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
       moved = await moveAccount(root, layout, source, path.join(home, 'runner'));
     }
     await runAll(root, servicePlan(layout, programOf(layout)));
+    await runAll(root, updaterPlan(layout, programOf(layout), server ? { server } : undefined));
     if (await root(signedInPlan(layout)).then(() => false, () => true)) {
       const reply = await ask('\nThe agent needs its own GitHub login for cards and clones. A second GitHub account is best: whatever its login reaches, the agent reaches. Sign it in now? GitHub shows a code to enter at github.com/login/device. [y/N] ');
       if (yes(reply)) await root(loginPlan(layout));
@@ -585,6 +612,8 @@ export async function status(home: string, layout = defaultLayout()) {
   const [keyholder, login, account] = [await keyholderState(layout), await serviceState(), await readAccount(home)];
   console.log(`Keyholder service: ${{ running: 'running', stopped: `installed, but not running. ${keyholderLog(layout)}`, missing: 'not installed. Run `webchat-agent setup <code>`.' }[keyholder]}`);
   console.log(`Runner service: ${{ running: 'running', stopped: `installed, but not running. ${logHint(home)}`, missing: 'not installed. Run `webchat-agent setup`.' }[login]}`);
+  const updater = await updaterRow(layout);
+  console.log(updater.text + (updater.fix ? `\n${updater.fix.replace(/^/gm, '  ')}` : ''));
   if (account) console.log(`Account from before the room, still in ${accountFile(home)}: ${account.username} on ${account.server}. Run \`webchat-agent setup\` to move it.`);
 }
 
@@ -592,7 +621,7 @@ export async function uninstall(home: string, ask = confirm, { layout = defaultL
   const found = await inspectRoom(layout, look);
   if ([found.user, found.group, found.ipc].includes('foreign')) throw new Error(`${layout.user} or ${layout.ipcGroup} is not an account setup made, so setup leaves it alone. Nothing was removed.`);
   if (!(await ask(`This stops the agent on this laptop and deletes its keys, the account ${layout.user} and the agent’s copies of your repositories. Continue? [y/N] `))) throw new Error('Nothing was removed.');
-  const built = found.user !== 'none' || found.ipc !== 'none' || [layout.unit, layout.data, layout.ipc, layout.programDir].some((file) => existsSync(file));
+  const built = found.user !== 'none' || found.ipc !== 'none' || [layout.unit, layout.updaterUnit, layout.data, layout.ipc, layout.programDir].some((file) => existsSync(file));
   const stopSudo = given || !built ? () => undefined : await openSudo();
   try {
     if (built) await runAll(given ?? realRoot, uninstallPlan(layout, found.user === 'ours'));

@@ -643,7 +643,11 @@ export class Plugin {
     await fs.mkdir(this.options.dataDir, { recursive: true, mode: 0o700 });
     await fs.writeFile(this.asleep, '');
     this.drowse();
-    // Only the process that serves knows what runs; another one goes to sleep at its next check.
+    return this.working();
+  }
+
+  /** What a restart would cut short, for the updater and for `sleep`. Only the process that serves knows; another one goes to sleep at its next check. */
+  async working() {
     return this.runs ? this.busy() : [];
   }
 

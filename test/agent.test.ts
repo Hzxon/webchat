@@ -23,7 +23,7 @@ import { LocalBench, worktreeGit } from '../agent/bench.ts';
 import { repoHome } from '../agent/keep.ts';
 import { Plugin } from '../agent/plugin.ts';
 import { callRoom, connectRunner, Room, type RoomStatus } from '../agent/room.ts';
-import { programOf } from '../agent/lockroom.ts';
+import { programOf, updateConfigOf, type Cmd } from '../agent/lockroom.ts';
 import { doctor, linksFrom, pairInto, setup, uninstall } from '../agent/setup.ts';
 import { harnessFinder, supported, supportedList } from '../agent/harnesses.ts';
 import { versionAtLeast } from '../agent/harness.ts';
@@ -2240,6 +2240,14 @@ describe('agent client (R-027)', () => {
       const first = await commands();
       assert.ok(first.some((line) => (process.platform === 'darwin' ? line.startsWith(`launchctl bootstrap gui/${process.getuid!()} ${unitFile}`) : line === 'systemctl --user restart webchat-agent')), first.join('\n'));
 
+      // The updater: stopped before the program is built over, installed after the keyholder's service, with the paired server in the settings only root writes.
+      const at = (match: (cmd: Cmd) => boolean) => room.log.findIndex(match);
+      const stop = at((cmd) => cmd.soft === true && cmd.argv.some((word) => word.includes(layout.updaterLabel)));
+      assert.ok(stop >= 0 && stop < at((cmd) => cmd.argv.at(-1) === programOf(layout)), 'stopped first');
+      assert.ok(at((cmd) => cmd.argv.at(-1) === layout.unit) < at((cmd) => cmd.argv.at(-1) === layout.updaterUnit), 'installed after the keyholder');
+      assert.equal(JSON.parse(await fs.readFile(updateConfigOf(layout), 'utf8')).server, baseUrl);
+      assert.match(await fs.readFile(layout.updaterUnit, 'utf8'), /update/);
+
       // A second run, with no code, pairs nothing again and replaces the service.
       room.system.made = true;
       said.length = 0;
@@ -2254,7 +2262,7 @@ describe('agent client (R-027)', () => {
       await assert.rejects(uninstall(agentHome, async () => false, gone), /Nothing was removed/);
       assert.equal(existsSync(unitFile), true);
       await uninstall(agentHome, async () => true, gone);
-      assert.deepEqual([unitFile, layout.data, layout.ipc, layout.programDir, layout.unit, path.join(laptopHome, '.local', 'bin', 'webchat-agent')].map((file) => existsSync(file)), [false, false, false, false, false, false]);
+      assert.deepEqual([unitFile, layout.data, layout.ipc, layout.programDir, layout.unit, layout.updaterUnit, path.join(laptopHome, '.local', 'bin', 'webchat-agent')].map((file) => existsSync(file)), [false, false, false, false, false, false, false]);
       assert.equal(room.system.made, false);
       assert.match((await commands()).at(-1) ?? '', process.platform === 'darwin' ? /^launchctl bootout|^launchctl bootstrap/ : /^systemctl --user daemon-reload/);
     } finally {

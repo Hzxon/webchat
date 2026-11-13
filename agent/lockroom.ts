@@ -25,6 +25,11 @@ export interface Layout {
   label: string;
   /** The keyholder's log, which launchd needs made for it; Linux logs to the journal. */
   log: string;
+  /** The updater's LaunchDaemon, or its systemd service and timer; its log on macOS, where Linux uses the journal. */
+  updaterLabel: string;
+  updaterUnit: string;
+  updaterTimer: string;
+  updaterLog: string;
   /** The only git the keyholder runs. */
   git: string;
   /** Who must own the program, git and gh: root, unless a test says otherwise. */
@@ -44,6 +49,10 @@ export const layoutFor = (platform: 'darwin' | 'linux', suffix = ''): Layout =>
         unit: `/Library/LaunchDaemons/com.webchat${suffix}.keyholder.plist`,
         label: `com.webchat${suffix}.keyholder`,
         log: `/Library/Logs/WebChat${suffix}/keyholder.log`,
+        updaterLabel: `com.webchat${suffix}.updater`,
+        updaterUnit: `/Library/LaunchDaemons/com.webchat${suffix}.updater.plist`,
+        updaterTimer: '',
+        updaterLog: `/Library/Logs/WebChat${suffix}/updater.log`,
         git: '/Library/Developer/CommandLineTools/usr/bin/git',
         rootUid: 0,
       }
@@ -57,6 +66,10 @@ export const layoutFor = (platform: 'darwin' | 'linux', suffix = ''): Layout =>
         unit: `/etc/systemd/system/webchat${suffix}-keyholder.service`,
         label: `webchat${suffix}-keyholder`,
         log: '',
+        updaterLabel: `webchat${suffix}-updater`,
+        updaterUnit: `/etc/systemd/system/webchat${suffix}-updater.service`,
+        updaterTimer: `/etc/systemd/system/webchat${suffix}-updater.timer`,
+        updaterLog: '',
         git: '/usr/bin/git',
         rootUid: 0,
       };
@@ -64,6 +77,12 @@ export const layoutFor = (platform: 'darwin' | 'linux', suffix = ''): Layout =>
 export const programOf = (l: Layout) => path.join(l.programDir, 'webchat-agent');
 export const ghOf = (l: Layout) => path.join(l.programDir, 'bin', 'gh');
 export const socketOf = (l: Layout) => path.join(l.ipc, 'keyholder.sock');
+/** What the updater reads (written by setup) and keeps, both in the root-owned folder. */
+export const updateConfigOf = (l: Layout) => path.join(l.programDir, 'update.json');
+export const stateOf = (l: Layout) => path.join(l.programDir, 'update-state.json');
+export const stagedOf = (l: Layout, release: string) => path.join(l.programDir, '.staged', `webchat-agent-${release}`);
+/** A release as the server and the release files name it: three numbers, nothing else, so no plan can carry more. */
+export const RELEASE = /^\d+\.\d+\.\d+$/;
 const rootGroup = (l: Layout) => (l.platform === 'darwin' ? 'wheel' : 'root');
 
 /** One command for root, or for the role account with `as`. `stdin` is how content reaches it; a code never goes in `argv`. */
@@ -85,18 +104,30 @@ export async function runAll(root: Root, cmds: Cmd[]) {
   for (const cmd of cmds) await root(cmd).catch((error: unknown) => (cmd.soft ? undefined : Promise.reject(error)));
 }
 
-/** `sudo -n`: setup opened the password's cache before it. Output is captured unless the command shows it. */
-export const realRoot: Root = (cmd) =>
-  new Promise((resolve, reject) => {
-    const tty = cmd.stdio === 'tty';
-    const child = spawn('sudo', ['-n', ...(cmd.as ? ['-u', cmd.as] : []), ...(cmd.group ? ['-g', cmd.group] : []), '--', ...cmd.argv], { stdio: [tty ? 'inherit' : 'pipe', cmd.stdio ? 'inherit' : 'pipe', cmd.stdio ? 'inherit' : 'pipe'] });
-    const out: Buffer[] = [];
-    const err: Buffer[] = [];
-    child.stdout?.on('data', (chunk: Buffer) => out.push(chunk)).on('error', () => undefined);
-    child.stderr?.on('data', (chunk: Buffer) => err.push(chunk)).on('error', () => undefined);
-    child.stdin?.on('error', () => undefined).end(cmd.stdin);
-    child.on('error', reject).on('close', (code) => (code === 0 ? resolve(Buffer.concat(out).toString()) : reject(new Error(`${cmd.argv[0]} failed with code ${code}. ${Buffer.concat(err).toString().trim()}`))));
-  });
+/** Runs commands as the process that owns them, with `wrap` saying what to execute. Output is captured unless the command shows it. */
+const rootVia =
+  (wrap: (cmd: Cmd) => string[]): Root =>
+  (cmd) =>
+    new Promise((resolve, reject) => {
+      const tty = cmd.stdio === 'tty';
+      const [file, ...args] = wrap(cmd);
+      const child = spawn(file!, args, { stdio: [tty ? 'inherit' : 'pipe', cmd.stdio ? 'inherit' : 'pipe', cmd.stdio ? 'inherit' : 'pipe'] });
+      const out: Buffer[] = [];
+      const err: Buffer[] = [];
+      child.stdout?.on('data', (chunk: Buffer) => out.push(chunk)).on('error', () => undefined);
+      child.stderr?.on('data', (chunk: Buffer) => err.push(chunk)).on('error', () => undefined);
+      child.stdin?.on('error', () => undefined).end(cmd.stdin);
+      child.on('error', reject).on('close', (code) => (code === 0 ? resolve(Buffer.concat(out).toString()) : reject(new Error(`${cmd.argv[0]} failed with code ${code}. ${Buffer.concat(err).toString().trim()}`))));
+    });
+
+/** `sudo -n`: setup opened the password's cache before it. */
+export const realRoot = rootVia((cmd) => ['sudo', '-n', ...(cmd.as ? ['-u', cmd.as] : []), ...(cmd.group ? ['-g', cmd.group] : []), '--', ...cmd.argv]);
+
+/** The updater is root already, so it runs its commands itself: no sudo, and nothing as another account. */
+export const selfRoot = rootVia((cmd) => {
+  if (cmd.as) throw new Error('The updater runs nothing as another account.');
+  return cmd.argv;
+});
 
 /** Writes `stdin` to `dst` by way of a sibling and a rename, so a running program is never written to. */
 export const put = (dst: string, mode: '644' | '755', stdin: string | Buffer): Cmd => ({ argv: ['sh', '-c', `set -e; umask 022; cat > "$1.new"; chmod ${mode} "$1.new"; mv -f "$1.new" "$1"`, 'sh', dst], stdin });
@@ -304,10 +335,132 @@ export const ghPlan = (l: Layout, archive: Buffer): Cmd => ({
   stdin: archive,
 });
 
+/** What the keyholder's service file says: the updater compares it with the file on disk after a release. */
+export const unitText = (l: Layout, program: string) => (l.platform === 'darwin' ? keyholderPlist(l, program) : keyholderUnit(l, program));
+
 /** Writes the service's file and starts it, replacing one that runs. */
 export function servicePlan(l: Layout, program: string): Cmd[] {
-  if (l.platform === 'darwin') return [put(l.unit, '644', keyholderPlist(l, program)), { argv: ['launchctl', 'bootout', `system/${l.label}`], soft: true }, { argv: ['launchctl', 'bootstrap', 'system', l.unit] }];
-  return [put(l.unit, '644', keyholderUnit(l, program)), { argv: ['systemctl', 'daemon-reload'] }, { argv: ['systemctl', 'enable', l.label] }, { argv: ['systemctl', 'restart', l.label] }];
+  if (l.platform === 'darwin') return [put(l.unit, '644', unitText(l, program)), { argv: ['launchctl', 'bootout', `system/${l.label}`], soft: true }, { argv: ['launchctl', 'bootstrap', 'system', l.unit] }];
+  return [put(l.unit, '644', unitText(l, program)), { argv: ['systemctl', 'daemon-reload'] }, { argv: ['systemctl', 'enable', l.label] }, { argv: ['systemctl', 'restart', l.label] }];
+}
+
+/** The updater's PATH: only folders root owns, as the keyholder's. */
+const updaterPath = '/usr/bin:/bin:/usr/sbin:/sbin';
+/** Minutes between checks. A check is one small request, and a release is rare. */
+const CHECK_MINUTES = 15;
+
+/** The updater's LaunchDaemon: it runs as root, at load and every 15 minutes, which launchd also catches up after sleep. */
+export const updaterPlist = (l: Layout, program: string) => `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${xml(l.updaterLabel)}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${xml(program)}</string>
+    <string>update</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>${CHECK_MINUTES * 60}</integer>
+  <key>Umask</key>
+  <integer>18</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${updaterPath}</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>${xml(l.updaterLog)}</string>
+  <key>StandardErrorPath</key>
+  <string>${xml(l.updaterLog)}</string>
+</dict>
+</plist>
+`;
+
+/** The updater as a oneshot: root, but with the disk read-only except its own folder. The timer starts it. */
+export const updaterService = (l: Layout, program: string) => `[Unit]
+Description=WebChat agent updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=${quoted(program, true)} update
+UMask=0022
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=${l.programDir}
+PrivateTmp=yes
+Environment=${quoted(`PATH=${updaterPath}`)}
+`;
+
+/** The timer: wall-clock quarter hours, which `Persistent` catches up after a suspend, a little apart across laptops. */
+export const updaterTimerUnit = () => `[Unit]
+Description=WebChat agent updater timer
+
+[Timer]
+OnBootSec=2min
+OnCalendar=*:0/${CHECK_MINUTES}
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+`;
+
+/** Installs the updater and starts it, replacing one that runs. `config` is what it reads of this laptop; left out, the one there stays. */
+export function updaterPlan(l: Layout, program: string, config?: { server?: string; releases?: string; suffix?: string }): Cmd[] {
+  const configure = config ? [put(updateConfigOf(l), '644', JSON.stringify(config))] : [];
+  if (l.platform === 'darwin') return [...configure, put(l.updaterUnit, '644', updaterPlist(l, program)), ...stopUpdaterPlan(l), { argv: ['launchctl', 'bootstrap', 'system', l.updaterUnit] }];
+  return [...configure, put(l.updaterUnit, '644', updaterService(l, program)), put(l.updaterTimer, '644', updaterTimerUnit()), { argv: ['systemctl', 'daemon-reload'] }, { argv: ['systemctl', 'enable', '--now', `${l.updaterLabel}.timer`] }];
+}
+
+/** Stops the updater, so it cannot swap the program under setup or restart the keyholder under uninstall. */
+export const stopUpdaterPlan = (l: Layout): Cmd[] => [l.platform === 'darwin' ? { argv: ['launchctl', 'bootout', `system/${l.updaterLabel}`], soft: true } : { argv: ['systemctl', 'stop', `${l.updaterLabel}.timer`, `${l.updaterLabel}.service`], soft: true }];
+
+/**
+ * Stages a release's file, from the gzip bytes the updater already checked against the release's
+ * checksum. It unzips into a folder of root's own and runs `--version` on the result before anything
+ * moves, so a file that does not start never reaches the program's place. The release is an argument,
+ * never part of the script.
+ */
+export function stagePlan(l: Layout, release: string, gz: Buffer): Cmd {
+  assertRelease(release);
+  return {
+    argv: [
+      'sh',
+      '-c',
+      'set -e; umask 022; mkdir -p "$1/.staged"; d=$(mktemp -d "$1/.staged/.in.XXXXXX"); trap \'rm -rf "$d"\' EXIT; cat > "$d/gz"; gunzip -c "$d/gz" > "$d/webchat-agent"; chmod 755 "$d/webchat-agent"; test "$("$d/webchat-agent" --version)" = "$2"; mv -f "$d/webchat-agent" "$1/.staged/webchat-agent-$2"',
+      'sh',
+      l.programDir,
+      release,
+    ],
+    stdin: gz,
+  };
+}
+
+/** The swap: the old program is kept under another name, and the new one takes its place by a rename, so no one ever sees half a file and a signed binary is never written over. */
+export function swapPlan(l: Layout, release: string): Cmd[] {
+  assertRelease(release);
+  return [{ argv: ['sh', '-c', 'set -e; rm -f "$1/webchat-agent.previous"; ln "$1/webchat-agent" "$1/webchat-agent.previous"; mv -f "$1/.staged/webchat-agent-$2" "$1/webchat-agent"; rm -rf "$1/.staged"', 'sh', l.programDir, release] }];
+}
+
+/** The keyholder, started again from whatever the program's file is now. */
+export const restartPlan = (l: Layout): Cmd[] => [l.platform === 'darwin' ? { argv: ['launchctl', 'kickstart', '-k', `system/${l.label}`] } : { argv: ['systemctl', 'restart', l.label] }];
+
+/** Puts the kept program back, if the swap got as far as replacing it, and restarts the keyholder from it. */
+export const rollbackPlan = (l: Layout): Cmd[] => [{ argv: ['sh', '-c', 'p="$1/webchat-agent.previous"; [ ! -e "$p" ] || [ "$p" -ef "$1/webchat-agent" ] || mv -f "$p" "$1/webchat-agent"', 'sh', l.programDir] }, ...restartPlan(l)];
+
+/** What a finished swap leaves: the kept program and any staged file. */
+export const cleanupPlan = (l: Layout): Cmd[] => [{ argv: ['rm', '-rf', path.join(l.programDir, '.staged'), path.join(l.programDir, 'webchat-agent.previous')] }];
+
+function assertRelease(release: string) {
+  if (!RELEASE.test(release)) throw new Error(`${release} is not a release number.`);
 }
 
 /** What the account's own `gh` runs with: the keyholder's variables, and what a sign-in needs to print its code and open no browser. */
@@ -325,15 +478,19 @@ export const pairPlan = (l: Layout, input: { code: string; picks?: unknown }): C
 
 /** The paths uninstall removes with `rm -rf` must be a folder of their own, never a system one. */
 function assertOwn(l: Layout) {
-  for (const p of [l.data, l.ipc, l.programDir, l.unit, ...(l.log ? [path.dirname(l.log)] : [])]) if (!path.isAbsolute(p) || p.split('/').filter(Boolean).length < 2 || p !== path.normalize(p)) throw new Error(`Refusing to remove ${p}.`);
+  for (const p of [l.data, l.ipc, l.programDir, l.unit, l.updaterUnit, l.updaterTimer, ...(l.log ? [path.dirname(l.log)] : [])].filter(Boolean)) if (!path.isAbsolute(p) || p.split('/').filter(Boolean).length < 2 || p !== path.normalize(p)) throw new Error(`Refusing to remove ${p}.`);
 }
 
 /** Uninstall, in order. The account and groups go only when setup made them (`ours`). */
 export function uninstallPlan(l: Layout, ours: boolean): Cmd[] {
   assertOwn(l);
-  const stop: Cmd[] = l.platform === 'darwin' ? [{ argv: ['launchctl', 'bootout', `system/${l.label}`], soft: true }] : [{ argv: ['systemctl', 'disable', '--now', l.label], soft: true }];
+  // The updater first, so it cannot kick the keyholder awake while it goes.
+  const stop: Cmd[] =
+    l.platform === 'darwin'
+      ? [...stopUpdaterPlan(l), { argv: ['launchctl', 'bootout', `system/${l.label}`], soft: true }]
+      : [{ argv: ['systemctl', 'disable', '--now', `${l.updaterLabel}.timer`], soft: true }, ...stopUpdaterPlan(l), { argv: ['systemctl', 'disable', '--now', l.label], soft: true }];
   const files: Cmd[] = [
-    { argv: ['rm', '-f', l.unit] },
+    { argv: ['rm', '-f', l.unit, l.updaterUnit, ...(l.updaterTimer ? [l.updaterTimer] : [])] },
     ...(l.platform === 'linux' ? [{ argv: ['systemctl', 'daemon-reload'], soft: true } satisfies Cmd] : []),
     // Logs the account out of GitHub here only: the token stays valid there until the owner revokes it.
     { ...ghAs(l, ['auth', 'logout', '--hostname', 'github.com']), soft: true },

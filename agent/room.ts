@@ -44,6 +44,8 @@ export interface Handlers {
   goToSleep(): Promise<string>;
   wake(): Promise<string>;
   status(): Promise<AgentStatus>;
+  /** The cards and questions that a restart would cut short. */
+  working(): Promise<string[]>;
   requestLink(harness: string): Promise<string>;
   requestConnect(dir: string, repo: string): Promise<string>;
 }
@@ -51,7 +53,7 @@ export interface Handlers {
 /** What `status` answers: the agent's own, and whether a runner is connected. */
 export type RoomStatus = AgentStatus & { runner: boolean };
 
-type Hello = { role: 'runner' | 'cli'; version: string; uid: number; user: string; home: string };
+type Hello = { role: 'runner' | 'cli' | 'updater'; version: string; uid: number; user: string; home: string };
 
 const mismatch = () => new Error('The runner sent something that does not fit, so I did not use it.');
 const record = (value: unknown): Record<string, unknown> => (value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
@@ -117,8 +119,8 @@ async function dial(file: string, role: Hello['role'], version: string, handle?:
   const peer = new Peer({ input: linesOf(socket), output: socket, handle, notified });
   const gone = new Promise<void>((resolve) => socket.once('close', () => (peer.fail(new Error('The keyholder went away.')), resolve())));
   const { username } = os.userInfo();
-  await peer.request('hello', { role, version, uid: process.getuid?.() ?? -1, user: username, home: os.homedir() } satisfies Hello).catch((error: unknown) => (socket.destroy(), Promise.reject(error)));
-  return { peer, socket, gone };
+  const { version: keyholder } = await peer.request<{ version: string }>('hello', { role, version, uid: process.getuid?.() ?? -1, user: username, home: os.homedir() } satisfies Hello).catch((error: unknown) => (socket.destroy(), Promise.reject(error)));
+  return { peer, socket, gone, version: keyholder };
 }
 
 /** What a command asks of the keyholder, in one connection. */
@@ -128,6 +130,24 @@ export async function callRoom<T = { text: string }>(file: string, method: strin
     return await peer.request<T>(method, params);
   } finally {
     socket.destroy();
+  }
+}
+
+/**
+ * What the root-owned updater asks: the keyholder's version and what runs, or undefined when nothing
+ * answers. Its hello skips the version check, since the updater meets a keyholder of another version
+ * by design, and may ask only `busy` (docs/decisions/agent-self-update.md).
+ */
+export async function askUpdater(file: string) {
+  try {
+    const { peer, socket, version } = await dial(file, 'updater', '');
+    try {
+      return { version, busy: strings((await peer.request<{ busy: unknown }>('busy', {})).busy, 100) };
+    } finally {
+      socket.destroy();
+    }
+  } catch {
+    return undefined;
   }
 }
 
@@ -240,6 +260,7 @@ export class Room {
         if (method === 'hello') return this.hello(peer, record(params), (r, m) => ((role = r), (mine = m)));
         if (role === 'runner') return this.fromRunner(method, record(params));
         if (role === 'cli') return this.fromCli(method, record(params));
+        if (role === 'updater') return this.fromUpdater(method);
         throw new RpcError(FIRST, 'Say hello first.');
       },
       notified: (method, params) => {
@@ -258,12 +279,12 @@ export class Room {
 
   private hello(peer: Peer, params: Record<string, unknown>, set: (role: Hello['role'], runner?: NonNullable<Room['runner']>) => void) {
     const { role, version, uid, user, home } = params;
-    if (role !== 'runner' && role !== 'cli') throw new RpcError(FIRST, 'Say who you are.');
-    if (version !== this.options.version) throw new RpcError(VERSION, `The keyholder is version ${this.options.version} and you are ${String(version)}. Update the older one.`);
+    if (role !== 'runner' && role !== 'cli' && role !== 'updater') throw new RpcError(FIRST, 'Say who you are.');
+    if (role !== 'updater' && version !== this.options.version) throw new RpcError(VERSION, `The keyholder is version ${this.options.version} and you are ${String(version)}. Update the older one.`);
     if (role === 'runner') {
       if (this.runner) throw new RpcError(BUSY, 'Another runner is connected.');
       const gone = new AbortController();
-      const runner = { peer, gone, hello: { role: 'runner' as const, version, uid: Number(uid), user: text(user, 100) ?? '', home: text(home, 1000) ?? '' } };
+      const runner = { peer, gone, hello: { role: 'runner' as const, version: this.options.version, uid: Number(uid), user: text(user, 100) ?? '', home: text(home, 1000) ?? '' } };
       this.runner = runner;
       set(role, runner);
       for (const resolve of this.waiting.splice(0)) resolve(gone.signal);
@@ -277,6 +298,11 @@ export class Room {
     const ask = record(params.ask);
     if (!KINDS.includes(String(ask.kind)) || typeof ask.detail !== 'string') throw mismatch();
     return turn.permit.ask({ ...(typeof ask.tool === 'string' && { tool: ask.tool.slice(0, 200) }), kind: ask.kind as Ask['kind'], paths: strings(ask.paths, 100), detail: ask.detail });
+  }
+
+  private async fromUpdater(method: string) {
+    if (method !== 'busy') throw new RpcError(-32601, `The updater may ask only busy, not ${method}.`);
+    return { busy: await this.handlers!.working() };
   }
 
   private async fromCli(method: string, params: Record<string, unknown>) {
@@ -548,12 +574,17 @@ export async function connectRunner({ file, bench, version }: { file: string; be
   return { closed: gone, close: () => socket.destroy() };
 }
 
-/** Connects, and again every 5 seconds after the keyholder goes or refuses, until `signal` aborts. */
-export async function runRunner(options: Parameters<typeof connectRunner>[0] & { signal?: AbortSignal; say?: (message: string) => void }) {
+/**
+ * Connects, and again every 5 seconds after the keyholder goes or refuses, until `signal` aborts.
+ * Returns `stale` when the keyholder refuses this version and `changed` says the program's own file
+ * was replaced: the login service then starts the new file, which a loop here never would.
+ */
+export async function runRunner(options: Parameters<typeof connectRunner>[0] & { signal?: AbortSignal; say?: (message: string) => void; changed?: () => boolean }) {
   while (!options.signal?.aborted) {
     try {
       await (await connectRunner(options)).closed;
     } catch (error) {
+      if (error instanceof RpcError && error.code === VERSION && options.changed?.()) return 'stale';
       options.say?.(error instanceof Error ? error.message : String(error));
     }
     await sleep(RETRY_MS, undefined, { signal: options.signal }).catch(() => undefined);

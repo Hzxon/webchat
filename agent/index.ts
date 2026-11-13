@@ -12,10 +12,12 @@
 //   npm run agent -- link claude|codex
 //
 // Each release also ships it as one file per OS, webchat-agent, with Node inside (agent/sea.json),
-// which takes the same commands, `setup [code]`, `doctor`, `status`, `uninstall` and `--version`.
+// which takes the same commands, `setup [code]`, `doctor`, `status`, `uninstall`, `update` (the root-owned
+// updater's job, which follows the server's release) and `--version`.
 //
 // The code comes from Connect coding agent in WebChat (R-030). The agent's account lives in the role
 // account's folder, and the runner's files in WEBCHAT_AGENT_HOME, by default ~/.webchat.
+import { statSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,6 +32,7 @@ import { layoutFor, selfProblem, socketOf } from './lockroom.ts';
 import { NO_REPOSITORY, Plugin } from './plugin.ts';
 import { callRoom, Room, runRunner, type RoomStatus } from './room.ts';
 import { doctor, pairInto, setup, status, uninstall } from './setup.ts';
+import { runUpdate } from './update.ts';
 
 const home = process.env.WEBCHAT_AGENT_HOME ?? path.join(os.homedir(), '.webchat');
 const cli = isSea() ? 'webchat-agent' : 'npm run agent --';
@@ -42,7 +45,14 @@ async function runner(file: string) {
   // The runner's own files, apart from the keyholder's `laptop` that a laptop from before the room still has.
   const runnerDir = path.join(home, 'runner');
   const find = harnessFinder({ dataDir: runnerDir });
-  return runRunner({ file, bench: new LocalBench(await find(), find, runnerDir), version: pkg.version, say: console.error });
+  // An update replaces the program's file by a rename, so a new inode says this runner is the old program.
+  const inode = () => statSync(process.execPath, { throwIfNoEntry: false })?.ino;
+  const started = inode();
+  const changed = () => isSea() && inode() !== started;
+  if ((await runRunner({ file, bench: new LocalBench(await find(), find, runnerDir), version: pkg.version, say: console.error, changed })) === 'stale') {
+    console.error('The program was updated, so the runner starts again.');
+    process.exit(0);
+  }
 }
 
 /**
@@ -110,6 +120,9 @@ async function main([command, ...args]: string[]) {
       return callRoom<RoomStatus>(socketFile(), 'status', {}, pkg.version).then(({ text, runner, paired }) => console.log(`Runner: ${runner ? 'connected' : 'not connected'}\nPaired: ${paired ? 'yes' : 'no'}\n${text}`), () => undefined);
     case 'uninstall':
       return uninstall(home);
+    // The updater's LaunchDaemon or timer runs this as root, from the root-owned program (agent/update.ts).
+    case 'update':
+      return runUpdate();
     // The login service of a laptop from before the room still runs this: it says so and idles, rather than restart in a loop.
     case 'serve':
       console.error('This command is retired: run `webchat-agent setup`, which replaces this service.');
@@ -144,7 +157,7 @@ async function main([command, ...args]: string[]) {
     case '--version':
       return console.log(pkg.version);
     default:
-      throw new Error(`usage: ${cli} setup|doctor|status|uninstall|keyholder|runner|dev|connect|sleep|wake|link ...`);
+      throw new Error(`usage: ${cli} setup|doctor|status|uninstall|update|keyholder|runner|dev|connect|sleep|wake|link ...`);
   }
 }
 

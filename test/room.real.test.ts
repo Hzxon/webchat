@@ -4,19 +4,26 @@
 // for: a harness turn of the owner's reads the agent's account file and gets Permission denied, and
 // another user cannot open the socket. Then it uninstalls and finds nothing left. It needs
 // passwordless sudo and the single file from `npm run build:agent`, so it runs only in CI (the
-// `room` job) or on a machine you can spare, with WEBCHAT_REAL_ROOM=1.
+// `room` job) or on a machine you can spare, with WEBCHAT_REAL_ROOM=1. With WEBCHAT_NEXT_AGENT, a
+// second build at release 99.0.0, it also swaps the program for real (docs/decisions/agent-self-update.md).
 import assert from 'node:assert/strict';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
+import { gzipSync } from 'node:zlib';
+import pkg from '../package.json' with { type: 'json' };
 import { claudeHarness } from '../agent/claude.ts';
 import { sha256 } from '../agent/keep.ts';
-import { ghOf, inspectRoom, layoutFor, programOf, putAs, realRoot, runAll, servicePlan, socketOf, uninstallPlan } from '../agent/lockroom.ts';
+import { ghOf, inspectRoom, layoutFor, programOf, putAs, realRoot, runAll, servicePlan, socketOf, uninstallPlan, updaterPlan } from '../agent/lockroom.ts';
 import { buildRoom, read, uninstall } from '../agent/setup.ts';
+import { readState } from '../agent/update.ts';
 
 const sh = promisify(execFile);
 const real = process.env.WEBCHAT_REAL_ROOM === '1';
@@ -43,7 +50,16 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
 }
 `;
 
-test('builds the room for real: a harness cannot read the agent’s account, nobody else opens the socket, and uninstall leaves nothing', { skip: real ? false : 'set WEBCHAT_REAL_ROOM=1 on a machine with passwordless sudo, after `npm run build:agent`', timeout: 240_000 }, async () => {
+/** Polls until `check` gives something, for up to `ms`, and fails with `what` otherwise. */
+async function until<T>(check: () => Promise<T | undefined | false>, ms: number, what: () => Promise<string> | string) {
+  for (const end = Date.now() + ms; Date.now() < end; await sleep(500)) {
+    const got = await check();
+    if (got) return got;
+  }
+  return assert.fail(await what());
+}
+
+test('builds the room for real: a harness cannot read the agent’s account, nobody else opens the socket, and uninstall leaves nothing', { skip: real ? false : 'set WEBCHAT_REAL_ROOM=1 on a machine with passwordless sudo, after `npm run build:agent`', timeout: 420_000 }, async () => {
   const platform = process.platform === 'darwin' ? 'darwin' : 'linux';
   const layout = layoutFor(platform, 'test');
   const owner = os.userInfo().username;
@@ -59,6 +75,13 @@ test('builds the room for real: a harness cannot read the agent’s account, nob
   const outputs: string[] = [];
   const home = process.env.HOME;
   let exited = true;
+  const releases = new Map<string, Buffer | string>();
+  let served = pkg.version;
+  const fakeServer = http.createServer((req, res) => {
+    const file = req.url === '/api/config' ? JSON.stringify({ vapidPublicKey: '', kdfSalt: '', release: served }) : releases.get(req.url!);
+    if (file === undefined) return void res.writeHead(404).end();
+    res.end(file);
+  });
   const stopRunner = async () => {
     if (exited) return;
     runner!.kill('SIGTERM');
@@ -117,12 +140,59 @@ test('builds the room for real: a harness cannot read the agent’s account, nob
     assert.match(answer.note, /Permission denied/);
     assert.doesNotMatch(answer.note, /secret keys/);
 
+    // The updater, with a release folder of our own: the program moves to 99.0.0 by itself, the runner follows it, and a release that is older or has a wrong checksum changes nothing.
+    const next = process.env.WEBCHAT_NEXT_AGENT && path.resolve(process.env.WEBCHAT_NEXT_AGENT);
+    if (next) {
+      await new Promise<void>((resolve) => fakeServer.listen(0, '127.0.0.1', resolve));
+      const origin = `http://127.0.0.1:${(fakeServer.address() as AddressInfo).port}`;
+      const asset = `webchat-agent-${platform}-${os.arch()}.gz`;
+      const gz = gzipSync(await fs.readFile(next));
+      const publish = (release: string, sum: string) => {
+        releases.set(`/releases/download/v${release}/${asset}`, gz);
+        releases.set(`/releases/download/v${release}/${asset}.sha256`, `${sum}  ${asset}\n`);
+      };
+      await runAll(realRoot, updaterPlan(layout, programOf(layout), { server: origin, releases: `${origin}/releases/download`, suffix: 'test' }));
+      for (const file of [layout.updaterUnit, ...(layout.updaterTimer ? [layout.updaterTimer] : [])]) assert.deepEqual([file, (await fs.stat(file)).uid], [file, 0]);
+      if (platform === 'darwin') await sh('plutil', ['-lint', layout.updaterUnit]);
+      else await sh('systemd-analyze', ['verify', layout.updaterUnit, layout.updaterTimer]);
+      const updaterLog = async () => (platform === 'darwin' ? await fs.readFile(layout.updaterLog, 'utf8').catch(() => '') : (await sh('journalctl', ['-u', layout.updaterLabel, '--no-pager', '-n', '30']).catch(() => ({ stdout: '' }))).stdout) + JSON.stringify(await readState(layout));
+      /** Runs one check as root, as the system's own job, and waits for the state it writes. */
+      const check = async (outcome: string) => {
+        const since = Date.now();
+        await realRoot({ argv: platform === 'darwin' ? ['launchctl', 'kickstart', `system/${layout.updaterLabel}`] : ['systemctl', 'start', `${layout.updaterLabel}.service`], soft: true });
+        return until(async () => ((await readState(layout))?.at ?? 0) > since && (await readState(layout)), 150_000, updaterLog).then(async (state) => (assert.equal(state.outcome, outcome, await updaterLog()), state));
+      };
+      const version = async () => (await sh(programOf(layout), ['--version'])).stdout.trim();
+      const pid = async () => (await sh('pgrep', ['-u', layout.user, '-f', 'keyholder'])).stdout.trim();
+      const before = await pid();
+
+      // At the running release: nothing to do.
+      await check('current');
+      assert.deepEqual([await version(), await pid()], [pkg.version, before]);
+      // Newer: the program is swapped, the keyholder starts from it, and the runner, which the keyholder now refuses, leaves for its login service.
+      publish('99.0.0', createHash('sha256').update(gz).digest('hex'));
+      served = '99.0.0';
+      await check('updated');
+      assert.equal(await version(), '99.0.0');
+      assert.notEqual(await pid(), before, 'the keyholder started again');
+      await until(async () => exited, 60_000, () => `the old runner never left. ${outputs.join('')}`);
+      assert.match(await status(), /^Runner: not connected/m, 'the new keyholder answers');
+      // Older, and a wrong checksum: the program and the keyholder stay.
+      const kept = await pid();
+      served = pkg.version;
+      await check('older');
+      publish('99.0.1', 'a'.repeat(64));
+      served = '99.0.1';
+      await check('bad-checksum');
+      assert.deepEqual([await version(), await pid()], ['99.0.0', kept]);
+    }
+
     // Uninstall, as `webchat-agent uninstall` does, with a home of its own so it touches nothing of this machine's.
     await stopRunner();
     process.env.HOME = tmp;
     await uninstall(path.join(tmp, 'agent'), async () => true, { layout });
     assert.equal(await room(), none, 'no account or group is left');
-    for (const file of [layout.data, layout.ipc, layout.programDir, layout.unit, ...(layout.log ? [path.dirname(layout.log)] : [])]) assert.equal(await fs.stat(file).then(() => true, () => false), false, `${file} is gone`);
+    for (const file of [layout.data, layout.ipc, layout.programDir, layout.unit, layout.updaterUnit, ...(layout.log ? [path.dirname(layout.log)] : [])]) assert.equal(await fs.stat(file).then(() => true, () => false), false, `${file} is gone`);
     const [service, args] = platform === 'darwin' ? ['launchctl', ['print', `system/${layout.label}`]] : ['systemctl', ['cat', layout.label]];
     await assert.rejects(sh(service!, args!), 'the service is gone');
   } finally {
@@ -130,6 +200,8 @@ test('builds the room for real: a harness cannot read the agent’s account, nob
     if (home === undefined) delete process.env.HOME;
     else process.env.HOME = home;
     await stopRunner();
+    fakeServer.close();
+    fakeServer.closeAllConnections();
     await runAll(realRoot, uninstallPlan(layout, (await inspectRoom(layout, read)).user === 'ours'));
     await fs.rm(tmp, { recursive: true, force: true });
   }
