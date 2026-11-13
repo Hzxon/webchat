@@ -4,7 +4,7 @@ import { ASK_WAIT_MS, harnessRow, type HarnessState } from '../shared/types.ts';
 
 // In a variable, so the tools tsconfig, which has no DOM types, does not typecheck the client module.
 const clientAgents = '../client/src/agents.ts';
-const { agentOf, seatFor, threadsOf, THREAD_TTL_MS, waitingProposals } = await import(clientAgents);
+const { agentOf, proposalsWaiting, seatFor, threadsOf, THREAD_TTL_MS, waitingProposals } = await import(clientAgents);
 
 const ME = 1;
 const AGENT = 2;
@@ -64,6 +64,17 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     const [thread] = threadsOf([prompt, answer, draft, theirs, mine], ME, AGENT, {}, 100);
     assert.deepEqual(thread.messages, [prompt, answer, draft]);
     assert.deepEqual(thread.added, { d1: 'K-3' });
+  });
+
+  test('the Coding agents row counts the proposals in every project whose draft the owner has not added (R-045)', () => {
+    const proposal = (clientId: string, project: number) => ({ ...say(AGENT, {}, clientId), prompt: null, board: { kind: 'proposal', project, repo: 'team/app' } });
+    const added = { ...say(ME, {}), prompt: null, added: { to: 'x1', draft: 'x1', card: 'K-4' } };
+    const theirs = { ...say(AGENT, {}), prompt: null, added: { to: 'x2', draft: 'x2', card: 'K-5' } };
+    const prompt = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'p1');
+    const count = (...messages: object[]) => proposalsWaiting(threadsOf(messages, ME, AGENT, {}, 100));
+    assert.equal(count(prompt), 0);
+    assert.equal(count(prompt, proposal('x1', 4), proposal('x2', 5)), 2);
+    assert.equal(count(proposal('x1', 4), proposal('x2', 5), added, theirs), 1, "only the owner's note ends the wait");
   });
 
   test("a card's run makes a conversation of its own, whose state follows the agent's reports (D-105)", () => {

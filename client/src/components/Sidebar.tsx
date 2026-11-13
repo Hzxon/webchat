@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { AGENT_LEVEL, type ProjectDTO } from '../../../shared/types';
-import { agentOf, ownAgents, ready, THREAD_STATE, useAgentThreads } from '../agents';
+import { agentOf, ownAgents, proposalsWaiting, ready, THREAD_STATE, useAgentThreads } from '../agents';
 import { sound } from '../alerts';
 import { deleteAccount, deleteChannel, openConversation, previewText, signOut } from '../chat';
 import { deleteDoc } from '../docs';
@@ -487,6 +487,7 @@ function AgentsListItem() {
   const { chats, threads } = useAgentThreads();
   const newest = threads[0];
   const unread = chats.reduce((sum, c) => sum + c.unread, 0);
+  const waiting = proposalsWaiting(threads);
   // A laptop that serves every folder is online with or without one (R-036).
   const online = agents.some((agent) => (agent.protocol >= AGENT_LEVEL.answers ? agent.online : agent.agentRepos.some(ready)));
 
@@ -504,7 +505,10 @@ function AgentsListItem() {
           </span>
           <span className="chat-item-row">
             <span className="chat-item-preview">
-              {newest ? `${THREAD_STATE[newest.state].label} · ${newest.messages[0]!.text}` : agents.length ? 'Ask about your code' : 'Connect your coding agent'}
+              {waiting > 0
+                ? `${waiting} ${waiting === 1 ? 'proposal waits' : 'proposals wait'} for the board`
+                : newest
+                  ? `${THREAD_STATE[newest.state].label} · ${newest.messages[0]!.text}` : agents.length ? 'Ask about your code' : 'Connect your coding agent'}
             </span>
             {unread > 0 && <span className="unread-badge">{unread}</span>}
           </span>
