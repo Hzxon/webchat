@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request cancels its older run, which would hold a runner for nothing. Runs on main are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   checks:
     # Either of the owner's runners, a Linux server or a Mac, since the account's Actions minutes ran out (docs/decisions/self-hosted-ci.md).
