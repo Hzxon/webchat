@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { isRepoName, LIMITS, SKILL_NAME, type SetupChoice } from '../shared/types.ts';
+import { Lab } from './browser.ts';
 import { secretDirs, type Ask, type Harness, type Reply } from './harness.ts';
 import { sha256 } from './keep.ts';
 import { judge } from './rulebook.ts';
@@ -149,6 +150,8 @@ function repoOfUrl(url: string) {
 export class LocalBench implements Bench {
   private list: Harness[];
   private choice?: SetupChoice;
+  /** Each session's lab, for a harness that browses (R-046): its proxy lasts the session, its dev server a turn. */
+  private labs = new Map<string, Promise<Lab | undefined>>();
 
   /** `find` finds the harnesses again, so one installed later shows (docs/decisions/harness-linking.md). */
   constructor(harnesses: Harness[], private readonly find?: () => Promise<Harness[]>, private readonly dataDir = '') {
@@ -327,23 +330,34 @@ export class LocalBench implements Bench {
     // The rulebook runs here, where the owner's paths are; the owner's folders never reach the keyholder (docs/decisions/harness-rulebook.md).
     const roots = [cwd, ...(skills ? [skills] : [])];
     const sandboxed = !!asked && !!(await harness.sandboxed?.());
+    // Only a turn that can ask has the MCP servers the browser needs.
+    if (asked && harness.secrets && !this.labs.has(session)) this.labs.set(session, Lab.open([...harness.secrets, ...secretDirs(this.dataDir)]));
+    const lab = asked && (await this.labs.get(session));
     const ask = asked && (async (action: Ask): Promise<Reply> => {
-      const verdict = judge(action, { folders: roots, secrets: secretDirs(this.dataDir), tools: [] });
+      const verdict = judge(action, { folders: roots, secrets: secretDirs(this.dataDir), tools: lab ? ['dev_server'] : [], ports: lab?.ports });
       if (!verdict.allow && !verdict.ask) return { allow: false, message: verdict.why };
+      // What `judge` allows of kind `other` is WebChat's own tool or the browser's, whose arguments it checked.
+      if (verdict.allow && action.kind === 'other') return { allow: true };
       // It refuses or asks, but for a command the sandbox holds: the owner could not judge it better, and the paths it names passed above.
       return sandboxed && action.kind === 'execute' ? { allow: true } : asked.ask(action);
     });
     try {
-      const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: { instructions, skills }, signal, progress, ask, quiet: asked?.quiet });
+      const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: { instructions, skills }, signal, progress, ask, quiet: asked?.quiet, ...(lab && { lab }) });
       return { answer, applied };
     } finally {
       asked?.done();
+      if (lab) lab.stop();
       if (skills) await fs.rm(path.join(os.tmpdir(), 'webchat-skills', session), { recursive: true, force: true });
     }
   }
 
   async end(session?: string) {
     await Promise.all(this.list.map((h) => h.end?.(session)));
+    for (const [id, lab] of this.labs) {
+      if (session && id !== session) continue;
+      this.labs.delete(id);
+      await (await lab)?.close();
+    }
   }
 }
 

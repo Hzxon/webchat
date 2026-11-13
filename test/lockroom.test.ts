@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { GH_VERSION, ghArchive, ghAsset } from '../agent/gh.ts';
+import { GH_VERSION, pinnedArchive, ghAsset } from '../agent/gh.ts';
 import {
   cleanupPlan, createPlan, foldersPlan, freeIds, ghPlan, idsOf, inspectRoom, keyholderPlist, keyholderUnit, layoutFor, loginPlan, MARK, pairPlan, programOf, put, putAs, refusals, restartPlan, rollbackPlan, runAll, selfProblem, selfRoot, servicePlan, signedInPlan, stagePlan, stopUpdaterPlan, swapPlan, uninstallPlan, updaterPlan, updaterPlist, updaterService, updaterTimerUnit,
   type Cmd, type Found,
@@ -225,9 +225,9 @@ test('pins a sum for each archive, and installs nothing that does not match it',
   assert.equal(ghAsset('win32', 'x64'), undefined);
   assert.equal(ghAsset('linux', 'ia32'), undefined);
   const asset = { ...ghAsset('linux', 'x64')!, sha256: createHash('sha256').update('archive').digest('hex') };
-  assert.equal((await ghArchive(asset, async () => new Response('archive'))).toString(), 'archive');
-  await assert.rejects(ghArchive(asset, async () => new Response('swapped')), /does not match the sum WebChat pins/);
-  await assert.rejects(ghArchive(asset, async () => new Response('missing', { status: 404 })), /failed with 404/);
+  assert.equal((await pinnedArchive(asset, async () => new Response('archive'))).toString(), 'archive');
+  await assert.rejects(pinnedArchive(asset, async () => new Response('swapped')), /does not match the sum WebChat pins/);
+  await assert.rejects(pinnedArchive(asset, async () => new Response('missing', { status: 404 })), /failed with 404/);
 });
 
 test('installs the program only if it is the bytes setup hashed when it started', async () => {

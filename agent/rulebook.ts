@@ -55,6 +55,8 @@ export interface Action {
   kind: 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'switch_mode' | 'other';
   /** Absolute paths it touches. */
   paths: string[];
+  /** The addresses it opens, as given. */
+  urls?: string[];
 }
 
 export interface Rules {
@@ -63,12 +65,31 @@ export interface Rules {
   secrets: string[];
   /** WebChat's own tools, which a harness may always call. */
   tools: string[];
+  /** The ports of the run's dev server, for a run that has a browser (R-046). */
+  ports?: number[];
 }
 
 /** `ask` marks a no that an owner could turn into a yes: with no owner to ask, it is a no. */
 export type Verdict = { allow: true } | { allow: false; why: string; ask?: true };
 
-export function judge({ tool, kind, paths }: Action, { folders, secrets, tools }: Rules): Verdict {
+/**
+ * The tools of the browser, `chrome-devtools-mcp`, that a run may call (R-046): pages, input, size
+ * and emulation, the snapshot and screenshot, the console and network lists, and scripts in the
+ * page. Named one by one, so a new version adds none unseen.
+ */
+export const BROWSER_TOOLS = ['click', 'click_at', 'drag', 'fill', 'fill_form', 'handle_dialog', 'hover', 'press_key', 'type_text', 'upload_file', 'close_page', 'list_pages', 'navigate_page', 'new_page', 'select_page', 'wait_for', 'emulate', 'resize_page', 'list_network_requests', 'get_network_request', 'list_console_messages', 'get_console_message', 'evaluate_script', 'take_snapshot', 'take_screenshot', 'get_css_styles'];
+
+/** Whether an address is the run's dev server: a `localhost` name or a loopback address, on a run port (R-046). */
+export function onRunPort(address: string, ports: number[]) {
+  if (address === 'about:blank') return true;
+  const url = URL.parse(address);
+  if (!url) return false;
+  const { protocol, hostname, port } = url;
+  const loopback = hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === '127.0.0.1' || hostname === '[::1]';
+  return /^(https?|wss?):$/.test(protocol) && loopback && ports.includes(Number(port));
+}
+
+export function judge({ tool, kind, paths, urls = [] }: Action, { folders, secrets, tools, ports }: Rules): Verdict {
   const deny = (why: string): Verdict => ({ allow: false, why });
   const ask = (why: string): Verdict => ({ allow: false, why, ask: true });
   const files = paths.map((file) => real(file));
@@ -76,6 +97,12 @@ export function judge({ tool, kind, paths }: Action, { folders, secrets, tools }
   if (files.some((file) => !folders.some((dir) => within(file, real(dir))))) return deny('That path is outside the working folder.');
   // Permission mode is never a knob (D-115).
   if (kind === 'switch_mode') return deny('A harness does not change its own permission mode.');
+  // Its paths passed above; a run with no dev server has no browser.
+  const browser = /^mcp__browser__(.*)$/.exec(tool ?? '')?.[1];
+  if (browser !== undefined) {
+    if (!ports || !BROWSER_TOOLS.includes(browser)) return deny('WebChat does not let a run use that browser tool.');
+    return urls.every((url) => onRunPort(url, ports)) ? { allow: true } : deny('The browser opens only this run’s dev server.');
+  }
   // A harness may prefix the name with its server's. An ACP agent writes the name itself, so only the whole name of a tool call counts.
   const own = tool ? /^(?:mcp__[\w-]+__|[\w-]+: )?(\w+)$/.exec(tool)?.[1] : undefined;
   if (own && tools.includes(own) && (kind === 'other' || kind === 'think')) return { allow: true };

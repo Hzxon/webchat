@@ -5,7 +5,8 @@ Status: Proposed 2026-11-12 in #193 (docs/roadmap/new-locked-room.md).
 A harness no longer proves that its shell cannot read the secrets before it takes cards: the locked
 room keeps them out of reach. Each adapter still hands its harness WebChat's rulebook, as
 `claude.ts` and `codex.ts` do: the sandbox required, no reads outside the working folders, network
-for packages only, no MCP servers but WebChat's own approval endpoint, neither the owner's settings
+for packages only, no MCP servers but WebChat's own approval endpoint and, on macOS, the run's
+browser (docs/decisions/new-dev-server-sandbox.md), neither the owner's settings
 nor the repository's. Knobs stay as
 D-115 has them. When a harness asks before an action, the owner answers from WebChat, signed
 (docs/decisions/harness-approvals.md).

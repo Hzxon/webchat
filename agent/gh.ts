@@ -22,8 +22,8 @@ export function ghAsset(platform: NodeJS.Platform, arch: string) {
   return sha256 ? { name, sha256, url: `https://github.com/cli/cli/releases/download/v${GH_VERSION}/${name}` } : undefined;
 }
 
-/** The archive's bytes, which must hash to the pinned sum. `fetcher` is a test's way to serve one. */
-export async function ghArchive(asset: NonNullable<ReturnType<typeof ghAsset>>, fetcher: typeof fetch = fetch) {
+/** An archive's bytes, which must hash to the pinned sum: `gh`'s, or the browser's (agent/browser.ts). `fetcher` is a test's way to serve one. */
+export async function pinnedArchive(asset: { name: string; sha256: string; url: string }, fetcher: typeof fetch = fetch) {
   const response = await fetcher(asset.url);
   if (!response.ok) throw new Error(`Downloading ${asset.url} failed with ${response.status}.`);
   const bytes = Buffer.from(await response.arrayBuffer());

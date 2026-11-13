@@ -32,9 +32,23 @@ const TOOL = {
   inputSchema: { type: 'object', properties: { tool_name: { type: 'string' }, input: { type: 'object' }, tool_use_id: { type: 'string' } }, required: ['tool_name', 'input'] },
 };
 
+/** The model's way to start the run's dev server, which the runner sandboxes (R-046). It is visible, unlike `approve`. */
+const DEV_TOOL = {
+  name: 'dev_server',
+  description:
+    'Starts this project’s dev server, such as `npm run dev`, in WebChat’s sandbox, and ends the one started before. Your shell cannot reach it: open it with the browser tools. It gets two ports, PORT and PORT_2 in its environment, and may bind and reach only those, so pass them to the servers it starts, such as `PORT=$PORT npm run dev:server & npx vite --port $PORT_2 --strictPort`. It returns once a port answers, with its output so far, and ends with your turn. The browser is headless, and its window is never narrower than 500 pixels: for a phone width, emulate a viewport such as 375x812x2,mobile,touch.',
+  inputSchema: { type: 'object', properties: { command: { type: 'string', description: 'The shell command that starts the dev server.' } }, required: ['command'] },
+};
+
 const hashOf = (token: string) => createHash('sha256').update(token).digest('hex');
 
-const deciders = new Map<string, (call: Call) => Promise<Reply>>();
+/** What a token's process gets: its decider, and the dev server's start when it browses. */
+interface Served {
+  decide: (call: Call) => Promise<Reply>;
+  start?: (command: string) => Promise<string>;
+}
+
+const deciders = new Map<string, Served>();
 let listening: Promise<number> | undefined;
 
 /** The one server for every Claude process of this program, started at the first. */
@@ -51,28 +65,33 @@ function listen() {
 
 async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   const token = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1];
-  const decide = token ? deciders.get(hashOf(token)) : undefined;
+  const served = token ? deciders.get(hashOf(token)) : undefined;
   // A browser page cannot reach it either: it names an Origin, which Claude Code does not.
-  if (!decide || req.headers.origin || req.url !== '/mcp') return void res.writeHead(401).end();
+  if (!served || req.headers.origin || req.url !== '/mcp') return void res.writeHead(401).end();
   if (req.method !== 'POST') return void res.writeHead(405, { allow: 'POST' }).end();
   let body = '';
   for await (const chunk of req) {
     body += chunk;
     if (body.length > BODY_LIMIT) return void res.writeHead(413).end();
   }
-  const { id, method, params } = JSON.parse(body) as { id?: number | string; method?: string; params?: { protocolVersion?: string; name?: string; arguments?: Call } };
+  const { id, method, params } = JSON.parse(body) as { id?: number | string; method?: string; params?: { protocolVersion?: string; name?: string; arguments?: Call & { command?: unknown } } };
   const reply = (result: unknown) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id, result }));
   if (id === undefined) return void res.writeHead(202).end();
   if (method === 'initialize') return reply(mcpInit(params));
   if (method === 'ping') return reply({});
-  if (method === 'tools/list') return reply({ tools: [TOOL] });
+  if (method === 'tools/list') return reply({ tools: served.start ? [TOOL, DEV_TOOL] : [TOOL] });
+  // Claude Code asked `approve` first, and the rulebook let it through.
+  if (method === 'tools/call' && params?.name === DEV_TOOL.name && served.start && typeof params.arguments?.command === 'string') {
+    const text = await served.start(params.arguments.command).catch((error: unknown) => `It did not start: ${error instanceof Error ? error.message : String(error)}`);
+    return reply({ content: [{ type: 'text', text }] });
+  }
   if (method !== 'tools/call' || params?.name !== TOOL.name) return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Unknown method.' } }));
   // The answer may take days, so the response is a stream that starts at once and stays alive.
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
   const beat = setInterval(() => res.write(': waiting\n\n'), KEEPALIVE_MS);
   res.on('close', () => clearInterval(beat));
   const call = params.arguments as Call;
-  const answer = await decide(call).catch((error: unknown): Reply => ({ allow: false, message: error instanceof Error ? error.message : String(error) }));
+  const answer = await served.decide(call).catch((error: unknown): Reply => ({ allow: false, message: error instanceof Error ? error.message : String(error) }));
   // One text block and no structuredContent, as Claude Code requires.
   const text = JSON.stringify(answer.allow ? { behavior: 'allow', updatedInput: call.input } : { behavior: 'deny', message: answer.message });
   res.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } })}\n\n`);
@@ -80,16 +99,17 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
 /**
  * Serves the tool to one Claude process, and returns the `--mcp-config` file that names it. `decide`
- * answers each call; `close` ends the token and removes the file.
+ * answers each call; `close` ends the token and removes the file. With `browser`, the process also
+ * gets the `dev_server` tool and the browser's own MCP server (R-046).
  */
-export async function openApprover(dir: string, decide: (call: Call) => Promise<Reply>) {
+export async function openApprover(dir: string, decide: (call: Call) => Promise<Reply>, browser?: { start: (command: string) => Promise<string>; server: object }) {
   const port = await listen();
   const token = randomBytes(32).toString('hex');
   const file = path.join(dir, `${hashOf(token).slice(0, 16)}.json`);
   const server = { type: 'http', url: `http://127.0.0.1:${port}/mcp`, headers: { Authorization: `Bearer ${token}` }, timeout: TOOL_TIMEOUT_MS };
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-  await fs.writeFile(file, JSON.stringify({ mcpServers: { webchat: server } }), { mode: 0o600 });
-  deciders.set(hashOf(token), decide);
+  await fs.writeFile(file, JSON.stringify({ mcpServers: { webchat: server, ...(browser && { browser: browser.server }) } }), { mode: 0o600 });
+  deciders.set(hashOf(token), { decide, start: browser?.start });
   return {
     file,
     close: async () => {

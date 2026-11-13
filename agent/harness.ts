@@ -4,6 +4,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import type { SetupChoice } from '../shared/types.ts';
+import type { Lab } from './browser.ts';
 import type { Quiet } from './runner.ts';
 import type { Action } from './rulebook.ts';
 
@@ -40,6 +41,8 @@ export interface Turn {
   ask?: (ask: Ask) => Promise<Reply>;
   /** Holds the turn's silence timer while `ask` waits for the owner. */
   quiet?: Quiet;
+  /** The run's dev server and the proxy its browser goes through, for a harness that browses (R-046). */
+  lab?: Lab;
 }
 
 export interface Harness {
@@ -53,6 +56,11 @@ export interface Harness {
   refusal(): Promise<string | undefined>;
   /** What the owner should know about its sandbox while it runs: a managed setting that lets its shell read the owner's secrets. It stops nothing. */
   warning?(): Promise<string | undefined>;
+  /**
+   * The folders its sandbox keeps from its shell, for a harness that can drive the browser of
+   * R-046: the dev server it starts is kept from them too. Left out means it has no browser.
+   */
+  readonly secrets?: string[];
   /** Whether its shell cannot leave its sandbox now, so a command it asks about needs no owner (docs/decisions/harness-rulebook.md). Left out means it can. */
   sandboxed?(): Promise<boolean>;
   /**

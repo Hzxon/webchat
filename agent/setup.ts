@@ -18,11 +18,12 @@ import { HARNESS_ROW_WORDS, harnessRow, type ConfigDTO, type HarnessState, type 
 import { Api } from './api.ts';
 import { onPath } from './claude.ts';
 import { AgentClient, readPairing, type AccountFile } from './client.ts';
-import { GH_VERSION, ghArchive, ghAsset } from './gh.ts';
+import { BROWSER_ASSET, BROWSER_VERSION } from './browser.ts';
+import { GH_VERSION, ghAsset, pinnedArchive } from './gh.ts';
 import { harnessFinder, SUPPORTED, supported } from './harnesses.ts';
 import { sha256 } from './keep.ts';
 import {
-  bootstrap, createPlan, foldersPlan, freeIds, ghOf, ghPlan, idsOf, inspectRoom, layoutFor, loginPlan, pairPlan, programOf, programPlan, quoted, realRoot, refusals, RELEASE, runAll, servicePlan, signedInPlan, socketOf, stopUpdaterPlan, uninstallPlan, updaterPlan, xml,
+  bootstrap, createPlan, foldersPlan, browserPlan, freeIds, ghOf, ghPlan, idsOf, inspectRoom, layoutFor, loginPlan, pairPlan, programOf, programPlan, quoted, realRoot, refusals, RELEASE, runAll, servicePlan, signedInPlan, socketOf, stopUpdaterPlan, uninstallPlan, updaterPlan, xml,
   type Layout, type Read, type Root,
 } from './lockroom.ts';
 import { finishMove, moveAccount, newest, sources } from './move.ts';
@@ -338,6 +339,8 @@ async function roomRows(layout: Layout, home: string, said?: RoomStatus): Promis
   rows.push(ok(`Agent account: ${layout.user}, made by setup`));
   const installed = await Promise.all([programOf(layout), ghOf(layout)].map((file) => rootOwned(file, layout)));
   rows.push(installed.every(Boolean) ? ok(`Agent program and GitHub CLI: root-owned in ${layout.programDir}`) : { level: 'todo', text: `Agent program and GitHub CLI: missing, or not owned by root alone, in ${layout.programDir}.` });
+  // A room built before R-046 lacks it: runs then have no browser, and setup installs it.
+  if (mac() && !(await rootOwned(path.join(layout.programDir, 'chrome-devtools-mcp', 'package.json'), layout))) rows.push({ level: 'todo', text: `Browser: chrome-devtools-mcp is missing in ${layout.programDir}, so runs cannot check their work in a browser.` });
   const state = await keyholderState(layout);
   rows.push(state === 'running' ? ok(`Keyholder service: running${said ? (said.runner ? ', the runner is connected' : ', no runner connected') : ''}`) : { level: state === 'missing' ? 'todo' : 'warn', text: `Keyholder service: ${state === 'missing' ? 'not installed' : 'installed, but not running'}.`, ...(state === 'stopped' && { fix: mac() ? `macOS may have turned it off: look under System Settings > General > Login Items > Allow in the Background. Its log is ${layout.log}.` : `Its log is in \`journalctl -u ${layout.label}\`.` }) });
   rows.push(await updaterRow(layout));
@@ -464,6 +467,8 @@ interface Options {
   root?: Root;
   /** The GitHub CLI's archive, checked against its pinned sum. Tests give one of their own. */
   ghArchive?: () => Promise<Buffer>;
+  /** The browser's package, checked the same way (R-046). */
+  browserArchive?: () => Promise<Buffer>;
   /** What setup reads of the accounts and groups, which tests answer for a layout that is not on this system. */
   read?: Read;
 }
@@ -491,14 +496,19 @@ const linkFile = () => path.join(os.homedir(), '.local', 'bin', 'webchat-agent')
  * Makes the account and groups, the folders, and the root-owned program and `gh`: all of the room but
  * its service, which waits for the account the owner pairs or moves in. `look` reads the system's lists.
  */
-export async function buildRoom(root: Root, layout: Layout, { owner, program, hash, look = read, gh = () => ghArchive(ghAsset(process.platform, os.arch())!) }: { owner: string; program: string; hash: string; look?: Read; gh?: () => Promise<Buffer> }) {
+export async function buildRoom(
+  root: Root,
+  layout: Layout,
+  { owner, program, hash, look = read, gh = () => pinnedArchive(ghAsset(process.platform, os.arch())!), browser = () => pinnedArchive(BROWSER_ASSET) }: { owner: string; program: string; hash: string; look?: Read; gh?: () => Promise<Buffer>; browser?: () => Promise<Buffer> },
+) {
   const ids = layout.platform === 'darwin' ? freeIds([...idsOf((await look(['dscl', '.', '-list', '/Users', 'UniqueID'])) ?? ''), ...idsOf((await look(['dscl', '.', '-list', '/Groups', 'PrimaryGroupID'])) ?? '')], 2) : [];
   await runAll(root, [...createPlan(layout, owner, await inspectRoom(layout, look), ids), ...foldersPlan(layout), ...programPlan(layout, await verifiedProgram(program, hash))]);
   if ((await sha256(programOf(layout))) !== hash) throw new Error(`${programOf(layout)} is not the program you ran. Run setup again.`);
   await root(ghPlan(layout, await gh()));
+  await root(browserPlan(layout, await browser()));
 }
 
-export async function setup(pasted: string | undefined, { home, program, ask = askLine, layout = defaultLayout(), root: given, ghArchive: fetchGh, read: look = read }: Options) {
+export async function setup(pasted: string | undefined, { home, program, ask = askLine, layout = defaultLayout(), root: given, ghArchive: fetchGh, browserArchive: fetchBrowser, read: look = read }: Options) {
   if (!program) throw new Error('Setup installs the webchat-agent file that a release ships. Run the line in WebChat’s Connect dialog.');
   const owner = os.userInfo().username;
   const daemon = path.join(home, 'laptop');
@@ -528,7 +538,7 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
   const plan = [
     ...(pasted ? [`pair with ${server}: you approve the agent in WebChat`] : []),
     ...(built ? [] : [`make the hidden account ${layout.user}, which holds the agent’s keys where no program of yours can read them, and the group ${layout.ipcGroup} with only you in it: this needs your administrator password`]),
-    `install the agent and GitHub’s CLI ${GH_VERSION}, owned by root, in ${layout.programDir}, and run the keyholder from there as ${layout.user}: ${mac() ? 'a LaunchDaemon' : 'a systemd service'} in ${path.dirname(layout.unit)}`,
+    `install the agent, GitHub’s CLI ${GH_VERSION} and the browser’s chrome-devtools-mcp ${BROWSER_VERSION}, owned by root, in ${layout.programDir}, and run the keyholder from there as ${layout.user}: ${mac() ? 'a LaunchDaemon' : 'a systemd service'} in ${path.dirname(layout.unit)}`,
     ...(moves ? [`move the agent’s account from ${source.dir} into its own folder, without pairing again`] : []),
     ...stepsFor(ticked).map((step) => step.say),
     `install an updater that moves the agent to ${server ?? 'its server'}’s release, forward only, whenever nothing runs: it runs as root, ${mac() ? 'a LaunchDaemon' : 'a systemd timer'} in ${path.dirname(layout.updaterUnit)}`,
@@ -547,7 +557,7 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
     await fs.mkdir(home, { recursive: true, mode: 0o700 });
     // A check must not swap the program under setup, which may install an older one on purpose: that is how going back works.
     await runAll(root, stopUpdaterPlan(layout));
-    await buildRoom(root, layout, { owner, program, hash, look, gh: fetchGh });
+    await buildRoom(root, layout, { owner, program, hash, look, gh: fetchGh, browser: fetchBrowser });
     // First, while the owner is at WebChat: the code lapses after 10 minutes, and Apple's installer can take longer.
     if (pasted) await root(pairPlan(layout, { code: pasted, picks: picks.map((f) => ({ name: f.name, ...(f.version && { version: f.version }), ...(f.signedIn !== undefined && { signedIn: f.signedIn }) })) }));
     for (const step of steps) for (const [cmd, ...args] of step.commands) await inherit(cmd, args);
