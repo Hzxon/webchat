@@ -1,6 +1,7 @@
 // What WebChat allows a harness to do when the harness asks first (docs/decisions/harness-rulebook.md).
 // It only denies or asks, and it knows no protocol: an adapter turns a request into an `Action`.
 import { readlinkSync, realpathSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 export const within = (file: string, dir: string) => {
@@ -33,6 +34,19 @@ export function real(file: string, hops = 0): string {
     return hops < 40 ? real(path.isAbsolute(target) ? target : `${dir}${path.sep}${target}`, hops + 1) : here;
   }
 }
+
+/**
+ * The places a shell command names: its words after the program that start like one, absolute, in
+ * the home folder or going up, which is all that can be read of a command. They are resolved from
+ * `cwd`. The program itself, such as `/bin/zsh -lc`, is no place it reads.
+ */
+export const shellPaths = (command: string, cwd: string) =>
+  command
+    .split(/\s+/)
+    .slice(1)
+    .map((word) => word.replace(/^['"]|['"]$/g, ''))
+    .filter((word) => /^(\/|~|\.\.)/.test(word) || word.includes('../'))
+    .map((word) => path.resolve(cwd, word.startsWith('~') ? os.homedir() + word.slice(1) : word));
 
 /** What a harness wants to do. The kinds are ACP's tool kinds, which are the common ones. */
 export interface Action {

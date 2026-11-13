@@ -1,6 +1,6 @@
 ### R: Approve a harness's actions from WebChat
 
-Status: Idea. Proposed 2026-11-12 from the agent host design.
+Status: Done in #204.
 
 Order: after docs/roadmap/new-harness-linking.md. It does not wait for the locked room.
 

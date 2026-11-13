@@ -25,6 +25,7 @@ import {
   type HarnessState,
   type MessageKind,
   type PairingPick,
+  type PermitDTO,
   type PublicKeysDTO,
   type PullCardDTO,
   type PullChecks,
@@ -394,6 +395,8 @@ export interface MessageContent {
   ask?: AskDTO;
   /** A request about a board card to the member asked (the card-notes decision). The text says the same in words. */
   card?: CardNoteDTO;
+  /** An agent's question before an action, and its owner's answer (docs/decisions/harness-approvals.md). */
+  permit?: PermitDTO;
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -529,6 +532,7 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
       ...(short(raw.hash, 64) && { hash: raw.hash as string }),
       ...(short(raw.was, LIMITS.runNoteLength) !== undefined && { was: raw.was as string }),
       ...(short(raw.harness, LIMITS.harnessFieldLength) && { harness: raw.harness as string }),
+      ...(raw.asks === true && { asks: true as const }),
     };
   }
   if (raw.kind === 'cancel') return isId(raw.request) ? { kind: 'cancel', request: raw.request } : undefined;
@@ -563,7 +567,7 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
     const repo = typeof raw.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
     if ((raw.repo !== undefined && !repo) || (!repo && !isId(raw.project)) || !isId(raw.sentAt)) return;
     const harness = short(raw.harness, LIMITS.harnessFieldLength);
-    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }) };
+    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }) };
   }
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
@@ -686,6 +690,35 @@ function readAsk(raw: Record<string, unknown> | undefined): AskDTO | undefined {
   return to ? { kind, step: raw.step, to, ...(note && { note }) } : undefined;
 }
 
+const PERMIT_WHAT: ReadonlyArray<Extract<PermitDTO, { kind: 'question' }>['what']> = ['run', 'edit', 'read', 'fetch', 'other'];
+const PERMIT_OUTCOMES: ReadonlyArray<Extract<PermitDTO, { kind: 'settled' }>['outcome']> = ['allowed', 'allowedForRun', 'denied', 'expired', 'stopped', 'stale'];
+const PERMIT_DECISIONS: ReadonlyArray<Extract<PermitDTO, { kind: 'answer' }>['decision']> = ['once', 'run', 'deny'];
+
+/** A question, an answer or a settled mark, if it has the right shape. */
+function readPermit(raw: Record<string, unknown> | undefined): PermitDTO | undefined {
+  if (!raw) return;
+  if (raw.kind === 'question') {
+    const [request, to] = [isId(raw.request) ? raw.request : undefined, short(raw.to, 64)];
+    const what = PERMIT_WHAT.find((w) => w === raw.what);
+    const detail = short(raw.detail, LIMITS.messageLength);
+    // One thread: a card's request or a conversation's prompt, never both or neither.
+    if (!what || detail === undefined || !isId(raw.expires) || (request === undefined) === (to === undefined)) return;
+    return { kind: 'question', ...(request !== undefined && { request }), ...(to && { to }), what, detail, expires: raw.expires };
+  }
+  const to = short(raw.to, 64);
+  if (!to) return;
+  if (raw.kind === 'settled') {
+    const outcome = PERMIT_OUTCOMES.find((o) => o === raw.outcome);
+    return outcome && { kind: 'settled', to, outcome };
+  }
+  const decision = PERMIT_DECISIONS.find((d) => d === raw.decision);
+  const seen = short(raw.seen, 64);
+  return raw.kind === 'answer' && decision && seen && isId(raw.sentAt) ? { kind: 'answer', to, decision, seen, sentAt: raw.sentAt } : undefined;
+}
+
+/** What the owner saw of a question, hashed into their answer, so an answer cannot be for another action (D-105). */
+export const permitHash = (question: Extract<PermitDTO, { kind: 'question' }>) => textHash(`${question.what}\n${question.detail}`);
+
 const NOTE_KINDS: ReadonlyArray<CardNoteDTO['kind']> = ['ready', 'review', 'waiting'];
 
 /** A request about a board card, if it has the right shape. */
@@ -713,6 +746,7 @@ function readContent(value: unknown): MessageContent {
     board?: Record<string, unknown>;
     ask?: Record<string, unknown>;
     card?: Record<string, unknown>;
+    permit?: Record<string, unknown>;
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -751,6 +785,8 @@ function readContent(value: unknown): MessageContent {
   if (ask) content.ask = ask;
   const note = readCardNote(raw.card);
   if (note) content.card = note;
+  const permit = readPermit(raw.permit);
+  if (permit) content.permit = permit;
   return content;
 }
 

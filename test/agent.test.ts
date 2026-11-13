@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { after, before, describe, test } from 'node:test';
@@ -15,20 +16,21 @@ import { Api } from '../agent/api.ts';
 import { claudeArgs, claudeHarness, claudeResult, claudeSettings, pathDirs, guard, restrictedSettings, sandboxProblem } from '../agent/claude.ts';
 import { AgentClient, type OpenedMessage } from '../agent/client.ts';
 import { CODEX_GAP, codexHarness } from '../agent/codex.ts';
-import type { Harness } from '../agent/harness.ts';
+import type { Ask, Harness, Reply, Turn } from '../agent/harness.ts';
 import { Conversations, parts, type Answerer } from '../agent/conversations.ts';
 import { Plugin, worktreeGit } from '../agent/plugin.ts';
 import { doctor, linksFrom, setup, uninstall } from '../agent/setup.ts';
 import { harnessFinder, supported, supportedList } from '../agent/harnesses.ts';
 import { versionAtLeast } from '../agent/harness.ts';
-import { addWorktree, start, type Final } from '../agent/runner.ts';
+import { addWorktree, type Final } from '../agent/runner.ts';
 import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { openDb, toUserDTO } from '../server/db.ts';
-import { createIdentity, keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, openPicks, sealPicks, textHash, wrapChatKey, type MessageContent } from '../shared/e2ee.ts';
-import { briefText, harnessRow, type AskDTO, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
+import { createIdentity, keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, openPicks, sealPicks, textHash, permitHash, wrapChatKey, type MessageContent } from '../shared/e2ee.ts';
+import { briefText, harnessRow, type AskDTO, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type PermitDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
 import { copyOf, readCard } from '../shared/board.ts';
+import { FAKE_CLAUDE, FAKE_CODEX } from './fakes.ts';
 
 // The server never sees how the login key was derived, so fewer PBKDF2 rounds keep tests fast.
 const KDF_ROUNDS = 1000;
@@ -78,78 +80,6 @@ if (args[0] === 'pr' && args[1] === 'create') {
   fs.writeFileSync(process.env.FAKE_GH_STATE, JSON.stringify(state));
 }
 `;
-/**
- * Stands in for the background Claude: logs how it was run, waits at a gate when told to, commits
- * a file like the work of a turn, and prints the lines a -p run ends with. A run's first turn only
- * checks that its card holds, and commits nothing (R-042).
- */
-const FAKE_CLAUDE = `#!/usr/bin/env node
-import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
-const args = process.argv.slice(2);
-// What the adapter asks of the laptop's Claude Code for Settings (D-115).
-if (args[0] === '--version' || args.join(' ') === 'auth status') {
-  console.log(args[0] === '--version' ? (process.env.FAKE_CLAUDE_VERSION ?? '2.1.300') + ' (Claude Code)' : '{"loggedIn": true}');
-  process.exit(0);
-}
-const input = fs.readFileSync(0, 'utf8');
-// The owner's skills it got, as a plugin folder made for the turn (R-039).
-const plugin = args.includes('--plugin-dir') ? fs.readdirSync(args[args.indexOf('--plugin-dir') + 1], { recursive: true }).sort() : undefined;
-fs.appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ args, input, cwd: process.cwd(), plugin }) + '\\n');
-const resume = args.includes('--resume');
-const id = args[args.indexOf(resume ? '--resume' : '--session-id') + 1];
-while (process.env.FAKE_CLAUDE_GATE && !fs.existsSync(process.env.FAKE_CLAUDE_GATE)) await new Promise((resolve) => setTimeout(resolve, 20));
-const check = input.includes('Change and commit nothing in this turn');
-if (process.env.FAKE_CLAUDE_COMMIT !== '0' && !check) {
-  const file = resume ? 'sum.test.js' : 'sum.js';
-  // A change of its own each turn, so a later round has something to commit.
-  fs.writeFileSync(file, file + ' ' + Date.now() + '\\n');
-  execFileSync('git', ['add', file]);
-  execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-q', '-m', 'Change ' + file]);
-}
-// A work turn its owner will stop: it says what it does, twice within a second, then holds.
-if (process.env.FAKE_CLAUDE_HOLD && !check) {
-  const use = (name, input) => console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name, input }] } }));
-  use('Bash', { command: 'npm test', description: 'Run the tests' });
-  use('Edit', { file_path: process.cwd() + '/sum.js' });
-  // A minute at most, so a test that fails before the stop leaves no process behind.
-  for (const until = Date.now() + 60_000; !fs.existsSync(process.env.FAKE_CLAUDE_HOLD) && Date.now() < until; ) await new Promise((resolve) => setTimeout(resolve, 20));
-}
-const answer = check
-  ? JSON.parse(process.env.FAKE_CLAUDE_CHECK ?? '{"outcome":"holds","note":"","checked":"Read K-7 and sum.js on main."}')
-  : process.env.FAKE_CLAUDE_ANSWER
-    ? JSON.parse(process.env.FAKE_CLAUDE_ANSWER)
-    : { outcome: 'done', note: 'Sums add up now.', title: 'Fix sums', body: 'Sums were off by one.' };
-console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: id }));
-console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: id, structured_output: answer }));
-`;
-/**
- * Stands in for `codex exec`, as FAKE_CLAUDE does for Claude Code: logs how it was run and prints
- * the JSONL events of a turn, as Codex's documentation shows them, with the answer as its last
- * message. A resume names its thread after `resume`.
- */
-const FAKE_CODEX = `#!/usr/bin/env node
-import fs from 'node:fs';
-const args = process.argv.slice(2);
-if (args[0] === '--version' || args.join(' ') === 'login status') {
-  console.log(args[0] === '--version' ? 'codex-cli 0.58.0' : 'Logged in using ChatGPT');
-  process.exit(process.env.FAKE_CODEX_SIGNED_OUT && args[0] === 'login' ? 1 : 0);
-}
-const input = fs.readFileSync(0, 'utf8');
-const schema = JSON.parse(fs.readFileSync(args[args.indexOf('--output-schema') + 1], 'utf8'));
-fs.appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ args, input, cwd: process.cwd(), schema }) + '\\n');
-const thread = args.includes('resume') ? args[args.indexOf('resume') + 1] : '0199a213-81c0-7800-8aa1-bbab2a035a53';
-const events = [
-  { type: 'thread.started', thread_id: thread },
-  { type: 'turn.started' },
-  { type: 'item.completed', item: { id: 'item_0', type: 'command_execution', command: 'bash -lc ls', status: 'completed' } },
-  { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: process.env.FAKE_CODEX_ANSWER ?? '{"reply":"It adds.","drafts":null}' } },
-  process.env.FAKE_CODEX_FAIL
-    ? { type: 'turn.failed', error: { message: process.env.FAKE_CODEX_FAIL } }
-    : { type: 'turn.completed', usage: { input_tokens: 24763, cached_input_tokens: 24448, output_tokens: 122, reasoning_output_tokens: 0 } },
-];
-for (const event of events) console.log(JSON.stringify(event));
-`;
 const PASSWORD = 'correct horse battery';
 
 /** A fresh chat key, wrapped by this client for each member, as a browser does when it makes a project. */
@@ -164,6 +94,19 @@ async function newChatKey(client: AgentClient, memberIds: number[]): Promise<Fir
   return { conversationId, keyId, wrappedKeys };
 }
 
+/** One turn of the real `claude` with the adapter's arguments: its stream-json line on stdin, then the end of stdin, which ends the process. */
+async function runClaude(args: string[], cwd: string, input: string, seen: (line: string) => void = () => undefined) {
+  const child = spawn('claude', args, { cwd, stdio: ['pipe', 'pipe', 'inherit'], signal: AbortSignal.timeout(5 * 60_000) });
+  child.stdin.end(`${JSON.stringify({ type: 'user', message: { role: 'user', content: input } })}\n`);
+  let last: Final | undefined;
+  for await (const line of readline.createInterface({ input: child.stdout })) {
+    seen(line);
+    last = claudeResult(line) ?? last;
+  }
+  assert.ok(last, 'the turn ends with a result');
+  return last;
+}
+
 /** Does `work` with these environment variables set, then puts back what was there. */
 async function withEnv<T>(vars: Record<string, string>, work: () => Promise<T>) {
   const restore = setEnv(vars);
@@ -174,15 +117,21 @@ async function withEnv<T>(vars: Record<string, string>, work: () => Promise<T>) 
   }
 }
 
+// The fake harnesses are processes the plugin keeps for a session, so they read what a test sets per turn from this file.
+process.env.FAKE_ENV_FILE = path.join(os.tmpdir(), `webchat-fake-env-${process.pid}.json`);
+const syncFakes = () => writeFileSync(process.env.FAKE_ENV_FILE!, JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([name]) => name.startsWith('FAKE_')))));
+
 /** Sets environment variables, and returns how to put back what was there. */
 function setEnv(vars: Record<string, string>) {
   const saved = Object.entries(vars).map(([name]) => [name, process.env[name]] as const);
   Object.assign(process.env, vars);
+  syncFakes();
   return () => {
     for (const [name, value] of saved) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
+    syncFakes();
   };
 }
 
@@ -678,7 +627,7 @@ describe('agent client (R-027)', () => {
         (await fs.readFile(claudeLog, 'utf8').catch(() => ''))
           .split('\n')
           .filter(Boolean)
-          .map((line) => JSON.parse(line) as { args: string[]; input: string; cwd: string; plugin?: string[] });
+          .map((line) => JSON.parse(line) as { args: string[]; input: string; cwd: string; plugin?: string[]; session: string; resumed: boolean; turn: number; pid: number; mcp?: { mcpServers: { webchat: { url: string; headers: { Authorization: string } } } } });
       try {
         const code = newPairingCode();
         // The page shows its address with the code, so the address setting stays empty (R-031).
@@ -785,10 +734,10 @@ describe('agent client (R-027)', () => {
         const settings = path.join(dataDir, 'laptop', 'claude.json');
         assert.ok(first!.args.includes('--restricted'));
         assert.equal(first!.args[first!.args.indexOf('--settings') + 1], settings);
-        assert.ok(first!.args.includes('--session-id'));
+        assert.ok(!first!.resumed);
         assert.ok(first!.input.includes('### K-7: Sums are off by one'), 'the brief holds the card');
         assert.ok(first!.input.includes('check that the card still holds'), 'the first turn checks the card');
-        assert.equal(work!.args[work!.args.indexOf('--resume') + 1], first!.args[first!.args.indexOf('--session-id') + 1], 'the work resumes the check');
+        assert.equal(work!.session, first!.session, 'the work resumes the check');
         assert.ok(work!.input.includes('acme/app#1 claims it'), 'the draft claims the card before the work');
         const denied = JSON.parse(await fs.readFile(settings, 'utf8')).sandbox.filesystem.denyRead;
         assert.ok(denied.includes(dataDir) && denied.includes(process.env.GH_CONFIG_DIR), 'the shell cannot read the plugin or gh');
@@ -807,7 +756,7 @@ describe('agent client (R-027)', () => {
         await fs.writeFile(ghState, JSON.stringify({ ...gh, pulls: [{ ...gh.pulls[0], view: failing }] }));
         await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ outcome: 'done', note: 'The test passes.' }) }, () => plugin.pollPulls());
         const [, , fix] = await turns();
-        assert.equal(fix!.args[fix!.args.indexOf('--resume') + 1], first!.args[first!.args.indexOf('--session-id') + 1], 'the fix resumes the first turn');
+        assert.equal(fix!.session, first!.session, 'the fix resumes the first turn');
         assert.equal(fix!.cwd, worktree);
         assert.ok(fix!.input.includes('CI failed: test') && fix!.input.includes('expected 3, got 4'), 'the brief says what failed, with the end of its log');
         assert.deepEqual(await reportsOn(asked), ['I am back on K-7: CI failed: test', `I finished K-7 on ${branch} (acme/app#1). The test passes.`]);
@@ -924,15 +873,15 @@ describe('agent client (R-027)', () => {
         const lkNotLinked = (name: string) => [`I could not answer. You have not linked ${name}, so I start nothing with it. Link it in my settings under Coding agents.`];
         const [lkOnlyClaude] = await lkLink('Claude Code');
         assert.deepEqual(lkOnlyClaude!.harnesses!.map((h) => [h.name, harnessRow(h)]), [['Claude Code', 'linked'], ['Codex', 'found']]);
-        assert.equal(plugin.client!.protocol, 7, 'Claude Code linked, and gh signed in: cards');
+        assert.equal(plugin.client!.protocol, 15, 'Claude Code linked, and gh signed in: cards, and it asks');
         await lkCodexPrompt();
         assert.deepEqual(await lkFailures(), lkNotLinked('Codex'));
         assert.equal(await lkHarnessOf(await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, lkPlain)), 'Claude Code', 'Claude Code still runs');
         await lkLink('Codex', 'Claude Code');
-        assert.equal(plugin.client!.protocol, 7);
+        assert.equal(plugin.client!.protocol, 15);
         assert.equal(await lkHarnessOf(await lkPlain()), 'Codex', 'a prompt that names none runs on the first she linked');
         const [lkOnlyCodex] = await lkLink('Codex');
-        assert.equal(plugin.client!.protocol, 5, 'Codex takes no cards, so the union has none');
+        assert.equal(plugin.client!.protocol, 13, 'Codex takes no cards, so the union has none, but it asks');
         assert.deepEqual(lkOnlyCodex!.harnesses!.map((h) => harnessRow(h)), ['found', 'linked']);
         await lkLink();
         assert.equal(plugin.client!.protocol, 5, 'with none linked the agent still answers settings');
@@ -975,7 +924,7 @@ describe('agent client (R-027)', () => {
         // Her approve links the harness the laptop recorded, whatever name the message adds, and says so.
         const lkHeard = await lkAnswer(alice, direct, 'approve', lkAsked!, { harness: 'Claude Code' });
         assert.deepEqual(await lkLinked(), ['Claude Code', 'Codex']);
-        assert.equal(plugin.client!.protocol, 7);
+        assert.equal(plugin.client!.protocol, 15);
         assert.ok((await lkAsks()).some((c) => c.ask?.step === 'done'), 'the laptop says it linked it');
         // The same message again, or another that names the same request, changes nothing.
         await lkLink('Claude Code');
@@ -1008,7 +957,7 @@ describe('agent client (R-027)', () => {
         const scratch = chat!.cwd;
         assert.ok(scratch.startsWith(path.join(await fs.realpath(os.tmpdir()), 'webchat-scratch')), 'the prompt runs in a scratch repository, not in the project');
         assert.equal((await git(scratch, 'remote')).stdout.trim(), '', 'the scratch copy has no remote');
-        assert.ok(chat!.args.includes('--session-id'), 'the first turn starts a session');
+        assert.ok(!chat!.resumed, 'the first turn starts a session');
         assert.ok(chat!.input.includes('What does sum.js do?') && chat!.input.includes('scratch copy'), 'the brief holds the prompt');
         assert.ok(chat!.input.includes('opens a draft pull request'), 'the brief says a card run, unlike a question, ends in a draft');
         assert.deepEqual(await answers(), ['It adds.']);
@@ -1042,7 +991,7 @@ describe('agent client (R-027)', () => {
         const [again] = (await turns()).slice(-1);
         assert.ok(again!.input.includes('Why: money.') && !again!.input.includes('### K-7'), 'the reply holds the decision that changed, and no card that did not');
         assert.ok(again!.input.includes('#6: Add a test'), 'the reply holds the open pull requests');
-        assert.equal(again!.args[again!.args.indexOf('--resume') + 1], chat!.args[chat!.args.indexOf('--session-id') + 1], 'the reply resumes the session');
+        assert.equal(again!.session, chat!.session, 'the reply resumes the session');
         assert.equal(again!.cwd, scratch);
         assert.ok(again!.input.includes('Your owner replies:') && again!.input.includes('And sum.test.js?'));
         assert.ok(again!.input.includes(`main moved from ${was.slice(0, 7)} to ${now.slice(0, 7)}`), 'the reply says what moved');
@@ -1358,7 +1307,7 @@ describe('agent client (R-027)', () => {
         await alice.send(general, { text: 'Go on with D-1', run: { kind: 'fix', request: paused.id, note: 'I added the decision as D-1. Go on with the work.', sentAt: Date.now() } });
         await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify(finished) }, async () => (await checkIn()).handled);
         const resumed = (await turns()).at(-1)!;
-        assert.equal(resumed.args[resumed.args.indexOf('--resume') + 1], pausedCheck!.args[pausedCheck!.args.indexOf('--session-id') + 1], 'it resumes the run');
+        assert.equal(resumed.session, pausedCheck!.session, 'it resumes the run');
         assert.ok(resumed.input.includes('I added the decision as D-1') && resumed.input.includes('Your owner added the decision you waited for'), 'the round has the number');
         const goneOn = await reports(paused.id);
         assert.deepEqual(goneOn.map((r) => r.text), [
@@ -1435,7 +1384,7 @@ describe('agent client (R-027)', () => {
         assert.equal(stoppedPull.closed, undefined, 'the draft stays open');
         await fs.access(stoppedWork!.cwd);
         const stoppedRecord = (JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'pulls.json'), 'utf8')) as Array<{ taken: { message: number }; session: string; unfinished?: { paused?: number; stopped?: true } }>).find((w) => w.taken.message === stopped.id)!;
-        assert.equal(stoppedRecord.session, stoppedCheck!.args[stoppedCheck!.args.indexOf('--session-id') + 1], 'the session is kept');
+        assert.equal(stoppedRecord.session, stoppedCheck!.session, 'the session is kept');
         assert.ok(stoppedRecord.unfinished?.paused && stoppedRecord.unfinished.stopped, 'the run waits as paused');
         await plugin.pollPulls();
         assert.deepEqual(await reports(stopped.id), [], 'nothing ends a paused run');
@@ -1458,7 +1407,7 @@ describe('agent client (R-027)', () => {
         await (await checkIn()).handled;
         const [redirectedCheck] = redirected.turns;
         const steered = (await turns()).at(-1)!;
-        assert.equal(steered.args[steered.args.indexOf('--resume') + 1], redirectedCheck!.args[redirectedCheck!.args.indexOf('--session-id') + 1], 'the same session goes on');
+        assert.equal(steered.session, redirectedCheck!.session, 'the same session goes on');
         assert.ok(steered.input.includes(`OWNER'S WORDS START ============\n${words}\n============`), 'the words are fenced');
         assert.ok(steered.input.includes('read `git status` first'), 'it looks at the worktree first');
         const redirectedPull = (await pullsNow()).at(-1)!;
@@ -1493,8 +1442,104 @@ describe('agent client (R-027)', () => {
         assert.deepEqual(await reportsOn(planned.id), ['I am back on K-7: you said go', `I finished K-7 on ${planPull.head} (acme/app#${pullsBeforePlan + 1}). Sums add up now.`]);
         assert.deepEqual(await log(planPull.head), ['Change sum.test.js', 'chore: Claim K-7']);
         const [, planWork] = (await turns()).slice(turnsBeforePlan);
-        assert.equal(planWork!.args[planWork!.args.indexOf('--resume') + 1], planCheck!.args[planCheck!.args.indexOf('--session-id') + 1], 'the work resumes the check');
+        assert.equal(planWork!.session, planCheck!.session, 'the work resumes the check');
         assert.ok(planWork!.input.includes('says go') && planWork!.input.includes(`acme/app#${pullsBeforePlan + 1} claims it`), 'the brief carries the go');
+        // A card run asks its owner before an action Claude Code would ask about, through its permission
+        // prompt tool, which the fake calls on a loopback endpoint of the plugin; the owner's second
+        // device answers (docs/decisions/harness-approvals.md). The plan gate is off again for these.
+        await setup(alice, direct, { ...chosen, noPlan: true });
+        await unthrottle();
+        await fs.writeFile(ghState, JSON.stringify({ ...JSON.parse(await fs.readFile(ghState, 'utf8')), open: [] }));
+        await fs.copyFile(path.join(home, 'alice.json'), path.join(home, 'alice-phone2.json'));
+        const phone = await AgentClient.load(path.join(home, 'alice-phone2.json'));
+        const askedLog = path.join(home, 'asked.log');
+        const restoreAsk = setEnv({ FAKE_CLAUDE_ASK: JSON.stringify([{ tool_name: 'Write', input: { file_path: '$CWD/.claude/settings.json', content: '{}' } }]), FAKE_CLAUDE_ASKED: askedLog });
+        try {
+          const decisions = async () => (await fs.readFile(askedLog, 'utf8').catch(() => '')).split('\n').filter(Boolean).map((l) => JSON.parse(l) as { decision: { behavior?: string; message?: string; updatedInput?: object; status?: number } });
+          const heardPermits: OpenedMessage[] = [];
+          const nextQuestion = async (n: number) => {
+            await waitFor('the question reaches the owner', async () => {
+              heardPermits.push(...(await phone.sync()).filter((m) => m.senderId === agent.id && m.content?.permit));
+              return heardPermits.filter((m) => m.content!.permit!.kind === 'question').length > n;
+            });
+            return heardPermits.filter((m) => m.content!.permit!.kind === 'question')[n]!;
+          };
+          const reply = async (question: OpenedMessage, decision: 'once' | 'run' | 'deny') => {
+            const permit = question.content!.permit as Extract<PermitDTO, { kind: 'question' }>;
+            await phone.send(direct, { text: 'Answer', permit: { kind: 'answer', to: question.clientId!, decision, seen: await permitHash(permit), sentAt: Date.now() } });
+            for (const m of await plugin.client!.sync()) await plugin.handle(m);
+          };
+          const startAsking = async () => {
+            const id = (await ask(alice, { hash: await briefNow(), asks: true })).id;
+            return { id, handled: (await checkIn()).handled };
+          };
+
+          // Allow, from the second device: the run goes on and finishes. The question names the file Claude Code would write.
+          const turnsBeforeAsk = (await turns()).length;
+          const allowed = await startAsking();
+          const first = await nextQuestion(0);
+          const permit = first.content!.permit as Extract<PermitDTO, { kind: 'question' }>;
+          assert.deepEqual([permit.what, permit.request, permit.detail.startsWith('Write ') && permit.detail.endsWith('.claude/settings.json')], ['edit', allowed.id, true]);
+          assert.deepEqual(await decisions(), [], 'Claude Code waits for the answer');
+          await reply(first, 'once');
+          await allowed.handled;
+          const allowedPull = (await pullsNow()).at(-1)!;
+          assert.deepEqual((await reportsOn(allowed.id)).at(-1), `I finished K-7 on ${allowedPull.head} (acme/app#${(await pullsNow()).length}). Sums add up now.`);
+          const [answered] = await decisions();
+          assert.deepEqual([answered!.decision.behavior, typeof answered!.decision.updatedInput], ['allow', 'object'], 'the tool answers allow, with the input');
+          // One process took both turns, started with the prompt tool and no refusal of what it asks.
+          const [check, work] = (await turns()).slice(turnsBeforeAsk);
+          assert.equal(check!.pid, work!.pid, 'one process for the session');
+          for (const flag of ['--mcp-config', '--permission-prompt-tool', '--disallowedTools']) assert.ok(check!.args.includes(flag), flag);
+          assert.ok(!check!.args.includes('--permission-prompts'), 'it no longer refuses what it asks');
+          const approveFile = check!.args[check!.args.indexOf('--mcp-config') + 1]!;
+          assert.equal((await fs.stat(approveFile)).mode & 0o777, 0o600, 'the token file is for the owner only');
+          assert.ok(approveFile.startsWith(path.join(dataDir, 'laptop')), 'it is in the plugin\'s folder, which the shell cannot read');
+          // Only the plugin's own endpoint is called, and only with the token.
+          const server = check!.mcp!.mcpServers.webchat;
+          const post = (headers: Record<string, string>) => fetch(server.url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) });
+          assert.equal((await post({})).status, 401, 'no token');
+          assert.equal((await post({ authorization: 'Bearer wrong' })).status, 401, 'a wrong token');
+          assert.equal((await post({ authorization: server.headers.Authorization, origin: 'https://evil.example' })).status, 401, 'a page in a browser');
+          const tools = (await (await post({ authorization: server.headers.Authorization })).json()) as { result: { tools: Array<{ name: string }> } };
+          assert.deepEqual(tools.result.tools.map((t) => t.name), ['approve']);
+
+          // Deny stops that action: the fake writes nothing and commits nothing, so the run has no work to push.
+          await unthrottle();
+          const denied = await startAsking();
+          await reply(await nextQuestion(1), 'deny');
+          await denied.handled;
+          assert.deepEqual((await decisions()).at(-1)!.decision, { behavior: 'deny', message: 'Your owner said no. Do not try it again: do something else, or stop.' });
+          assert.equal((await reportsOn(denied.id)).at(-1), 'I could not run K-7: I left no new commits.');
+
+          // A question left 7 days ends the run: it fails with the reason, closes its draft, and keeps the branch.
+          await unthrottle();
+          const forgotten = await startAsking();
+          await nextQuestion(2);
+          const draftsBefore = (await pullsNow()).length;
+          await plugin.pollPulls(Date.now() + 8 * DAY);
+          await forgotten.handled;
+          assert.equal((await reportsOn(forgotten.id)).at(-1), 'I could not run K-7: No answer came within 7 days.');
+          assert.equal((await pullsNow()).at(-1)!.closed, 'The agent stopped: No answer came within 7 days. The branch stays.');
+          assert.equal((await pullsNow()).length, draftsBefore, 'the draft it opened is the one closed');
+          await waitFor('the owner is told it expired', async () => {
+            heardPermits.push(...(await phone.sync()).filter((m) => m.senderId === agent.id && m.content?.permit));
+            return heardPermits.some((m) => m.content!.permit!.kind === 'settled' && m.content!.permit!.outcome === 'expired');
+          });
+          // A request from a page that sets no flag asks nothing, and the process refuses what it would ask, as before.
+          await unthrottle();
+          const before = (await turns()).length;
+          const refused = (await ask(alice, { hash: await briefNow() })).id;
+          await (await checkIn()).handled;
+          const [plain] = (await turns()).slice(before);
+          assert.ok(plain!.args.includes('--permission-prompts') && !plain!.args.includes('--mcp-config'), 'no question can be asked, so it refuses');
+          assert.equal((await reportsOn(refused)).length > 0, true);
+        } finally {
+          restoreAsk();
+        }
+        // Ending the sessions ends the processes, and the token files go with them.
+        await Promise.all(options.harnesses.map((h) => h.end?.()));
+        assert.deepEqual(await fs.readdir(path.join(dataDir, 'laptop', 'approve')), []);
       } finally {
         restore();
       }
@@ -1834,6 +1879,107 @@ describe('agent client (R-027)', () => {
     assert.ok(!saved.working && saved.session !== cut.session, 'a fresh session');
   });
 
+  test("asks its owner before an action its harness asks about, and goes on with the owner's signed answer from another device (docs/decisions/harness-approvals.md)", { timeout: 60_000 }, async () => {
+    const dataDir = path.join(home, 'asker', 'laptop');
+    // A harness that asks before it runs a command, and runs it only when told to.
+    const turns: Array<{ cwd: string; asked: boolean; reply?: Reply }> = [];
+    const fake = {
+      name: 'Fake',
+      asks: true,
+      refusal: async () => undefined,
+      offers: () => ({ knobs: [] }),
+      found: async () => ({ path: '/fake' }),
+      apply: async () => undefined,
+      async turn(t) {
+        const entry: (typeof turns)[number] = { cwd: t.cwd, asked: !!t.ask };
+        turns.push(entry);
+        if (t.ask) {
+          entry.reply = await t.ask({ tool: 'Bash', kind: 'execute', paths: [], detail: 'npm test' });
+          if (entry.reply.allow) await fs.writeFile(path.join(t.cwd, 'ran.txt'), 'x');
+        }
+        return { reply: entry.reply?.allow ? 'It ran.' : 'It did not run.' };
+      },
+    } as Harness;
+    const code = newPairingCode();
+    const plugin = new Plugin({ harnesses: [fake], cloneRoot: path.join(home, 'WebChat'), dataDir, projectDir: home, code: `${baseUrl}#${code}` });
+    const starting = plugin.start();
+    const agent = await approve(alice, code, 'Asker');
+    assert.equal(await starting, true);
+    await alice.sync();
+    const direct = (await alice.request<{ id: number }>('POST', '/conversations/direct', { userId: agent.id, key: await newChatKey(alice, [alice.id, agent.id]) })).id;
+    const project = (await alice.request<CreateProjectResponse>('POST', '/projects', { name: 'Asks', memberIds: [agent.id], key: await newChatKey(alice, [alice.id, agent.id]) })).project.id;
+    // Alice's second device: the same account, signed in again.
+    await fs.copyFile(path.join(home, 'alice.json'), path.join(home, 'alice-phone.json'));
+    const phone = await AgentClient.load(path.join(home, 'alice-phone.json'));
+    await alice.sync();
+    await plugin.client!.sync();
+
+    const prompt = async (asks: boolean) => {
+      await alice.send(direct, { text: 'Run the tests', prompt: { kind: 'prompt', sentAt: Date.now(), project, ...(asks && { asks: true as const }) } });
+      // Not awaited: the turn waits for the owner.
+      for (const m of await plugin.client!.sync()) void plugin.handle(m);
+    };
+    // Everything each reader heard from the agent, since a sync returns a message once.
+    const heard = new Map<AgentClient, OpenedMessage[]>();
+    const fromAgent = async (reader: AgentClient) => {
+      const list = heard.get(reader) ?? [];
+      heard.set(reader, list);
+      list.push(...(await reader.sync()).filter((m) => m.senderId === agent.id));
+      return list;
+    };
+    /** The nth question the agent asked, once it reaches the reader. */
+    const question = async (reader: AgentClient, n: number) => {
+      let found: OpenedMessage | undefined;
+      await waitFor('the question reaches the owner', async () => !!(found = (await fromAgent(reader)).filter((m) => m.content?.permit?.kind === 'question')[n]));
+      return found!;
+    };
+    const answer = async (to: OpenedMessage, decision: 'once' | 'run' | 'deny', from: AgentClient = phone) => {
+      const asked = to.content!.permit as Extract<PermitDTO, { kind: 'question' }>;
+      await from.send(direct, { text: 'Answer', permit: { kind: 'answer', to: to.clientId!, decision, seen: await permitHash(asked), sentAt: Date.now() } });
+      for (const m of await plugin.client!.sync()) await plugin.handle(m);
+    };
+    const replies = async () => (await fromAgent(alice)).filter((m) => m.content?.prompt?.kind === 'answer' || m.content?.prompt?.kind === 'failed').map((m) => m.content!.text);
+
+    // The owner's page can show a question: it asks, sealed, and Alice's second device answers.
+    await prompt(true);
+    const asked = await question(phone, 0);
+    const permit = asked.content!.permit as Extract<PermitDTO, { kind: 'question' }>;
+    assert.deepEqual([permit.what, permit.detail, typeof permit.to, asked.content!.text.split('\n')[0]], ['run', 'npm test', 'string', 'Your agent asks your permission to run a command:']);
+    const [row] = await instance.sql.query<Record<string, unknown>>('SELECT * FROM webchat.messages WHERE id = $1', [asked.id]);
+    assert.ok(!JSON.stringify(row).includes('npm test') && !JSON.stringify(row).includes('permission'), 'the server holds the question sealed');
+    assert.equal(turns.at(-1)!.reply, undefined, 'the turn waits for the answer');
+    await answer(asked, 'once');
+    await waitFor('the turn goes on', async () => (await replies()).includes('It ran.'));
+    await fs.access(path.join(turns.at(-1)!.cwd, 'ran.txt'));
+    assert.deepEqual((await fromAgent(phone)).map((m) => m.content?.permit?.kind).filter(Boolean), ['question', 'settled'], 'the second device learns it was answered');
+    // The answer counts once: sent again, it changes nothing.
+    await answer(asked, 'deny');
+    assert.equal((await replies()).filter((r) => r === 'It did not run.').length, 0);
+
+    // Deny stops that action, and the turn still ends with its answer.
+    await prompt(true);
+    await answer(await question(phone, 1), 'deny');
+    await waitFor('the turn ends', async () => (await replies()).includes('It did not run.'));
+    assert.equal(existsSync(path.join(turns.at(-1)!.cwd, 'ran.txt')), false, 'the action did not run');
+    assert.deepEqual(turns.at(-1)!.reply, { allow: false, message: 'Your owner said no. Do not try it again: do something else, or stop.' });
+
+    // A page from before questions sets no flag: nothing is asked, and the harness gets no way to ask.
+    const quiet = turns.length;
+    const permitted = async () => (await fromAgent(alice)).filter((m) => m.content?.permit).length;
+    const before = await permitted();
+    await prompt(false);
+    await waitFor('the turn ran', async () => turns.length === quiet + 1);
+    assert.equal(turns.at(-1)!.asked, false);
+    assert.equal(await permitted(), before, 'no question was posted');
+
+    // A question that waits 7 days ends the turn, and says so.
+    await prompt(true);
+    await question(alice, 2);
+    await plugin.pollPulls(Date.now() + 8 * 24 * 60 * 60_000);
+    await waitFor('the turn failed', async () => (await replies()).includes('I could not answer. No answer came within 7 days.'));
+    assert.ok((await fromAgent(alice)).some((m) => m.content?.permit?.kind === 'settled' && m.content.permit.outcome === 'expired'));
+  });
+
   test('goes when its owner deletes their account (R-030)', async () => {
     const dave = await AgentClient.signUp(path.join(home, 'dave.json'), { server: baseUrl, username: 'dave', password: PASSWORD, kdfIterations: KDF_ROUNDS }, 'Dave', 'friends-only');
     const code = newPairingCode();
@@ -2147,28 +2293,47 @@ test('cuts an answer into messages after line breaks, never inside a surrogate p
   assert.equal(emoji.join(''), `${'a'.repeat(3999)}\u{1F600} and more`);
 });
 
-test('answers through Codex with the message on stdin, and resumes its thread after a restart; takes no cards', async () => {
+test('answers through Codex app-server, one process for a session, and resumes its thread after a restart; takes no cards', async () => {
   const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-codex-')));
   const program = path.join(dir, 'codex');
   const log = path.join(dir, 'codex.log');
   await fs.writeFile(program, FAKE_CODEX, { mode: 0o755 });
-  const restore = setEnv({ FAKE_CODEX_LOG: log });
+  // The owner's Codex config lists MCP servers, which are turned off by name.
+  const home = path.join(dir, 'home');
+  await fs.mkdir(home);
+  await fs.writeFile(path.join(home, 'config.toml'), '[mcp_servers.github]\ncommand = "x"\n[mcp_servers.github.env]\nA = "1"\n[mcp_servers."odd.name"]\ncommand = "y"\n');
+  const restore = setEnv({ FAKE_CODEX_LOG: log, CODEX_HOME: home });
+  const entries = async () => (await fs.readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string; args?: string[]; input?: string; schema?: object; thread?: string; pid?: number; params?: Record<string, unknown> });
+  const harnesses: Harness[] = [];
   try {
     const schema = { type: 'object', properties: { reply: { type: 'string' }, drafts: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] } } }, required: ['reply'] };
     const turn = (harness: Harness, resume: boolean, message: string) => harness.turn({ cwd: dir, session: 's-1', resume, message, schema, setup: {}, signal: new AbortController().signal });
     const harness = codexHarness(program, dir);
+    harnesses.push(harness);
     assert.equal(await harness.refusal(), undefined, 'it answers questions');
     assert.equal(await harness.refusal(dir), CODEX_GAP, 'it takes no cards');
     assert.equal(await codexHarness('', dir).refusal(), 'I cannot find Codex on this laptop.');
     assert.deepEqual(await turn(harness, false, 'What does sum.js do?'), { reply: 'It adds.' }, 'a null for a left-out field is dropped');
+    assert.deepEqual(await turn(harness, true, 'And again?'), { reply: 'It adds.' });
     // A restart keeps the thread of each session.
-    await withEnv({ FAKE_CODEX_ANSWER: '{"reply":"Still adds.","drafts":[{"title":"Sums"}]}' }, () => turn(codexHarness(program, dir), true, 'And now?'));
-    const [first, second] = (await fs.readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { args: string[]; input: string; cwd: string; schema: object });
+    const again = codexHarness(program, dir);
+    harnesses.push(again);
+    await withEnv({ FAKE_CODEX_ANSWER: '{"reply":"Still adds.","drafts":[{"title":"Sums"}]}' }, () => turn(again, true, 'And now?'));
+    const all = await entries();
+    const [first, second, third] = all.filter((e) => e.method === 'turn/start');
+    const [start, resumed] = all.filter((e) => e.method?.startsWith('thread/'));
     assert.equal(first!.input, 'What does sum.js do?');
-    assert.ok(!first!.args.some((arg) => arg.includes('sum.js')), 'the message is never in the arguments');
-    assert.deepEqual(first!.args.slice(-1), ['-'], 'the message is read from stdin');
-    assert.deepEqual(second!.args.slice(-3), ['resume', '0199a213-81c0-7800-8aa1-bbab2a035a53', '-']);
-    assert.ok(first!.args.includes('--ignore-user-config') && first!.args.includes('shell_environment_policy.inherit="core"'), "none of the owner's config or tokens");
+    assert.equal(first!.pid, second!.pid, 'one process takes the turns of a session');
+    assert.notEqual(first!.pid, third!.pid, 'a restart starts another');
+    assert.equal(start!.method, 'thread/start');
+    assert.equal(resumed!.method, 'thread/resume');
+    assert.equal(resumed!.params!.threadId, '0199a213-81c0-7800-8aa1-bbab2a035a53');
+    assert.equal(start!.params!.approvalPolicy, 'never', 'with no question to ask, it asks for nothing');
+    const args = all[0]!.args!;
+    assert.ok(!args.some((arg) => arg.includes('sum.js')), 'the message is never in the arguments');
+    assert.ok(args.includes('shell_environment_policy.inherit="core"') && args.includes('features.hooks=false'), "none of the owner's hooks or tokens");
+    assert.ok(args.includes('mcp_servers.github.enabled=false') && args.includes('mcp_servers."odd.name".enabled=false'), "none of the owner's MCP servers, one by one");
+    assert.ok(!args.includes('--ignore-user-config'), 'app-server has no such flag');
     assert.deepEqual(first!.schema, {
       type: 'object',
       properties: {
@@ -2178,9 +2343,122 @@ test('answers through Codex with the message on stdin, and resumes its thread af
       required: ['reply', 'drafts'],
       additionalProperties: false,
     });
-    await assert.rejects(withEnv({ FAKE_CODEX_FAIL: 'Usage limit reached.' }, () => turn(harness, true, 'Again?')), /Usage limit reached/);
+    await assert.rejects(withEnv({ FAKE_CODEX_FAIL: 'Usage limit reached.' }, () => turn(again, true, 'Again?')), /Usage limit reached/);
   } finally {
     restore();
+    await Promise.all(harnesses.map((h) => h.end?.()));
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('asks through Claude Code\'s permission prompt tool, one process for a session, and no rule outlives the turn (docs/decisions/harness-approvals.md)', async () => {
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-claude-ask-')));
+  const program = path.join(dir, 'claude');
+  await fs.writeFile(program, FAKE_CLAUDE, { mode: 0o755 });
+  const [log, asked] = [path.join(dir, 'claude.log'), path.join(dir, 'asked.log')];
+  const calls = [
+    { tool_name: 'Bash', input: { command: 'npm test ../elsewhere', description: 'Quietly delete everything' } },
+    { tool_name: 'Edit', input: { file_path: 'src/a.ts', old_string: 'a', new_string: 'b' } },
+    { tool_name: 'mcp__owner__mail', input: { to: 'x' } },
+  ];
+  const restore = setEnv({ FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_ASKED: asked, FAKE_CLAUDE_ASK: JSON.stringify(calls), FAKE_CLAUDE_COMMIT: '0' });
+  const harness = claudeHarness(program, 'true', dir);
+  try {
+    await fs.mkdir(path.join(dir, 'laptop'), { recursive: true });
+    const one = { type: 'object', properties: { outcome: { type: 'string', enum: ['holds', 'stale'] }, note: { type: 'string' }, checked: { type: 'string' } }, required: ['outcome', 'note', 'checked'] };
+    const two = { type: 'object', properties: { outcome: { type: 'string', enum: ['done', 'failed'] }, note: { type: 'string' }, title: { type: 'string' } }, required: ['outcome', 'note'] };
+    const seen: Ask[] = [];
+    const replies: Reply[] = [{ allow: true }, { allow: false, message: 'Your owner said no.' }, { allow: true }];
+    const turn = (over: Partial<Turn> = {}) =>
+      harness.turn({ cwd: dir, session: 's-1', resume: false, message: 'Run it', schema: two, schemas: [one, two], setup: {}, signal: new AbortController().signal, ask: async (ask) => (seen.push(ask), replies[seen.length - 1]!), ...over });
+    await withEnv({ FAKE_CLAUDE_ANSWER: '{"outcome":"done","note":"ok"}' }, () => turn());
+    // What the owner is asked is the tool's own input, never the model's description, and paths are the ones that name a place.
+    assert.deepEqual(seen.map((a) => [a.tool, a.kind, a.detail, a.paths]), [
+      ['Bash', 'execute', 'npm test ../elsewhere', [path.resolve(dir, '../elsewhere')]],
+      ['Edit', 'edit', 'Edit src/a.ts', [path.join(dir, 'src/a.ts')]],
+      ['mcp__owner__mail', 'other', 'mcp__owner__mail {"to":"x"}', []],
+    ]);
+    const decisions = (await fs.readFile(asked, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { decision: { behavior: string; message?: string; updatedInput?: object } });
+    assert.deepEqual(decisions.map((d) => d.decision.behavior), ['allow', 'deny', 'allow']);
+    assert.deepEqual(decisions[0]!.decision.updatedInput, calls[0]!.input, 'an allow hands the input back');
+    assert.equal(decisions[1]!.decision.message, 'Your owner said no.');
+    const [first] = (await fs.readFile(log, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { args: string[]; input: string; pid: number; mcp: { mcpServers: { webchat: { type: string; url: string; timeout: number } } } });
+    const flag = (name: string) => first!.args[first!.args.indexOf(name) + 1];
+    assert.equal(flag('--permission-prompt-tool'), 'mcp__webchat__approve');
+    assert.equal(flag('--disallowedTools'), 'mcp__webchat__approve', 'the model cannot call the tool');
+    assert.ok(first!.args.includes('--strict-mcp-config') && first!.args.includes('--restricted') && !first!.args.includes('--permission-prompts'));
+    assert.equal(first!.args.at(-2), '--session-id');
+    assert.deepEqual(first!.mcp.mcpServers.webchat.type, 'http');
+    assert.match(first!.mcp.mcpServers.webchat.url, /^http:\/\/127\.0\.0\.1:\d+\/mcp$/, 'a port of this machine only');
+    assert.ok(first!.mcp.mcpServers.webchat.timeout > 7 * 24 * 60 * 60_000, 'it outwaits the 7 days a question waits');
+    // One schema serves the session, with what every turn needs; the turn's own schema is in its message.
+    const schema = JSON.parse(flag('--json-schema')!) as { properties: Record<string, { enum?: string[] }>; required: string[] };
+    assert.deepEqual([Object.keys(schema.properties), schema.properties.outcome!.enum, schema.required], [['outcome', 'note', 'checked', 'title'], ['holds', 'stale', 'done', 'failed'], ['outcome', 'note']]);
+    assert.ok(first!.input.includes('Answer this message only') && first!.input.includes(JSON.stringify(two)), 'each turn says to answer afresh, as its own schema says');
+    assert.ok(!first!.args.some((arg) => arg.includes('Run it')), 'the message is never in the arguments');
+    assert.equal((await fs.readdir(path.join(dir, 'laptop', 'approve'))).length, 1, 'a token file while it runs');
+
+    // A later turn of the session goes to the same process, which takes a different schema; one with no way to ask starts another that refuses.
+    seen.length = 0;
+    replies.push({ allow: true }, { allow: true }, { allow: true });
+    await withEnv({ FAKE_CLAUDE_ANSWER: '{"outcome":"holds","note":"","checked":"x"}' }, () => turn({ resume: true, schema: one }));
+    const later = (await fs.readFile(log, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { pid: number; turn: number; args: string[] });
+    assert.deepEqual([later[1]!.pid === later[0]!.pid, later[1]!.turn], [true, 1], 'one process takes the session\'s turns');
+    await withEnv({ FAKE_CLAUDE_ANSWER: '{"outcome":"done","note":"ok"}' }, () => turn({ resume: true, ask: undefined }));
+    const refusing = (await fs.readFile(log, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { pid: number; args: string[] }).at(-1)!;
+    assert.notEqual(refusing.pid, later[0]!.pid);
+    assert.deepEqual([refusing.args.includes('--permission-prompts'), refusing.args.includes('--mcp-config'), refusing.args.includes('--resume')], [true, false, true]);
+    // An answer that does not fit the turn's own schema fails the turn.
+    await assert.rejects(withEnv({ FAKE_CLAUDE_ANSWER: '{"outcome":"done"}' }, () => turn({ ask: undefined })), /answer did not fit: the answer\.note: required/);
+    // A question that cannot be asked fails the turn with the reason, and its process ends.
+    await assert.rejects(turn({ resume: true, ask: async () => Promise.reject(new Error('No answer came within 7 days.')) }), /^Error: No answer came within 7 days\.$/);
+    await harness.end?.();
+    assert.deepEqual(await fs.readdir(path.join(dir, 'laptop', 'approve')), [], 'no token file outlives its process');
+  } finally {
+    restore();
+    await harness.end?.();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('answers Codex\'s approvals accept or decline only, and never a rule that outlives one (docs/decisions/harness-approvals.md)', async () => {
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-codex-ask-')));
+  const program = path.join(dir, 'codex');
+  const log = path.join(dir, 'codex.log');
+  await fs.writeFile(program, FAKE_CODEX, { mode: 0o755 });
+  const requests = [
+    { method: 'item/commandExecution/requestApproval', params: { itemId: 'i1', command: '/bin/zsh -lc \'curl https://example.com\'', cwd: dir } },
+    { method: 'item/fileChange/requestApproval', params: { itemId: 'i2', reason: null, grantRoot: null }, changes: [{ path: 'src/a.ts', kind: 'update', diff: '' }] },
+    { method: 'item/fileChange/requestApproval', params: { itemId: 'i3', grantRoot: '/' }, changes: [{ path: 'b.ts', kind: 'add', diff: '' }] },
+    { method: 'item/permissions/requestApproval', params: { itemId: 'i4' } },
+  ];
+  const restore = setEnv({ FAKE_CODEX_LOG: log, FAKE_CODEX_ASK: JSON.stringify(requests), CODEX_HOME: path.join(dir, 'none') });
+  const harness = codexHarness(program, dir);
+  try {
+    const schema = { type: 'object', properties: { reply: { type: 'string' } }, required: ['reply'] };
+    const seen: Ask[] = [];
+    await harness.turn({ cwd: dir, session: 's-1', resume: false, message: 'Go', schema, setup: {}, signal: new AbortController().signal, ask: async (ask): Promise<Reply> => (seen.push(ask), seen.length === 1 ? { allow: true } : { allow: false, message: 'No.' }) });
+    assert.deepEqual(seen.map((a) => [a.tool, a.kind, a.detail, a.paths]), [
+      ['shell', 'execute', '/bin/zsh -lc \'curl https://example.com\'', []],
+      ['apply_patch', 'edit', path.join(dir, 'src/a.ts'), [path.join(dir, 'src/a.ts')]],
+    ], 'a file change names its files from the item it joins, and one that asks for a whole folder is declined unasked');
+    const entries = (await fs.readFile(log, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { method?: string; params?: { approvalPolicy: string }; asked?: string; decision?: unknown });
+    assert.equal(entries.find((e) => e.method === 'thread/start')!.params!.approvalPolicy, 'on-request', 'with a way to ask, Codex asks');
+    assert.deepEqual(
+      entries.filter((e) => e.asked).map((e) => [e.asked, e.decision]),
+      [
+        ['item/commandExecution/requestApproval', { decision: 'accept' }],
+        ['item/fileChange/requestApproval', { decision: 'decline' }],
+        ['item/fileChange/requestApproval', { decision: 'decline' }],
+        ['item/permissions/requestApproval', { code: -32601, message: 'WebChat answers only the approval of a command or a file change.' }],
+      ],
+      'only accept or decline, never a decision for the session or an amendment',
+    );
+    // A question that cannot be asked fails the turn with its reason.
+    await assert.rejects(harness.turn({ cwd: dir, session: 's-2', resume: false, message: 'Go', schema, setup: {}, signal: new AbortController().signal, ask: () => Promise.reject(new Error('No answer came within 7 days.')) }), /^Error: No answer came within 7 days\.$/);
+  } finally {
+    restore();
+    await harness.end?.();
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
@@ -2234,15 +2512,7 @@ test(
     const lines: string[] = [];
     const session = randomUUID();
     const answer = { type: 'object', properties: { reply: { type: 'string' } }, required: ['reply'] };
-    const turn = (input: string, resume: boolean) =>
-      start(
-        'claude',
-        [...claudeArgs({ settings, session, resume, answer }), '--model', 'haiku', '--max-budget-usd', '1'],
-        worktree,
-        AbortSignal.timeout(5 * 60_000),
-        (line) => (lines.push(line), claudeResult(line)),
-        input,
-      );
+    const turn = (input: string, resume: boolean) => runClaude([...claudeArgs({ settings, session, resume, schema: answer }), '--model', 'haiku', '--max-budget-usd', '1'], worktree, input, (line) => lines.push(line));
     const first = await turn(
       [
         'This checks a sandbox. Do these steps in order, one tool call each, and do not retry one that fails. Steps 1 to 3, 6 and 7 are meant to fail.',
@@ -2318,12 +2588,9 @@ test(
     const settings = path.join(dir, 'claude.json');
     await fs.writeFile(settings, JSON.stringify(claudeSettings({ secrets: [], npmCache: path.join(dir, 'npm'), guard: 'true', env: process.env, noAttribution: true })));
     const answer = { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' } }, required: ['title', 'body'] };
-    const turn = await start(
-      'claude',
-      [...claudeArgs({ settings, session: randomUUID(), resume: false, answer, claudeMd, skills }), '--model', 'haiku', '--max-budget-usd', '1'],
+    const turn = await runClaude(
+      [...claudeArgs({ settings, session: randomUUID(), resume: false, schema: answer, claudeMd, skills }), '--model', 'haiku', '--max-budget-usd', '1'],
       project,
-      AbortSignal.timeout(5 * 60_000),
-      claudeResult,
       'Add a line "hi" to notes.txt and commit it with git. Then answer with the title and the body of a pull request for it.',
     );
     const pull = turn.answer as { title?: string; body?: string } | undefined;

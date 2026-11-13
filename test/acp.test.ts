@@ -7,12 +7,14 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { afterEach, before, beforeEach, describe, test } from 'node:test';
+import { PassThrough } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { acpGap, acpHarness } from '../agent/acp.ts';
 import { ACP_AGENTS, type AcpAgent } from '../agent/acp-agents.ts';
 import { fits, listenForAnswers } from '../agent/answer.ts';
+import { Peer } from '../agent/rpc.ts';
 import { acpRow, harnessFinder, SUPPORTED, supported, supportedList } from '../agent/harnesses.ts';
-import type { Harness, Turn } from '../agent/harness.ts';
+import type { Ask, Harness, Reply, Turn } from '../agent/harness.ts';
 import { LIMITS } from '../shared/types.ts';
 
 /**
@@ -204,6 +206,13 @@ describe('the ACP adapter', () => {
     return !(await alive());
   };
 
+  test('a peer whose input breaks throws nothing: on Linux a child that exits resets its pipe', async () => {
+    const input = new PassThrough();
+    new Peer({ input, output: new PassThrough() });
+    input.destroy(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }));
+    await sleep(10);
+  });
+
   test('fits reads the keywords the plugin\'s schemas use', () => {
     const schema = { type: 'object', properties: { outcome: { type: 'string', enum: ['done', 'failed'] }, drafts: { type: 'array', items: { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] } }, ok: { type: 'boolean' } }, required: ['outcome'] };
     assert.equal(fits(schema, { outcome: 'done', drafts: [{ n: 1 }], ok: true }), undefined);
@@ -325,6 +334,26 @@ describe('the ACP adapter', () => {
       ['mcp__owner__mail', 'ro'],
       ['inside', 'cancelled'],
     ]);
+  });
+
+  test('what the rulebook cannot decide goes to the owner when the turn can ask, and only a once is ever chosen (docs/decisions/harness-approvals.md)', async () => {
+    const call = (title: string, kind: string, ...paths: string[]) => ({ toolCall: { toolCallId: title, title, kind, rawInput: { command: `run ${title}` }, locations: paths.map((p) => ({ path: p })) } });
+    process.env.FAKE_ACP_ASK = JSON.stringify([
+      call('shell', 'execute'),
+      call('shell no', 'execute'),
+      call('inside', 'read', path.join(work, 'sum.js')),
+      call('secret', 'read', path.join(data, 'account.json')),
+      { toolCall: { toolCallId: 'x', title: 'mcp__owner__mail', kind: 'other' } },
+    ]);
+    const asked: Ask[] = [];
+    const replies: Reply[] = [{ allow: true }, { allow: false, message: 'No.' }, { allow: true }];
+    await adapter().turn(turn({ ask: async (ask) => (asked.push(ask), replies[asked.length - 1]!) }));
+    // The rulebook allows what is in the folder and refuses what is secret, and asks the owner for the rest.
+    assert.deepEqual(asked.map((a) => [a.kind, a.detail]), [['execute', 'run shell'], ['execute', 'run shell no'], ['other', 'mcp__owner__mail']]);
+    assert.deepEqual((await logged('permission')).map((e) => [e.permission, e.answer.outcome.optionId]), [['shell', 'ao'], ['shell no', 'ro'], ['inside', 'ao'], ['secret', 'ro'], ['mcp__owner__mail', 'ao']]);
+    // A question that cannot be asked, as when nobody answered in 7 days, fails the turn with its reason.
+    process.env.FAKE_ACP_ASK = JSON.stringify([call('shell', 'execute')]);
+    await assert.rejects(adapter().turn(turn({ session: 's2', ask: () => Promise.reject(new Error('No answer came within 7 days.')) })), /^Error: No answer came within 7 days\.$/);
   });
 
   test('the agent\'s file and terminal methods get a method-not-found error, since none was offered', async () => {

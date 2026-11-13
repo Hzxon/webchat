@@ -4,7 +4,7 @@
 // last run loaded. Save sends a new choice, and the agent's answer to it confirms it. Nothing of it
 // reaches the server unsealed.
 import { useEffect, useMemo, useState } from 'react';
-import { HARNESS_ROW_WORDS, harnessRow, setupWords, type HarnessRow, type HarnessState, type SetupChoice, type UserDTO } from '../../../shared/types';
+import { HARNESS_ROW_WORDS, harnessRow, setupWords, takesAsks, type HarnessRow, type HarnessState, type SetupChoice, type UserDTO } from '../../../shared/types';
 import { blockedBy, ownAgents, useAgentChat, WAKE } from '../agents';
 import { askSetup } from '../chat';
 import { useAppState } from '../store';
@@ -102,7 +102,8 @@ function SetupForm({ agent }: { agent: UserDTO }) {
     >
       <p className="dialog-intro">
         Each coding agent on your agent’s laptop, and what its runs and answers load from your setup there. Your settings, hooks,
-        MCP servers and plugins stay off, since a run follows cards your teammates wrote.
+        MCP servers and plugins stay off, since a run follows cards your teammates wrote.{' '}
+        {takesAsks(agent.protocol) ? 'It asks you in the Coding agents pane before an action its coding agent would ask about.' : 'Update your agent to be asked before such an action; until then it refuses it.'}
       </p>
       <AgentAsks />
       {(answer.harnesses ?? [OLD_PLUGIN]).map((h) => (

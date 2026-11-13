@@ -453,7 +453,20 @@ WebChat also runs coding agents that speak the Agent Client Protocol, from a lis
 the agent and is empty for now. Each is linked like Claude Code and Codex, answers questions only,
 and takes no cards. Such an agent keeps its own sandbox, shell and network, which WebChat does not
 set: WebChat answers only what it asks about, and says no to shell commands until you can approve
-them from WebChat.
+them from WebChat (see "Approve what your coding agent asks").
+
+### Approve what your coding agent asks
+
+When a coding agent would ask before an action, such as writing to Claude Code's own settings file or
+running a command outside its sandbox, your agent asks you in **Coding agents**: **Allow**, **Allow
+for this run** or **Deny**. Your phone is told only that your agent asks your permission, never what.
+Your answer counts once, within 10 minutes of when you gave it, and **Allow for this run** covers
+exactly the same action until the run ends, never any other. A question left 7 days ends the run.
+WebChat's rules answer first: a read outside the working folder, or of your agent's secrets, is a no
+that you are never asked about. Nothing is allowed for you. A coding agent is a process per session,
+which your laptop ends 10 minutes after a turn and starts again when a later turn needs it. Codex
+still answers questions only. Your own Codex `.rules` files keep applying to it. A page or agent
+from before this feature never asks: the action is refused, as it was.
 
 ### With the Claude Code plugin
 

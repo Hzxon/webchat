@@ -2,7 +2,8 @@
 // It starts the agent at a session's first turn and keeps the process, and the ACP session in it,
 // for the session's later turns, each a `session/prompt`; the prompt goes over the protocol and
 // never in arguments, which `ps` shows (D-097). The agent ends each turn by calling `submit_answer`
-// on an MCP server of ours (answer.ts). Its permission requests get the rulebook's answer.
+// on an MCP server of ours (answer.ts). Its permission requests get the rulebook's answer, and the
+// owner's when the rulebook cannot decide and the owner's page can show a question.
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -12,7 +13,7 @@ import type { AcpAgent } from './acp-agents.ts';
 import { listenForAnswers } from './answer.ts';
 import { isCredential, olderThan, secretDirs, type Harness, type Turn } from './harness.ts';
 import { Peer, RpcError } from './rpc.ts';
-import { IDLE_MS } from './runner.ts';
+import { IDLE_MS, Quiet, watchdog } from './runner.ts';
 import { judge, type Action } from './rulebook.ts';
 
 const exec = promisify(execFile);
@@ -82,7 +83,7 @@ interface Live {
   timer?: NodeJS.Timeout;
   /** Marks that the agent said something, for the idle watch of the turn. */
   touch?: () => void;
-  turn?: { progress?: (sentence: string) => void; cwd: string; done: boolean; last: string; denied?: string };
+  turn?: { progress?: (sentence: string) => void; ask?: Turn['ask']; cwd: string; done: boolean; last: string; denied?: string; fail?: (error: Error) => void };
 }
 
 export interface AcpOptions {
@@ -120,21 +121,37 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
     await live.listener.close();
   }
 
-  /** The agent's answer to its own permission request, by the rulebook: only a no or a yes, once, never a standing rule. */
-  function permission(live: Live, params: { toolCall: ToolCall; options?: { optionId: string; kind: string }[] }) {
+  /**
+   * The agent's answer to its own permission request: the rulebook's, and the owner's where the
+   * rulebook cannot decide and the owner's page can show a question. Only a no or a yes, once, never
+   * a standing rule: "for this run" is WebChat's own grant, so the agent is never told `allow_always`.
+   */
+  async function permission(live: Live, params: { toolCall: ToolCall; options?: { optionId: string; kind: string }[] }) {
     const cancelled = { outcome: { outcome: 'cancelled' } };
     const { turn } = live;
     if (!turn || turn.done) return cancelled;
-    const verdict = judge(actionOf(params.toolCall, turn.cwd), { folders: [turn.cwd], secrets: secretDirs(dataDir), tools: ['submit_answer'] });
-    // With no owner to ask yet (docs/roadmap/new-harness-approvals.md), a question is a no.
-    if (!verdict.allow) turn.denied = verdict.why;
-    const option = params.options?.find((o) => o.kind === (verdict.allow ? 'allow_once' : 'reject_once'));
+    const action = actionOf(params.toolCall, turn.cwd);
+    const verdict = judge(action, { folders: [turn.cwd], secrets: secretDirs(dataDir), tools: ['submit_answer'] });
+    let allow = verdict.allow;
+    if (!verdict.allow) {
+      turn.denied = verdict.why;
+      if (verdict.ask && turn.ask) {
+        const call = params.toolCall;
+        const detail = String(call.rawInput?.command ?? call.title ?? action.paths.join('\n'));
+        const reply = await turn.ask({ ...action, detail }).catch((error: unknown) => {
+          turn.fail?.(error as Error);
+          return { allow: false as const, message: '' };
+        });
+        allow = reply.allow;
+      }
+    }
+    const option = params.options?.find((o) => o.kind === (allow ? 'allow_once' : 'reject_once'));
     return option ? { outcome: { outcome: 'selected', optionId: option.optionId } } : cancelled;
   }
 
   function onRequest(live: Live, method: string, params: any) {
     // File and terminal methods were not offered, and neither was a form for the owner.
-    if (method === 'session/request_permission') return Promise.resolve(permission(live, params));
+    if (method === 'session/request_permission') return permission(live, params);
     return Promise.reject(new Error(`${method} is not offered.`));
   }
 
@@ -158,7 +175,7 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
     running.add(child);
     // Kept for the error text, and never forwarded.
     let stderr = '';
-    child.stderr.on('data', (data: Buffer) => (stderr = (stderr + data).slice(-2000)));
+    child.stderr.on('data', (data: Buffer) => (stderr = (stderr + data).slice(-2000))).on('error', () => undefined);
     const exited = new Promise<string>((resolve) => {
       child.on('error', (error) => resolve(`${name} did not start: ${error.message}`));
       child.on('close', (code) => {
@@ -226,14 +243,14 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
     const answered = live.listener.ask(t.schema);
     let got: { value: unknown } | undefined;
     answered.then((value) => ((got = { value }), (turn.done = true)), () => undefined);
-    let timer: NodeJS.Timeout;
+    let dog!: ReturnType<typeof watchdog>;
     const stalled = new Promise<never>((_, reject) => {
-      live.touch = () => {
-        clearTimeout(timer);
-        timer = setTimeout(reject, time.idle, new Error(`the agent printed nothing for ${Math.round(time.idle / 60_000)} minutes.`));
-      };
-      live.touch();
+      dog = watchdog(time.idle, t.quiet ?? new Quiet(), () => reject(new Error(`the agent printed nothing for ${Math.round(time.idle / 60_000)} minutes.`)));
+      live.touch = dog.arm;
     });
+    // A question nobody answered in 7 days ends the turn, with the reason the owner reads.
+    const broken = new Promise<never>((_, reject) => (turn.fail = reject));
+    broken.catch(() => undefined);
     let onAbort!: () => void;
     const aborted = new Promise<never>((_, reject) => t.signal.addEventListener('abort', (onAbort = () => reject(new Error(CANCELLED))), { once: true }));
     stalled.catch(() => undefined);
@@ -243,7 +260,7 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
       for (let nudges = 0; ; nudges++) {
         const prompt = live.peer.request<{ stopReason?: string }>('session/prompt', { sessionId: live.acp, prompt: [{ type: 'text', text }] });
         prompt.catch(() => undefined);
-        const result = await Promise.race([prompt, answered, live.gone, aborted, stalled]);
+        const result = await Promise.race([prompt, answered, live.gone, aborted, stalled, broken]);
         if (got) {
           // Its prompt ends soon after, which a later prompt must wait for; an agent that will not is cancelled, then ended.
           if (!(await ended(prompt, time.grace))) {
@@ -262,7 +279,7 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
         throw new Error([why || `${name} stopped without an answer.`, turn.denied && `WebChat refused it: ${turn.denied}`].filter(Boolean).join(' '));
       }
     } finally {
-      clearTimeout(timer!);
+      dog.stop();
       live.touch = undefined;
       t.signal.removeEventListener('abort', onAbort);
       live.listener.rest();
@@ -271,6 +288,7 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
 
   return {
     name,
+    asks: true,
     async refusal(dir, purpose) {
       if (!program) return `I cannot find ${name} on this laptop.`;
       const old = olderThan(name, await versionOf(), agent.min);
@@ -295,7 +313,7 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
       }
       if (live) clearTimeout(live.timer);
       else lives.set(t.session, (live = await open(t)));
-      const turn = (live.turn = { progress: t.progress, cwd: t.cwd, done: false, last: '' });
+      const turn = (live.turn = { progress: t.progress, ask: t.ask, cwd: t.cwd, done: false, last: '' });
       try {
         return await converse(live, t, turn);
       } catch (error) {

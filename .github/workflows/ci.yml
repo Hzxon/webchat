@@ -14,6 +14,8 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    # A test that leaves a process behind once held a run for hours; the private repository pays for each minute.
+    timeout-minutes: 15
     steps:
       # Pinned to commits, like the actions in release-please.yml and doc-ids.yml.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
