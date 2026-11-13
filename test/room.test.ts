@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 import { LocalBench, PrerequisitesMissing, type Permit } from '../agent/bench.ts';
 import type { Ask, Harness, Turn } from '../agent/harness.ts';
 import { Quiet } from '../agent/runner.ts';
-import { callRoom, connectRunner, LINE_MAX, Room, type Handlers } from '../agent/room.ts';
+import { askUpdater, callRoom, connectRunner, LINE_MAX, Room, runRunner, type Handlers } from '../agent/room.ts';
 
 const sh = promisify(execFile);
 const VERSION = '1.2.3';
@@ -51,6 +51,8 @@ describe('the room', () => {
   let room: Room;
   let keys: string;
   let calls: string[];
+  /** What the keyholder says runs, for the updater. */
+  let running: string[];
   let closers: Array<() => void>;
   /** What the fake harness does in its turn. */
   let work: (turn: Turn) => Promise<unknown>;
@@ -58,6 +60,7 @@ describe('the room', () => {
     goToSleep: async () => (calls.push('sleep'), 'sleep done'),
     wake: async () => (calls.push('wake'), 'wake done'),
     status: async () => (calls.push('status'), { text: 'status done', paired: true, asleep: false }),
+    working: async () => running,
     requestLink: async (harness) => (calls.push(`link ${harness}`), `Asked to link ${harness}.`),
     requestConnect: async (dir, repo) => (calls.push(`connect ${repo} ${dir}`), `Asked to connect ${repo}.`),
   };
@@ -86,6 +89,7 @@ describe('the room', () => {
     await fs.mkdir(keys);
     file = path.join(root, 'k.sock');
     calls = [];
+    running = [];
     closers = [];
     work = async () => ({ note: 'done' });
     room = new Room({ version: VERSION, transferMs: 200 });
@@ -119,6 +123,28 @@ describe('the room', () => {
     await wait(50);
     await runner();
     assert.ok(room.runner);
+  });
+
+  test('lets the updater ask what runs at any version, and nothing else, without taking a runner’s place', async () => {
+    running = ['K-1', 'your question'];
+    assert.deepEqual(await askUpdater(file), { version: VERSION, busy: ['K-1', 'your question'] });
+    const line = (id: number, method: string, params: object) => `${JSON.stringify({ id, method, params })}\n`;
+    const said = (await talk(file, line(1, 'hello', { role: 'updater', version: '0.0.1' }) + line(2, 'status', {}) + line(3, 'sleep', {}))).toString().trim().split('\n').map((l) => JSON.parse(l) as { id: number; result?: unknown; error?: { message: string } });
+    assert.deepEqual(said[0]?.result, { version: VERSION });
+    assert.match(said[1]!.error!.message, /may ask only busy, not status/);
+    assert.match(said[2]!.error!.message, /may ask only busy, not sleep/);
+    assert.deepEqual(calls, [], 'no handler ran');
+    await runner();
+    assert.ok(room.runner, 'the updater held no slot');
+    assert.equal(await askUpdater(path.join(root, 'nobody.sock')), undefined);
+  });
+
+  test('a runner leaves for its login service only when a keyholder of another version refuses it and its own program changed', async () => {
+    const old = { file, bench: new LocalBench([]), version: '0.0.1', say: () => undefined };
+    assert.equal(await runRunner({ ...old, changed: () => true }), 'stale');
+    const stop = new AbortController();
+    setTimeout(() => stop.abort(), 300).unref();
+    assert.equal(await runRunner({ ...old, changed: () => false, signal: stop.signal }), undefined, 'the loop stays while the program is the same');
   });
 
   test('fails at once while no runner is connected', async () => {

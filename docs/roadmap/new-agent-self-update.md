@@ -1,6 +1,6 @@
 ### R: The agent updates itself to its server's release
 
-Status: Idea. Proposed 2026-11-12 from the agent host design.
+Status: Done in #210.
 
 Order: after docs/roadmap/new-locked-room.md, whose root-owned folder the updater writes.
 

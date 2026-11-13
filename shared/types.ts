@@ -269,6 +269,9 @@ export interface ConfigDTO {
   release: string;
 }
 
+/** Where each release's agent files are: the install line and the agent's updater both read them here, never from the server (docs/decisions/agent-self-update.md). */
+export const AGENT_RELEASES = 'https://github.com/Hzxon/webchat/releases/download';
+
 /** A phone's Bark app that registered through the user's link. The key is what Bark shows for the device. */
 export interface BarkDeviceDTO {
   key: string;

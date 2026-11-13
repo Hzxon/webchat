@@ -140,6 +140,11 @@ What it does not protect against:
 - **A server that sends tampered app code.** Like any web app, the page runs the code the server
   sends, so encryption protects you from anyone who reads the database or the hosts, not from a
   malicious operator who changes the app itself.
+- **A release's checksum gives integrity, not authenticity.** The agent's updater runs as root and
+  takes the release's file and its checksum from the same GitHub release, so the checksum catches a broken
+  download, not a changed release. Whoever can change the repository's releases can change the agent on
+  every laptop within 15 minutes. The server only names a release number, and the address of the files
+  is built into the agent, so a tampered server cannot send agents elsewhere.
 - **Alerts through Bark pass Apple.** For an iPhone linked to Bark, Apple sees when an alert goes
   to it, and, unless encryption is turned on in the bell dialog, the chat and sender names in it.
   The Bark app on the phone sees the alert in full. The message text is never in it.
@@ -645,9 +650,18 @@ Then:
 
 - `webchat-agent doctor` repeats the checks. It names what is missing, such as a harness that is not
   signed in: "Claude Code is not signed in. Run `claude` once and sign in."
-- `webchat-agent status` says whether both services run, whether the runner is connected, whether the agent is
+- `webchat-agent status` says whether both services run, what the updater last found, whether the runner is connected, whether the agent is
   paired and signed in to GitHub, and whether it is asleep. `doctor` and `status` need no password.
-- `webchat-agent uninstall` asks, then stops and removes both services, signs the agent out of GitHub, and removes
+- The agent follows its server's release by itself. Setup installs a small job that runs as root every 15
+  minutes (a LaunchDaemon on a Mac, a systemd timer on Linux). It asks your server which release it runs
+  and, when that is newer than the agent, downloads that release's file from GitHub, checks it against the
+  release's checksum, and starts the agent's services from it, once no card is running (after a day it goes
+  ahead anyway, and the running card fails). It moves forward only: an older release is refused, and going
+  back takes the line in the Connect dialog. A file that fails its checksum or its `--version` is dropped and
+  the old agent keeps running. If the new keyholder does not answer within 2 minutes, the old agent comes back
+  and that release is skipped. While a repository's release files are private, GitHub refuses the download:
+  the agent stays as it is and `doctor` warns after a day.
+- `webchat-agent uninstall` asks, then stops and removes the services and the updater, signs the agent out of GitHub, and removes
   the account `_webchat` and its folders, only if setup made them. The agent stays in
   WebChat until you remove it under **Coding agents**. The clones in `~/WebChat` stay. The agent's GitHub
   login stays valid on GitHub until you revoke it. Revoking "GitHub CLI" under Authorized OAuth Apps
@@ -681,7 +695,8 @@ version starts with 0, and any release may change how it runs. Each release has 
 `v0.1.0` and a GitHub release, and `CHANGELOG.md` lists what it changed. Before you upgrade a server
 you host yourself, read the breaking changes of each release you skip. They say what you must
 change, such as a new setting. A Vercel deployment of main runs the newest code, which can be ahead
-of the latest release.
+of the latest release. A coding agent on a laptop follows the release of its server by itself, forward
+only (see the agent section above), so update the server first.
 
 ## Tests
 
