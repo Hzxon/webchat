@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.11.0](https://github.com/Hzxon/webchat/compare/v0.10.0...v0.11.0) (2026-11-13)
+
+
+### Features
+
+* **agent:** Number a card from the terminal ([#225](https://github.com/Hzxon/webchat/issues/225)) ([506690e](https://github.com/Hzxon/webchat/commit/506690ea19f930cd6d83a3d69cf633fd65749666))
+* **agents:** Say on the row when proposals wait ([#227](https://github.com/Hzxon/webchat/issues/227)) ([80a0827](https://github.com/Hzxon/webchat/commit/80a082796b473e63fbd785a628a52227fac0fc6f))
+* **board:** Show proposals waiting for the owner ([#222](https://github.com/Hzxon/webchat/issues/222)) ([eb8c3c4](https://github.com/Hzxon/webchat/commit/eb8c3c459290892dccdd1aeba6a5183ab345c675))
+
+
+### Bug Fixes
+
+* **agent:** Pace proposal drafts under send limit ([#224](https://github.com/Hzxon/webchat/issues/224)) ([0911f5f](https://github.com/Hzxon/webchat/commit/0911f5f19d2c7d67afcab4de758ff6782055db9f))
+* **agent:** Start setup's commands in / ([#217](https://github.com/Hzxon/webchat/issues/217)) ([fba35d6](https://github.com/Hzxon/webchat/commit/fba35d6fedbf8535a1170a1751f41773301d8295))
+* **agent:** Wait for launchd to unload a service ([#218](https://github.com/Hzxon/webchat/issues/218)) ([4473251](https://github.com/Hzxon/webchat/commit/44732516b1d2ca1cc418b8f47a958a5a43f849dd))
+* **sync:** Read the fingerprint before the lists ([#223](https://github.com/Hzxon/webchat/issues/223)) ([f33a56f](https://github.com/Hzxon/webchat/commit/f33a56f21c23968625948939ccf252995018b164))
+
 ## [0.10.0](https://github.com/Hzxon/webchat/compare/v0.9.0...v0.10.0) (2026-11-13)
 
 
