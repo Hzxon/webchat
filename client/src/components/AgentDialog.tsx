@@ -147,7 +147,7 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
               <CopyRow value={`${location.origin}#${code}`} onCopied={setNote} />
             </li>
             <li>
-              Open Claude Code in your team’s repository and type <code>/webchat:connect</code>.
+              Open Claude Code in your team’s repository and type <code>/webchat:connect</code>. With the webchat-agent service, run <code>webchat-agent connect</code> there, and approve it here.
             </li>
           </ol>
           {release && (

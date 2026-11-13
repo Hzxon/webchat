@@ -18,7 +18,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
 import { cardsOf, copyOf, entriesOf, proposalOf, readCard, usernamesOf } from '../shared/board.ts';
-import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, SKILL_NAME, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type PairingPick, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
+import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, SKILL_NAME, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type AskDTO, type PairingPick, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
 import { AgentClient, checkInEvery, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
 import type { Harness } from './harness.ts';
@@ -294,6 +294,20 @@ interface PullView {
   updatedAt: string;
 }
 
+/** What `connect` says in a folder that is no GitHub repository. */
+const NO_REPOSITORY = 'This folder is no GitHub repository, so there is nothing to connect here. Your agent works in every folder it knows, and offers to clone the others when you ask it in WebChat.';
+
+/** What a command filed for the serving agent to ask its owner: `at` is when the command ran. */
+type Filed = ({ kind: 'link'; harness: string } | { kind: 'connect'; repo: string; dir: string }) & { at?: number };
+
+/** A request sent and not answered: what it asked (a harness name, or a repository), for a connect the folder, and when the agent sent it. */
+interface Asked {
+  kind: 'link' | 'connect';
+  what: string;
+  dir?: string;
+  at: number;
+}
+
 /** Why every request fails until the owner links a harness. */
 const NONE_LINKED = 'You have linked no coding agent on this laptop, so I start nothing. Link one in my settings under Coding agents.';
 
@@ -327,7 +341,7 @@ export class Plugin {
   /** Cuts short the minute a waiting window sleeps, so a wake here serves at once. */
   private nudge?: AbortController;
   /** What runs and turns load from the owner's Claude setup, as they chose, and what the last one loaded (R-039). Kept on disk. */
-  private setup: { choice: SetupChoice; applied?: SetupChoice & { at: number }; links?: Record<string, { harness: string; at: number }> } = { choice: { claudeMd: false, skills: [], noAttribution: false } };
+  private setup: { choice: SetupChoice; applied?: SetupChoice & { at: number }; asks?: Record<string, Asked> } = { choice: { claudeMd: false, skills: [], noAttribution: false } };
   private harnesses: Harness[];
   /** Each linked board's copy, by project. Kept on disk. */
   private copies: Record<number, BoardCopy> = {};
@@ -612,7 +626,7 @@ export class Plugin {
       setInterval(() => {
         this.drowse();
         void this.scan().catch(log);
-        void this.sendLinkRequests().catch(log);
+        void this.sendAsks().catch(log);
       }, SYNC_INTERVAL_MS),
       setInterval(() => {
         void this.refreshHarnesses().then(() => this.updateLevel()).then(() => this.pollPulls()).catch(log);
@@ -722,70 +736,111 @@ export class Plugin {
   }
 
   /**
-   * Files a request, from `webchat-agent link`, for the serving agent to send its owner: a file, since
-   * the account belongs to the serving process, which this command must not race. Returns what to tell the one who typed it.
+   * Files a request, from `webchat-agent link` or `connect`, for the serving agent to send its owner:
+   * a file, since the account belongs to the serving process, which this command must not race.
    */
+  private async fileAsk(filed: Filed) {
+    const dir = path.join(this.options.dataDir, 'asks');
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    await fs.writeFile(path.join(dir, `${randomUUID()}.json`), JSON.stringify({ ...filed, at: Date.now() }));
+  }
+
+  /** Returns what to tell the one who typed `webchat-agent link`. */
   async requestLink(name: string) {
     const stored = JSON.parse(await fs.readFile(this.file('setup.json'), 'utf8').catch(() => 'null')) as { choice?: SetupChoice } | null;
     if (stored?.choice?.linked?.includes(name) && !stored.choice.off?.includes(name)) return `${name} is linked already.`;
-    const dir = path.join(this.options.dataDir, 'links');
-    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-    await fs.writeFile(path.join(dir, `${randomUUID()}.json`), JSON.stringify({ harness: name, at: Date.now() }));
+    await this.fileAsk({ kind: 'link', harness: name });
     return `Asked your agent to link ${name}. Approve it in WebChat under Coding agents, within 10 minutes. The agent must be running: see \`webchat-agent status\`.`;
   }
 
   /**
-   * Sends the owner each request `webchat-agent link` filed, as a sealed `ask` in their direct chat,
-   * and keeps what it asked by the message's client id. Only a harness this agent supports, as the
-   * file's text never reaches the page; a stale file, a linked harness and a second request for one
-   * that waits are dropped.
+   * Asks the owner to connect this folder, for `webchat-agent connect`: it marks nothing, and the
+   * serving agent does when the owner approves in WebChat (docs/decisions/connect-approval.md).
    */
-  async sendLinkRequests() {
-    const dir = path.join(this.options.dataDir, 'links');
+  async requestConnect() {
+    const { dataDir, projectDir } = this.options;
+    const repo = await originOf(projectDir);
+    if (!repo) return NO_REPOSITORY;
+    if (!existsSync(path.join(dataDir, 'account.json'))) return 'This agent is not paired, so there is no owner to ask. Pair first: see `webchat-agent setup`.';
+    if ((await fs.readFile(markOf(dataDir, repo), 'utf8').catch(() => '')) === projectDir) return `${repo} is connected to this folder already.`;
+    await this.fileAsk({ kind: 'connect', repo, dir: projectDir });
+    return `Asked your agent's owner to connect ${repo} in ${shown(projectDir)}. They approve it in WebChat under Coding agents, within 10 minutes; nothing changes until then. The agent must be running: see \`webchat-agent status\`.`;
+  }
+
+  /**
+   * Sends the owner each request the commands filed, as a sealed `ask` in their direct chat, and
+   * keeps what it asked by the message's client id. A stale file, a harness already linked, a
+   * folder that no longer pushes to its repository or is connected already, and a second request for
+   * what waits are dropped. Only a harness this agent supports gets through, as the file's text
+   * never reaches the page.
+   */
+  async sendAsks() {
+    const dir = path.join(this.options.dataDir, 'asks');
     const chat = this.ownerChat();
     const names = await fs.readdir(dir).catch(() => [] as string[]);
     if (!names.length || chat === undefined) return;
-    const links = (this.setup.links ??= {});
+    const asks = (this.setup.asks ??= {});
     const now = Date.now();
-    for (const [id, link] of Object.entries(links)) if (now - link.at > 60 * 60_000) delete links[id];
+    for (const [id, ask] of Object.entries(asks)) if (now - ask.at > 60 * 60_000) delete asks[id];
     for (const name of names) {
       const file = path.join(dir, name);
-      const filed = JSON.parse(await fs.readFile(file, 'utf8').catch(() => 'null')) as { harness?: unknown; at?: unknown } | null;
+      const filed = JSON.parse(await fs.readFile(file, 'utf8').catch(() => 'null')) as Filed | null;
       await fs.rm(file, { force: true });
-      const harness = this.harnesses.find((h) => h.name === filed?.harness);
-      if (!harness || typeof filed?.at !== 'number' || now - filed.at > REQUEST_TTL_MS || this.isLinked(harness)) continue;
-      if (Object.values(links).some((l) => l.harness === harness.name && now - l.at <= REQUEST_TTL_MS)) continue;
-      const sent = await this.client!.send(chat, { text: `Link ${harness.name} on this laptop? Approve or decline it in WebChat, under Coding agents.`, ask: { kind: 'link', step: 'request', harness: harness.name } });
-      links[sent.clientId!] = { harness: harness.name, at: now };
+      if (typeof filed?.at !== 'number' || now - filed.at > REQUEST_TTL_MS) continue;
+      const what = filed.kind === 'link' ? this.harnesses.find((h) => h.name === filed.harness && !this.isLinked(h))?.name : filed.kind === 'connect' ? await this.connectable(filed) : undefined;
+      if (!what || Object.values(asks).some((a) => a.kind === filed.kind && a.what.toLowerCase() === what.toLowerCase() && now - a.at <= REQUEST_TTL_MS)) continue;
+      const [text, ask]: [string, AskDTO] =
+        filed.kind === 'link'
+          ? [`Link ${what} on this laptop? Approve or decline it in WebChat, under Coding agents.`, { kind: 'link', step: 'request', harness: what }]
+          : [`Connect ${what} in ${shown(filed.dir)}? Approve or decline it in WebChat, under Coding agents.`, { kind: 'connect', step: 'request', repo: what, folder: shown(filed.dir) }];
+      const sent = await this.client!.send(chat, { text, ask });
+      asks[sent.clientId!] = { kind: filed.kind, what, ...(filed.kind === 'connect' && { dir: filed.dir }), at: now } as Asked;
       await this.keepSetup();
     }
   }
 
+  /** The repository a connect request names, when its folder is still a checkout of it and not marked yet. */
+  private async connectable(filed: Extract<Filed, { kind: 'connect' }>) {
+    const repo = await originOf(filed.dir);
+    if (repo?.toLowerCase() !== String(filed.repo).toLowerCase()) return;
+    return (await fs.readFile(markOf(this.options.dataDir, repo), 'utf8').catch(() => '')) === filed.dir ? undefined : repo;
+  }
+
   /**
-   * Links the harness its owner approves, for the request this agent sent: the one it recorded, never
-   * a name from the message. Only the owner's word counts, once (D-089, K-47), and a request answers
-   * only within 10 minutes. A decline links nothing.
+   * Acts on the owner's answer to a request this agent sent: what it recorded, never a name from the
+   * message, except that a connect's approval must repeat the repository and folder the owner saw.
+   * Only the owner's word counts, once (D-089, K-47), and a request answers only within 10 minutes
+   * of its sending. A decline changes nothing.
    */
   private async askOnWord(message: OpenedMessage) {
     const { ask } = message.content!;
-    if (ask?.kind !== 'link' || (ask.step !== 'approve' && ask.step !== 'decline') || !this.fromOwner(message, ask.sentAt)) return;
-    const asked = this.setup.links?.[ask.to];
-    if (!asked) return;
-    delete this.setup.links![ask.to];
-    const send = (text: string, step: 'done' | 'failed') => this.client!.send(message.conversationId, { text, ask: { kind: 'link', step, to: ask.to } });
-    const harness = this.harnesses.find((h) => h.name === asked.harness);
-    const fresh = Date.now() - asked.at <= REQUEST_TTL_MS;
-    if (!fresh) await send('That request is older than 10 minutes. Run `webchat-agent link` again.', 'failed');
-    const link = fresh && ask.step === 'approve' && harness;
-    if (link) {
+    if (!message.clientId || !ask || (ask.step !== 'approve' && ask.step !== 'decline') || !this.fromOwner(message, ask.sentAt)) return;
+    const asked = this.setup.asks?.[ask.to];
+    if (asked?.kind !== ask.kind) return;
+    delete this.setup.asks![ask.to];
+    const dir = asked.dir ?? '';
+    const send = (text: string, step: 'done' | 'failed') => this.client!.send(message.conversationId, { text, ask: { kind: asked.kind, step, to: ask.to } });
+    const again = `Run \`webchat-agent ${asked.kind}\` again.`;
+    const stale = Date.now() - asked.at > REQUEST_TTL_MS;
+    const changed = ask.step === 'approve' && ask.kind === 'connect' && (ask.repo !== asked.what || ask.folder !== shown(dir));
+    if (stale || changed) await send(stale ? `That request is older than 10 minutes. ${again}` : `That approval names another repository or folder than the request did, so I connect nothing. ${again}`, 'failed');
+    const approved = ask.step === 'approve' && !stale && !changed;
+    const harness = approved && asked.kind === 'link' && this.harnesses.find((h) => h.name === asked.what);
+    if (harness) {
       const { linked = [], off = [] } = this.setup.choice;
-      this.setup.choice = { ...this.setup.choice, linked: [...linked.filter((n) => n !== link.name), link.name], off: off.filter((n) => n !== link.name) };
+      this.setup.choice = { ...this.setup.choice, linked: [...linked.filter((n) => n !== harness.name), harness.name], off: off.filter((n) => n !== harness.name) };
     }
     await this.saveSetup();
-    if (!link) return;
-    await this.updateLevel();
-    await send(`Linked ${link.name}.`, 'done');
-    await this.sendSetupState(message.conversationId, message.clientId!);
+    if (harness) {
+      await this.updateLevel();
+      await send(`Linked ${harness.name}.`, 'done');
+      await this.sendSetupState(message.conversationId, message.clientId);
+    } else if (approved && asked.kind === 'connect') {
+      // The folder may have moved or changed its origin since it asked.
+      if ((await originOf(dir))?.toLowerCase() !== asked.what.toLowerCase()) return void (await send(`${shown(dir)} is no longer a checkout of ${asked.what}, so I connect nothing. ${again}`, 'failed'));
+      await this.mark(asked.what, dir);
+      await send(`Connected ${asked.what}: I work in ${shown(dir)}.`, 'done');
+    }
   }
 
   /** Notes that its owner added a proposal's draft to the board, so the next copy drops its file (R-040). */
@@ -1451,15 +1506,20 @@ export class Plugin {
     // Questions need no GitHub login, so connecting does not wait for one.
     const github = (await signedIn()) ? '' : ` ${GITHUB}`;
     const repo = await originOf(this.options.projectDir);
-    if (!repo) return `This folder is no GitHub repository, so there is nothing to connect here. Your agent works in every folder it knows, and offers to clone the others when you ask it in WebChat.${github}`;
-    const mark = markOf(this.options.dataDir, repo);
-    await fs.mkdir(path.dirname(mark), { recursive: true, mode: 0o700 });
-    await fs.writeFile(mark, this.options.projectDir);
-    if (this.client) await this.scan();
+    if (!repo) return `${NO_REPOSITORY}${github}`;
+    await this.mark(repo, this.options.projectDir);
     const paired = existsSync(path.join(this.options.dataDir, 'account.json'));
     let next = paired ? ' Ask your agent about it in WebChat, or hand it cards on the board.' : ' Now approve the agent in WebChat, in the window that shows the code.';
     if (!paired && !this.options.code) next = ' To pair the agent, choose Connect coding agent in WebChat, then type /plugin configure webchat@webchat here and paste the code.';
     return `Connected ${repo}: your agent works in this folder.${next}${github}`;
+  }
+
+  /** Writes the mark that names a repository's folder, and reads the marks again when this window serves. */
+  private async mark(repo: string, dir: string) {
+    const mark = markOf(this.options.dataDir, repo);
+    await fs.mkdir(path.dirname(mark), { recursive: true, mode: 0o700 });
+    await fs.writeFile(mark, dir);
+    if (this.client) await this.scan();
   }
 
   /** Removes the folder's mark, never its files. */

@@ -239,7 +239,7 @@ describe('end-to-end encryption', () => {
     assert.deepEqual(await open({ text: 'Hi' }), { text: 'Hi' }, 'a message without it opens as before');
   });
 
-  test('a link request and its answer travel inside the envelope, and a malformed one is dropped (docs/decisions/harness-linking.md)', async () => {
+  test('a link or connect request and its answer travel inside the envelope, and a malformed one is dropped (docs/decisions/harness-linking.md)', async () => {
     const key = await importChatKey(newChatKeyBytes());
     const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'l1' };
     const open = async (content: object) => decryptContent(key, alice.identity.publicKeys.sign, meta, await encryptMessage(key, newKeyId(), alice.identity.signPrivate, meta, content as MessageContent));
@@ -249,8 +249,12 @@ describe('end-to-end encryption', () => {
       { kind: 'link', step: 'decline', to: 'c1', sentAt: 5 },
       { kind: 'link', step: 'done', to: 'c1' },
       { kind: 'link', step: 'failed', to: 'c1', note: 'Too old.' },
+      { kind: 'connect', step: 'request', repo: 'acme/app', folder: '~/code/app' },
+      { kind: 'connect', step: 'approve', to: 'c1', sentAt: 5, repo: 'acme/app', folder: '~/code/app' },
+      { kind: 'connect', step: 'decline', to: 'c1', sentAt: 5 },
+      { kind: 'connect', step: 'done', to: 'c1' },
     ]) assert.deepEqual((await open({ text: 'x', ask })).ask, ask);
-    for (const ask of [{ kind: 'link', step: 'request' }, { kind: 'link', step: 'approve', to: 'c1' }, { kind: 'link', step: 'approve', to: 'c1', sentAt: 0 }, { kind: 'link', step: 'remove', to: 'c1' }, { kind: 'connect', step: 'request', harness: 'Codex' }, 'link']) {
+    for (const ask of [{ kind: 'link', step: 'request' }, { kind: 'link', step: 'approve', to: 'c1' }, { kind: 'link', step: 'approve', to: 'c1', sentAt: 0 }, { kind: 'link', step: 'remove', to: 'c1' }, { kind: 'connect', step: 'request', harness: 'Codex' }, { kind: 'connect', step: 'request', repo: '../x', folder: '~/app' }, { kind: 'connect', step: 'request', repo: 'acme/app' }, { kind: 'connect', step: 'approve', to: 'c1', sentAt: 5, repo: 'acme/app' }, 'link']) {
       assert.deepEqual(await open({ text: 'x', ask }), { text: 'x' });
     }
   });

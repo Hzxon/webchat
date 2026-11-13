@@ -73,7 +73,7 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
   else if (loaded?.card && !startable(loaded.card, meName) && loaded.card.status !== workingStatus(meName)) blocked = loaded.card.owner === undefined ? 'Only an open or Ready card runs.' : 'Only a Ready card runs, and only its owner marks it ready.';
   else if (!seat) blocked = 'Your agent is not in this project. Add it under the project’s people, then start.';
   else if (!seat.online) blocked = `${asleep(seat.lastSeen)}. ${WAKE}`;
-  else if (!runsCards(seat.protocol)) blocked = `${short(seat.repo)} can’t take cards yet. Link Claude Code in Agent settings, or in Claude Code on your laptop type /webchat:connect: it says what is missing.`;
+  else if (!runsCards(seat.protocol)) blocked = `${short(seat.repo)} can’t take cards yet. Link Claude Code in Agent settings, or in Claude Code on your laptop type /webchat:connect: it says what is missing. The webchat-agent service connects a folder by running webchat-agent connect there, which you approve here.`;
   else if (lock) blocked = `${senderName(users, lock.userId)} is editing this card. Start once they are done, so your agent gets all of it.`;
 
   async function start() {

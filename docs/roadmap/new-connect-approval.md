@@ -1,6 +1,6 @@
 ### R: Connect a folder only on the owner's approval in WebChat
 
-Status: Idea. Proposed 2026-11-12 from the agent host design.
+Status: Done in #202.
 
 Order: after docs/roadmap/new-agent-setup.md.
 

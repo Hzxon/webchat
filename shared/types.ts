@@ -773,14 +773,18 @@ export interface CardNoteDTO {
 
 /**
  * A request from the owner's laptop that the owner approves on their page, and the approval, in
- * their direct chat, sealed (docs/decisions/harness-linking.md). `kind` says what is asked; each
- * kind has its own steps. The laptop's `request` names what it asks, and the approval or decline
- * names the request by its message's client id (`to`) with the signed time it was sent.
+ * their direct chat, sealed (docs/decisions/harness-linking.md, docs/decisions/connect-approval.md).
+ * `kind` says what is asked; each kind has its own steps. The laptop's `request` names what it asks,
+ * and the approval or decline names the request by its message's client id (`to`) with the signed
+ * time it was sent. A connect's approval also signs the repository and the folder the owner saw.
  */
 export type AskDTO =
   | { kind: 'link'; step: 'request'; harness: string }
-  | { kind: 'link'; step: 'approve' | 'decline'; to: string; sentAt: number }
-  | { kind: 'link'; step: 'done' | 'failed'; to: string; note?: string };
+  | { kind: 'connect'; step: 'request'; repo: string; folder: string }
+  | { kind: 'link'; step: 'approve'; to: string; sentAt: number }
+  | { kind: 'connect'; step: 'approve'; to: string; sentAt: number; repo: string; folder: string }
+  | { kind: 'link' | 'connect'; step: 'decline'; to: string; sentAt: number }
+  | { kind: 'link' | 'connect'; step: 'done' | 'failed'; to: string; note?: string };
 
 /**
  * A pull request shared into a chat: a snapshot of how it stood when it was shared. It travels
