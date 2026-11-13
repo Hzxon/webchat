@@ -4,11 +4,51 @@ This file is a copy of the Roadmap column of the project's board in WebChat, whi
 
 ## Running
 
-### R-045: The Coding agents row's name says nothing of board work
+### R-005: Photos and files
+
+Status: Running: Hzxon/webchat#236.
+
+Checked: 2026-11-14. Read R-005 and D-123 as on the board now and D-037; the card's facts were checked against shared/types.ts, server/app.ts, server/api.ts, vercel.json, package.json and server/migrations at 7305298, not reread this turn. Open pull request #229 by title only.
+
+Why: students share drafts, slides and screenshots. WebChat sends text only.
+
+Scope:
+
+- The message box takes a photo or a file of an allowed type: JPEG, PNG, WebP, GIF, PDF, Word, PowerPoint, Excel, plain text and zip. No programs, scripts, HTML or SVG.
+- The page resizes a photo to at most 1600 pixels and encodes it again before upload, which also removes its GPS position and device details. Any other file is at most 10 MB (`LIMITS`, D-011).
+- The browser encrypts the file with a random AES-256-GCM key of its own and uploads only the ciphertext.
+- The message is an ordinary message of kind "message" whose sealed content carries a `file` field: the file's id, key, name, type and size, and for a photo its width, height and a tiny blurred preview. Its text says the same in words, so an older page, a push and the chat list show something, as with `pull` (D-042). The signature covers it (D-016), and the server never sees the name, the key or the preview.
+- The page asks the server for an upload address, uploads, then sends the message. To show a file it asks for a download address, which the server gives only to a member of the file's chat.
+- The receiving page checks every file after it decrypts it: the type must be on the list, and the file's first bytes must match the type its name claims. It refuses any other file with a note, whatever the sender's page did.
+- A photo shows inline through `<img>`. Every other file shows as its name and size with a download button, and is never opened inside the page.
+- The server drops a file 7 days after it was sent. The message stays: it shows the name, the size and the preview with "No longer on the server". The page tells from the message's time and asks for nothing. The message box says "Kept for 7 days" when a file is attached.
+- A photo whose upload or send failed stays on the device with the unsent message, for a retry (D-051).
+- Deleting a chat, a channel, a project or an account also deletes the stored ciphertext of its files (D-039, D-088, D-096). An upload that no message followed is deleted after an hour.
+
+Constraints:
+
+- Vercel Functions accept request bodies of at most 4.5 MB, so on Vercel the ciphertext goes from the browser straight to a private Vercel Blob store through a presigned URL, which enforces the size. A self-hosted server takes the upload on a route of its own and keeps the ciphertext on disk. The page uploads to whatever address the server answers (D-005).
+- Free hosting (D-003): Hobby includes 1 GB of storage, 2,000 uploads and 10 GB of downloads a month, shared with the rest of the project, and a store that goes over is blocked for 30 days. The server counts uploads and stored bytes and refuses a new upload before either limit.
+- No scheduler: the server refuses a download address for a file older than 7 days, and deletes expired ciphertext when it next gives an upload address.
+- No scan on the server: it holds only ciphertext (D-014). The README says that nobody scans files and that the checks above catch a wrong type, not malware inside an allowed one.
+- The Content Security Policy must allow the storage hosts in `connect-src` and `blob:` in `img-src`, in `vercel.json` and `server/app.ts` together (D-009).
+- The server learns who uploaded a file, to which chat, when and how large, and the storage service holds the ciphertext. D-020 and the README list that.
+- A new `files` table ties each file to its chat, in a new migration (D-010). The upload does not go through `request`, whose timer would cut a slow upload after a minute (D-077).
+- Tests run against a fake storage service and check that no plain text and no key reaches it (D-036).
+
+Needs D-123.
+
+Not yet confirmed: that a browser can fetch a presigned Blob URL from the page's origin (CORS), and which host a presigned upload goes to. Try both in a short spike before the rest.
+
+Done when, with two accounts that share a chat, one sending and the other receiving:
+
+- The first sends a photo and a PDF and the sec
+
+### R-045: R-045: The Coding agents row's name says nothing of board work
 
 Status: In review: Hzxon/webchat#227.
 
-Checked: 2026-11-14. Read R-045, K-69, K-72 and the other cards, D-103, D-104, D-116 and D-117; Sidebar.tsx, agents.ts, AgentDraft.tsx, test/agents.test.ts and CHANGELOG 0.11.0 on main at e7bdfac, which has the change from #227; open pull requests #228 and #229 by title only. Tests not run.
+Checked: 2026-11-14. Read R-045, the other cards, D-103/D-104/D-116/D-117, Sidebar.tsx, agents.ts and test/agents.test.ts on main at 7305298; open PR #229 by title only; tests not run.
 
 Why: proposal drafts from a linked repository (D-117) sit in threads under Chats, in the row "Coding agents", named `Proposed in <repo>: <file>`. An owner who looks for board work does not think of that row. K-72 points the owner's board at the drafts, but the row itself still read as chats with an agent only.
 
@@ -16,76 +56,9 @@ Scope: the row's subtitle says when proposals wait, such as "3 proposals wait fo
 
 Done when: with a proposal draft not yet added, the Coding agents row says so, and it stops once the draft is added. `test/agents.test.ts` proves the count.
 
-### R-046: A run checks its work in a browser that reaches only its own dev server
-
-Status: In review: part 1, the browser, in #235; part 2, screenshots sealed to the owner, waits. Proposed by the owner on 2026-11-14.
-
-Order: after K-73 (#233).
-
-Why: AGENTS.md asks for a browser check with two accounts, at desktop width and 375 pixels, in
-light and dark, and for screenshots in the pull request. A run cannot do either. Its tools are the
-shell, the file tools, web search and web fetch (`agent/claude.ts`), its only MCP server is the
-approval tool, and its shell reaches only the npm registry. So the owner does the visual check by
-hand, and the model never sees what it built.
-
-Scope:
-
-- The runner adds `chrome-devtools-mcp` to the `--mcp-config` file, beside the approval tool. Setup
-  installs one pinned version; a run never fetches it. It runs headless with a temporary profile,
-  never the owner's, and with usage statistics, CrUX lookups, update checks and `file:` navigation
-  off. It launches Chrome itself, so no debugging port is open for the shell to drive.
-- Chrome sends every request, loopback included, through a proxy in the runner. The proxy passes
-  only `localhost` names and loopback addresses, on the ports the run's dev server opened.
-- The rulebook allows a named list of the server's tools: pages, input, resize and emulate, the
-  snapshot, the screenshot, console and network lists, and script evaluation. Any other tool is
-  refused, so a new version adds nothing silently. A `url` must be loopback on a run port. An
-  argument that names a file, such as `filePath` or `filePaths`, is judged as a path, so it stays
-  in the working folders.
-- The runner starts the dev server, not the model's shell, as the owner decided on 2026-11-14. The
-  model asks for it through a tool of WebChat's own, naming the command. The runner picks free
-  ports, so two runs do not clash on 3000 and 5173, and runs the command in a sandbox it owns: it
-  writes only the working folder, binds only those ports, and connects to nothing but them. It
-  ends with the turn.
-- Screenshots go back to the model and, sealed, to the owner in the run's thread. The pull request
-  says they are there.
-
-Constraints: screenshots are content, so they travel sealed (rule 1). The dev server is the
-model's code, so the runner never starts it as a plain process of the owner: that would run a
-teammate-steered model's code outside every sandbox. Claude Code's own sandbox cannot hold it
-either: its `network.allowLocalBinding` opens every loopback port of the laptop, such as another
-project's dev server or a local database, and does nothing on Linux, where a sandboxed command's
-`localhost` is private to it (code.claude.com/docs/en/sandboxing, read 2026-11-13). So the runner's
-sandbox names the ports: a profile of WebChat's own on macOS, and on Linux a network namespace
-that the dev server and the browser share. The model's shell keeps no local network, so it checks
-the server through the browser's tools, not `curl`. Web Push cannot be tested, since it needs a
-push service outside the laptop. Claude Code only: Codex and ACP agents need the same filter by
-another route.
-
-Cost: a sandbox WebChat owns and must keep working on two systems, which
-docs/decisions/new-sandbox-owned.md once dropped. A dependency to pin and watch, with 63 tools at
-this reading, of which the default set goes into every turn's context. A Chrome per run, a few
-hundred MB of memory, started at first use and ended with the turn.
-
-Done when: on macOS, a card run that changes the client starts the dev server, opens it as two
-accounts on `alice.localhost` and `bob.localhost`, and the owner gets screenshots at desktop width
-and 375 pixels, light and dark, with no question asked; tests show the proxy refusing another host
-and another port, the dev server failing to reach a port that is not its own, and the rulebook
-refusing a `file:` URL, a file path outside the folder and a tool off the list.
+Status to set by hand: `Done in Hzxon/webchat#227`.
 
 ## Ready
-
-### R-005: Photos and files
-
-Status: Planned.
-
-Why: students share drafts, slides and screenshots. WebChat sends text only.
-
-Scope: the browser encrypts each file with a key of its own and uploads only the ciphertext. The
-message carries the file's address and key inside its envelope.
-
-Constraints: Vercel Functions accept request bodies of at most 4.5 MB, so files go from the browser
-straight to a storage service, such as Vercel Blob with private access. The Content Security Policy
-allows connections only to the site itself, so it must also allow the storage service (D-009).
 
 ### R-014: Cards for pasted pull request links
 
@@ -211,23 +184,81 @@ Constraints: a knob is offered only when the adapter honors it without running c
 
 Done when: a Claude Code agent behaves as before and the tests pass; Settings lists the harnesses the laptop has, each with its state and knobs; a card run and a conversation each show the harness the owner picked; a request from an old page runs on the host harness; a request naming a harness that is not enabled fails with the reason.
 
+### R-046: A run checks its work in a browser that reaches only its own dev server
+
+Status: Open: part 1, the browser, in #235; part 2, screenshots sealed to the owner, waits. Proposed by the owner on 2026-11-14.
+
+Order: after K-73 (#233).
+
+Why: AGENTS.md asks for a browser check with two accounts, at desktop width and 375 pixels, in
+light and dark, and for screenshots in the pull request. A run cannot do either. Its tools are the
+shell, the file tools, web search and web fetch (`agent/claude.ts`), its only MCP server is the
+approval tool, and its shell reaches only the npm registry. So the owner does the visual check by
+hand, and the model never sees what it built.
+
+Scope:
+
+- The runner adds `chrome-devtools-mcp` to the `--mcp-config` file, beside the approval tool. Setup
+  installs one pinned version; a run never fetches it. It runs headless with a temporary profile,
+  never the owner's, and with usage statistics, CrUX lookups, update checks and `file:` navigation
+  off. It launches Chrome itself, so no debugging port is open for the shell to drive.
+- Chrome sends every request, loopback included, through a proxy in the runner. The proxy passes
+  only `localhost` names and loopback addresses, on the ports the run's dev server opened.
+- The rulebook allows a named list of the server's tools: pages, input, resize and emulate, the
+  snapshot, the screenshot, console and network lists, and script evaluation. Any other tool is
+  refused, so a new version adds nothing silently. A `url` must be loopback on a run port. An
+  argument that names a file, such as `filePath` or `filePaths`, is judged as a path, so it stays
+  in the working folders.
+- The runner starts the dev server, not the model's shell, as the owner decided on 2026-11-14. The
+  model asks for it through a tool of WebChat's own, naming the command. The runner picks free
+  ports, so two runs do not clash on 3000 and 5173, and runs the command in a sandbox it owns: it
+  writes only the working folder, binds only those ports, and connects to nothing but them. It
+  ends with the turn.
+- Screenshots go back to the model and, sealed, to the owner in the run's thread. The pull request
+  says they are there.
+
+Constraints: screenshots are content, so they travel sealed (rule 1). The dev server is the
+model's code, so the runner never starts it as a plain process of the owner: that would run a
+teammate-steered model's code outside every sandbox. Claude Code's own sandbox cannot hold it
+either: its `network.allowLocalBinding` opens every loopback port of the laptop, such as another
+project's dev server or a local database, and does nothing on Linux, where a sandboxed command's
+`localhost` is private to it (code.claude.com/docs/en/sandboxing, read 2026-11-13). So the runner's
+sandbox names the ports: a profile of WebChat's own on macOS, and on Linux a network namespace
+that the dev server and the browser share. The model's shell keeps no local network, so it checks
+the server through the browser's tools, not `curl`. Web Push cannot be tested, since it needs a
+push service outside the laptop. Claude Code only: Codex and ACP agents need the same filter by
+another route.
+
+Cost: a sandbox WebChat owns and must keep working on two systems, which
+docs/decisions/new-sandbox-owned.md once dropped. A dependency to pin and watch, with 63 tools at
+this reading, of which the default set goes into every turn's context. A Chrome per run, a few
+hundred MB of memory, started at first use and ended with the turn.
+
+Done when: on macOS, a card run that changes the client starts the dev server, opens it as two
+accounts on `alice.localhost` and `bob.localhost`, and the owner gets screenshots at desktop width
+and 375 pixels, light and dark, with no question asked; tests show the proxy refusing another host
+and another port, the dev server failing to reach a port that is not its own, and the rulebook
+refusing a `file:` URL, a file path outside the folder and a tool off the list.
+
 ## Known issues
 
 ### K-69: An agent's board messages buzz the owner's phone and count as unread
 
 Status: Open. Found on 2026-11-07 in the review of #167 (R-040).
 
-Checked: 2026-11-14. Read K-69 and the other cards, the held decisions (D-016, D-020, D-030, D-117), docs/roadmap/K-69.md, docs/decisions/quiet-sync-messages.md and D-020.md, server/notify.ts, bark.ts, api.ts, db.ts, migration 23, agent/client.ts, sw.ts and the tests on main at 040ba5d; tests not run. Open pull request #229 read by title only.
+Checked: 2026-11-14. Read K-69, the other cards, D-016, D-020, D-030 and D-117; shared/types.ts, server/notify.ts, server/api.ts, agent/client.ts, migration 23 and docs/decisions/quiet-sync-messages.md on main at 7305298; open pull requests #237, #236 and #229 by title only; tests not run.
 
-Main has the fix since #198 (checked at 040ba5d). Set the status line to `Fixed in Hzxon/webchat#198` by hand, or add the proposal from `docs/roadmap/K-69.md`, which carries that status: a draft from a conversation keeps the status as written.
+Status: Fixed in Hzxon/webchat#198. Found on 2026-11-07 in the review of #167 (R-040).
+
+
 
 Seen: when the owner links a board, their agent sends the repository's entries in several messages. It also sends one each time the cards that open pull requests claim change. Each was an ordinary message in the owner's direct chat with the agent. The server pushed it and counted it as unread, so the Coding agents row showed a badge, and a phone whose tabs were closed buzzed. The page only kept them from raising a toast (`shouldAlert` in `client/src/chat.ts`).
 
 Cause: the server knew the message kinds message, reaction and github, and only a reaction stayed quiet (`server/notify.ts`, and the unread counts in `server/db.ts`).
 
-Fix: a quiet message kind, `sync` (`MessageKind` in `shared/types.ts`, migration 23). The server pushes and counts it as it does a reaction (D-030): no push unless the owner looks at a tab, no Bark alert, never unread, and no new chat preview (`server/notify.ts`, `server/bark.ts`, `server/db.ts`, `client/src/sw.ts`). It refuses an urgent one (`server/api.ts`). The agent sends its entries, claims and failed links with it, and a proposal stays an ordinary message, since it is news to the owner (`send` in `agent/client.ts`). Against a server that answers `Unknown message kind.`, the agent sends the message as before. The kind is signed into the envelope (D-016), so rule 2 of AGENTS.md holds.
+Fix, on main in #198: a quiet message kind, `sync` (`MessageKind` in `shared/types.ts`, migration 23). The server pushes and counts it as it does a reaction (D-030): no push unless the owner looks at a tab, no Bark alert, never unread, and no new chat preview (`server/notify.ts`, `server/bark.ts`, `server/db.ts`, `client/src/sw.ts`). It refuses an urgent one (`server/api.ts`). The agent sends its entries, claims and failed links with it, and a proposal stays an ordinary message, since it is news to the owner (`send` in `agent/client.ts`). Against a server that answers `Unknown message kind.`, the agent sends the message as before. The kind is signed into the envelope (D-016), so rule 2 of AGENTS.md holds.
 
-Decision: the quiet-sync decision, Proposed in #198 as `docs/decisions/quiet-sync-messages.md`, is not on the board yet and has no number. The server now sees which messages are board traffic; `docs/decisions/D-020.md` adds that to D-020, and the board's D-020 does not have the line yet.
+Decision: the quiet-sync decision is Proposed in `docs/decisions/quiet-sync-messages.md` and has no number on the board yet. The server now sees which messages are board traffic; `docs/decisions/D-020.md` adds that to D-020, and the board's D-020 does not have the line yet. The owner adds the decision from its proposal file.
 
 Tests: `test/chat.test.ts` (no push, never unread, no new preview, never urgent) and `test/agent.test.ts` (entries and claims go as `sync`).
 

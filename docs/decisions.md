@@ -1829,6 +1829,18 @@ local program could take one first, and the browser would reach it. chrome-devto
 outside every sandbox, as any local MCP server does, so its tool list and path checks carry the
 weight. A release that changes the pin needs setup again.
 
+### D-123: Files are ciphertext in a storage service for 7 days, and the receiving device checks them
+
+Status: Proposed.
+
+Checked: 2026-11-14. Read the held decisions (D-003, D-005, D-009, D-011, D-014, D-016, D-020, D-026, D-042) and the cards; server/app.ts, vercel.json and shared/types.ts at 7305298; Vercel's Blob pricing, private storage and signed URL pages. Open pull request #229 by title only.
+
+A photo or file (R-005) is encrypted in the browser with a random AES-256-GCM key of its own. The key, name, type and a photo's tiny preview travel only inside the message's sealed content, as a `file` field next to its text (D-042, D-016). The server keeps a row per file in `files`: its chat, uploader, size, time and place in the storage. It gives an upload address to a member of the chat, and a download address only to a member, for 7 days after the upload. On Vercel both are presigned URLs of a private Vercel Blob store; a self-hosted server serves both from a route of its own and a folder on disk. The server deletes expired ciphertext when it next gives an upload address, and the message stays. Nobody scans a file. The receiving page takes only listed types whose first bytes match their name, shows photos through `<img>` alone, and offers every other file only as a download. Photos are resized to 1600 pixels, other files are at most 10 MB (D-011), and uploads stop at 1,800 a month or 900 MB stored.
+
+Why: a Vercel Function takes at most 4.5 MB, and Hobby's Blob store is blocked for 30 days past 1 GB or 2,000 uploads a month (D-003). A scan needs the plain file, which the server never has (D-014), and a check on the sender's page stops no attacker.
+
+Cost: a file older than 7 days is gone for everyone, new members included (D-026). The checks catch a wrong type, not malware inside an allowed one; the device's own protection is the only scanner. The server sees who uploaded a file, to which chat, when and how large, and Vercel holds the ciphertext (D-020). The policy of D-009 gains the storage hosts and `blob:` images. Expired ciphertext stays in the store until the next upload.
+
 ## Superseded
 
 ### D-028: No leaving or removal before key rotation
