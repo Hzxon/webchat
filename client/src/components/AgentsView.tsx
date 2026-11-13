@@ -15,6 +15,7 @@ import { AlertIcon, BackIcon, PlusIcon, SendIcon, SlidersIcon, TerminalIcon } fr
 import { AgentBrief } from './AgentBrief';
 import { AgentDialog } from './AgentDialog';
 import { AgentDraft } from './AgentDraft';
+import { AgentLinkAsks } from './AgentLinkAsk';
 import { AgentSetup } from './AgentSetup';
 import { HarnessPicker, useHarnessPick } from './HarnessPicker';
 import { Markdown } from './Markdown';
@@ -127,7 +128,10 @@ export function AgentsView() {
           </button>
         </div>
       ) : (
-        <ProjectList threads={threads} chats={chats} />
+        <>
+          <AgentLinkAsks />
+          <ProjectList threads={threads} chats={chats} />
+        </>
       )}
       {connecting && <AgentDialog onClose={() => setConnecting(false)} />}
       {setting && <AgentSetup onClose={() => setSetting(false)} />}
@@ -211,7 +215,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
   const repos = project ? choicesOf(project.id) : [];
   const repo = repos.find((r) => r === picked.repo) ?? repos[0];
   const agent = project && agentIn(project.id);
-  const { list, harness, pick } = useHarnessPick(agent);
+  const { list, harness, pick } = useHarnessPick(agent, true);
   // With no repository, the agent answers from the board alone, on its laptop (R-038).
   const blocked = !agent ? 'Add your agent to one of your projects first: Add it, below.' : blockedBy(seatFor(agent, repo ?? ''));
   const loading = !!project && !linked[project.id];

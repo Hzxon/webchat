@@ -18,7 +18,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
 import { cardsOf, copyOf, entriesOf, proposalOf, readCard, usernamesOf } from '../shared/board.ts';
-import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, SKILL_NAME, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
+import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, SKILL_NAME, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type PairingPick, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
 import { AgentClient, checkInEvery, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
 import type { Harness } from './harness.ts';
@@ -79,10 +79,15 @@ export interface PluginOptions {
   /** Where the agent clones a repository its owner asks for: `~/WebChat` (D-108). */
   cloneRoot: string;
   /**
-   * The coding agents whose turns run cards and answer questions, as the laptop has them. The owner
-   * names one in each request; the first is the host, which takes the turns no request names one for.
+   * Every coding agent WebChat supports, as the laptop has it, with no program for one it lacks.
+   * The owner links each, and names one in each request; a request that names none runs on the
+   * first linked.
    */
   harnesses: Harness[];
+  /** Finds the harnesses again, which `harnesses` holds as found when the host started: every minute, so one installed later shows (docs/decisions/harness-linking.md). */
+  find?: () => Promise<Harness[]>;
+  /** The names of the harnesses a pairing asks to link. Left out, every harness the laptop has that is not known to be signed out. */
+  picks?: string[];
   /** A background job of Claude Code: it never serves, so closing the window you work in puts the agent to sleep (K-66). */
   job?: boolean;
   /** What the owner does to wake the agent, in the host's words, for "To wake me, …". The plugin's: a Claude Code skill. */
@@ -289,6 +294,9 @@ interface PullView {
   updatedAt: string;
 }
 
+/** Why every request fails until the owner links a harness. */
+const NONE_LINKED = 'You have linked no coding agent on this laptop, so I start nothing. Link one in my settings under Coding agents.';
+
 // Never the content of a message: this lands in Claude Code's log files.
 const log = (error: unknown) => console.error(`webchat: ${messageOf(error)}`);
 
@@ -319,7 +327,8 @@ export class Plugin {
   /** Cuts short the minute a waiting window sleeps, so a wake here serves at once. */
   private nudge?: AbortController;
   /** What runs and turns load from the owner's Claude setup, as they chose, and what the last one loaded (R-039). Kept on disk. */
-  private setup: { choice: SetupChoice; applied?: SetupChoice & { at: number } } = { choice: { claudeMd: false, skills: [], noAttribution: false } };
+  private setup: { choice: SetupChoice; applied?: SetupChoice & { at: number }; links?: Record<string, { harness: string; at: number }> } = { choice: { claudeMd: false, skills: [], noAttribution: false } };
+  private harnesses: Harness[];
   /** Each linked board's copy, by project. Kept on disk. */
   private copies: Record<number, BoardCopy> = {};
   private copying = false;
@@ -330,6 +339,7 @@ export class Plugin {
 
   constructor(private readonly options: PluginOptions) {
     this.home = path.join(options.dataDir, 'laptop');
+    this.harnesses = options.harnesses;
   }
 
   private file(name: string) {
@@ -390,15 +400,21 @@ export class Plugin {
     }
     if (code && paired?.pairing !== (await pairingId(code))) {
       this.problem = 'Waiting for you to approve this agent in WebChat, in the window that shows the code.';
-      paired = await AgentClient.pair(pairedFile, server, code);
+      paired = await AgentClient.pair(pairedFile, server, code, undefined, await this.offered());
     }
     // The laptop's own copy, whose cursor starts now, so messages from before it are history (D-094).
     // Paired just now, or loaded: with neither a file nor a code, start returned above.
     let client = await AgentClient.load(this.file('account.json')).catch(() => null);
-    if (!client || client.pairing !== paired!.pairing) client = await paired!.copyTo(this.file('account.json'));
+    const fresh = !client || client.pairing !== paired!.pairing;
+    if (!client || fresh) client = await paired!.copyTo(this.file('account.json'));
     this.client = client;
     client.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup;
     this.setup = JSON.parse(await fs.readFile(this.file('setup.json'), 'utf8').catch(() => 'null')) ?? this.setup;
+    await this.refreshHarnesses();
+    // Only an approved pairing links anything, and a new one replaces the list. An agent paired before
+    // linking runs what it found, minus what its owner turned off, and a harness installed later stays unlinked.
+    if (fresh && paired!.picked) this.setup.choice.linked = paired!.picked;
+    else if (!this.setup.choice.linked) this.setup.choice.linked = (await Promise.all(this.harnesses.map(async (h) => ((await h.found()).path ? [h.name] : [])))).flat().filter((n) => !this.setup.choice.off?.includes(n));
     await this.saveSetup();
     this.runs = new Runs(client, (job) => this.run(job), (run) => this.cardRefusal(run), (taken, why) => this.abandon(taken, why));
     this.conversations = new Conversations(client, this.file('conversations.json'), (job) => this.converse(job));
@@ -450,43 +466,70 @@ export class Plugin {
     return this.noHarness();
   }
 
-  /** The host harness, which takes the turns no request names one for: Claude Code when the plugin hosts. */
-  private get host() {
-    return this.options.harnesses[0]!;
+  /** Looks for the harnesses again, and hands a new adapter the owner's choice. */
+  private async refreshHarnesses() {
+    if (!this.options.find) return;
+    const next = await this.options.find();
+    const fresh = next.filter((h) => !this.harnesses.includes(h));
+    this.harnesses = next;
+    await Promise.all(fresh.map((h) => h.apply(this.setup.choice)));
   }
 
-  /** Why a harness starts nothing: the owner turned it off, or its laptop cannot run it. */
+  /** The harnesses a new pairing asks to link, for the owner's approval: those named, or every one the laptop has that is not known to be signed out. */
+  private async offered(): Promise<PairingPick[]> {
+    const { picks } = this.options;
+    const found = await Promise.all(this.harnesses.map(async (h) => ({ name: h.name, ...(await h.found()) })));
+    return found.flatMap(({ name, path: where, version, signedIn }) => (where && (picks ? picks.includes(name) : signedIn !== false) ? [{ name, ...(version && { version }), ...(signedIn !== undefined && { signedIn }) }] : []));
+  }
+
+  /** Whether the owner linked a harness and has not turned it off, as an older page does. */
+  private isLinked(harness: Harness) {
+    const { linked = [], off = [] } = this.setup.choice;
+    return linked.includes(harness.name) && !off.includes(harness.name);
+  }
+
+  /** The harnesses the owner linked, in the order they linked them. */
+  private linkedHarnesses() {
+    return (this.setup.choice.linked ?? []).flatMap((name) => this.harnesses.filter((h) => h.name === name && this.isLinked(h)));
+  }
+
+  /** Why a harness starts nothing: the owner turned it off or never linked it, or its laptop cannot run it. */
   private harnessRefusal(harness: Harness) {
-    if (this.setup.choice.off?.includes(harness.name)) return `You turned ${harness.name} off, so I start nothing with it. Turn it on in my settings under Coding agents.`;
+    if (this.setup.choice.off?.includes(harness.name)) return `You turned ${harness.name} off, so I start nothing with it. Link it in my settings under Coding agents.`;
+    if (!this.isLinked(harness)) return `You have not linked ${harness.name}, so I start nothing with it. Link it in my settings under Coding agents.`;
     return harness.refusal();
   }
 
-  /** Why no harness takes turns, or undefined while one does: the host's reason stands for them all. */
+  /** Why no linked harness takes turns, or undefined while one does. With none linked, `every` would say all is well. */
   private async noHarness() {
-    const refusals = await Promise.all(this.options.harnesses.map((h) => this.harnessRefusal(h)));
+    const linked = this.linkedHarnesses();
+    if (!linked.length) return NONE_LINKED;
+    const refusals = await Promise.all(linked.map((h) => this.harnessRefusal(h)));
     return refusals.every(Boolean) ? refusals[0] : undefined;
   }
 
-  /** Why the harness a request names takes no cards: turned off, missing, or no isolation proof in the folder it would work in. */
+  /** Why the harness a request names takes no cards: not linked, missing, or no isolation proof in the folder it would work in. */
   private async noCardsWith(run: RunRequest) {
     const { harness, refused } = await this.pick(run.harness);
     return refused ?? harness!.refusal(this.folderOf(run.repo!)?.dir ?? this.options.cloneRoot);
   }
 
-  /** Why no harness takes cards, or undefined while one does: a harness that answers may still lack the isolation proof a folder needs. */
+  /** Why no linked harness takes cards, or undefined while one does: a harness that answers may still lack the isolation proof a folder needs. */
   private async noCards() {
-    const refusals = await Promise.all(this.options.harnesses.map(async (h) => (await this.harnessRefusal(h)) ?? h.refusal(this.options.cloneRoot)));
+    const linked = this.linkedHarnesses();
+    if (!linked.length) return NONE_LINKED;
+    const refusals = await Promise.all(linked.map(async (h) => (await this.harnessRefusal(h)) ?? h.refusal(this.options.cloneRoot)));
     return refusals.every(Boolean) ? refusals[0] : undefined;
   }
 
   /**
-   * The harness a request names, or the host for one from before the pick, such as a Check again
-   * or a proposal's draft, and why it starts nothing, when it does. Picked once per run or turn,
-   * and the harness goes on as an object from there.
+   * The harness a request names, or the first linked for one from before the pick, such as a Check
+   * again or a proposal's draft, and why it starts nothing, when it does. Picked once per run or
+   * turn, and the harness goes on as an object from there.
    */
   private async pick(name?: string): Promise<{ harness?: Harness; refused?: string }> {
-    const harness = name === undefined ? this.host : this.options.harnesses.find((h) => h.name === name);
-    if (!harness) return { refused: `I have no ${name} on this laptop. Pick another coding agent.` };
+    const harness = name === undefined ? this.linkedHarnesses()[0] : this.harnesses.find((h) => h.name === name);
+    if (!harness) return { refused: name === undefined ? NONE_LINKED : `I have no ${name} on this laptop. Pick another coding agent.` };
     return { harness, refused: await this.harnessRefusal(harness) };
   }
 
@@ -495,6 +538,11 @@ export class Plugin {
     const { harness, refused } = await this.pick(name);
     if (refused) throw new Error(refused);
     return harness!;
+  }
+
+  /** The first linked harness that may work in a folder, for what no request names one for, or undefined. */
+  private async hostFor(folder: Folder) {
+    for (const harness of this.linkedHarnesses()) if (!(await this.folderRefusal(folder, harness))) return harness;
   }
 
   /** Why the work in one folder fails before it starts, or undefined (D-097). */
@@ -558,17 +606,16 @@ export class Plugin {
     await this.runs!.recover().catch(log);
     await this.conversations!.recover().catch(log);
     missed.forEach((m) => this.handle(m));
-    // The union over the harnesses that take turns: cards need one of them, and the GitHub sign-in.
-    const level = async () => (this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0));
-    await level();
+    await this.updateLevel();
     // Another window may connect a folder meanwhile, a folder may move, and another window may put the agent to sleep.
     const timers = [
       setInterval(() => {
         this.drowse();
         void this.scan().catch(log);
+        void this.sendLinkRequests().catch(log);
       }, SYNC_INTERVAL_MS),
       setInterval(() => {
-        void level().then(() => this.pollPulls()).catch(log);
+        void this.refreshHarnesses().then(() => this.updateLevel()).then(() => this.pollPulls()).catch(log);
         void this.conversations!.sweep().catch(log);
         void this.syncBoards().catch(log);
       }, 60_000),
@@ -579,6 +626,15 @@ export class Plugin {
     };
     for await (const message of this.client!.watch(this.stop.signal, every)) this.handle(message);
     timers.forEach(clearInterval);
+  }
+
+  /**
+   * What the check-in names: the union over the linked harnesses, so cards need one that takes
+   * them, and the GitHub sign-in. Answers and setup stay set with none linked, or Settings, the
+   * only place to link one, would stay shut.
+   */
+  private async updateLevel() {
+    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | ((await signedIn()) && !(await this.noCards()) ? AGENT_LEVEL.cards : 0);
   }
 
   /** The work that keeps an agent awake while it goes to sleep: its running cards and questions. */
@@ -637,7 +693,7 @@ export class Plugin {
     if (!this.fromOwner(message, ask.sentAt)) return;
     const to = message.clientId!;
     const folder = this.folderOf(ask.repo);
-    if (!folder || (await this.folderRefusal(folder, this.host))) {
+    if (!folder || !(await this.hostFor(folder))) {
       const text = `${noCopy(ask.repo)} Ask me about it under Coding agents, and I offer to clone it.`;
       return void (await this.client!.send(message.conversationId, { text, board: { kind: 'failed', to } }));
     }
@@ -659,6 +715,79 @@ export class Plugin {
     }
   }
 
+  /** The owner's direct chat with this agent, where they send what the agent acts on. */
+  private ownerChat() {
+    const client = this.client!;
+    return [...client.conversations.values()].find((c) => c.type === 'direct' && c.members.some((m) => m.userId === client.owner))?.id;
+  }
+
+  /**
+   * Files a request, from `webchat-agent link`, for the serving agent to send its owner: a file, since
+   * the account belongs to the serving process, which this command must not race. Returns what to tell the one who typed it.
+   */
+  async requestLink(name: string) {
+    const stored = JSON.parse(await fs.readFile(this.file('setup.json'), 'utf8').catch(() => 'null')) as { choice?: SetupChoice } | null;
+    if (stored?.choice?.linked?.includes(name) && !stored.choice.off?.includes(name)) return `${name} is linked already.`;
+    const dir = path.join(this.options.dataDir, 'links');
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    await fs.writeFile(path.join(dir, `${randomUUID()}.json`), JSON.stringify({ harness: name, at: Date.now() }));
+    return `Asked your agent to link ${name}. Approve it in WebChat under Coding agents, within 10 minutes. The agent must be running: see \`webchat-agent status\`.`;
+  }
+
+  /**
+   * Sends the owner each request `webchat-agent link` filed, as a sealed `ask` in their direct chat,
+   * and keeps what it asked by the message's client id. Only a harness this agent supports, as the
+   * file's text never reaches the page; a stale file, a linked harness and a second request for one
+   * that waits are dropped.
+   */
+  async sendLinkRequests() {
+    const dir = path.join(this.options.dataDir, 'links');
+    const chat = this.ownerChat();
+    const names = await fs.readdir(dir).catch(() => [] as string[]);
+    if (!names.length || chat === undefined) return;
+    const links = (this.setup.links ??= {});
+    const now = Date.now();
+    for (const [id, link] of Object.entries(links)) if (now - link.at > 60 * 60_000) delete links[id];
+    for (const name of names) {
+      const file = path.join(dir, name);
+      const filed = JSON.parse(await fs.readFile(file, 'utf8').catch(() => 'null')) as { harness?: unknown; at?: unknown } | null;
+      await fs.rm(file, { force: true });
+      const harness = this.harnesses.find((h) => h.name === filed?.harness);
+      if (!harness || typeof filed?.at !== 'number' || now - filed.at > REQUEST_TTL_MS || this.isLinked(harness)) continue;
+      if (Object.values(links).some((l) => l.harness === harness.name && now - l.at <= REQUEST_TTL_MS)) continue;
+      const sent = await this.client!.send(chat, { text: `Link ${harness.name} on this laptop? Approve or decline it in WebChat, under Coding agents.`, ask: { kind: 'link', step: 'request', harness: harness.name } });
+      links[sent.clientId!] = { harness: harness.name, at: now };
+      await this.keepSetup();
+    }
+  }
+
+  /**
+   * Links the harness its owner approves, for the request this agent sent: the one it recorded, never
+   * a name from the message. Only the owner's word counts, once (D-089, K-47), and a request answers
+   * only within 10 minutes. A decline links nothing.
+   */
+  private async askOnWord(message: OpenedMessage) {
+    const { ask } = message.content!;
+    if (ask?.kind !== 'link' || (ask.step !== 'approve' && ask.step !== 'decline') || !this.fromOwner(message, ask.sentAt)) return;
+    const asked = this.setup.links?.[ask.to];
+    if (!asked) return;
+    delete this.setup.links![ask.to];
+    const send = (text: string, step: 'done' | 'failed') => this.client!.send(message.conversationId, { text, ask: { kind: 'link', step, to: ask.to } });
+    const harness = this.harnesses.find((h) => h.name === asked.harness);
+    const fresh = Date.now() - asked.at <= REQUEST_TTL_MS;
+    if (!fresh) await send('That request is older than 10 minutes. Run `webchat-agent link` again.', 'failed');
+    const link = fresh && ask.step === 'approve' && harness;
+    if (link) {
+      const { linked = [], off = [] } = this.setup.choice;
+      this.setup.choice = { ...this.setup.choice, linked: [...linked.filter((n) => n !== link.name), link.name], off: off.filter((n) => n !== link.name) };
+    }
+    await this.saveSetup();
+    if (!link) return;
+    await this.updateLevel();
+    await send(`Linked ${link.name}.`, 'done');
+    await this.sendSetupState(message.conversationId, message.clientId!);
+  }
+
   /** Notes that its owner added a proposal's draft to the board, so the next copy drops its file (R-040). */
   private async proposalAdded(message: OpenedMessage) {
     if (!this.ownersOwn(message)) return;
@@ -677,7 +806,7 @@ export class Plugin {
    */
   async syncBoards(now = Date.now()) {
     const client = this.client!;
-    const chat = [...client.conversations.values()].find((c) => c.type === 'direct' && c.members.some((m) => m.userId === client.owner))?.id;
+    const chat = this.ownerChat();
     if (this.copying || chat === undefined || (await this.refusal())) return;
     this.copying = true;
     const before = JSON.stringify(this.copies);
@@ -700,7 +829,7 @@ export class Plugin {
         // Origin and GitHub are looked at every 5 minutes, or when a copy is due.
         if (!due && now - (this.looked.get(project.id) ?? 0) < 5 * 60_000) continue;
         const folder = this.folderOf(repo);
-        if (!folder || (await this.folderRefusal(folder, this.host)) || !(await signedIn())) continue;
+        if (!folder || !(await this.hostFor(folder)) || !(await signedIn())) continue;
         this.looked.set(project.id, now);
         const { roadmap, decisions } = await this.columns(project, versions, docs);
         const base = await fetchOrigin(folder.dir);
@@ -832,6 +961,7 @@ export class Plugin {
     if (message.content?.forget) return this.forget(message).catch(log);
     if (message.content?.sleep) return this.sleepOnWord(message).catch(log);
     if (message.content?.setup) return this.setupOnWord(message).catch(log);
+    if (message.content?.ask) return this.askOnWord(message).catch(log);
     if (message.content?.board?.kind === 'link') return this.linkOnWord(message).catch(log);
     if (message.content?.added) return this.proposalAdded(message).catch(log);
     return (prompt ? this.conversations! : this.runs!).handle(message).catch(log);
@@ -847,24 +977,47 @@ export class Plugin {
     const { setup } = message.content!;
     if (!this.fromOwner(message, setup!.sentAt)) return;
     if (setup!.choice) {
-      // A page from before the harness list names none it turned off, so those stay as they were.
-      this.setup.choice = { off: this.setup.choice.off, ...setup!.choice };
+      // A page from before linking sends no list, and a page from before the off list sends none, so those stay as they were.
+      this.setup.choice = { linked: this.setup.choice.linked, off: this.setup.choice.off, ...setup!.choice };
       await this.saveSetup();
+      await this.updateLevel();
     }
+    await this.sendSetupState(message.conversationId, message.clientId!);
+  }
+
+  /** Answers a `setup` with what the laptop offers, the choice it keeps, and what its last run or turn loaded. */
+  private async sendSetupState(chat: number, to: string) {
     const { choice, applied } = this.setup;
-    const { harnesses, cloneRoot } = this.options;
-    // One choice serves every harness (D-115), so the host's files stand for what the laptop offers.
-    const [owner, ...states] = await Promise.all([ownerSetup(this.host.offers()), ...harnesses.map((h) => harnessState(h, cloneRoot))]);
-    await this.client!.send(message.conversationId, {
+    // One choice serves every harness (D-115), so the first supported adapter's files stand for what the laptop offers: they depend on paths only.
+    const [owner, ...states] = await Promise.all([ownerSetup(this.harnesses[0]!.offers()), ...this.harnesses.map((h) => this.stateOf(h))]);
+    await this.client!.send(chat, {
       text: `My runs load ${setupWords(choice)}.`,
-      setupState: { to: message.clientId!, ...owner, choice, ...(applied && { applied }), harnesses: states },
+      setupState: { to, ...owner, choice, ...(applied && { applied }), harnesses: states },
     });
+  }
+
+  /**
+   * A harness as the owner's Settings shows it (D-115): where the laptop has it, whether it is
+   * linked, what needs the owner's attention, whether it takes cards, and what it offers. A
+   * harness that answers but cannot keep its shell from the secrets says so for a folder of
+   * `cloneRoot`, where cards run. `refusal` names not-linked too, so a page from before linking greys it.
+   */
+  private async stateOf(harness: Harness): Promise<HarnessState> {
+    const { instructions, skills, knobs } = harness.offers();
+    const linked = this.isLinked(harness);
+    const [{ path: where, ...found }, own, cards, refused] = await Promise.all([harness.found(), harness.refusal(), harness.refusal(this.options.cloneRoot), this.harnessRefusal(harness)]);
+    const attention = linked ? own ?? (found.signedIn === false ? `${harness.name} is not signed in.` : undefined) : undefined;
+    return { name: harness.name, ...found, ...(where && { path: shown(where) }), linked, ...(attention && { attention }), answers: refused, refusal: refused ?? cards, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
   }
 
   /** Keeps the setup on disk, and hands each harness its choice. */
   private async saveSetup() {
-    await Promise.all(this.options.harnesses.map((h) => h.apply(this.setup.choice)));
-    await fs.writeFile(this.file('setup.json'), JSON.stringify(this.setup));
+    await Promise.all(this.harnesses.map((h) => h.apply(this.setup.choice)));
+    await this.keepSetup();
+  }
+
+  private keepSetup() {
+    return fs.writeFile(this.file('setup.json'), JSON.stringify(this.setup));
   }
 
   /**
@@ -1329,6 +1482,7 @@ export class Plugin {
       folders.length ? `Working in ${folders.join(', ')}.` : 'No folders yet: your agent offers to clone a repository when you ask it about one.',
       ...(this.runs!.running.length ? [`Working on ${this.runs!.running.map((r) => r.card).join(', ')}.`] : []),
       `Watching ${this.watched.length} draft pull requests.`,
+      `Linked: ${this.linkedHarnesses().map((h) => h.name).join(', ') || 'none'}.`,
     ].join('\n');
   }
 
@@ -1853,17 +2007,6 @@ async function ownerSetup({ instructions, skills: dir }: ReturnType<Harness['off
     skills.push({ name, description: description.length > max ? `${description.slice(0, max - 1)}…` : description });
   }
   return { claudeMd: !!instructions && existsSync(instructions), skills };
-}
-
-/**
- * A harness as the owner's Settings shows it (D-115): what the laptop has of it, whether it takes
- * cards, and what it offers. A harness that answers but cannot keep its shell from the secrets
- * says so for a folder of `cloneRoot`, where cards run.
- */
-async function harnessState(harness: Harness, cloneRoot: string): Promise<HarnessState> {
-  const { instructions, skills, knobs } = harness.offers();
-  const [found, anywhere, cards] = await Promise.all([harness.found(), harness.refusal(), harness.refusal(cloneRoot)]);
-  return { name: harness.name, ...found, refusal: anywhere ?? cards, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
 }
 
 /** A SKILL.md's description, from its front matter: one line, or the indented lines a block scalar folds. */

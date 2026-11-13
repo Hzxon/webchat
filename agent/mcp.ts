@@ -7,8 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { ClaudePlugin, claudeProgram, onPath, runGuard } from './claude.ts';
-import { codexHarness } from './codex.ts';
+import { claudeSession, runGuard } from './claude.ts';
+import { harnessFinder } from './harnesses.ts';
+import { Plugin } from './plugin.ts';
 import { messageOf } from './runs.ts';
 
 const none = { type: 'object', properties: {} };
@@ -45,16 +46,18 @@ const TOOLS = [
 
 async function serve() {
   const dataDir = process.env.CLAUDE_PLUGIN_DATA ?? '';
-  const [claude, codex] = await Promise.all([claudeProgram(), onPath('codex')]);
-  const plugin = new ClaudePlugin({
+  // The folder goes as an argument, since the background Claude's hooks get no plugin variables.
+  const hook = `"${process.execPath}" "${fileURLToPath(import.meta.url)}" guard "${dataDir}"`;
+  const find = harnessFinder({ hook, dataDir }, await claudeSession());
+  const plugin = new Plugin({
     code: process.env.WEBCHAT_PAIRING_CODE ?? '',
     dataDir,
     projectDir: process.env.CLAUDE_PROJECT_DIR ?? process.cwd(),
     cloneRoot: path.join(os.homedir(), 'WebChat'),
-    claude,
-    others: codex ? [codexHarness(codex, dataDir)] : [],
-    // The folder goes as an argument, since the background Claude's hooks get no plugin variables.
-    guard: `"${process.execPath}" "${fileURLToPath(import.meta.url)}" guard "${dataDir}"`,
+    harnesses: await find(),
+    find,
+    // This window has Claude Code, so it asks to link that one; the owner links Codex in Settings.
+    picks: ['Claude Code'],
     job: !!process.env.CLAUDE_JOB_DIR,
   });
   // Exiting runs the exit handlers, which free the machine's watch.

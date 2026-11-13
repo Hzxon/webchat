@@ -17,12 +17,14 @@
 import {
   isRepoName,
   LIMITS,
+  type AskDTO,
   type BoardSyncDTO,
   type CardNoteDTO,
   type CardDraftDTO,
   type EnvelopeDTO,
   type HarnessState,
   type MessageKind,
+  type PairingPick,
   type PublicKeysDTO,
   type PullCardDTO,
   type PullChecks,
@@ -388,6 +390,8 @@ export interface MessageContent {
   setupState?: SetupState;
   /** The board's copy in a linked repository, between the owner's page and their agent (R-040, D-117). */
   board?: BoardSyncDTO;
+  /** A request from the owner's laptop that the owner approves, and their answer (docs/decisions/harness-linking.md). */
+  ask?: AskDTO;
   /** A request about a board card to the member asked (the card-notes decision). The text says the same in words. */
   card?: CardNoteDTO;
 }
@@ -602,11 +606,12 @@ function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | und
 
 /** A setup choice, if it has the right shape: skills only by a folder name that cannot leave `~/.claude/skills` (R-039). */
 function readChoice(raw: unknown): SetupChoice | undefined {
-  const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown; off?: unknown; noPlan?: unknown } | null | undefined;
+  const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown; linked?: unknown; off?: unknown; noPlan?: unknown } | null | undefined;
   if (typeof choice?.claudeMd !== 'boolean' || typeof choice.noAttribution !== 'boolean' || !Array.isArray(choice.skills)) return;
   const skills = choice.skills.filter((s): s is string => typeof s === 'string' && SKILL_NAME.test(s)).slice(0, LIMITS.setupSkills);
-  const off = Array.isArray(choice.off) ? choice.off.filter((n): n is string => !!short(n, LIMITS.harnessFieldLength)).slice(0, LIMITS.harnesses) : undefined;
-  return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution, ...(off && { off }), ...(typeof choice.noPlan === 'boolean' && { noPlan: choice.noPlan }) };
+  const names = (list: unknown) => (Array.isArray(list) ? list.filter((n): n is string => !!short(n, LIMITS.harnessFieldLength)).slice(0, LIMITS.harnesses) : undefined);
+  const [linked, off] = [names(choice.linked), names(choice.off)];
+  return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution, ...(linked && { linked }), ...(off && { off }), ...(typeof choice.noPlan === 'boolean' && { noPlan: choice.noPlan }) };
 }
 
 /** The harnesses an agent's answer lists, those of the right shape, or nothing from a plugin before them (D-115). */
@@ -618,7 +623,8 @@ function readHarnesses(raw: unknown): HarnessState[] | undefined {
     if (!h || !name) return [];
     const knobs = Array.isArray(h.knobs) ? h.knobs.filter((k): k is string => typeof k === 'string' && /^\w{1,32}$/.test(k)) : [];
     const signedIn = typeof h.signedIn === 'boolean' ? h.signedIn : undefined;
-    return [{ name, version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs }];
+    const linked = typeof h.linked === 'boolean' ? h.linked : undefined;
+    return [{ name, path: field(h.path), linked, attention: field(h.attention), answers: field(h.answers), version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs }];
   });
 }
 
@@ -658,6 +664,20 @@ function readBoardSync(raw: Record<string, unknown> | undefined): BoardSyncDTO |
   }
 }
 
+/** An ask or its answer, if it has the right shape: `to` names the request by its client id. */
+function readAsk(raw: Record<string, unknown> | undefined): AskDTO | undefined {
+  if (raw?.kind !== 'link') return;
+  const to = short(raw.to, 64);
+  if (raw.step === 'request') {
+    const harness = short(raw.harness, LIMITS.harnessFieldLength);
+    return harness ? { kind: 'link', step: 'request', harness } : undefined;
+  }
+  if ((raw.step === 'approve' || raw.step === 'decline') && to && isId(raw.sentAt)) return { kind: 'link', step: raw.step, to, sentAt: raw.sentAt };
+  if (raw.step !== 'done' && raw.step !== 'failed') return;
+  const note = short(raw.note, LIMITS.runNoteLength);
+  return to ? { kind: 'link', step: raw.step, to, ...(note && { note }) } : undefined;
+}
+
 const NOTE_KINDS: ReadonlyArray<CardNoteDTO['kind']> = ['ready', 'review', 'waiting'];
 
 /** A request about a board card, if it has the right shape. */
@@ -683,6 +703,7 @@ function readContent(value: unknown): MessageContent {
     setup?: { sentAt?: unknown; choice?: unknown };
     setupState?: Record<string, unknown>;
     board?: Record<string, unknown>;
+    ask?: Record<string, unknown>;
     card?: Record<string, unknown>;
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
@@ -718,6 +739,8 @@ function readContent(value: unknown): MessageContent {
   if (state) content.setupState = state;
   const board = readBoardSync(raw.board);
   if (board) content.board = board;
+  const ask = readAsk(raw.ask);
+  if (ask) content.ask = ask;
   const note = readCardNote(raw.card);
   if (note) content.card = note;
   return content;
@@ -883,4 +906,45 @@ export async function pairingProof(code: string, agent: PublicKeysDTO, owner?: {
     ? [utf8(`webchat/pair/owner/v1:${owner.id}`), fromBase64Url(owner.keys.dh), fromBase64Url(owner.keys.sign)]
     : [utf8('webchat/pair/agent/v1')];
   return toBase64Url(await subtle().sign('HMAC', key, concat(...signer, fromBase64Url(agent.dh), fromBase64Url(agent.sign))));
+}
+
+// ---------------------------------------------------------------------------------------------
+// The harnesses an agent asks to link, which ride its pairing
+
+const PICKS_INFO = 'webchat/pair/picks/v1';
+
+/** The key the agent and the owner's page derive from the code, which the server never has. */
+const picksKey = async (code: string) =>
+  subtle().deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(), info: utf8(PICKS_INFO) },
+    await subtle().importKey('raw', pairingSecret(code), 'HKDF', false, ['deriveKey']),
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+
+/** The agent's keys are bound in, so the server cannot lay a blob of another pairing's under this one. */
+const picksAad = (agent: PublicKeysDTO) => concat(utf8(PICKS_INFO), fromBase64Url(agent.dh), fromBase64Url(agent.sign));
+
+/** Seals the picks under the pairing code, padded as content is, so the server sees only a size band. */
+export async function sealPicks(code: string, agent: PublicKeysDTO, picks: PairingPick[]): Promise<string> {
+  const iv = randomBytes(12);
+  const data = await subtle().encrypt({ name: 'AES-GCM', iv, additionalData: picksAad(agent) }, await picksKey(code), padContent(utf8(JSON.stringify(picks))));
+  return toBase64Url(concat(iv, new Uint8Array(data)));
+}
+
+/** Opens sealed picks, or returns nothing when they do not open or have the wrong shape: the owner still approves as before. */
+export async function openPicks(code: string, agent: PublicKeysDTO, sealed: string): Promise<PairingPick[]> {
+  try {
+    const bytes = fromBase64Url(sealed);
+    const plain = await subtle().decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12), additionalData: picksAad(agent) }, await picksKey(code), bytes.subarray(12));
+    const list = JSON.parse(decoder.decode(unpadContent(new Uint8Array(plain)))) as Array<Record<string, unknown> | null>;
+    return list.slice(0, LIMITS.harnesses).flatMap((p) => {
+      const name = short(p?.name, LIMITS.harnessFieldLength);
+      const version = short(p?.version, 64);
+      return name ? [{ name, ...(version && { version }), ...(typeof p?.signedIn === 'boolean' && { signedIn: p.signedIn }) }] : [];
+    });
+  } catch {
+    return [];
+  }
 }

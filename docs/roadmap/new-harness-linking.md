@@ -1,6 +1,6 @@
 ### R: Link harnesses from the list WebChat supports
 
-Status: Idea. Proposed 2026-11-12 from the agent host design.
+Status: Done in #201.
 
 Order: second, beside docs/roadmap/new-agent-setup.md.
 

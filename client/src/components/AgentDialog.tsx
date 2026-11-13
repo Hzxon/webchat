@@ -4,7 +4,7 @@
 // also lists the owner's agents, so one can be removed (R-033).
 import { useEffect, useMemo, useState } from 'react';
 import { newPairingCode } from '../../../shared/e2ee';
-import { LIMITS, PAIRING_TTL_MS, type PublicKeysDTO, type UserDTO } from '../../../shared/types';
+import { LIMITS, PAIRING_TTL_MS, type PairingPick, type PublicKeysDTO, type UserDTO } from '../../../shared/types';
 import { ownAgents } from '../agents';
 import { api, ApiError } from '../api';
 import { holdReloadWhile } from '../build';
@@ -27,6 +27,8 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
   const mine = useMemo(() => ownAgents(users, meId), [users, meId]);
   const [code] = useState(newPairingCode);
   const [keys, setKeys] = useState<PublicKeysDTO | null>(null);
+  // The harnesses the agent asks to link, which its code opens: shown before the owner approves.
+  const [picks, setPicks] = useState<PairingPick[]>([]);
   const [name, setName] = useState('Claude Code');
   const [picked, setPicked] = useState<Set<number>>(() => new Set());
   const [error, setError] = useState('');
@@ -59,7 +61,8 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
         if (failed) setError('');
         failed = false;
         if (found) {
-          setKeys(found);
+          setKeys(found.keys);
+          setPicks(found.picks);
           return;
         }
       } catch (err) {
@@ -185,6 +188,22 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
           }}
         >
           <p className="dialog-intro">The agent sent the code. Name it, and pick the projects it joins: it reads their channels.</p>
+          {/* Display only: Unlink in Agent settings takes one back. */}
+          {picks.length > 0 && (
+            <>
+              <p className="dialog-intro">It links these coding agents on its laptop, and runs your questions and cards with them:</p>
+              <ul className="people-list">
+                {picks.map((p) => (
+                  <li key={p.name} className="member">
+                    <span className="member-name">
+                      <strong>{p.name}</strong>
+                      <small>{[p.version, p.signedIn !== undefined && (p.signedIn ? 'signed in' : 'not signed in')].filter(Boolean).join(', ') || 'not installed yet'}</small>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <label className="field">
             Name
             <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} maxLength={LIMITS.displayNameLength} />

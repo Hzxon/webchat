@@ -170,6 +170,7 @@ interface PairingRow {
   expires_at: number;
   agent_id: number | null;
   owner_proof: string | null;
+  picks: string | null;
 }
 
 
@@ -886,9 +887,9 @@ export async function openDb(sql: Sql) {
     createPairing: async (input: PairingInput, loginHash: string) =>
       (
         await sql.query(
-          `INSERT INTO webchat.pairings (id, dh_public, sign_public, proof, login_hash, expires_at)
-           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING RETURNING id`,
-          [input.id, input.keys.dh, input.keys.sign, input.proof, loginHash, Date.now() + PAIRING_TTL_MS],
+          `INSERT INTO webchat.pairings (id, dh_public, sign_public, proof, login_hash, expires_at, picks)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING RETURNING id`,
+          [input.id, input.keys.dh, input.keys.sign, input.proof, loginHash, Date.now() + PAIRING_TTL_MS, input.picks ?? null],
         )
       ).length > 0,
     /** A pairing while it lasts, with the agent's account and its owner's keys once approved. */
@@ -901,7 +902,7 @@ export async function openDb(sql: Sql) {
         agent && owner?.dh_public && owner.sign_public && row.owner_proof
           ? { user: toUserDTO(agent), owner: { id: owner.id, keys: { dh: owner.dh_public, sign: owner.sign_public } }, proof: row.owner_proof }
           : null;
-      return { keys: { dh: row.dh_public, sign: row.sign_public }, proof: row.proof, approved };
+      return { keys: { dh: row.dh_public, sign: row.sign_public }, proof: row.proof, approved, ...(row.picks && { picks: row.picks }) };
     },
     /**
      * Makes the agent's account for the owner who approves, once, while the pairing lasts. Nobody but

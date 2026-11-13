@@ -64,7 +64,13 @@ export interface SetupChoice {
   claudeMd: boolean;
   skills: string[];
   noAttribution: boolean;
-  /** The harnesses the owner turned off, by name. A page from before the list sends none, and the agent keeps what it had. */
+  /**
+   * The harnesses the owner linked, by name, in the order that picks one for a request that names
+   * none (docs/decisions/harness-linking.md). An agent from before it has none until it first
+   * starts; a page from before it sends none, and the agent keeps what it had.
+   */
+  linked?: string[];
+  /** The harnesses an older page turned off, by name: still read, and they mute a linked one. A page that sends `linked` sends none. */
   off?: string[];
   /** Whether a card run goes on without showing its plan first; a page from before the gate sends none, which keeps it on (docs/decisions/redirect-plan-gate.md). */
   noPlan?: boolean;
@@ -77,6 +83,14 @@ export interface HarnessState {
   version?: string;
   /** Whether it is signed in, when its adapter can tell. */
   signedIn?: boolean;
+  /** Where the agent found it, with `~` for the home folder; none when it found none. */
+  path?: string;
+  /** Whether the owner linked it and it is not turned off. Undefined from a plugin that has no linking. */
+  linked?: boolean;
+  /** Why a linked harness needs attention: it cannot run turns, is too old, or is signed out. */
+  attention?: string;
+  /** Why it answers no questions: not linked, turned off, missing or too old. Undefined from an agent before linking, whose `refusal` stands for both. */
+  answers?: string;
   /** Why it takes no cards on this laptop, or nothing when it does. */
   refusal?: string;
   /** The instructions file and the skills folder it reads, such as `~/.claude/CLAUDE.md`. */
@@ -84,6 +98,21 @@ export interface HarnessState {
   skills?: string;
   /** The knobs its adapter honors, named as in `SetupChoice`, such as `noAttribution`. */
   knobs: string[];
+}
+
+export type HarnessRow = 'linked' | 'attention' | 'found' | 'missing';
+
+/** What each row says, for Settings and `doctor` alike. */
+export const HARNESS_ROW_WORDS: Record<HarnessRow, string> = { linked: 'Linked', attention: 'Linked, needs attention', found: 'Found, not linked', missing: 'Not found' };
+
+/** Which of the four rows Settings shows for a harness, and `doctor` too. */
+export const harnessRow = (h: HarnessState): HarnessRow => (h.linked ? (h.attention ? 'attention' : 'linked') : h.path ? 'found' : 'missing');
+
+/** A harness the owner picked at pairing, as its pairing code seals it for the approval dialog. */
+export interface PairingPick {
+  name: string;
+  version?: string;
+  signedIn?: boolean;
 }
 
 /** The agent's answer to its owner's `setup`: what the laptop offers, the choice it keeps, and what its last run or turn loaded (R-039). */
@@ -295,6 +324,8 @@ export interface PairingInput {
   proof: string;
   /** The agent's login key, random, since an agent has no password. */
   authKey: string;
+  /** The harnesses it asks to link, sealed under the code (`sealPicks`); the server cannot read them. */
+  picks?: string;
 }
 
 export interface PairingDTO {
@@ -302,6 +333,7 @@ export interface PairingDTO {
   proof: string;
   /** Once the owner approved: the agent's new account, and the owner's keys bound to the code. */
   approved: { user: UserDTO; owner: { id: number; keys: PublicKeysDTO }; proof: string } | null;
+  picks?: string;
 }
 
 /** How long a pairing code works, from the page showing it to the owner's approval (R-030). */
@@ -740,6 +772,17 @@ export interface CardNoteDTO {
 }
 
 /**
+ * A request from the owner's laptop that the owner approves on their page, and the approval, in
+ * their direct chat, sealed (docs/decisions/harness-linking.md). `kind` says what is asked; each
+ * kind has its own steps. The laptop's `request` names what it asks, and the approval or decline
+ * names the request by its message's client id (`to`) with the signed time it was sent.
+ */
+export type AskDTO =
+  | { kind: 'link'; step: 'request'; harness: string }
+  | { kind: 'link'; step: 'approve' | 'decline'; to: string; sentAt: number }
+  | { kind: 'link'; step: 'done' | 'failed'; to: string; note?: string };
+
+/**
  * A pull request shared into a chat: a snapshot of how it stood when it was shared. It travels
  * inside the message's envelope, so the server never sees which pull request was shared.
  */
@@ -955,6 +998,8 @@ export const LIMITS = {
   /** Harnesses an agent's answer lists, and the length of a name, a version, a path or a refusal (D-115). */
   harnesses: 8,
   harnessFieldLength: 500,
+  /** A pairing's sealed picks, in base64url characters. */
+  pairingPicks: 4096,
 } as const;
 
 /** Slack-style channel names (D-027): lowercase letters and digits in any script, joined by single hyphens. */

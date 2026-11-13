@@ -10,8 +10,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { secretDirs, type Harness } from './harness.ts';
-import { line, Plugin, type PluginOptions } from './plugin.ts';
+import { olderThan, secretDirs, type Harness } from './harness.ts';
+import { line } from './plugin.ts';
 import { start, type Final } from './runner.ts';
 
 const exec = promisify(execFile);
@@ -159,27 +159,33 @@ const claudeHome = () => process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir()
  */
 export const claudeSecrets = (dataDir: string) => [...secretDirs(dataDir), path.join(claudeHome(), 'session-env')];
 
+/** The first release with `--permission-prompts`, which every turn passes (claude.ts `claudeArgs`; Claude Code's changelog, 2.1.259). */
+export const CLAUDE_MIN_VERSION = '2.1.259';
+
 /** The adapter: turns in `program`, restricted, under the plugin's settings file, which the guard hook `hook` completes. */
 export function claudeHarness(program: string, hook: string, dataDir: string): Harness {
   const secrets = claudeSecrets(dataDir);
   // Beside the laptop's copy of the account, where it always was.
   const settings = path.join(dataDir, 'laptop', 'claude.json');
   const npmCache = path.join(os.tmpdir(), 'webchat-npm', 'laptop');
+  // The version is read once: `refusal()` runs on every request, and the finder builds a new adapter when the program changes.
+  let version: Promise<string | undefined> | undefined;
+  const versionOf = () => (version ??= exec(program, ['--version'], { timeout: 10_000 }).then((r) => /^\d[\w.-]*/.exec(r.stdout.trim())?.[0], () => undefined));
   return {
     name: 'Claude Code',
     async refusal(dir) {
       if (dir) return sandboxProblem(dir, secrets, restrictedSettings(settings));
       if (process.platform === 'win32') return 'Claude Code’s sandbox does not run on Windows, so I cannot work here. It runs in WSL2.';
       if (!program) return 'I cannot find Claude Code on this laptop.';
+      return olderThan('Claude Code', await versionOf(), CLAUDE_MIN_VERSION);
     },
     offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution', 'noPlan'] }),
     async found() {
       if (!program) return {};
       // `auth status` prints its JSON and exits 1 when signed out.
-      const stdout = (args: string[]) => exec(program, args, { timeout: 10_000 }).then((r) => r.stdout, (e: { stdout?: string }) => e.stdout ?? '');
-      const [version, status] = await Promise.all([stdout(['--version']), stdout(['auth', 'status'])]);
+      const status = await exec(program, ['auth', 'status'], { timeout: 10_000 }).then((r) => r.stdout, (e: { stdout?: string }) => e.stdout ?? '');
       const loggedIn = /"loggedIn":\s*(true|false)/.exec(status)?.[1];
-      return { version: /^\d[\w.-]*/.exec(version.trim())?.[0], ...(loggedIn && { signedIn: loggedIn === 'true' }) };
+      return { path: program, version: await versionOf(), ...(loggedIn && { signedIn: loggedIn === 'true' }) };
     },
     // The turn runs under the plugin's settings alone, so the owner's do not count (D-097).
     async apply({ noAttribution }) {
@@ -201,33 +207,27 @@ export function claudeHarness(program: string, hook: string, dataDir: string): H
 }
 
 /**
- * The session's own `claude`, by its absolute path: this server's parent, which the desktop app keeps
- * outside the PATH. Else the first on the PATH, from absolute folders only, since the background
- * Claude starts in a worktree whose files the model writes. Empty when there is none (D-097).
+ * The session's own `claude`, by its absolute path: this server's parent, which the desktop app
+ * keeps outside the PATH. Empty when the parent is no Claude Code (D-097).
  */
-export async function claudeProgram() {
+export async function claudeSession() {
   const parent =
     process.platform === 'linux'
       ? await fs.readlink(`/proc/${process.ppid}/exe`).catch(() => '')
       : await promisify(execFile)('ps', ['-o', 'comm=', '-p', String(process.ppid)]).then((r) => r.stdout.trim(), () => '');
-  if (path.isAbsolute(parent) && path.basename(parent) === 'claude') return parent;
-  return onPath('claude');
+  return path.isAbsolute(parent) && path.basename(parent) === 'claude' ? parent : '';
 }
 
-/** A program's absolute path, from the absolute folders of the PATH only, or empty when there is none. */
-export async function onPath(name: string) {
-  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d))) {
+/** The absolute folders of the PATH only, since the background Claude starts in a worktree whose files the model writes. */
+export const pathDirs = () => (process.env.PATH ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d));
+
+/** A program's absolute path, from `dirs`, or empty when there is none. */
+export async function onPath(name: string, dirs = pathDirs()) {
+  for (const dir of dirs) {
     const file = path.join(dir, name);
     if (await fs.access(file, constants.X_OK).then(() => true, () => false)) return file;
   }
   return '';
-}
-
-/** The plugin as Claude Code hosts it: its turns run in the session's own `claude`, with the guard hook `guard`. */
-export class ClaudePlugin extends Plugin {
-  constructor({ claude, guard: hook, others = [], ...options }: Omit<PluginOptions, 'harnesses'> & { claude: string; guard: string; others?: Harness[] }) {
-    super({ ...options, harnesses: [claudeHarness(claude, hook, options.dataDir), ...others] });
-  }
 }
 
 const within = (file: string, dir: string) => {

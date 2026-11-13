@@ -38,8 +38,8 @@ export interface Harness {
    * permission or sandbox mode (D-115).
    */
   offers(): { instructions?: string; skills?: string; knobs: string[] };
-  /** What the laptop has of it: its version, and whether it is signed in, each left out when it cannot tell. */
-  found(): Promise<{ version?: string; signedIn?: boolean }>;
+  /** What the laptop has of it: where it is, its version, and whether it is signed in, each left out when it cannot tell. */
+  found(): Promise<{ path?: string; version?: string; signedIn?: boolean }>;
   /** Takes the owner's choice for its knobs: before any proof or turn, and again whenever it changes. */
   apply(choice: SetupChoice): Promise<void>;
   /** Runs one turn, and resolves to its answer for the schema. */
@@ -55,3 +55,16 @@ export function secretDirs(dataDir: string) {
   const keychains = process.platform === 'darwin' ? [path.join(os.homedir(), 'Library', 'Keychains')] : [];
   return [dataDir, ghDir, ...keychains].filter(Boolean);
 }
+
+/** Whether `found` is at least `min`, comparing dotted numbers up to the first other character. A version that is no number counts as new enough. */
+export function versionAtLeast(found: string | undefined, min: string) {
+  const parts = (version: string) => (/^\d+(\.\d+)*/.exec(version)?.[0] ?? '').split('.').map(Number);
+  if (!found || !/^\d/.test(found)) return true;
+  const [have, need] = [parts(found), parts(min)];
+  for (let i = 0; i < Math.max(have.length, need.length); i++) if ((have[i] ?? 0) !== (need[i] ?? 0)) return (have[i] ?? 0) > (need[i] ?? 0);
+  return true;
+}
+
+/** Why an adapter refuses a harness older than the release it needs, or undefined. */
+export const olderThan = (name: string, found: string | undefined, min: string) =>
+  versionAtLeast(found, min) ? undefined : `${name} ${found} is older than ${min}, which I need. Update it.`;
