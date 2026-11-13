@@ -27,7 +27,7 @@ import {
   type CardRun,
   type Move,
 } from '../board';
-import { inOrder, ownAgents, ready, seatFor, useAgentChats } from '../agents';
+import { inOrder, ownAgents, ready, seatFor, useAgentChats, useAgentThreads, waitingProposals } from '../agents';
 import { askAgent, askFix, askLink, cancelRun, sendCardNote, startDirectChat, syncNow } from '../chat';
 import { addCard, beginEditing, boardCards, createBoard, loadCards, loadSections, markSeen, newSectionId, replaceSection, rewriteCard, stopEditing, takeCard, type Editing } from '../docs';
 import type { ChatDoc, ChatMessage } from '../e2ee/keyring';
@@ -71,6 +71,9 @@ export function BoardView({ project }: { project: ProjectDTO }) {
   const linkedTo = boards.roadmap?.repo && boards.roadmap.title?.authorId === project.ownerId ? boards.roadmap.repo : undefined;
   const free = repos.filter((r) => !copied.has(r.toLowerCase()));
   const canLink = !linkedTo && project.ownerId === meId && !!linked && !!seat && ready(seat) && free.length > 0;
+  // Proposals on main reach only the owner, as drafts in the Coding agents pane, so their board says they wait (D-117, K-72).
+  const { threads } = useAgentThreads();
+  const proposals = linkedTo && project.ownerId === meId ? waitingProposals(threads, project.id, linkedTo) : [];
 
   return (
     <section className="chat board-view">
@@ -93,6 +96,14 @@ export function BoardView({ project }: { project: ProjectDTO }) {
           ))}
         </div>
       </header>
+      {proposals.length > 0 && (
+        <div className="board-link">
+          <p>Drafts from proposal files on main wait in Coding agents until you add them.</p>
+          <button className="button-secondary" onClick={() => actions.setAgentsOpen(true, proposals[0]!.root)}>
+            {proposals.length === 1 ? '1 proposal waits' : `${proposals.length} proposals wait`}
+          </button>
+        </div>
+      )}
       {canLink && <BoardLink project={project} agentId={agent!.id} repos={free} />}
       <div className={`board-columns shows-${shown}`}>
         {COLUMNS.map((column) => (
