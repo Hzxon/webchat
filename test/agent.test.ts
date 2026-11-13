@@ -23,7 +23,7 @@ import { LocalBench, worktreeGit } from '../agent/bench.ts';
 import { repoHome } from '../agent/keep.ts';
 import { Plugin } from '../agent/plugin.ts';
 import { callRoom, connectRunner, Room, type RoomStatus } from '../agent/room.ts';
-import { programOf, updateConfigOf, type Cmd } from '../agent/lockroom.ts';
+import { layoutFor, programOf, updateConfigOf, type Cmd } from '../agent/lockroom.ts';
 import { doctor, linksFrom, pairInto, setup, uninstall } from '../agent/setup.ts';
 import { harnessFinder, supported, supportedList } from '../agent/harnesses.ts';
 import { versionAtLeast } from '../agent/harness.ts';
@@ -2374,11 +2374,13 @@ describe('agent client (R-027)', () => {
 
       // One doctor line per supported harness, for each state a row can be in (docs/decisions/harness-linking.md).
       console.log = (...words: unknown[]) => void said.push(words.join(' '));
+      // A keyholder installed on this machine would answer on the default socket, and its linked list wins over setup.json.
+      const noRoom = { ...layoutFor(process.platform === 'darwin' ? 'darwin' : 'linux'), ipc: path.join(dir, 'no-ipc') };
       const doctorSays = async (linked: string[], env: Record<string, string> = {}) => {
         await fs.mkdir(path.join(agentHome, 'laptop', 'laptop'), { recursive: true });
         await fs.writeFile(path.join(agentHome, 'laptop', 'laptop', 'setup.json'), JSON.stringify({ choice: { claudeMd: false, skills: [], noAttribution: false, linked } }));
         said.length = 0;
-        await withEnv(env, () => doctor(agentHome));
+        await withEnv(env, () => doctor(agentHome, noRoom));
         process.exitCode = 0;
         return said.filter((line) => /^ {2}\w+ {2,}(Claude Code|Codex)/.test(line)).map((line) => line.replace(/^ {2}\w+ {2,}/, ''));
       };
