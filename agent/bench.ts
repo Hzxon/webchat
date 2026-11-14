@@ -14,6 +14,7 @@ import { isRepoName, LIMITS, SKILL_NAME, type SetupChoice } from '../shared/type
 import { Lab } from './browser.ts';
 import { secretDirs, type Ask, type Harness, type Reply } from './harness.ts';
 import { sha256 } from './keep.ts';
+import { SHOT } from './permits.ts';
 import { judge } from './rulebook.ts';
 import type { Quiet } from './runner.ts';
 
@@ -49,6 +50,8 @@ export interface Folder {
 /** What one turn gets for its questions: the answer to each action the rulebook leaves to the owner, the silence timer's hold, and the end of it all. */
 export interface Permit {
   ask: (ask: Ask) => Promise<Reply>;
+  /** Sends a screenshot's bytes to the owner, and says what became of it in a fixed sentence (R-046). */
+  shot?: (png: Uint8Array<ArrayBuffer>, caption: string) => Promise<string>;
   quiet: Quiet;
   done: () => void;
 }
@@ -334,15 +337,26 @@ export class LocalBench implements Bench {
     if (asked && harness.secrets && !this.labs.has(session)) this.labs.set(session, Lab.open([...harness.secrets, ...secretDirs(this.dataDir)]));
     const lab = asked && (await this.labs.get(session));
     const ask = asked && (async (action: Ask): Promise<Reply> => {
-      const verdict = judge(action, { folders: roots, secrets: secretDirs(this.dataDir), tools: lab ? ['dev_server'] : [], ports: lab?.ports });
+      const verdict = judge(action, { folders: roots, secrets: secretDirs(this.dataDir), tools: lab ? ['dev_server', 'send_screenshot'] : [], ports: lab?.ports });
       if (!verdict.allow && !verdict.ask) return { allow: false, message: verdict.why };
       // What `judge` allows of kind `other` is WebChat's own tool or the browser's, whose arguments it checked.
       if (verdict.allow && action.kind === 'other') return { allow: true };
       // It refuses or asks, but for a command the sandbox holds: the owner could not judge it better, and the paths it names passed above.
       return sandboxed && action.kind === 'execute' ? { allow: true } : asked.ask(action);
     });
+    // The path is judged here again, so the bytes sent are only a file the run may read; the keyholder checks them as data.
+    const shot = asked && asked.shot && (async (file: string, caption: string) => {
+      const verdict = judge({ tool: 'send_screenshot', kind: 'read', paths: [file] }, { folders: roots, secrets: secretDirs(this.dataDir), tools: [] });
+      if (!verdict.allow) return verdict.why;
+      try {
+        if ((await fs.stat(file)).size > LIMITS.fileBytes) return SHOT.size;
+        return await asked.shot!(new Uint8Array(await fs.readFile(file)), caption);
+      } catch {
+        return SHOT.failed;
+      }
+    });
     try {
-      const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: { instructions, skills }, signal, progress, ask, quiet: asked?.quiet, ...(lab && { lab }) });
+      const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: { instructions, skills }, signal, progress, ask, quiet: asked?.quiet, ...(lab && { lab }), ...(shot && { shot }) });
       return { answer, applied };
     } finally {
       asked?.done();

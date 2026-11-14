@@ -266,7 +266,7 @@ export function cardRuns(messages: ChatMessage[], meId: number, docId: string, p
       // here, so a page that reloads before the agent says so does not move the card back to review.
       const target = m.senderId === meId ? latest(run.request) : undefined;
       if (target?.state === 'done') Object.assign(target, { state: 'fixing', at: m.id });
-    } else if (run.kind !== 'clone' && run.kind !== 'draft') {
+    } else if (run.kind !== 'clone' && run.kind !== 'draft' && run.kind !== 'note') {
       const target = latest(run.request);
       if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull, decisions: run.decisions, at: m.id, stopping: false });
     }

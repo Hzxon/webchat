@@ -204,7 +204,7 @@ interface Live {
   /** What it was started for: another folder, setup, schema or question mode starts a new one. */
   key: string;
   session: string;
-  turn?: { ask?: Turn['ask']; cwd: string; line: (line: string) => void; fail: (error: Error) => void };
+  turn?: { ask?: Turn['ask']; shot?: Turn['shot']; cwd: string; line: (line: string) => void; fail: (error: Error) => void };
   /** Ends the process after `CLAUDE_KEEP_MS` without a turn. */
   timer?: NodeJS.Timeout;
   approver?: Awaited<ReturnType<typeof openApprover>>;
@@ -264,7 +264,11 @@ export function claudeHarness(program: string, dataDir: string): Harness {
             turn.fail(error as Error);
             throw error;
           });
-        }, t.lab && { start: (command) => (live.turn ? t.lab!.start(command, live.turn.cwd) : Promise.reject(new Error('No turn runs.'))), server: t.lab.mcpServer(t.cwd) })
+        }, t.lab && {
+          start: (command) => (live.turn ? t.lab!.start(command, live.turn.cwd) : Promise.reject(new Error('No turn runs.'))),
+          ...(t.shot && { shot: (file: string, caption: string) => (live.turn?.shot ? live.turn.shot(path.resolve(live.turn.cwd, file), caption) : Promise.reject(new Error('No turn runs.'))) }),
+          server: t.lab.mcpServer(t.cwd),
+        })
       : undefined;
     // The skills' copies load as a plugin, which holds only `skills/`.
     const args = claudeArgs({ settings, session: t.session, resume: t.resume, schema, claudeMd: t.setup.instructions, skills: t.setup.skills && path.dirname(t.setup.skills), mcp: live.approver?.file });
@@ -306,6 +310,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
       t.signal.addEventListener('abort', onAbort, { once: true });
       live.turn = {
         ask: t.ask,
+        shot: t.shot,
         cwd: t.cwd,
         fail: finish,
         line(output) {

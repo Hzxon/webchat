@@ -43,6 +43,8 @@ export interface Turn {
   quiet?: Quiet;
   /** The run's dev server and the proxy its browser goes through, for a harness that browses (R-046). */
   lab?: Lab;
+  /** Sends a PNG in the working folder to the owner, as a photo in the run's thread, and says what became of it (R-046). */
+  shot?: (file: string, caption: string) => Promise<string>;
 }
 
 export interface Harness {

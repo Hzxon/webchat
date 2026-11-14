@@ -141,6 +141,12 @@ describe('the rules for the browser (R-046)', () => {
     assert.equal(judge(claudeAsk({ tool_name: 'mcp__browser__new_page', input: { url: 'http://localhost:4100/' } }, root), { ...rules, ports: undefined }).allow, false, 'a run with no lab has no browser');
   });
 
+  test('lets the screenshot tool send only a file in the working folder', () => {
+    const shot = (input: Record<string, unknown>) => judge(claudeAsk({ tool_name: 'mcp__webchat__send_screenshot', input }, path.join(root, 'work')), { ...rules, tools: ['dev_server', 'send_screenshot'] });
+    assert.deepEqual(shot({ path: 'shots/desktop.png', caption: 'Desktop' }), { allow: true });
+    for (const file of [path.join(root, 'out.png'), '../out.png', path.join(os.homedir(), '.ssh', 'id_rsa')]) assert.equal(shot({ path: file, caption: 'x' }).allow, false, file);
+  });
+
   test('lets an allowed browser call and the dev server tool through without asking the owner', async () => {
     const work = path.join(root, 'work');
     const asked: string[] = [];

@@ -687,8 +687,9 @@ export interface RunReport {
    * work was unfinished, which keeps its worktree, branch, draft and session for their next words
    * (docs/decisions/stop-pauses-run.md). "planned" holds in the note the plan of a card that holds,
    * which waits for the owner's go or words before the claim commit (docs/decisions/redirect-plan-gate.md).
+   * "note" puts a message in the run's thread and changes nothing, such as a screenshot (R-046).
    */
-  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended' | 'nocopy' | 'stale' | 'decision' | 'merged' | 'closed' | 'draft' | 'progress' | 'paused' | 'planned';
+  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended' | 'nocopy' | 'stale' | 'decision' | 'merged' | 'closed' | 'draft' | 'progress' | 'paused' | 'planned' | 'note';
   request: number;
   /** What happened, in a line. */
   note?: string;
