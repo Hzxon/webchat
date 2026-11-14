@@ -1,6 +1,6 @@
 ### R: Move every screen to Astryx
 
-Status: Running in #248.
+Status: Done in #248 to #252.
 
 Why: the owner chose a full migration after the sign-in pilot (docs/roadmap/new-astryx-pilot.md).
 One design system replaces the hand-written `styles.css`, and agents build UI from the `astryx`

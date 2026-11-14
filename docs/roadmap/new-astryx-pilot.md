@@ -1,6 +1,6 @@
 ### R: Try the Astryx design system on the sign-in screen
 
-Status: Running in #247.
+Status: Done in #247.
 
 Why: the client styles every screen by hand in one 3,500-line `styles.css` (D-083). Astryx
 (github.com/meta/astryx, MIT, React 19) ships accessible components, themes and dark mode, and
