@@ -43,6 +43,9 @@ export const SHOT = {
   ended: 'This turn has ended, so nothing was sent.',
 };
 
+/** The server's refusals once this account's or the server's files are used up (D-123). */
+const FULL = ['own_upload_limit', 'own_storage_full', 'upload_limit', 'storage_full'];
+
 /** A PNG's width and height from its IHDR chunk, which must come first, or undefined for anything else. */
 function pngSize(bytes: Uint8Array) {
   if (fileTypeOf('screenshot.png', bytes) !== 'image/png' || bytes.length < 24 || String.fromCharCode(...bytes.subarray(12, 16)) !== 'IHDR') return;
@@ -134,10 +137,10 @@ export class Permits {
       return send.then(
         () => SHOT.sent,
         (error: unknown) => {
-          const code = error instanceof ApiError ? error.code : undefined;
-          if (code === 'files_off') return SHOT.off;
-          if (code && ['own_upload_limit', 'own_storage_full', 'upload_limit', 'storage_full'].includes(code)) return SHOT.full;
-          return error instanceof ApiError && error.status === 429 ? SHOT.busy : SHOT.failed;
+          if (!(error instanceof ApiError)) return SHOT.failed;
+          if (error.code === 'files_off') return SHOT.off;
+          if (FULL.includes(error.code ?? '')) return SHOT.full;
+          return error.status === 429 ? SHOT.busy : SHOT.failed;
         },
       );
     };

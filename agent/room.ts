@@ -13,7 +13,7 @@ import fs from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { Transform } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isRepoName, LIMITS, SKILL_NAME, type SetupChoice } from '../shared/types.ts';
@@ -509,12 +509,11 @@ export async function connectRunner({ file, bench, version }: { file: string; be
     }
   };
   /** Puts bytes on a side connection, under a transfer id the keyholder gave, and waits for its `ok`. */
-  const put = async (transfer: unknown, size: number, bytes: NodeJS.ReadableStream | Uint8Array) => {
+  const put = async (transfer: unknown, size: number, bytes: NodeJS.ReadableStream) => {
     const socket = await connect(file);
     socket.write(`${JSON.stringify({ transfer, op: 'put', size })}\n`);
     const answered = new Promise<string>((resolve, reject) => socket.once('data', (d: Buffer) => resolve(d.toString())).once('close', () => reject(new Error('The keyholder did not take the bytes.'))));
-    if (bytes instanceof Uint8Array) socket.write(bytes);
-    else await pipeline(bytes, socket, { end: false });
+    await pipeline(bytes, socket, { end: false });
     if ((await answered).trim() !== 'ok') throw new Error('The keyholder did not take the bytes.');
     socket.destroy();
   };
@@ -579,7 +578,7 @@ export async function connectRunner({ file, bench, version }: { file: string; be
                 const quiet = new Quiet();
                 const shot = async (png: Uint8Array<ArrayBuffer>, caption: string) => {
                   const { transfer } = record(await peer.request('upload', { id }));
-                  await put(transfer, png.length, png);
+                  await put(transfer, png.length, Readable.from([png]));
                   return String(await peer.request('shot', { id, transfer, caption }));
                 };
                 return { quiet, ask: (ask: Ask) => quiet.during(peer.request<Reply>('approve', { id, ask })), done: () => undefined, shot };
