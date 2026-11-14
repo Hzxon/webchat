@@ -39,3 +39,4 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - A photo shows only from bytes the page decrypted and checked with `fileTypeOf`; any other file is only downloaded, never opened in the page; uploads skip `request`, whose timer would cut them (D-123, D-077).
 - `styles.css` loads through `layers.css` in the `app` layer, above Astryx's reset and under its components; a stylesheet imported any other way stays unlayered and restyles every Astryx component (the astryx-migration decision, proposed in #248).
 - An Astryx field has no `maxLength` or native `required`: cut the value in `onChange` and check empty fields before a request (the astryx-migration decision, proposed in #248).
+- A class on an Astryx component wins only from `overrides.css`, the layer above Astryx's; keep it to states no prop covers (the astryx-migration decision, proposed in #248).

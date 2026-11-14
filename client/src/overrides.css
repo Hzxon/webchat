@@ -1,0 +1,11 @@
+/* Row states Astryx's list items have no prop for. This file's layer sits above Astryx's, so it
+   wins over a component's own styles (layers.css). Keep it to what a prop cannot say. */
+
+.row-unread {
+  font-weight: 700;
+}
+
+.row-urgent {
+  background: var(--danger-soft);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
