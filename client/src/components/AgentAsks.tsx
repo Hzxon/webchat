@@ -3,7 +3,7 @@
 // approves or declines it here; the answer is a signed message the agent checks, so only the
 // owner's page can link a harness or connect a folder.
 import { useState } from 'react';
-import type { AskDTO } from '../../../shared/types';
+import { HARNESS_WARNING, type AskDTO } from '../../../shared/types';
 import { useAgentChats } from '../agents';
 import { answerAsk } from '../chat';
 import { useAppState } from '../store';
@@ -49,6 +49,7 @@ export function AgentAsks() {
             {a.request.kind === 'link' ? (
               <p>
                 <strong>{a.agent}</strong> asks to link <strong>{a.request.harness}</strong> on its laptop. It will run the questions and cards you give it.
+                {HARNESS_WARNING[a.request.harness] && <strong> {HARNESS_WARNING[a.request.harness]}</strong>}
               </p>
             ) : (
               <p>

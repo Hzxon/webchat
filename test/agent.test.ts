@@ -950,9 +950,9 @@ describe('agent client (R-027)', () => {
         assert.deepEqual(JSON.parse(await fs.readFile(settings, 'utf8')).attribution, { commit: '', pr: '' }, 'the settings hide the attribution lines');
         // A prompt naming a coding agent the laptop does not have fails with the reason, and no turn runs.
         const turnsBeforePrompts = (await turns()).length;
-        await tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Hermes' }, 'What does sum.js do?');
+        await tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Gemini' }, 'What does sum.js do?');
         const refusedPrompt = (await alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'failed').map((m) => m.content?.text);
-        assert.deepEqual(refusedPrompt, ['I could not answer. I have no Hermes on this laptop. Pick another coding agent.']);
+        assert.deepEqual(refusedPrompt, ['I could not answer. I have no Gemini on this laptop. Pick another coding agent.']);
         assert.equal((await turns()).length, turnsBeforePrompts, 'no Claude ran for it');
         // One naming Codex is answered by it, in a scratch copy.
         await tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Codex' }, 'What does sum.js do?');
@@ -1000,7 +1000,7 @@ describe('agent client (R-027)', () => {
         const lkFile = (name: string, body: object) => fs.writeFile(path.join(lkDir, name), JSON.stringify(body));
         assert.match(await plugin.requestLink('Codex'), /Approve it in WebChat/);
         // A file naming no supported harness, or filed more than 10 minutes ago, sends nothing.
-        await lkFile('hermes.json', { kind: 'link', harness: 'Hermes', at: Date.now() });
+        await lkFile('gemini.json', { kind: 'link', harness: 'Gemini', at: Date.now() });
         await lkFile('old.json', { kind: 'link', harness: 'Codex', at: Date.now() - REQUEST_TTL_MS - 1000 });
         await plugin.sendAsks();
         assert.deepEqual((await lkAsks()).map((c) => c.ask), [{ kind: 'link', step: 'request', harness: 'Codex' }]);
@@ -2483,17 +2483,17 @@ describe('agent client (R-027)', () => {
       const find = harnessFinder({ dataDir: agentHome });
       const where = async () => Promise.all((await find()).map(async (h) => (await h.found()).path));
       const [claude, codex] = await find();
-      assert.deepEqual(await where(), [path.join(bin, 'claude'), undefined], 'Codex is not found, and still listed');
+      assert.deepEqual(await where(), [path.join(bin, 'claude'), undefined, undefined], 'Codex and Hermes are not found, and still listed');
       assert.equal(await codex!.refusal(), 'I cannot find Codex on this laptop.');
       // Installed later, in a folder the installers use, it shows at the next look, and the adapter before it stays.
       await fake(path.join(userHome, '.local', 'bin'), 'codex', FAKE_CODEX);
-      assert.deepEqual(await where(), [path.join(bin, 'claude'), path.join(userHome, '.local', 'bin', 'codex')]);
+      assert.deepEqual(await where(), [path.join(bin, 'claude'), path.join(userHome, '.local', 'bin', 'codex'), undefined]);
       assert.equal((await find())[0], claude, 'an unchanged program keeps its adapter');
       await fs.utimes(path.join(bin, 'claude'), new Date(), new Date(Date.now() + 5000));
       assert.notEqual((await find())[0], claude, 'an updated one gets a new adapter');
-      assert.deepEqual([supported('Claude Code')?.id, supported('CODEX')?.id, supported('hermes')], ['claude', 'codex', undefined]);
-      assert.equal(supportedList(), 'claude (Claude Code), codex (Codex)');
-      await assert.rejects(sh(process.execPath, ['--import', 'tsx', 'agent/index.ts', 'link', 'hermes']), (error: { code: number; stderr: string }) => error.code === 1 && /^'hermes' is not a harness WebChat supports\. Supported: claude \(Claude Code\), codex \(Codex\)\./.test(error.stderr));
+      assert.deepEqual([supported('Claude Code')?.id, supported('CODEX')?.id, supported('hermes')?.id, supported('gemini')], ['claude', 'codex', 'hermes', undefined]);
+      assert.equal(supportedList(), 'claude (Claude Code), codex (Codex), hermes (Hermes)');
+      await assert.rejects(sh(process.execPath, ['--import', 'tsx', 'agent/index.ts', 'link', 'gemini']), (error: { code: number; stderr: string }) => error.code === 1 && /^'gemini' is not a harness WebChat supports\. Supported: claude \(Claude Code\), codex \(Codex\), hermes \(Hermes\)\./.test(error.stderr));
 
       assert.equal(await claudeHarness(path.join(bin, 'claude'), agentHome).refusal(), undefined);
       await withEnv({ FAKE_CLAUDE_VERSION: '2.1.258' }, async () => assert.equal(await claudeHarness(path.join(bin, 'claude'), agentHome).refusal(), 'Claude Code 2.1.258 is older than 2.1.259, which I need. Update it.'));

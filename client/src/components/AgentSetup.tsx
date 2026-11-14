@@ -4,7 +4,7 @@
 // last run loaded. Save sends a new choice, and the agent's answer to it confirms it. Nothing of it
 // reaches the server unsealed.
 import { useEffect, useMemo, useState } from 'react';
-import { HARNESS_ROW_WORDS, harnessRow, setupWords, takesAsks, type HarnessRow, type HarnessState, type SetupChoice, type UserDTO } from '../../../shared/types';
+import { HARNESS_ROW_WORDS, HARNESS_WARNING, harnessRow, setupWords, takesAsks, type HarnessRow, type HarnessState, type SetupChoice, type UserDTO } from '../../../shared/types';
 import { blockedBy, ownAgents, useAgentChat, WAKE } from '../agents';
 import { askSetup } from '../chat';
 import { useAppState } from '../store';
@@ -113,7 +113,7 @@ function SetupForm({ agent }: { agent: UserDTO }) {
               <span>
                 <strong>{[h.name, h.version].filter(Boolean).join(' ')}</strong>
                 {h.path && <small>{h.path}</small>}
-                <small>{h.attention ?? (h.linked ? h.refusal ?? 'Takes cards' : !h.path && h.refusal)}</small>
+                <small>{h.attention ?? (h.linked ? h.refusal ?? 'Takes cards' : h.path ? HARNESS_WARNING[h.name] : h.refusal)}</small>
               </span>
               <Tag tone={ROW_TONE[harnessRow(h)]}>{HARNESS_ROW_WORDS[harnessRow(h)]}</Tag>
               <button type="button" className="button-secondary" disabled={busy || (!h.linked && !h.path)} onClick={() => relink(h)}>
