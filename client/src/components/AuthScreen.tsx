@@ -25,7 +25,13 @@ export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError('');
-    // TextInput has no minLength, and the server never sees the password, so the page checks it.
+    // TextInput sets no native required or minLength, so the page checks before a request that
+    // would count as a failed sign-in. The server never sees the password, so only the page can.
+    const fields = mode === 'login' ? [username, password] : [username, displayName, password, inviteCode];
+    if (fields.some((value) => !value.trim())) {
+      setError('Fill in every field.');
+      return;
+    }
     if (mode === 'register' && password.length < 8) {
       setError('Use a password of at least 8 characters.');
       return;
@@ -68,10 +74,9 @@ export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
                   onChange={setUsername}
                   autoComplete="username"
                   autoCapitalize="none"
-                  isRequired
                 />
                 {mode === 'register' && (
-                  <TextInput label="Your name" value={displayName} onChange={setDisplayName} isRequired />
+                  <TextInput label="Your name" value={displayName} onChange={setDisplayName} />
                 )}
                 <TextInput
                   type="password"
@@ -84,7 +89,6 @@ export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
                       ? 'Your password also locks your encrypted messages. If you forget it, your message history cannot be recovered.'
                       : undefined
                   }
-                  isRequired
                 />
                 {mode === 'register' && (
                   <TextInput
@@ -93,7 +97,6 @@ export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
                     onChange={setInviteCode}
                     autoCapitalize="none"
                     description="Ask the person who runs this server."
-                    isRequired
                   />
                 )}
                 {error && <Banner status="error" title={error} />}

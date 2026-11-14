@@ -19,4 +19,6 @@ export const webchatTheme = defineTheme({
     '--radius-element': 'var(--radius)',
     '--radius-container': 'var(--radius)',
   },
+  // Astryx's reset is left out (layers.css), so the browser's h1 margin would push the tagline down.
+  components: { heading: { base: { margin: '0' } } },
 });
