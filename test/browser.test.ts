@@ -165,7 +165,11 @@ describe('the rules for the browser (R-046)', () => {
     );
     await bench.end();
     const replies = answer as Array<{ allow: boolean }>;
-    if (process.platform !== 'darwin') return assert.deepEqual(replies.map((r) => r.allow), [false, false, false]);
+    if (process.platform !== 'darwin') {
+      // No lab off macOS: the browser is refused, and WebChat has no rule for its own tool without one, so the owner decides.
+      assert.deepEqual(replies.map((r) => r.allow), [false, true, false]);
+      return assert.deepEqual(asked, [`mcp__webchat__dev_server ${JSON.stringify({ command: 'npm run dev' })}`]);
+    }
     assert.deepEqual(replies.map((r) => r.allow), [true, true, false]);
     assert.deepEqual(asked, [], 'the owner is asked nothing');
   });
