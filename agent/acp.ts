@@ -5,7 +5,7 @@
 // on an MCP server of ours (answer.ts). Its permission requests get the rulebook's answer, and the
 // owner's when the rulebook cannot decide and the owner's page can show a question.
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import pkg from '../package.json' with { type: 'json' };
@@ -170,7 +170,10 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
   /** Starts the agent and opens its session for `t`: a new one, or the one it kept. */
   async function open(t: Turn): Promise<Live> {
     const listener = await listenForAnswers();
-    const child = spawn(program, [...agent.args, ...(agent.isolation?.args ?? [])], { cwd: t.cwd, env: environment(), stdio: ['pipe', 'pipe', 'pipe'] });
+    const home = path.join(dataDir, agent.id);
+    const isolation = (agent.isolation?.args ?? []).map((arg) => arg.replaceAll('{data}', home));
+    if (agent.isolation?.args.some((arg) => arg.includes('{data}'))) mkdirSync(home, { recursive: true });
+    const child = spawn(program, [...agent.args, ...isolation], { cwd: t.cwd, env: environment(), stdio: ['pipe', 'pipe', 'pipe'] });
     running.add(child);
     // Kept for the error text, and never forwarded.
     let stderr = '';
@@ -304,6 +307,9 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
     async apply() {},
     async turn(t) {
       if (t.signal.aborted) throw new Error(CANCELLED);
+      // Checked on every turn: the agent reads such a file again for its next turn.
+      const unsafe = agent.refuseFiles?.find((file) => existsSync(path.join(t.cwd, file)));
+      if (unsafe) throw new Error(`${name} would run the commands in ${unsafe} outside its sandbox, so I do not run it in a folder that has one. Remove it, or pick another coding agent.`);
       let live = lives.get(t.session);
       if (live?.turn) throw new Error('a turn of this session is running already.');
       // A session that starts over, or moves to another folder, cannot keep its process.

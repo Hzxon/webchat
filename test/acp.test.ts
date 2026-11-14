@@ -452,6 +452,20 @@ describe('the ACP adapter', () => {
     assert.deepEqual([env.GH_TOKEN, env.NPM_TOKEN, env.FAKE_LOGIN_TOKEN, env.EDITOR], [undefined, undefined, 'canary-login', 'vim']);
   });
 
+  test('an agent kept apart in a folder of its own gets that folder, and no turn runs where a file would let it out', async () => {
+    const kept = { ...FAKE, isolation: { ...FAKE.isolation!, args: ['--home', '{data}'] }, refuseFiles: ['.agents/mcp_config.json'] };
+    const harness = adapter({}, kept);
+    assert.deepEqual(await harness.turn(turn()), { reply: 'It adds.' });
+    const home = path.join(data, 'fake');
+    assert.deepEqual((await logged('start'))[0]!.start.argv, ['--acp', '--home', home]);
+    assert.ok((await fs.stat(home)).isDirectory(), 'the folder exists before the agent starts');
+    // A file written between turns counts too, since the agent reads it again for the next turn.
+    await fs.mkdir(path.join(work, '.agents'));
+    await fs.writeFile(path.join(work, '.agents', 'mcp_config.json'), '{}');
+    await assert.rejects(harness.turn(turn({ resume: true })), /\.agents\/mcp_config\.json/);
+    assert.equal((await logged('in')).filter((e) => e.in === 'session/prompt').length, 1, 'no prompt reached the agent');
+  });
+
   test('refusal and found say what this laptop has', async () => {
     assert.equal(await acpHarness({ agent: FAKE, program: '', self: SELF, dataDir: data }).refusal(), 'I cannot find Fake on this laptop.');
     const harness = adapter();
@@ -487,7 +501,7 @@ describe('the ACP adapter', () => {
 
   test('an agent that is not on the list cannot be linked, found or run', async () => {
     assert.equal(supported('gemini'), undefined);
-    assert.equal(supportedList(), 'claude (Claude Code), codex (Codex), hermes (Hermes)');
+    assert.equal(supportedList(), 'claude (Claude Code), codex (Codex), hermes (Hermes), antigravity (Antigravity)');
     // A program of that name on the PATH is never started, not even to read its version.
     const marker = path.join(root, `gemini-ran-${randomUUID()}`);
     await fs.writeFile(path.join(root, 'bin', 'gemini'), `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 });
@@ -501,7 +515,7 @@ describe('the ACP adapter', () => {
   test('an agent on the list is found by its file name, linked by its id, and runs a turn', async () => {
     const kinds = [...SUPPORTED, acpRow(FAKE)];
     assert.equal(supported('fake', kinds)?.name, 'Fake');
-    assert.equal(supportedList(kinds), 'claude (Claude Code), codex (Codex), hermes (Hermes), fake (Fake)');
+    assert.equal(supportedList(kinds), 'claude (Claude Code), codex (Codex), hermes (Hermes), antigravity (Antigravity), fake (Fake)');
     process.env.PATH = `${path.join(root, 'bin')}${path.delimiter}${saved.PATH}`;
     const found = await harnessFinder({ dataDir: data, self: SELF }, kinds)();
     const fake = found.at(-1)!;

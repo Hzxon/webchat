@@ -2483,17 +2483,17 @@ describe('agent client (R-027)', () => {
       const find = harnessFinder({ dataDir: agentHome });
       const where = async () => Promise.all((await find()).map(async (h) => (await h.found()).path));
       const [claude, codex] = await find();
-      assert.deepEqual(await where(), [path.join(bin, 'claude'), undefined, undefined], 'Codex and Hermes are not found, and still listed');
+      assert.deepEqual(await where(), [path.join(bin, 'claude'), undefined, undefined, undefined], 'Codex, Hermes and Antigravity are not found, and still listed');
       assert.equal(await codex!.refusal(), 'I cannot find Codex on this laptop.');
       // Installed later, in a folder the installers use, it shows at the next look, and the adapter before it stays.
       await fake(path.join(userHome, '.local', 'bin'), 'codex', FAKE_CODEX);
-      assert.deepEqual(await where(), [path.join(bin, 'claude'), path.join(userHome, '.local', 'bin', 'codex'), undefined]);
+      assert.deepEqual(await where(), [path.join(bin, 'claude'), path.join(userHome, '.local', 'bin', 'codex'), undefined, undefined]);
       assert.equal((await find())[0], claude, 'an unchanged program keeps its adapter');
       await fs.utimes(path.join(bin, 'claude'), new Date(), new Date(Date.now() + 5000));
       assert.notEqual((await find())[0], claude, 'an updated one gets a new adapter');
       assert.deepEqual([supported('Claude Code')?.id, supported('CODEX')?.id, supported('hermes')?.id, supported('gemini')], ['claude', 'codex', 'hermes', undefined]);
-      assert.equal(supportedList(), 'claude (Claude Code), codex (Codex), hermes (Hermes)');
-      await assert.rejects(sh(process.execPath, ['--import', 'tsx', 'agent/index.ts', 'link', 'gemini']), (error: { code: number; stderr: string }) => error.code === 1 && /^'gemini' is not a harness WebChat supports\. Supported: claude \(Claude Code\), codex \(Codex\), hermes \(Hermes\)\./.test(error.stderr));
+      assert.equal(supportedList(), 'claude (Claude Code), codex (Codex), hermes (Hermes), antigravity (Antigravity)');
+      await assert.rejects(sh(process.execPath, ['--import', 'tsx', 'agent/index.ts', 'link', 'gemini']), (error: { code: number; stderr: string }) => error.code === 1 && /^'gemini' is not a harness WebChat supports\. Supported: claude \(Claude Code\), codex \(Codex\), hermes \(Hermes\), antigravity \(Antigravity\)\./.test(error.stderr));
 
       assert.equal(await claudeHarness(path.join(bin, 'claude'), agentHome).refusal(), undefined);
       await withEnv({ FAKE_CLAUDE_VERSION: '2.1.258' }, async () => assert.equal(await claudeHarness(path.join(bin, 'claude'), agentHome).refusal(), 'Claude Code 2.1.258 is older than 2.1.259, which I need. Update it.'));

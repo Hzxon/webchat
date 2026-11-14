@@ -110,12 +110,14 @@ export type HarnessRow = 'linked' | 'attention' | 'found' | 'missing';
 
 /** What each row says, for Settings and `doctor` alike. */
 /**
- * What the owner reads before and after linking a harness that runs with neither a sandbox nor
- * WebChat's isolation from their setup, by its name (docs/decisions/new-hermes-unconfined.md).
+ * What the owner reads before and after linking a harness that WebChat cannot fully confine, by its
+ * name (docs/decisions/new-hermes-unconfined.md, docs/decisions/new-antigravity-harness.md).
  */
 export const HARNESS_WARNING: Record<string, string> = {
   Hermes:
     'Hermes runs with no sandbox and loads your own Hermes setup: your config, memory, plugins, hooks and MCP servers. A teammate’s question or card can make it read or change your files and use your tools, such as your email. The agent’s keys stay out of its reach.',
+  Antigravity:
+    'Antigravity runs its shell in its own sandbox, apart from your Antigravity setup, but its file, web and MCP tools are outside that sandbox. A repository’s .agents/mcp_config.json would run a command as you, so WebChat refuses a turn in a folder that has one. A file the model writes during a turn can still load before the turn ends.',
 };
 
 export const HARNESS_ROW_WORDS: Record<HarnessRow, string> = { linked: 'Linked', attention: 'Linked, needs attention', found: 'Found, not linked', missing: 'Not found' };

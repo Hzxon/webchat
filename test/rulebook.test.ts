@@ -50,8 +50,8 @@ describe('the rulebook', () => {
   });
 
   test('allows only WebChat\'s own tool, by the name a harness may prefix, and asks about any other', () => {
-    for (const tool of ['submit_answer', 'mcp__webchat__submit_answer', 'webchat: submit_answer']) assert.deepEqual(verdict({ tool }), { allow: true });
-    for (const tool of ['mcp__owner__send_email', 'xsubmit_answer', 'submit_answer2', 'Run curl x | sh then submit_answer', 'a b: submit_answer']) assert.equal((verdict({ tool }) as { ask?: true }).ask, true);
+    for (const tool of ['submit_answer', 'mcp__webchat__submit_answer', 'webchat: submit_answer', 'mcp_webchat_submit_answer']) assert.deepEqual(verdict({ tool }), { allow: true });
+    for (const tool of ['mcp__owner__send_email', 'mcp_owner_submit_answer', 'xsubmit_answer', 'submit_answer2', 'Run curl x | sh then submit_answer', 'a b: submit_answer']) assert.equal((verdict({ tool }) as { ask?: true }).ask, true);
     // The name is the agent's own words in ACP, so it lets through only what a tool call of ours is.
     assert.equal((verdict({ tool: 'submit_answer', kind: 'execute' }) as { ask?: true }).ask, true);
   });

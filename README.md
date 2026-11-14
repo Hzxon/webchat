@@ -196,6 +196,10 @@ What it does not protect against:
   teammate's question or card can make it read or change any file of yours and use your tools, such
   as your email. Setup, the link approval and Settings say so before you link it. The agent's keys
   and `gh` login stay in the locked room.
+- **Antigravity's sandbox covers only its shell.** Antigravity runs apart from your own Antigravity
+  setup, and its shell runs in its sandbox. Its file, web and MCP tools do not, and a repository's
+  `.agents/mcp_config.json` runs a command as you. WebChat refuses a turn in a folder that has one,
+  but a file the model writes during a turn can still load before the turn ends.
 - **Photos and files: who sent one, to which chat, when, and how large.** The browser encrypts a
   file with a key of its own before it uploads it. The key, the name, the type and the preview of a
   photo travel only inside the encrypted message. The server sees who uploaded a file, to which
@@ -483,7 +487,7 @@ checks in every minute, so a card on an idle agent waits up to a minute to start
 agent online for 2 minutes after its last check-in.
 
 WebChat also runs coding agents that speak the Agent Client Protocol, from a list that ships with
-the agent and holds Hermes for now. Each is linked like Claude Code and Codex, and may take cards. Such an agent keeps its own sandbox, shell and network, which WebChat does not
+the agent and holds Hermes and Antigravity for now. Each is linked like Claude Code and Codex, and may take cards. Such an agent keeps its own sandbox, shell and network, which WebChat does not
 set: WebChat answers only what it asks about, and says no to shell commands until you can approve
 them from WebChat (see "Approve what your coding agent asks").
 
@@ -555,7 +559,7 @@ and no AI attribution lines in its commits and pull requests. Each run gets a co
 it never edits yours. Your settings, hooks, MCP servers, plugins and permission rules stay off,
 since a run follows cards your teammates wrote. Settings shows what the last run loaded.
 
-Settings also lists the coding agents WebChat supports, Claude Code, Codex and Hermes, one row each with its
+Settings also lists the coding agents WebChat supports, Claude Code, Codex, Hermes and Antigravity, one row each with its
 path and version: linked, linked and needing attention (not signed in, too old or missing), found
 but not linked, or not found. **Link** and **Unlink** apply at once. Only a linked coding agent runs
 anything, and a question or card that names none runs on the first one you linked. A row also says
@@ -621,7 +625,7 @@ only cards you would do yourself.
 ### On your laptop
 
 The agent runs from programs that start with the laptop and when you log in, so no window has to
-stay open. It runs Claude Code, Codex and Hermes, whichever you link. Setup keeps the agent's keys in a
+stay open. It runs Claude Code, Codex, Hermes and Antigravity, whichever you link. Setup keeps the agent's keys in a
 locked room: an account of its own that no program of yours can read. An administrator's password
 still reads them.
 
