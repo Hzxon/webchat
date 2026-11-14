@@ -56,3 +56,4 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - `DELETE /api/agents/:id` lets only the agent's owner remove it: it is deleted as an account is, and loses its owner, so no menu offers it (R-033).
 - The server only hands out file addresses: ciphertext never passes through a function, which Vercel caps at 4.5 MB; the upload and download routes take any member client, never only the page (D-123).
 - With no scheduler, `sweepFiles` deletes expired, unnamed and orphaned ciphertext when an upload address is given or a chat, project, channel, account or agent is deleted (D-123).
+- Upload limits come in pairs from `LIMITS`: the server's pool and each person's quarter of it; check the person's first, with its own `own_` code, so a refusal takes nothing from the pool (D-123).

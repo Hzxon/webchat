@@ -1092,7 +1092,7 @@ export function createApiRouter({ db, push, bark, github, githubApp, files, conf
   /**
    * An address to upload one file's ciphertext to, for a member of the chat (R-005, D-123). Any
    * member client can use it, a page or an agent. The limits keep a Hobby Blob store from being
-   * blocked: a month's uploads and the bytes stored.
+   * blocked: a month's uploads and the bytes stored, for the server and for each person.
    */
   router.post('/conversations/:id/files', requireAuth, async (req, res) => {
     if (!files) throw new HttpError(404, 'This server keeps no files.', 'files_off');
@@ -1105,10 +1105,19 @@ export function createApiRouter({ db, push, bark, github, githubApp, files, conf
     await requireMember(conversationId, me.id);
     if (!(await db.takeRateLimit(`upload:${me.id}`, 20, 60_000))) throw new HttpError(429, 'Slow down a little.');
     await sweepFiles();
+    // The person's share first, so someone over it takes nothing from everyone's count.
+    if ((await db.storedFileBytes(me.id)) + size > LIMITS.storedBytesPerPerson) {
+      const share = LIMITS.storedBytesPerPerson / 1024 / 1024;
+      throw new HttpError(507, `Your files fill your share of this server, ${share} MB. Try again when older ones expire.`, 'own_storage_full');
+    }
     if ((await db.storedFileBytes()) + size > LIMITS.storedBytes) {
       throw new HttpError(507, 'The server is full of files. Try again when older ones expire.', 'storage_full');
     }
-    if (!(await db.countUpload(new Date().toISOString().slice(0, 7)))) {
+    const month = `uploads:${new Date().toISOString().slice(0, 7)}`;
+    if (!(await db.countUpload(`${month}:${me.id}`, LIMITS.uploadsPerPerson))) {
+      throw new HttpError(429, `You sent your share of files this month, ${LIMITS.uploadsPerPerson}. Try again next month.`, 'own_upload_limit');
+    }
+    if (!(await db.countUpload(month, LIMITS.uploadsPerMonth))) {
       throw new HttpError(429, 'This server took all the files it can this month.', 'upload_limit');
     }
     const id = toBase64Url(randomBytes(16));

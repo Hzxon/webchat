@@ -288,7 +288,8 @@ Share the address and the invite code with your friends, or send a link that fil
 
 - Vercel Hobby is for personal, non-commercial use.
 - Hobby's Blob storage holds 1 GB and takes 2,000 uploads a month, and a store that goes over is
-  blocked for 30 days. WebChat refuses new files at 900 MB stored or 1,800 uploads a month.
+  blocked for 30 days. WebChat refuses new files at 900 MB stored or 1,800 uploads a month, and
+  each person at a quarter of that: 225 MB stored and 450 uploads a month.
 - Supabase pauses a free project after about a week with no activity. Anyone using the chat keeps it
   awake. If it pauses, resume it from the Supabase dashboard.
 

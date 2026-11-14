@@ -912,16 +912,20 @@ export async function openDb(sql: Sql) {
           uploaderId,
         ])
       ).length > 0,
-    storedFileBytes: async () =>
-      Number((await one(sql.query<{ total: string }>('SELECT COALESCE(SUM(size), 0) AS total FROM webchat.files')))!.total),
-    /** Counts an upload in the month's total, or answers false once the total reached the limit. */
-    countUpload: async (month: string) =>
+    /** The bytes stored, of everyone's files or of one uploader's. */
+    storedFileBytes: async (uploaderId: number | null = null) =>
+      Number(
+        (await one(sql.query<{ total: string }>('SELECT COALESCE(SUM(size), 0) AS total FROM webchat.files WHERE $1::int IS NULL OR uploader_id = $1', [uploaderId])))!
+          .total,
+      ),
+    /** Counts an upload under a key of `meta`, or answers false once that count reached the limit. */
+    countUpload: async (key: string, limit: number) =>
       (
         await sql.query(
           `INSERT INTO webchat.meta (key, value) VALUES ($1, '1')
            ON CONFLICT (key) DO UPDATE SET value = (webchat.meta.value::int + 1)::text WHERE webchat.meta.value::int < $2
            RETURNING value`,
-          [`uploads:${month}`, LIMITS.uploadsPerMonth],
+          [key, limit],
         )
       ).length > 0,
     /** Files whose ciphertext goes: past their days, an upload no message followed for an hour, or of a deleted chat or account. */

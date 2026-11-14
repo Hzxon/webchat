@@ -2204,24 +2204,60 @@ describe('chat server', () => {
     assert.ok(history.data.some((m) => m.id === sent.data.id), 'the message stays');
   });
 
-  test("uploads stop before the store's monthly or size limit (D-123)", async () => {
-    const month = `uploads:${new Date().toISOString().slice(0, 7)}`;
-    const before = (await instance.sql.query<{ value: string }>('SELECT value FROM webchat.meta WHERE key = $1', [month]))[0]!.value;
-    await instance.sql.query('UPDATE webchat.meta SET value = $1 WHERE key = $2', [String(LIMITS.uploadsPerMonth), month]);
-    const monthly = await alice.request<{ code?: string }>('POST', `/conversations/${directChat.id}/files`, { size: 100 });
-    assert.deepEqual([monthly.status, monthly.data.code], [429, 'upload_limit']);
-    await instance.sql.query('UPDATE webchat.meta SET value = $1 WHERE key = $2', [before, month]);
-
+  /** Charges stored bytes to someone, as a file of theirs would, and returns a function that takes it back. */
+  async function charge(uploader: Client, size: number) {
+    const id = crypto.randomBytes(16).toString('base64url');
     await instance.sql.query('INSERT INTO webchat.files (id, conversation_id, uploader_id, size, created_at, sent) VALUES ($1, $2, $3, $4, $5, true)', [
-      'f'.repeat(22),
+      id,
       directChat.id,
-      alice.id,
-      LIMITS.storedBytes - 99,
+      uploader.id,
+      size,
       Date.now(),
     ]);
-    const full = await alice.request<{ code?: string }>('POST', `/conversations/${directChat.id}/files`, { size: 100 });
+    return () => instance.sql.query('DELETE FROM webchat.files WHERE id = $1', [id]);
+  }
+  const month = () => `uploads:${new Date().toISOString().slice(0, 7)}`;
+  const counted = async (key: string) =>
+    Number((await instance.sql.query<{ value: string }>('SELECT value FROM webchat.meta WHERE key = $1', [key]))[0]?.value ?? 0);
+  const setCount = (key: string, value: number) =>
+    instance.sql.query('INSERT INTO webchat.meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [key, String(value)]);
+  const askUpload = (client: Client) => client.request<{ code?: string; error?: string }>('POST', `/conversations/${directChat.id}/files`, { size: 100 });
+
+  test("uploads stop before the store's monthly or size limit (D-123)", async () => {
+    const before = await counted(month());
+    await setCount(month(), LIMITS.uploadsPerMonth);
+    const monthly = await askUpload(alice);
+    assert.deepEqual([monthly.status, monthly.data.code], [429, 'upload_limit']);
+    await setCount(month(), before);
+
+    // Bob's share is full too, but Alice asks: the server's pool is what stops her.
+    const takeBack = await charge(bob, LIMITS.storedBytes - 99);
+    const full = await askUpload(alice);
     assert.deepEqual([full.status, full.data.code], [507, 'storage_full']);
-    await instance.sql.query('DELETE FROM webchat.files WHERE id = $1', ['f'.repeat(22)]);
+    await takeBack();
+  });
+
+  test("one person's uploads stop at their share of the month, and others in the chat go on (D-123)", async () => {
+    const mine = `${month()}:${alice.id}`;
+    const shared = await counted(month());
+    await setCount(mine, LIMITS.uploadsPerPerson);
+    const refused = await askUpload(alice);
+    assert.deepEqual([refused.status, refused.data.code], [429, 'own_upload_limit']);
+    assert.match(refused.data.error!, /your share/i);
+    assert.equal(await counted(month()), shared, 'a refused person takes nothing from the shared count');
+    assert.equal((await askUpload(bob)).status, 201, 'Bob in the same chat still gets an address');
+    await setCount(mine, 0);
+  });
+
+  test("one person's stored files stop at their share, and others in the chat go on (D-123)", async () => {
+    const takeBack = await charge(alice, LIMITS.storedBytesPerPerson - 99);
+    const refused = await askUpload(alice);
+    assert.deepEqual([refused.status, refused.data.code], [507, 'own_storage_full']);
+    assert.match(refused.data.error!, /your share/i);
+    assert.equal((await askUpload(bob)).status, 201, 'Bob in the same chat still gets an address');
+    await takeBack();
+    assert.equal(LIMITS.uploadsPerPerson * 4, LIMITS.uploadsPerMonth, 'a share is a quarter of the pool');
+    assert.equal(LIMITS.storedBytesPerPerson * 4, LIMITS.storedBytes);
   });
 
   test("deleting a chat or an account deletes its files' ciphertext", async () => {

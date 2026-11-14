@@ -1006,6 +1006,10 @@ export function previewOf(content: { text: string; pull?: { title: string } | nu
   return content.text;
 }
 
+/** Under Hobby's 2,000 Blob uploads a month and 1 GB stored, which the rest of the project shares (D-003, D-123). */
+const UPLOADS_PER_MONTH = 1800;
+const STORED_BYTES = 900 * 1024 * 1024;
+
 export const LIMITS = {
   messageLength: 4000,
   /** Characters of the quoted message a reply carries. */
@@ -1067,9 +1071,11 @@ export const LIMITS = {
   previewLength: 600,
   /** Days the server keeps a file's ciphertext; the message stays. */
   fileDays: 7,
-  /** Under Hobby's 2,000 uploads a month and 1 GB stored, which the rest of the project shares (D-003). */
-  uploadsPerMonth: 1800,
-  storedBytes: 900 * 1024 * 1024,
+  uploadsPerMonth: UPLOADS_PER_MONTH,
+  storedBytes: STORED_BYTES,
+  /** Each person's share of both, so one looping client cannot fill the store for everyone (D-123). */
+  uploadsPerPerson: UPLOADS_PER_MONTH / 4,
+  storedBytesPerPerson: STORED_BYTES / 4,
 } as const;
 
 // The types a message may carry, by the extension of its name, and how each file starts. No
