@@ -50,20 +50,6 @@ Done when, with two accounts that share a chat, one sending and the other receiv
 8. Deleting the chat deletes its stored files.
 9. The README and D-020 list what the server and the storage service see, and say that nobody scans files.
 
-### R-045: R-045: The Coding agents row's name says nothing of board work
-
-Status: In review: Hzxon/webchat#227.
-
-Checked: 2026-11-14. Read R-045, the other cards, D-103/D-104/D-116/D-117, Sidebar.tsx, agents.ts and test/agents.test.ts on main at 7305298; open PR #229 by title only; tests not run.
-
-Why: proposal drafts from a linked repository (D-117) sit in threads under Chats, in the row "Coding agents", named `Proposed in <repo>: <file>`. An owner who looks for board work does not think of that row. K-72 points the owner's board at the drafts, but the row itself still read as chats with an agent only.
-
-Scope: the row's subtitle says when proposals wait, such as "3 proposals wait for the board" (`AgentsListItem` in `client/src/components/Sidebar.tsx`). The row is not tied to one project, so it counts the waiting drafts of every project with `proposalsWaiting` in `client/src/agents.ts`, while the board counts its own with `waitingProposals` (K-72). The unread badge stays the agents' chats' (D-103). Nothing new reaches the server.
-
-Done when: with a proposal draft not yet added, the Coding agents row says so, and it stops once the draft is added. `test/agents.test.ts` proves the count.
-
-Status to set by hand: `Done in Hzxon/webchat#227`.
-
 ### R-046: A run checks its work in a browser that reaches only its own dev server
 
 Status: In review: part 1, the browser, merged in #235; part 2, screenshots sealed to the owner, in #240. Proposed by the owner on 2026-11-14.
@@ -423,6 +409,7 @@ Status: Dropped on 2026-11-13. The owner no longer wants a teammate to run a car
 | K-70: The pane says "No copy yet" for a repository the agent works in | #223 |
 | K-71: A backlog of proposal files hits the send limit, and a new install sends them all again | #224 |
 | R-044: Make and number a card from the terminal | #225 |
+| R-045: R-045: The Coding agents row's name says nothing of board work | #227 |
 | K-1: The iOS 16.4 banner stays after Bark is linked | #228 |
 | K-73: The owner is asked about shell commands the sandbox already holds | #233 |
 | K-74: An agent's card draft loses everything past 4,000 characters | Fixed |
