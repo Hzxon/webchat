@@ -167,7 +167,7 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
             void approve();
           }}
         >
-          <p className="dialog-intro">The agent sent the code. Name it, and pick the projects it joins: it reads their channels.</p>
+          <p className="dialog-intro">The agent sent the code. Name it, and pick any projects it joins: it reads their channels. You can add it to a project later, like anyone.</p>
           {/* Display only: Unlink in Agent settings takes one back. */}
           {picks.length > 0 && (
             <>
@@ -200,8 +200,7 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
               </li>
             ))}
           </ul>
-          {/* An agent in no project reads no board, so it could answer nothing. */}
-          <button className="button-primary" disabled={busy || !name.trim() || picked.size === 0}>
+          <button className="button-primary" disabled={busy || !name.trim()}>
             Approve
           </button>
         </form>
