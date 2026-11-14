@@ -1,9 +1,13 @@
-import type { ReactNode } from 'react';
+import { Badge } from '@astryxdesign/core/Badge';
 import type { PullCardDTO, PullChecks, PullReview, RunReport } from '../../../shared/types';
 
 export type Tone = 'ok' | 'danger' | 'warn' | 'info' | 'muted';
 
-export const Tag = ({ tone, children }: { tone: Tone; children: ReactNode }) => <span className={`tag tag-${tone}`}>{children}</span>;
+const VARIANT = { ok: 'success', danger: 'error', warn: 'warning', info: 'info', muted: 'neutral' } as const;
+
+export const Tag = ({ tone, children }: { tone: Tone; children: string }) => (
+  <Badge variant={VARIANT[tone]} label={children} />
+);
 
 /** An agent's latest report on a run, in the chat and on the board (R-027), in the pane's words (D-105). */
 export const RUN_TAGS: Record<RunReport['kind'], [Tone, string]> = {

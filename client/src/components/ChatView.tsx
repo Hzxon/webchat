@@ -1,4 +1,10 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { Divider } from '@astryxdesign/core/Divider';
+import { IconButton } from '@astryxdesign/core/IconButton';
+import { Stack } from '@astryxdesign/core/Stack';
+import { Text } from '@astryxdesign/core/Text';
 import type { QuotedMessage } from '../../../shared/e2ee';
 import { githubCardEvent } from '../../../shared/github';
 import { FILE_EXTENSIONS, FILE_TYPE_LIST, isPhotoType, LIMITS, RUN_PICKUP_MS, type CardNoteDTO, type FileDTO, type GithubCardDTO, type PullCardDTO, type PullEvent, type RunReport, type RunRequest } from '../../../shared/types';
@@ -94,46 +100,55 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
   return (
     <section className="chat">
       <header className="chat-header">
-        <button className="icon-button back-button" onClick={() => actions.setActive(null)} aria-label="Back to chats">
-          <BackIcon />
-        </button>
+        <IconButton
+          className="back-button"
+          variant="ghost"
+          label="Back to chats"
+          onClick={() => actions.setActive(null)}
+          icon={<BackIcon />}
+        />
         {isChannel ? (
           <Avatar name={project?.name ?? '#'} seed={(project?.id ?? 0) + 5} size={40} square />
         ) : (
           <Avatar name={title} seed={otherId ?? conversation.id + 3} size={40} online={otherId ? users[otherId]?.online : false} />
         )}
-        <div className="chat-header-text">
-          <strong>{title}</strong>
-          <span>{subtitle}</span>
-        </div>
-        <div className="header-end">
+        <Stack gap={0} className="chat-header-text">
+          <Text weight="semibold" maxLines={1}>
+            {title}
+          </Text>
+          <Text type="supporting" color="secondary" maxLines={1}>
+            {subtitle}
+          </Text>
+        </Stack>
+        <Stack direction="horizontal" gap={0.5}>
           {membersOf && (
             <>
-              <button className="icon-button" onClick={() => onMembers(membersOf)} title="Members" aria-label="Members">
-                <UsersIcon />
-              </button>
-              <button className="icon-button" onClick={() => onAddPeople(membersOf)} title="Add people" aria-label="Add people">
-                <UserPlusIcon />
-              </button>
+              <IconButton variant="ghost" label="Members" tooltip="Members" onClick={() => onMembers(membersOf)} icon={<UsersIcon />} />
+              <IconButton
+                variant="ghost"
+                label="Add people"
+                tooltip="Add people"
+                onClick={() => onAddPeople(membersOf)}
+                icon={<UserPlusIcon />}
+              />
             </>
           )}
-          <button
-            className="icon-button"
+          <IconButton
+            variant="ghost"
+            label="Encryption and security codes"
+            tooltip="Encryption and security codes"
             onClick={() => setShowCodes(true)}
-            title="Encryption and security codes"
-            aria-label="Encryption and security codes"
-          >
-            <LockIcon />
-          </button>
-        </div>
+            icon={<LockIcon />}
+          />
+        </Stack>
       </header>
       {changed.length > 0 && (
-        <button className="banner banner-warn" onClick={() => setShowCodes(true)}>
-          <AlertIcon width={18} height={18} />
-          <span>
-            {changed.join(', ')}’s security code changed. Check it with them before trusting new messages.
-          </span>
-        </button>
+        <Banner
+          status="warning"
+          container="section"
+          title={`${changed.join(', ')}’s security code changed. Check it with them before trusting new messages.`}
+          endContent={<Button size="sm" label="Check" onClick={() => setShowCodes(true)} />}
+        />
       )}
       <MessageList conversation={conversation} onShowCodes={() => setShowCodes(true)} onReply={setReplyTo} />
       <Composer
@@ -266,11 +281,15 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
           : 'Messages you send here will be end-to-end encrypted. Earlier ones were sent before encryption.'}
       </button>
       {loaded && !complete && (
-        <button className="load-older" onClick={() => void showOlder()} disabled={loadingOlder}>
-          {loadingOlder ? 'Loading…' : 'Show earlier messages'}
-        </button>
+        <Stack hAlign="center">
+          <Button variant="ghost" size="sm" onClick={() => void showOlder()} isLoading={loadingOlder} label="Show earlier messages" />
+        </Stack>
       )}
-      {messages.length === 0 && complete && <p className="messages-empty">No messages yet. Say hello.</p>}
+      {messages.length === 0 && complete && (
+        <Stack padding={10} hAlign="center">
+          <Text color="secondary">No messages yet. Say hello.</Text>
+        </Stack>
+      )}
       {shown.map((message, i) => {
         const previous = shown[i - 1];
         const newDay = !previous || dayLabel(previous.createdAt) !== dayLabel(message.createdAt);
@@ -288,7 +307,7 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
         ].join(' ');
         return (
           <Fragment key={message.clientId ?? message.id}>
-            {newDay && <div className="day-separator">{dayLabel(message.createdAt)}</div>}
+            {newDay && <Divider label={dayLabel(message.createdAt)} />}
             <div className={rowClass} id={message.id > 0 ? `message-${message.id}` : undefined}>
               <div className="bubble-line">
                 <div
@@ -348,17 +367,14 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                 </div>
                 {canAct && (
                   <span className="message-tools">
-                    <button
-                      className="tool-button"
+                    <IconButton
+                      size="sm"
+                      label="React"
+                      tooltip="React"
                       onClick={() => setTrayFor((current) => (current === message.id ? null : message.id))}
-                      title="React"
-                      aria-label="React"
-                    >
-                      <SmilePlusIcon width={17} height={17} />
-                    </button>
-                    <button className="tool-button" onClick={() => onReply(message)} title="Reply" aria-label="Reply">
-                      <ReplyIcon width={17} height={17} />
-                    </button>
+                      icon={<SmilePlusIcon width={17} height={17} />}
+                    />
+                    <IconButton size="sm" label="Reply" tooltip="Reply" onClick={() => onReply(message)} icon={<ReplyIcon width={17} height={17} />} />
                   </span>
                 )}
                 {trayFor === message.id && (
@@ -392,14 +408,16 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
               </div>
               {marks && <ReactionChips marks={marks} target={message} onToggle={(emoji) => void react(message, emoji)} />}
               {status === 'failed' && (
-                <div className="send-failed-row">
-                  <button className="send-failed" onClick={() => retryMessage(message)}>
-                    <AlertIcon width={14} height={14} /> Not sent. Tap to retry.
-                  </button>
-                  <button className="send-discard" onClick={() => discardMessage(message)}>
-                    Remove
-                  </button>
-                </div>
+                <Stack direction="horizontal" gap={1} hAlign={mine ? 'end' : 'start'}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<AlertIcon width={14} height={14} />}
+                    label="Not sent. Tap to retry."
+                    onClick={() => retryMessage(message)}
+                  />
+                  <Button variant="ghost" size="sm" label="Remove" onClick={() => discardMessage(message)} />
+                </Stack>
               )}
             </div>
           </Fragment>
@@ -467,9 +485,14 @@ export function FileBubble({ file, sentAt }: { file: FileDTO; sentAt: number }) 
           <FileIcon width={22} height={22} />
           {about}
           {!gone && (
-            <button className="file-download" disabled={!file.id} onClick={() => void downloadFile(file).catch(fail)} aria-label={`Download ${file.name}`}>
-              <DownloadIcon width={16} height={16} /> Download
-            </button>
+            <Button
+              size="sm"
+              isDisabled={!file.id}
+              onClick={() => void downloadFile(file).catch(fail)}
+              aria-label={`Download ${file.name}`}
+              icon={<DownloadIcon width={16} height={16} />}
+              label="Download"
+            />
           )}
         </span>
       )}
@@ -543,15 +566,14 @@ function RunCard({ run, state, users, onCancel }: { run: RunRequest; state: RunR
       </span>
       {state?.note && <span className="pull-people">{state.note}</span>}
       {going && onCancel && (
-        <button
-          className="button-secondary run-cancel"
+        <Button
+          size="sm"
+          label="Cancel"
           onClick={(e) => {
             e.stopPropagation();
             onCancel();
           }}
-        >
-          Cancel
-        </button>
+        />
       )}
     </span>
   );
@@ -775,17 +797,23 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
 
   return (
     <footer className={`composer ${urgent ? 'is-urgent' : ''}`}>
-      {blockedReason && <p className="composer-blocked">{blockedReason}</p>}
+      {blockedReason && <Banner status="warning" title={blockedReason} />}
       {replyTo && (
         <div className="composer-reply">
           <Quote quote={quoteOf(replyTo)} original={replyTo} />
-          <button className="icon-button" onClick={onCancelReply} title="Cancel reply" aria-label="Cancel reply">
-            <CloseIcon width={18} height={18} />
-          </button>
+          <IconButton variant="ghost" label="Cancel reply" tooltip="Cancel reply" onClick={onCancelReply} icon={<CloseIcon width={18} height={18} />} />
         </div>
       )}
-      {urgent && <p className="composer-hint">Urgent: their device keeps ringing until they see it.</p>}
-      {fileProblem && <p className="composer-hint">{fileProblem}</p>}
+      {urgent && (
+        <Text as="p" type="supporting" color="secondary">
+          Urgent: their device keeps ringing until they see it.
+        </Text>
+      )}
+      {fileProblem && (
+        <Text as="p" type="supporting" color="secondary">
+          {fileProblem}
+        </Text>
+      )}
       {attachment && (
         <div className="composer-attachment">
           {attachment.file.preview ? <img src={attachment.file.preview} alt="" /> : <FileIcon width={22} height={22} />}
@@ -793,32 +821,28 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
             <span className="file-name">{attachment.file.name}</span>
             <span className="file-size">{formatSize(attachment.file.size)} · Kept for 7 days</span>
           </span>
-          <button className="icon-button" onClick={() => setAttachment(null)} title="Remove file" aria-label="Remove file">
-            <CloseIcon width={18} height={18} />
-          </button>
+          <IconButton variant="ghost" label="Remove file" tooltip="Remove file" onClick={() => setAttachment(null)} icon={<CloseIcon width={18} height={18} />} />
         </div>
       )}
       <div className="composer-row">
-        <button
-          className={`icon-button urgent-toggle ${urgent ? 'is-on' : ''}`}
-          onClick={() => setUrgent((u) => !u)}
+        <IconButton
+          variant={urgent ? 'destructive' : 'ghost'}
           aria-pressed={urgent}
-          title="Mark as urgent"
-          aria-label="Mark as urgent"
-        >
-          <BellRingIcon />
-        </button>
+          label="Mark as urgent"
+          tooltip="Mark as urgent"
+          onClick={() => setUrgent((u) => !u)}
+          icon={<BellRingIcon />}
+        />
         {filesOn && (
           <>
-            <button
-              className="icon-button"
+            <IconButton
+              variant="ghost"
+              label="Attach a photo or file"
+              tooltip="Attach a photo or file"
+              isDisabled={blockedReason !== null}
               onClick={() => picker.current?.click()}
-              disabled={blockedReason !== null}
-              title="Attach a photo or file"
-              aria-label="Attach a photo or file"
-            >
-              <PaperclipIcon />
-            </button>
+              icon={<PaperclipIcon />}
+            />
             <input
               ref={picker}
               type="file"
@@ -840,9 +864,14 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
           onChange={(e) => edit(e.target.value)}
           onKeyDown={onKeyDown}
         />
-        <button className="send-button" onClick={submit} disabled={(!text.trim() && !attachment) || blockedReason !== null} aria-label="Send">
-          <SendIcon />
-        </button>
+        <IconButton
+          variant={urgent ? 'destructive' : 'primary'}
+          size="lg"
+          label="Send"
+          onClick={submit}
+          isDisabled={(!text.trim() && !attachment) || blockedReason !== null}
+          icon={<SendIcon />}
+        />
       </div>
     </footer>
   );
