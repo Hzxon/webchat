@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { CodeBlock } from '@astryxdesign/core/CodeBlock';
+import { IconButton } from '@astryxdesign/core/IconButton';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
@@ -90,29 +91,33 @@ export function DocView({ doc }: { doc: ChatDoc }) {
   return (
     <section className="chat doc-view">
       <header className="chat-header">
-        <button className="icon-button back-button" onClick={() => actions.setDocOpen(null)} aria-label="Back to projects">
-          <BackIcon />
-        </button>
+        <IconButton
+          className="back-button"
+          variant="ghost"
+          label="Back to projects"
+          onClick={() => actions.setDocOpen(null)}
+          icon={<BackIcon />}
+        />
         <span className="avatar avatar-square doc-avatar">
           <FileIcon />
         </span>
-        <div className="chat-header-text">
-          <strong>{doc.name}</strong>
-          <span>
+        <Stack gap={0} className="chat-header-text">
+          <Text weight="semibold" maxLines={1}>
+            {doc.name}
+          </Text>
+          <Text type="supporting" color="secondary" maxLines={1}>
             {project?.name} · {nameOf(doc.updatedBy)} edited {formatAgo(doc.updatedAt)} · {words} words
-          </span>
-        </div>
-        <div className="header-end">
-          <button className="icon-button" onClick={() => print()} title="Export to PDF" aria-label="Export to PDF">
-            <PrinterIcon />
-          </button>
-        </div>
+          </Text>
+        </Stack>
+        <IconButton variant="ghost" label="Export to PDF" tooltip="Export to PDF" onClick={() => print()} icon={<PrinterIcon />} />
       </header>
       <div className="doc-scroll">
         <article className="doc-page">
           <h1 className="doc-title">{doc.name}</h1>
-          {error && <p className="form-error">{error}</p>}
-          {sections === null && !error && <p className="doc-note">Loading…</p>}
+          {error && <Banner status="error" title={error} />}
+          {sections === null && !error && <Text as="p" color="secondary">
+              Loading…
+            </Text>}
           {shown.map((section, index) => {
             if (editing?.id === section.id) {
               return (
@@ -132,42 +137,55 @@ export function DocView({ doc }: { doc: ChatDoc }) {
               <div key={section.id} className={`doc-section ${lock ? 'is-locked' : ''}`}>
                 <div className="doc-section-tools">
                   {lock && <span className="doc-lock">{nameOf(lock.userId)} is editing</span>}
-                  <button
-                    className="icon-button icon-button-small"
+                  <IconButton
+                    variant="ghost"
+                    size="sm"
+                    label="Edit section"
+                    tooltip="Edit"
                     onClick={() => void edit(section.id, section.text, section.pos)}
-                    disabled={editing !== null || !!lock || section.failed}
-                    title="Edit"
-                    aria-label="Edit section"
-                  >
-                    <PencilIcon width={18} height={18} />
-                  </button>
-                  <button className="icon-button icon-button-small" onClick={() => setHistoryOf(section)} title="History" aria-label="Section history">
-                    <HistoryIcon width={18} height={18} />
-                  </button>
-                  <button
-                    className="icon-button icon-button-small"
+                    isDisabled={editing !== null || !!lock || section.failed}
+                    icon={<PencilIcon width={18} height={18} />}
+                  />
+                  <IconButton
+                    variant="ghost"
+                    size="sm"
+                    label="Section history"
+                    tooltip="History"
+                    onClick={() => setHistoryOf(section)}
+                    icon={<HistoryIcon width={18} height={18} />}
+                  />
+                  <IconButton
+                    variant="ghost"
+                    size="sm"
+                    label="Add a section below"
+                    tooltip="Add a section below"
                     onClick={() => addAfter(index)}
-                    disabled={editing !== null}
-                    title="Add a section below"
-                    aria-label="Add a section below"
-                  >
-                    <PlusIcon width={18} height={18} />
-                  </button>
+                    isDisabled={editing !== null}
+                    icon={<PlusIcon width={18} height={18} />}
+                  />
                 </div>
                 {section.failed ? (
-                  <p className="doc-note">This section could not be decrypted.</p>
+                  <Text as="p" color="secondary">
+                    This section could not be decrypted.
+                  </Text>
                 ) : section.text.trim() ? (
                   <Markdown text={section.text} />
                 ) : (
-                  <p className="doc-note">Empty section</p>
+                  <Text as="p" color="secondary">
+                    Empty section
+                  </Text>
                 )}
               </div>
             );
           })}
           {sections !== null && (
-            <button className="button-secondary doc-add" onClick={() => addAfter(list.length - 1)} disabled={editing !== null}>
-              <PlusIcon width={18} height={18} /> Add a section
-            </button>
+            <Button
+              className="doc-add"
+              label="Add a section"
+              icon={<PlusIcon width={18} height={18} />}
+              onClick={() => addAfter(list.length - 1)}
+              isDisabled={editing !== null}
+            />
           )}
         </article>
       </div>
@@ -307,21 +325,13 @@ export function SectionEditor({
         autoFocus
       />
       <div className="doc-editor-actions">
-        <span className="doc-note">{status}</span>
+        <Text color="secondary">{status}</Text>
         {editing.isNew ? (
-          <button className="button-secondary" onClick={() => void cancel()}>
-            Cancel
-          </button>
+          <Button label="Cancel" onClick={() => void cancel()} />
         ) : (
-          canDelete && (
-            <button className="button-danger" onClick={() => void remove()}>
-              Delete
-            </button>
-          )
+          canDelete && <Button variant="destructive" label="Delete" onClick={() => void remove()} />
         )}
-        <button className="button-primary" onClick={() => void done()}>
-          Done
-        </button>
+        <Button variant="primary" label="Done" onClick={() => void done()} />
       </div>
     </div>
   );

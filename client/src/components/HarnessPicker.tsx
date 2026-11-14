@@ -5,6 +5,7 @@
 // with the reason.
 import { useEffect, useState } from 'react';
 import type { UserDTO } from '../../../shared/types';
+import { Selector } from '@astryxdesign/core/Selector';
 import { blockedBy, useAgentChat } from '../agents';
 import { askSetup } from '../chat';
 import { useAppState } from '../store';
@@ -29,7 +30,9 @@ export interface HarnessChoice {
 export function useHarnessPick(agent: UserDTO | undefined, questions = false) {
   const chat = useAgentChat(agent);
   // The newest answer alone, so a new message in the chat renders nothing here.
-  const state = useAppState((s) => (chat ? s.messages[chat.id]?.findLast((m) => m.senderId === agent?.id && m.setupState)?.setupState : undefined));
+  const state = useAppState((s) =>
+    chat ? s.messages[chat.id]?.findLast((m) => m.senderId === agent?.id && m.setupState)?.setupState : undefined,
+  );
   const [picked, setPicked] = useState(remembered);
   useEffect(() => {
     if (agent && !state && !asked.has(agent.id) && !blockedBy(agent, true)) {
@@ -37,12 +40,13 @@ export function useHarnessPick(agent: UserDTO | undefined, questions = false) {
       void askSetup(agent.id);
     }
   }, [agent?.id, !!state]);
-  const list = state?.harnesses?.map(
-    (h): HarnessChoice => ({
-      name: h.name,
-      reason: questions && h.linked !== undefined ? h.answers : (h.refusal ?? (state.choice.off?.includes(h.name) ? 'turned off in Agent settings' : undefined)),
-    }),
-  );
+  const list = state?.harnesses?.map((h): HarnessChoice => ({
+    name: h.name,
+    reason:
+      questions && h.linked !== undefined
+        ? h.answers
+        : (h.refusal ?? (state.choice.off?.includes(h.name) ? 'turned off in Agent settings' : undefined)),
+  }));
   const harness = (list?.find((h) => h.name === picked && !h.reason) ?? list?.find((h) => !h.reason))?.name;
   const pick = (name: string) => {
     setPicked(name);
@@ -64,19 +68,27 @@ function remembered() {
 }
 
 /** The pick, as a line after the repository: nothing while the agent has listed no harnesses. */
-export function HarnessPicker({ list, value, onChange }: { list?: HarnessChoice[]; value?: string; onChange: (name: string) => void }) {
+export function HarnessPicker({
+  list,
+  value,
+  onChange,
+}: {
+  list?: HarnessChoice[];
+  value?: string;
+  onChange: (name: string) => void;
+}) {
   if (!list?.length) return null;
   return (
-    <label className="agents-repo">
+    <div className="agents-repo">
       with
-      <select value={value ?? ''} onChange={(e) => onChange(e.target.value)} aria-label="Coding agent">
-        {list.map((h) => (
-          <option key={h.name} value={h.name} disabled={!!h.reason}>
-            {h.name}
-            {h.reason && ` (${h.reason})`}
-          </option>
-        ))}
-      </select>
-    </label>
+      <Selector
+        label="Coding agent"
+        isLabelHidden
+        size="sm"
+        value={value ?? ''}
+        onChange={onChange}
+        options={list.map((h) => ({ value: h.name, label: h.name, description: h.reason, disabled: !!h.reason }))}
+      />
+    </div>
   );
 }
