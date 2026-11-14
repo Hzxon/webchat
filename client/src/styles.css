@@ -836,11 +836,6 @@ a {
   font-size: 13px;
 }
 
-.back-button {
-  display: none;
-  margin-left: -8px;
-}
-
 .messages {
   flex: 1;
   /* On a phone the hidden tools of a wide bubble reach past the right edge and let the list slide sideways. */
@@ -1871,10 +1866,6 @@ a {
 
   .layout.has-active .chat {
     display: flex;
-  }
-
-  .back-button {
-    display: inline-grid;
   }
 
   .messages {

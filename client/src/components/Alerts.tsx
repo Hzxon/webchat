@@ -1,3 +1,6 @@
+import { useEffect, useRef } from 'react';
+import { Button } from '@astryxdesign/core/Button';
+import { IconButton } from '@astryxdesign/core/IconButton';
 import { dismissUrgent, openConversation, previewText } from '../chat';
 import { actions, chatTitle, senderName, useAppState } from '../store';
 import { formatTime } from './format';
@@ -9,6 +12,8 @@ export function UrgentAlert() {
   const users = useAppState((s) => s.users);
   const conversations = useAppState((s) => s.conversations);
   const first = urgent[0];
+  const open = useRef<HTMLButtonElement>(null);
+  useEffect(() => open.current?.focus(), [first?.id]);
   if (!first) return null;
 
   const sender = senderName(users, first.senderId);
@@ -34,12 +39,13 @@ export function UrgentAlert() {
           {urgent.length > 1 ? ` · ${urgent.length - 1} more urgent` : ''}
         </p>
         <div className="urgent-actions">
-          <button className="button-primary" autoFocus onClick={() => void openConversation(first.conversationId)}>
-            Open chat
-          </button>
-          <button className="button-secondary" onClick={() => dismissUrgent(first)}>
-            Dismiss
-          </button>
+          <Button
+            variant="destructive"
+            ref={open}
+            label="Open chat"
+            onClick={() => void openConversation(first.conversationId)}
+          />
+          <Button label="Dismiss" onClick={() => dismissUrgent(first)} />
         </div>
       </div>
     </div>
@@ -64,9 +70,13 @@ export function Toasts() {
             <strong>{toast.title}</strong>
             <span>{toast.body}</span>
           </button>
-          <button className="icon-button" onClick={() => actions.dismissToast(toast.id)} aria-label="Dismiss">
-            <CloseIcon width={16} height={16} />
-          </button>
+          <IconButton
+            variant="ghost"
+            size="sm"
+            label="Dismiss"
+            onClick={() => actions.dismissToast(toast.id)}
+            icon={<CloseIcon width={16} height={16} />}
+          />
         </div>
       ))}
     </div>

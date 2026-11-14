@@ -9,3 +9,15 @@
   background: var(--danger-soft);
   box-shadow: inset 3px 0 0 var(--danger);
 }
+
+/* The back button shows only where the chat covers the list, as in styles.css's narrow layout. */
+.back-button {
+  display: none;
+  margin-left: -8px;
+}
+
+@media (max-width: 760px) {
+  .back-button {
+    display: inline-flex;
+  }
+}
