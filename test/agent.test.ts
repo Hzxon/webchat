@@ -33,7 +33,7 @@ import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { openDb, toUserDTO } from '../server/db.ts';
 import { createIdentity, keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, openPicks, sealPicks, textHash, permitHash, wrapChatKey, type MessageContent } from '../shared/e2ee.ts';
-import { briefText, harnessRow, type AskDTO, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type PermitDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
+import { briefText, harnessRow, LIMITS, type AskDTO, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type PermitDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
 import { copyOf, readCard } from '../shared/board.ts';
 import { fakeRoom, testLayout } from './fakeRoom.ts';
 import { FAKE_CLAUDE, FAKE_CODEX } from './fakes.ts';
@@ -1047,7 +1047,10 @@ describe('agent client (R-027)', () => {
           { id: '#9', kind: 'duplicate', why: 'Not open.' },
         ];
         const card = { kind: 'issue', title: 'Sums are off by two', body: 'Seen: in the tests.', replaces: 'K-7', checked: 'Read 1 card, 1 decision, the code and 2 open pull requests.', related };
-        const decision = { kind: 'decision', title: 'Sums round to cents', body: 'Why: money.', checked: 'Read D-1.' };
+        // A full card, past a chat message's 4,000 characters and its 32 KB padding band, reaches the
+        // owner whole: three-byte characters, a check and a related reason fill the message.
+        const long = `Why: money.\n\nDone when: ${'两个账户在聊天中都能看到照片。'.repeat(700)}`.slice(0, LIMITS.docSectionLength);
+        const decision = { kind: 'decision', title: 'Sums round to cents', body: long, checked: '读'.repeat(LIMITS.checkedLength), related: [{ id: 'D-1', kind: 'conflict', why: '冲'.repeat(LIMITS.relatedWhyLength) }] };
         await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ reply: 'Here is the change.', drafts: [card, decision] }), FAKE_CLAUDE_COMMIT: '0' }, () =>
           tell({ kind: 'reply', to: prompted, sentAt: Date.now() }, 'Draft a change to K-7.'),
         );
@@ -1062,7 +1065,7 @@ describe('agent client (R-027)', () => {
               card: { kind: 'K', title: 'Sums are off by two', body: 'Seen: in the tests.', replaces: { card: 'K-7', doc: board.id, section, seen }, checked: card.checked, related: related.slice(0, 2) },
             },
           ],
-          ['Decision draft: Sums round to cents', { kind: 'answer', to: prompted, card: { kind: 'D', title: 'Sums round to cents', body: 'Why: money.', checked: 'Read D-1.' } }],
+          ['Decision draft: Sums round to cents', { kind: 'answer', to: prompted, card: { kind: 'D', title: 'Sums round to cents', body: long, checked: decision.checked, related: decision.related } }],
         ]);
         // Runs below hash a brief with no decisions.
         await alice.request('DELETE', `/docs/${decisions.id}`);

@@ -22,6 +22,8 @@ import {
   type CardNoteDTO,
   type CardDraftDTO,
   type EnvelopeDTO,
+  FILE_TYPE_LIST,
+  type FileDTO,
   type HarnessState,
   type MessageKind,
   type PairingPick,
@@ -397,6 +399,8 @@ export interface MessageContent {
   card?: CardNoteDTO;
   /** An agent's question before an action, and its owner's answer (docs/decisions/harness-approvals.md). */
   permit?: PermitDTO;
+  /** A photo or file (R-005). The text says the same in words, for older pages, pushes and the chat list. */
+  file?: FileDTO;
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -582,7 +586,7 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
 /** A card draft in an agent's answer, if it has the right shape (D-104, D-116). */
 function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | undefined {
   const title = short(raw?.title, LIMITS.docTitleLength);
-  const body = short(raw?.body, LIMITS.messageLength);
+  const body = short(raw?.body, LIMITS.docSectionLength);
   // A line break in the title would write a status line of its own into the card.
   if (!raw || (raw.kind !== 'D' && raw.kind !== 'R' && raw.kind !== 'K' && raw.kind !== 'Q') || !title || /[\r\n]/.test(title) || body === undefined) return;
   // A line break in the check would end the card's Checked line, and one in a status would write a line of its own.
@@ -728,6 +732,24 @@ function readCardNote(raw: Record<string, unknown> | undefined): CardNoteDTO | u
   return kind && card && CARD_ID.test(card) && docId && section ? { kind, card, docId, section } : undefined;
 }
 
+/** A file's id: 16 random bytes, base64url. */
+export const FILE_ID = /^[A-Za-z0-9_-]{22}$/;
+const FILE_KEY = /^[A-Za-z0-9_-]{43}$/;
+const PREVIEW = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
+const isSize = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 0;
+
+/** A file, if it has the right shape: a type on the list, and a preview that is only an inline image. */
+function readFile(raw: Record<string, unknown> | undefined): FileDTO | undefined {
+  const [id, key, name, type] = [raw?.id, raw?.key, short(raw?.name, LIMITS.fileNameLength), raw?.type];
+  if (typeof id !== 'string' || !FILE_ID.test(id) || typeof key !== 'string' || !FILE_KEY.test(key) || !name) return;
+  if (typeof type !== 'string' || !FILE_TYPE_LIST.includes(type) || !isSize(raw?.size) || raw.size > LIMITS.fileBytes) return;
+  const file: FileDTO = { id, key, name, type, size: raw.size };
+  if (isSize(raw.width) && isSize(raw.height)) Object.assign(file, { width: raw.width, height: raw.height });
+  const preview = short(raw.preview, LIMITS.previewLength);
+  if (preview && PREVIEW.test(preview)) file.preview = preview;
+  return file;
+}
+
 /** Keeps the parts of decrypted content that have the right shape. The sender signed it, so it is not tampered. */
 function readContent(value: unknown): MessageContent {
   const raw = value as {
@@ -747,6 +769,7 @@ function readContent(value: unknown): MessageContent {
     ask?: Record<string, unknown>;
     card?: Record<string, unknown>;
     permit?: Record<string, unknown>;
+    file?: Record<string, unknown>;
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -787,6 +810,8 @@ function readContent(value: unknown): MessageContent {
   if (note) content.card = note;
   const permit = readPermit(raw.permit);
   if (permit) content.permit = permit;
+  const file = readFile(raw.file);
+  if (file) content.file = file;
   return content;
 }
 
@@ -829,6 +854,35 @@ async function unseal(chatKey: CryptoKey, signPublic: string, head: string, enve
     throw new TamperedMessageError('decryption failed');
   }
   return JSON.parse(decoder.decode(unpadContent(new Uint8Array(plain))));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Files (R-005)
+
+/** What encryption adds to a file: its IV in front and the GCM tag. Files are not padded. */
+export const FILE_OVERHEAD = 28;
+
+/**
+ * Encrypts a file with a random key of its own, which travels only in the sealed `file` field.
+ * The key encrypts this one file once, so no header is bound in: another file's ciphertext under
+ * this id would not open with it.
+ */
+export async function encryptFile(plain: Uint8Array<ArrayBuffer>): Promise<{ key: string; data: Uint8Array<ArrayBuffer> }> {
+  const raw = randomBytes(32);
+  const key = await subtle().importKey('raw', raw, 'AES-GCM', false, ['encrypt']);
+  const iv = randomBytes(12);
+  const data = await subtle().encrypt({ name: 'AES-GCM', iv }, key, plain);
+  return { key: toBase64Url(raw), data: concat(iv, new Uint8Array(data)) };
+}
+
+/** Decrypts a downloaded file. Throws TamperedMessageError if it was changed or the key is not its own. */
+export async function decryptFile(key: string, data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
+  const cryptoKey = await subtle().importKey('raw', fromBase64Url(key), 'AES-GCM', false, ['decrypt']);
+  try {
+    return new Uint8Array(await subtle().decrypt({ name: 'AES-GCM', iv: data.subarray(0, 12) }, cryptoKey, data.subarray(12)));
+  } catch {
+    throw new TamperedMessageError('file decryption failed');
+  }
 }
 
 // ---------------------------------------------------------------------------------------------

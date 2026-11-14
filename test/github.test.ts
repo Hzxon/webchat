@@ -339,6 +339,8 @@ describe('GitHub connector', () => {
       githubPollUrl: undefined,
       urgentRingUrl: undefined,
       build: undefined,
+      filesDir: undefined,
+      blobStore: false,
       logger: silent,
     };
     instance = await createApp(config);

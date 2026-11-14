@@ -44,3 +44,4 @@ docs/decisions.md that explains it.
 - The page and the agent take the chat-key checks, the key cache and the pins from `shared/keyring.ts`; never copy them into one side (K-40, D-085).
 - Message content is padded to powers of two from 256 bytes inside the AES-GCM ciphertext; `decryptContent` tells it from older unpadded content by the last byte, and both open (D-059).
 - The service worker never shows a reaction notification; it hands it to open pages, under the tag `reaction-` plus the chat id (D-070).
+- A photo's or file's key, name, type and preview are sealed `file` content, never a header field or a request field; the receiving device checks every decrypted file with `fileTypeOf` (D-123).

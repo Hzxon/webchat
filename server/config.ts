@@ -72,6 +72,13 @@ export interface Config {
    * page from before a deploy does not show new data as errors. When unset, the built page is hashed.
    */
   build: string | undefined;
+  /**
+   * The folder a self-hosted server keeps the ciphertext of photos and files in (R-005). Unset on
+   * Vercel, whose functions have no disk to keep.
+   */
+  filesDir: string | undefined;
+  /** A private Vercel Blob store is connected, which holds the ciphertext instead (D-123). */
+  blobStore: boolean;
   logger: Logger;
 }
 
@@ -137,6 +144,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         : undefined,
     // Vercel names each deployment. Elsewhere, WEBCHAT_BUILD can name it, or the built page is hashed.
     build: env.VERCEL_DEPLOYMENT_ID || env.VERCEL_GIT_COMMIT_SHA || env.WEBCHAT_BUILD || undefined,
+    filesDir: onVercel ? undefined : path.resolve(env.FILES_DIR ?? path.join('data', 'files')),
+    // Connecting a store to the project sets BLOB_STORE_ID, for the SDK's OIDC sign-in; elsewhere a token does.
+    blobStore: Boolean(env.BLOB_STORE_ID || env.BLOB_READ_WRITE_TOKEN),
     logger: consoleLogger,
   };
 }

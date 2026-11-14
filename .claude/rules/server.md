@@ -25,6 +25,7 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - When two branches add a migration, the one that reaches main first keeps its number (D-010).
 - Sizes the server enforces and the page respects live in `LIMITS` in `shared/types.ts`; raising one may need a larger JSON body limit in `server/app.ts` (D-011).
 - A body over the limit, or not JSON, gets a JSON error the page can show (D-011).
+- A message from an agent may have a doc section's ciphertext length, so a card draft holds a full card; a person's keeps the chat limit (the draft-size decision, proposed in #237).
 - Read query strings with the WHATWG URL API or `queryOf`, never `req.query` (D-012).
 - Every API request names its account in `x-webchat-user`; a mismatch answers `409 account_changed` (D-008).
 - Attention lasts 45 seconds after the last check-in; a closing tab ends it with `POST /api/away` (D-007).
@@ -54,3 +55,6 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - A check-in names repositories, never a path: a laptop's names every folder and sets the agent's `protocol`, each repository named updates its row of `agent_repos`, and a laptop's drops the rows it no longer names; the sync fingerprint covers both (D-094).
 - A new chat is inserted with the id its first key names, which only the person it was reserved for may use, once; a channel's id must be above #general's (D-111).
 - `DELETE /api/agents/:id` lets only the agent's owner remove it: it is deleted as an account is, and loses its owner, so no menu offers it (R-033).
+- The server only hands out file addresses: ciphertext never passes through a function, which Vercel caps at 4.5 MB; the upload and download routes take any member client, never only the page (D-123).
+- With no scheduler, `sweepFiles` deletes expired, unnamed and orphaned ciphertext when an upload address is given or a chat, project, channel, account or agent is deleted (D-123).
+- Upload limits come in pairs from `LIMITS`: the server's pool and each person's quarter of it; check the person's first, with its own `own_` code, so a refusal takes nothing from the pool (D-123).

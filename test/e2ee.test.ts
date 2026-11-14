@@ -4,9 +4,11 @@ import {
   createIdentity,
   decryptContent,
   decryptDoc,
+  decryptFile,
   decryptMessage,
   deriveAccountSecrets,
   encryptDoc,
+  encryptFile,
   encryptMessage,
   fromBase64Url,
   importChatKey,
@@ -39,7 +41,7 @@ import {
   type MessageContent,
   type MessageMeta,
 } from '../shared/e2ee.ts';
-import { previewOf, type PullCardDTO, type RunDTO } from '../shared/types.ts';
+import { fileTypeOf, previewOf, type PullCardDTO, type RunDTO } from '../shared/types.ts';
 
 // Fewer PBKDF2 rounds keep the suite fast; one test runs the real count.
 const FAST = 1000;
@@ -222,6 +224,69 @@ describe('end-to-end encryption', () => {
     const opened = await decryptContent(key, alice.identity.publicKeys.sign, meta, await encryptMessage(key, keyId, alice.identity.signPrivate, meta, elsewhere));
     assert.equal(opened.pull, undefined, 'the text stays, the card goes');
     assert.equal(opened.text, content.text);
+  });
+
+  test('a file travels inside the signed envelope, and a malformed one is dropped (R-005)', async () => {
+    const key = await importChatKey(newChatKeyBytes());
+    const keyId = newKeyId();
+    const meta: MessageMeta = { conversationId: 4, senderId: alice.id, urgent: false, clientId: 'f1' };
+    const file = {
+      id: 'a'.repeat(22),
+      key: 'k'.repeat(43),
+      name: 'poster.png',
+      type: 'image/png',
+      size: 120_000,
+      width: 1600,
+      height: 900,
+      preview: 'data:image/webp;base64,UklGRg',
+    };
+    const content = { text: '📷 Photo', file };
+    const envelope = await encryptMessage(key, keyId, alice.identity.signPrivate, meta, content);
+    assert.deepEqual(await decryptContent(key, alice.identity.publicKeys.sign, meta, envelope), content);
+    // An older page, a push and the chat list read only the text; one that reads the field verifies it with the rest.
+    assert.equal(await decryptMessage(key, alice.identity.publicKeys.sign, meta, envelope), '📷 Photo');
+
+    const open = async (raw: object) =>
+      (await decryptContent(key, alice.identity.publicKeys.sign, meta, await encryptMessage(key, keyId, alice.identity.signPrivate, meta, { text: 'File', file: raw as typeof file }))).file;
+    const { preview: _, ...withoutPreview } = file;
+    assert.deepEqual(await open({ ...file, preview: 'https://evil.example/track.png' }), withoutPreview, 'a preview is only an inline image');
+    assert.equal(await open({ ...file, type: 'text/html' }), undefined, 'a type off the list');
+    assert.equal(await open({ ...file, key: 'short' }), undefined);
+    assert.equal(await open({ ...file, size: -1 }), undefined);
+  });
+
+  test('a file opens only with its own key, unchanged', async () => {
+    const plain = new TextEncoder().encode('%PDF-1.7 draft');
+    const sealed = await encryptFile(plain);
+    assert.equal(sealed.data.length, plain.length + 28, 'an IV and a tag, no padding');
+    assert.deepEqual(await decryptFile(sealed.key, sealed.data), plain);
+    const flipped = sealed.data.slice();
+    flipped[20]! ^= 1;
+    await assert.rejects(decryptFile(sealed.key, flipped), TamperedMessageError);
+    await assert.rejects(decryptFile((await encryptFile(plain)).key, sealed.data), TamperedMessageError);
+  });
+
+  test("a received file must be on the list, and its first bytes must match the type its name claims", () => {
+    const bytes = (...values: number[]) => new Uint8Array([...values, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    const text = (value: string) => new TextEncoder().encode(value);
+    assert.equal(fileTypeOf('photo.JPG', bytes(0xff, 0xd8, 0xff, 0xe0)), 'image/jpeg');
+    assert.equal(fileTypeOf('shot.png', bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)), 'image/png');
+    assert.equal(fileTypeOf('anim.gif', text('GIF89a......')), 'image/gif');
+    assert.equal(fileTypeOf('pic.webp', text('RIFF\0\0\0\0WEBPVP8 ')), 'image/webp');
+    assert.equal(fileTypeOf('report.pdf', text('%PDF-1.7')), 'application/pdf');
+    assert.equal(fileTypeOf('slides.pptx', bytes(0x50, 0x4b, 0x03, 0x04)), 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+    assert.equal(fileTypeOf('code.zip', bytes(0x50, 0x4b, 0x03, 0x04)), 'application/zip');
+    assert.equal(fileTypeOf('old.doc', bytes(0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1)), 'application/msword');
+    assert.equal(fileTypeOf('notes.txt', text('Meet at 7 ✓')), 'text/plain');
+
+    assert.equal(fileTypeOf('report.pdf', bytes(0x50, 0x4b, 0x03, 0x04)), null, 'a zip named as a PDF');
+    assert.equal(fileTypeOf('photo.jpg', text('<svg onload=alert(1)>')), null);
+    assert.equal(fileTypeOf('notes.txt', bytes(0x4d, 0x5a, 0x90)), null, 'a program named as text');
+    assert.equal(fileTypeOf('setup.pdf', bytes(0x4d, 0x5a, 0x90)), null, 'a program renamed to .pdf');
+    assert.equal(fileTypeOf('notes.txt', new Uint8Array([0xc3, 0x28])), null, 'text that is not UTF-8');
+    for (const name of ['page.html', 'logo.svg', 'setup.exe', 'run.sh', 'macro.docm', 'noextension']) {
+      assert.equal(fileTypeOf(name, text('anything')), null, name);
+    }
   });
 
   test('a request about a board card travels inside the envelope, and a malformed one is dropped (the card-notes decision)', async () => {

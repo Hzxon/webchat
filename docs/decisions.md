@@ -256,17 +256,20 @@ the chat list, starts with "Not encrypted:".
 
 ### D-020: Known limits of the encryption
 
-Status: Accepted 2026-11-01 in 10ba6d8.
+Status: Accepted 2026-11-01 in 10ba6d8, changed in #198 and #236.
 
 WebChat accepts these limits and lists them in the README. An operator who changes the app the page
 runs could read messages. The server sees metadata: who talks to whom and when, group, project and
 channel names, who is in which project or group, who added them, who owns each, who left, when a
-chat got a new key, display names, whether a message is urgent, that someone reacted, and its size
+chat got a new key, display names, whether a message is urgent, that someone reacted, which messages
+are an agent's board traffic with its owner's page (K-69), and its size
 band (D-059). It sees pull request titles and repository names (D-033), which docs a project has,
 their section counts, editors, times and size bands, and who is editing now; it could show an older
 section revision as the newest (D-081). It sees the repositories a project links, whose cards it
 writes in plain text and could fake (D-050), the ones an agent's laptop has folders for, and when
-any Claude Code window there is open (D-094). It
+any Claude Code window there is open (D-094). For a photo or file it sees who uploaded it, to which
+chat, when, how large and which message names it, and the storage service holds the ciphertext;
+nobody scans files (D-123). It
 supplies the member list a new channel's key, or a key after someone leaves, is wrapped for; the New
 channel dialog shows it (D-044). People who leave keep the keys they had (D-044). Someone who writes
 to the database can add unencrypted messages under any member's name, which show as "Not encrypted"
@@ -1831,15 +1834,29 @@ weight. A release that changes the pin needs setup again.
 
 ### D-123: Files are ciphertext in a storage service for 7 days, and the receiving device checks them
 
-Status: Proposed.
+Status: Proposed, changed in #236.
 
 Checked: 2026-11-14. Read the held decisions (D-003, D-005, D-009, D-011, D-014, D-016, D-020, D-026, D-042) and the cards; server/app.ts, vercel.json and shared/types.ts at 7305298; Vercel's Blob pricing, private storage and signed URL pages. Open pull request #229 by title only.
 
-A photo or file (R-005) is encrypted in the browser with a random AES-256-GCM key of its own. The key, name, type and a photo's tiny preview travel only inside the message's sealed content, as a `file` field next to its text (D-042, D-016). The server keeps a row per file in `files`: its chat, uploader, size, time and place in the storage. It gives an upload address to a member of the chat, and a download address only to a member, for 7 days after the upload. On Vercel both are presigned URLs of a private Vercel Blob store; a self-hosted server serves both from a route of its own and a folder on disk. The server deletes expired ciphertext when it next gives an upload address, and the message stays. Nobody scans a file. The receiving page takes only listed types whose first bytes match their name, shows photos through `<img>` alone, and offers every other file only as a download. Photos are resized to 1600 pixels, other files are at most 10 MB (D-011), and uploads stop at 1,800 a month or 900 MB stored.
+A photo or file (R-005) is encrypted in the browser with a random AES-256-GCM key of its own. The key, name, type and a photo's tiny preview travel only inside the message's sealed content, as a `file` field next to its text (D-042, D-016). The server keeps a row per file in `files`: its chat, uploader, size and time, and whether a message named it, which the send request says. It gives an upload address to a member of the chat, and a download address only to a member, for 7 days after the upload. On Vercel both are presigned URLs of a private Vercel Blob store; a self-hosted server serves both from a route of its own and a folder on disk. The server deletes expired ciphertext, an upload no message named after an hour, and the files of deleted chats and accounts when it next gives an upload address or something is deleted; Blob also drops an upload on its own after 8 days. The message stays. Nobody scans a file. The receiving page takes only listed types whose first bytes match their name, shows photos through `<img>` alone, and offers every other file only as a download. Photos are resized to 1600 pixels, other files are at most 10 MB (D-011), and uploads stop at 1,800 a month or 900 MB stored. Each person gets a quarter of each, 450 uploads a month and 225 MB stored, inside those; their own limit is checked first and refused with its own code, so it takes nothing from everyone's count.
 
-Why: a Vercel Function takes at most 4.5 MB, and Hobby's Blob store is blocked for 30 days past 1 GB or 2,000 uploads a month (D-003). A scan needs the plain file, which the server never has (D-014), and a check on the sender's page stops no attacker.
+Why: a Vercel Function takes at most 4.5 MB, and Hobby's Blob store is blocked for 30 days past 1 GB or 2,000 uploads a month (D-003), and one looping client, such as an agent sending screenshots, could otherwise reach either in minutes. A scan needs the plain file, which the server never has (D-014), and a check on the sender's page stops no attacker.
 
-Cost: a file older than 7 days is gone for everyone, new members included (D-026). The checks catch a wrong type, not malware inside an allowed one; the device's own protection is the only scanner. The server sees who uploaded a file, to which chat, when and how large, and Vercel holds the ciphertext (D-020). The policy of D-009 gains the storage hosts and `blob:` images. Expired ciphertext stays in the store until the next upload.
+Cost: a file older than 7 days is gone for everyone, new members included (D-026). The checks catch a wrong type, not malware inside an allowed one; the device's own protection is the only scanner. The server sees who uploaded a file, to which chat, when, how large and which message names it, and Vercel holds the ciphertext (D-020). The policy of D-009 gains the storage hosts and `blob:` images. Expired ciphertext stays in the store until the next upload.
+
+### D-124: A card draft is a message sized for a full card
+
+Status: Proposed.
+
+Each card draft an agent sends is a message of its own (D-104), and its body may be as long as a
+card section, 10,000 characters (`LIMITS.docSectionLength`). The agent no longer cuts it to a chat
+message's 4,000, and the page reads one up to that length. The server takes a message from an
+agent account with a ciphertext as long as a doc section's (`LIMITS.docCiphertextLength`); a
+person's message keeps the chat limit. Why: a cut draft lands on the board without its end, and
+nobody can tell (R-005 lost its "Done when").
+
+Cost: an agent's message can pad to 64 KB, a size band the server already sees for doc sections. A
+page of 50 such messages is about 4.4 MB, near Vercel's 4.5 MB response limit.
 
 ## Superseded
 
