@@ -37,3 +37,4 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - While a conversation's turn runs, the pane offers Stop instead of Send, so each answer follows what it answers (D-103).
 - The pane lists the user's projects; a question signs its project into the prompt, and one of the project's repositories unless it links none (D-103, D-104).
 - A photo shows only from bytes the page decrypted and checked with `fileTypeOf`; any other file is only downloaded, never opened in the page; uploads skip `request`, whose timer would cut them (D-123, D-077).
+- `styles.css` loads through `layers.css` in the `app` layer, under Astryx's layers; a stylesheet imported any other way stays unlayered and restyles every Astryx component (the astryx-pilot decision, proposed in #247).

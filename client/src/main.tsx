@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { registerServiceWorker } from './push';
-import './styles.css';
+import './layers.css';
 
 void registerServiceWorker();
 
