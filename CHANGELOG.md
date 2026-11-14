@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/Hzxon/webchat/compare/v0.14.0...v0.14.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **agents:** Approve an agent with no project ([#245](https://github.com/Hzxon/webchat/issues/245)) ([95c916a](https://github.com/Hzxon/webchat/commit/95c916a89ead76bd676db2cd40569fb54273ddd1))
+
 ## [0.14.0](https://github.com/Hzxon/webchat/compare/v0.13.0...v0.14.0) (2026-11-14)
 
 
