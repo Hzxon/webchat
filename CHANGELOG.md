@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0](https://github.com/Hzxon/webchat/compare/v0.12.0...v0.13.0) (2026-11-14)
+
+
+### Features
+
+* **agent:** Send a run's screenshots to its owner ([#240](https://github.com/Hzxon/webchat/issues/240)) ([0dea6ee](https://github.com/Hzxon/webchat/commit/0dea6ee5bb3521a75095d74159800479428d4c54))
+* **chat:** Send photos and files ([#238](https://github.com/Hzxon/webchat/issues/238)) ([74a7456](https://github.com/Hzxon/webchat/commit/74a7456eee001c6297db01a93ec81faa42abcaea))
+* **files:** Store encrypted files for 7 days ([#236](https://github.com/Hzxon/webchat/issues/236)) ([e6fc30c](https://github.com/Hzxon/webchat/commit/e6fc30cba302117afc9b255d8c514ad41e296f9c))
+
+
+### Bug Fixes
+
+* **agent:** Size a card draft's message for a card ([#237](https://github.com/Hzxon/webchat/issues/237)) ([44090b8](https://github.com/Hzxon/webchat/commit/44090b85618b2faa1288d676b4b2fad825e57f3d))
+
 ## [0.12.0](https://github.com/Hzxon/webchat/compare/v0.11.1...v0.12.0) (2026-11-13)
 
 
