@@ -7,6 +7,8 @@ export const webchatTheme = defineTheme({
   tokens: {
     '--color-accent': 'var(--accent)',
     '--color-on-accent': 'var(--on-accent)',
+    '--color-accent-muted': 'var(--accent-soft)',
+    '--color-text-accent': 'var(--accent)',
     '--focus-outline-color': 'var(--accent)',
     '--color-background-body': 'var(--bg)',
     '--color-background-surface': 'var(--panel)',
@@ -15,10 +17,10 @@ export const webchatTheme = defineTheme({
     '--color-text-secondary': 'var(--muted)',
     '--color-border': 'var(--line)',
     '--color-error': 'var(--danger)',
+    '--color-success': 'var(--ok)',
+    '--color-warning': 'var(--warn)',
     '--radius-inner': 'var(--radius)',
     '--radius-element': 'var(--radius)',
     '--radius-container': 'var(--radius)',
   },
-  // Astryx's reset is left out (layers.css), so the browser's h1 margin would push the tagline down.
-  components: { heading: { base: { margin: '0' } } },
 });

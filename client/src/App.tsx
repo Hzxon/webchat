@@ -1,10 +1,11 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { UserDTO } from '../../shared/types';
 import { ApiError } from './api';
 import { sessionExpired, signOut, startChat } from './chat';
 import type { ChatDoc } from './e2ee/keyring';
 import { actions, useAppState } from './store';
 import { Toasts, UrgentAlert } from './components/Alerts';
+import { AuthScreen } from './components/AuthScreen';
 import { ChatView } from './components/ChatView';
 import { BoardView } from './components/BoardView';
 import { DocView, RenameDialog } from './components/DocView';
@@ -20,9 +21,6 @@ import { BellRingIcon } from './components/icons';
 import { fitToVisualViewport } from './viewport';
 import { runSignature } from './agents';
 import { followRuns } from './runStatus';
-
-// Astryx is tried on this screen alone, so only signed-out pages load its code and CSS.
-const AuthScreen = lazy(() => import('./components/AuthScreen').then((m) => ({ default: m.AuthScreen })));
 
 type Phase = 'loading' | 'signed-out' | 'locked' | 'signed-in' | 'error';
 
@@ -56,12 +54,7 @@ export function App() {
   useEffect(start, [start]);
 
   if (phase === 'loading') return <div className="splash">Loading…</div>;
-  if (phase === 'signed-out')
-    return (
-      <Suspense>
-        <AuthScreen onSignedIn={start} />
-      </Suspense>
-    );
+  if (phase === 'signed-out') return <AuthScreen onSignedIn={start} />;
   if (phase === 'locked' && lockedUser) {
     return <UnlockScreen me={lockedUser} onUnlocked={start} onSignOut={() => void signOut().then(() => setPhase('signed-out'))} />;
   }

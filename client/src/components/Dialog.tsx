@@ -1,44 +1,19 @@
-import { useEffect, useRef, type ReactNode } from 'react';
-import { CloseIcon } from './icons';
+import type { ReactNode } from 'react';
+import { Dialog as AstryxDialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { Stack } from '@astryxdesign/core/Stack';
 
-/** Native <dialog> as a modal: focus trapping, Escape to close, and the backdrop come from the browser. */
+/** A modal with a title and a close button. Astryx's dialog traps focus, closes on Escape, and
+ * with purpose "form" ignores a backdrop click once a field was used, so no typing is lost. */
 export function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  const pressedBackdrop = useRef(false);
-
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog || dialog.open) return;
-    dialog.showModal();
-    // A field marked autoFocus gets no focus: React calls focus() on it when it mounts, while the
-    // dialog is still closed and nothing in it can take focus. showModal() then focuses the first
-    // focusable element, the close button. So the first field in the body takes the focus instead.
-    dialog.querySelector<HTMLElement>('.dialog-body input, .dialog-body textarea, .dialog-body select')?.focus();
-  }, []);
-
+  const close = (open: boolean) => {
+    if (!open) onClose();
+  };
   return (
-    <dialog
-      ref={ref}
-      className="dialog"
-      onClose={onClose}
-      onPointerDown={(e) => {
-        pressedBackdrop.current = e.target === ref.current;
-      }}
-      onClick={(e) => {
-        // A drag from inside that ends on the backdrop, such as selecting a field's text, also
-        // clicks the dialog itself. Only a press that started on the backdrop closes it.
-        if (e.target === ref.current && pressedBackdrop.current) onClose();
-      }}
-    >
-      <div className="dialog-body">
-        <header className="dialog-header">
-          <h2>{title}</h2>
-          <button className="icon-button" onClick={onClose} aria-label="Close">
-            <CloseIcon />
-          </button>
-        </header>
+    <AstryxDialog isOpen onOpenChange={close} purpose="form" width={440} maxHeight="min(680px, 85dvh)">
+      <DialogHeader title={title} onOpenChange={close} />
+      <Stack gap={4} padding={5}>
         {children}
-      </div>
-    </dialog>
+      </Stack>
+    </AstryxDialog>
   );
 }

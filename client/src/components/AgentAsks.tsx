@@ -3,6 +3,10 @@
 // approves or declines it here; the answer is a signed message the agent checks, so only the
 // owner's page can link a harness or connect a folder.
 import { useState } from 'react';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { Stack } from '@astryxdesign/core/Stack';
+import { Text } from '@astryxdesign/core/Text';
 import { HARNESS_WARNING, type AskDTO } from '../../../shared/types';
 import { useAgentChats } from '../agents';
 import { answerAsk } from '../chat';
@@ -11,7 +15,9 @@ import { useAppState } from '../store';
 /** How long a request waits for its answer: the agent drops it after the same 10 minutes. */
 const FRESH_MS = 10 * 60_000;
 
-type Shown = { key: string; chat: number; note: string } | { key: string; chat: number; to: string; request: Extract<AskDTO, { step: 'request' }>; agent: string };
+type Shown =
+  | { key: string; chat: number; note: string }
+  | { key: string; chat: number; to: string; request: Extract<AskDTO, { step: 'request' }>; agent: string };
 
 export function AgentAsks() {
   const chats = useAgentChats();
@@ -27,46 +33,89 @@ export function AgentAsks() {
     return list.flatMap((m): Shown[] => {
       if (m.senderId === meId || !m.ask || now - m.createdAt > FRESH_MS) return [];
       if (m.ask.step === 'failed') return [{ key: `${m.id}`, chat: chat.id, note: m.text }];
-      return m.ask.step === 'request' && m.clientId && !answered.has(m.clientId) ? [{ key: m.clientId, chat: chat.id, to: m.clientId, request: m.ask, agent: agent?.displayName ?? 'Your agent' }] : [];
+      return m.ask.step === 'request' && m.clientId && !answered.has(m.clientId)
+        ? [
+            {
+              key: m.clientId,
+              chat: chat.id,
+              to: m.clientId,
+              request: m.ask,
+              agent: agent?.displayName ?? 'Your agent',
+            },
+          ]
+        : [];
     });
   });
   if (!asks.length) return null;
 
-  async function answer(chat: number, to: string, request: Extract<AskDTO, { step: 'request' }>, step: 'approve' | 'decline') {
+  async function answer(
+    chat: number,
+    to: string,
+    request: Extract<AskDTO, { step: 'request' }>,
+    step: 'approve' | 'decline',
+  ) {
     setBusy(to);
     await answerAsk(chat, to, request, step).finally(() => setBusy(''));
   }
 
   return (
-    <div className="agents-link-asks">
+    <Stack gap={2}>
       {asks.map((a) =>
         'note' in a ? (
-          <p key={a.key} className="dialog-note">
+          <Text key={a.key} as="p" weight="semibold">
             {a.note}
-          </p>
+          </Text>
         ) : (
-          <div key={a.key} className="agents-link-ask" role="group" aria-label={a.request.kind === 'link' ? `Link ${a.request.harness}` : `Connect ${a.request.repo}`}>
-            {a.request.kind === 'link' ? (
-              <p>
-                <strong>{a.agent}</strong> asks to link <strong>{a.request.harness}</strong> on its laptop. It will run the questions and cards you give it.
-                {HARNESS_WARNING[a.request.harness] && <strong> {HARNESS_WARNING[a.request.harness]}</strong>}
-              </p>
-            ) : (
-              <p>
-                <strong>{a.agent}</strong> asks to connect <strong>{a.request.repo}</strong> in <code>{a.request.folder}</code> on its laptop. It will work in that folder, and a program there can change it.
-              </p>
-            )}
-            <div className="agents-link-buttons">
-              <button className="button-primary" disabled={busy === a.to} onClick={() => void answer(a.chat, a.to, a.request, 'approve')}>
-                Approve
-              </button>
-              <button className="button-secondary" disabled={busy === a.to} onClick={() => void answer(a.chat, a.to, a.request, 'decline')}>
-                Decline
-              </button>
-            </div>
-          </div>
+          <Banner
+            key={a.key}
+            status={a.request.kind === 'link' && HARNESS_WARNING[a.request.harness] ? 'warning' : 'info'}
+            title={
+              a.request.kind === 'link' ? (
+                <>
+                  <strong>{a.agent}</strong> asks to link <strong>{a.request.harness}</strong> on its laptop.
+                </>
+              ) : (
+                <>
+                  <strong>{a.agent}</strong> asks to connect <strong>{a.request.repo}</strong> in{' '}
+                  <code>{a.request.folder}</code> on its laptop.
+                </>
+              )
+            }
+            description={
+              a.request.kind === 'link' ? (
+                <>
+                  It will run the questions and cards you give it.
+                  {HARNESS_WARNING[a.request.harness] && <strong> {HARNESS_WARNING[a.request.harness]}</strong>}
+                </>
+              ) : (
+                'It will work in that folder, and a program there can change it.'
+              )
+            }
+            endContent={
+              <Stack direction="horizontal" gap={2}>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  label="Approve"
+                  aria-label={
+                    a.request.kind === 'link'
+                      ? `Approve linking ${a.request.harness}`
+                      : `Approve connecting ${a.request.repo}`
+                  }
+                  isDisabled={busy === a.to}
+                  onClick={() => void answer(a.chat, a.to, a.request, 'approve')}
+                />
+                <Button
+                  size="sm"
+                  label="Decline"
+                  isDisabled={busy === a.to}
+                  onClick={() => void answer(a.chat, a.to, a.request, 'decline')}
+                />
+              </Stack>
+            }
+          />
         ),
       )}
-    </div>
+    </Stack>
   );
 }

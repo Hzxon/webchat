@@ -1,9 +1,16 @@
 import { useMemo, useState } from 'react';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { List, ListItem } from '@astryxdesign/core/List';
+import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
+import { Text } from '@astryxdesign/core/Text';
+import { TextInput } from '@astryxdesign/core/TextInput';
 import { LIMITS } from '../../../shared/types';
 import { createProject, openConversation, startDirectChat, startGroupChat } from '../chat';
 import { useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
+import { PickItem } from './PickItem';
 import { presenceText } from './format';
 
 const NO_KEYS = 'Must sign in again to turn on encryption';
@@ -54,95 +61,89 @@ export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode
     });
   }
 
+  const nameLimit = mode === 'project' ? LIMITS.projectNameLength : LIMITS.groupTitleLength;
+
   return (
     <Dialog title={mode === 'project' ? 'New project' : 'New chat'} onClose={onClose}>
-      <div className="segmented">
-        <button aria-selected={mode === 'person'} onClick={() => setMode('person')}>
-          Person
-        </button>
-        <button aria-selected={mode === 'group'} onClick={() => setMode('group')}>
-          Group
-        </button>
-        <button aria-selected={mode === 'project'} onClick={() => setMode('project')}>
-          Project
-        </button>
-      </div>
+      <SegmentedControl label="Kind of chat" value={mode} onChange={(v) => setMode(v as NewChatMode)} layout="fill">
+        <SegmentedControlItem value="person" label="Person" />
+        <SegmentedControlItem value="group" label="Group" />
+        <SegmentedControlItem value="project" label="Project" />
+      </SegmentedControl>
 
       {mode !== 'person' && (
-        <label className="field">
-          {mode === 'project' ? 'Project name' : 'Group name'}
-          <input
-            value={groupName}
-            onChange={(e) => setGroupName(e.target.value)}
-            maxLength={mode === 'project' ? LIMITS.projectNameLength : LIMITS.groupTitleLength}
-            placeholder={mode === 'project' ? 'Capstone, Thesis, Robotics club' : undefined}
-          />
-        </label>
+        <TextInput
+          label={mode === 'project' ? 'Project name' : 'Group name'}
+          value={groupName}
+          onChange={(v) => setGroupName(v.slice(0, nameLimit))}
+          placeholder={mode === 'project' ? 'Capstone, Thesis, Robotics club' : undefined}
+        />
       )}
       {mode === 'project' && (
-        <p className="dialog-intro">
+        <Text as="p" color="secondary">
           The project starts with a #general channel. Everyone in it can read every channel, including earlier messages,
           and can add more people later.
-        </p>
+        </Text>
       )}
 
-      <input
-        className="field-input"
+      <TextInput
+        label="Search people"
+        isLabelHidden
         placeholder="Search people"
+        type="search"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        autoFocus
+        onChange={setQuery}
+        hasAutoFocus
       />
 
-      <ul className="people-list">
-        {people.map((user) => (
-          <li key={user.id}>
-            {mode === 'person' ? (
-              <button className="person" onClick={() => void openDirect(user.id)} disabled={busy || !user.keys}>
-                <Avatar name={user.displayName} seed={user.id} size={38} online={user.online} />
-                <span>
-                  <strong>{user.displayName}</strong>
-                  <small>{user.keys ? presenceText(user) : NO_KEYS}</small>
-                </span>
-              </button>
-            ) : (
-              <label className="person">
-                <input
-                  type="checkbox"
-                  checked={picked.has(user.id)}
-                  onChange={() => toggle(user.id)}
-                  disabled={!user.keys}
-                />
-                <Avatar name={user.displayName} seed={user.id} size={38} online={user.online} />
-                <span>
-                  <strong>{user.displayName}</strong>
-                  <small>{user.keys ? `@${user.username}` : NO_KEYS}</small>
-                </span>
-              </label>
-            )}
-          </li>
-        ))}
-        {people.length === 0 && (
-          <li className="people-empty">
-            {query ? 'Nobody matches.' : 'No one else has joined yet. Share the site address and the invite code.'}
-          </li>
+      <List edge="flush">
+        {people.map((user) =>
+          mode === 'person' ? (
+            <ListItem
+              key={user.id}
+              label={user.displayName}
+              description={user.keys ? presenceText(user) : NO_KEYS}
+              startContent={<Avatar name={user.displayName} seed={user.id} size={38} online={user.online} />}
+              onClick={() => void openDirect(user.id)}
+              isDisabled={busy || !user.keys}
+            />
+          ) : (
+            <PickItem
+              key={user.id}
+              label={user.displayName}
+              description={user.keys ? `@${user.username}` : NO_KEYS}
+              start={<Avatar name={user.displayName} seed={user.id} size={38} online={user.online} />}
+              checked={picked.has(user.id)}
+              onChange={() => toggle(user.id)}
+              isDisabled={!user.keys}
+            />
+          ),
         )}
-      </ul>
+      </List>
+      {people.length === 0 && (
+        <Text as="p" color="secondary">
+          {query ? 'Nobody matches.' : 'No one else has joined yet. Share the site address and the invite code.'}
+        </Text>
+      )}
 
-      {error && <p className="form-error">{error}</p>}
+      {error && <Banner status="error" title={error} />}
       {mode === 'project' && (
-        <button className="button-primary" onClick={() => void startProject()} disabled={busy || !groupName.trim()}>
-          {picked.size > 0 ? `Create project with ${picked.size}` : 'Create project'}
-        </button>
+        <Button
+          variant="primary"
+          onClick={() => void startProject()}
+          isLoading={busy}
+          isDisabled={!groupName.trim()}
+          label={picked.size > 0 ? `Create project with ${picked.size}` : 'Create project'}
+        />
       )}
       {mode === 'group' && (
-        <button
-          className="button-primary"
+        <Button
+          variant="primary"
           onClick={() => void createGroup()}
-          disabled={busy || picked.size === 0 || !groupName.trim()}
-        >
-          Create group{picked.size > 0 ? ` with ${picked.size}` : ''}
-        </button>
+          isLoading={busy}
+          isDisabled={picked.size === 0 || !groupName.trim()}
+          label={`Create group${picked.size > 0 ? ` with ${picked.size}` : ''}`}
+        />
       )}
     </Dialog>
   );

@@ -1,6 +1,13 @@
 // A shared doc in a project: its sections as Markdown, who is editing which, and each section's
 // history (R-020). Editing a section locks it, so two people never write over each other.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { CodeBlock } from '@astryxdesign/core/CodeBlock';
+import { List, ListItem } from '@astryxdesign/core/List';
+import { Stack } from '@astryxdesign/core/Stack';
+import { Text } from '@astryxdesign/core/Text';
+import { TextInput } from '@astryxdesign/core/TextInput';
 import type { DocSection } from '../../../shared/board';
 import { LIMITS } from '../../../shared/types';
 import { ApiError } from '../api';
@@ -340,22 +347,18 @@ export function RenameDialog({ doc, onClose }: { doc: ChatDoc; onClose: () => vo
 
   return (
     <Dialog title="Rename doc" onClose={onClose}>
-      <form
-        className="dialog-form"
-        onSubmit={(e) => {
+      <Stack
+        as="form"
+        gap={4}
+        onSubmit={(e: React.FormEvent) => {
           e.preventDefault();
           if (name.trim()) void save();
         }}
       >
-        <label className="field">
-          Title
-          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={LIMITS.docTitleLength} />
-        </label>
-        {error && <p className="form-error">{error}</p>}
-        <button className="button-primary" type="submit" disabled={busy || !name.trim()}>
-          Save
-        </button>
-      </form>
+        <TextInput label="Title" value={name} onChange={(v) => setName(v.slice(0, LIMITS.docTitleLength))} hasAutoFocus />
+        {error && <Banner status="error" title={error} />}
+        <Button variant="primary" type="submit" isLoading={busy} isDisabled={!name.trim()} label="Save" />
+      </Stack>
     </Dialog>
   );
 }
@@ -392,37 +395,40 @@ export function HistoryDialog(props: { doc: ChatDoc; section: DocSection; nameOf
 
   return (
     <Dialog title="Section history" onClose={onClose}>
-      {entries === null && !error && <p className="dialog-intro">Loading…</p>}
+      {entries === null && !error && (
+        <Text as="p" color="secondary">
+          Loading…
+        </Text>
+      )}
       {entries && (
-        <ol className="doc-history">
+        <List edge="flush" listStyle="decimal">
           {entries.map(({ revision }, i) => (
-            <li key={revision.id}>
-              <button className={i === picked ? 'is-active' : ''} aria-pressed={i === picked} onClick={() => setPicked(i)}>
-                <strong>{nameOf(revision.authorId)}</strong>
-                <time>{formatListTime(revision.updatedAt)}</time>
-              </button>
-            </li>
+            <ListItem
+              key={revision.id}
+              label={nameOf(revision.authorId)}
+              endContent={<Text color="secondary">{formatListTime(revision.updatedAt)}</Text>}
+              isSelected={i === picked}
+              onClick={() => setPicked(i)}
+            />
           ))}
-        </ol>
+        </List>
       )}
-      {entry && !entry.content && <p className="dialog-intro">This version could not be decrypted.</p>}
+      {entry && !entry.content && (
+        <Text as="p" color="secondary">
+          This version could not be decrypted.
+        </Text>
+      )}
       {diff && (
-        <pre className="doc-diff" aria-label="What this version changed">
-          {diff.map((line, i) => (
-            <span key={i} className={`diff-${line.kind}`}>
-              {line.kind === 'added' ? '+ ' : line.kind === 'removed' ? '− ' : '  '}
-              {line.text}
-              {'\n'}
-            </span>
-          ))}
-        </pre>
+        <CodeBlock
+          title="What this version changed"
+          isDiff
+          hasLanguageLabel={false}
+          hasCopyButton={false}
+          code={diff.map((line) => (line.kind === 'added' ? '+' : line.kind === 'removed' ? '-' : ' ') + line.text).join('\n')}
+        />
       )}
-      {error && <p className="form-error">{error}</p>}
-      {picked > 0 && entry?.content && (
-        <button className="button-secondary" onClick={() => void restore()} disabled={busy}>
-          Restore this version
-        </button>
-      )}
+      {error && <Banner status="error" title={error} />}
+      {picked > 0 && entry?.content && <Button onClick={() => void restore()} isDisabled={busy} label="Restore this version" />}
     </Dialog>
   );
 }

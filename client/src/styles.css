@@ -100,6 +100,37 @@ textarea {
   color: inherit;
 }
 
+/* Astryx's reset makes headings plain text. The screens not yet on Astryx expect the browser's;
+   Astryx's Heading wins over these from its higher layer (layers.css). */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: bold;
+}
+
+h1 {
+  font-size: 2em;
+}
+
+h2 {
+  font-size: 1.5em;
+}
+
+h3 {
+  font-size: 1.17em;
+}
+
+h5 {
+  font-size: 0.83em;
+}
+
+h6 {
+  font-size: 0.67em;
+}
+
 /* Safari on iPhone zooms into a field whose text is smaller than 16px, and stays zoomed after. */
 @media (pointer: coarse) {
   input,
@@ -2788,6 +2819,15 @@ a {
 .markdown ul,
 .markdown ol {
   padding-left: 24px;
+}
+
+/* Astryx's reset takes the markers off every list. */
+.markdown ul {
+  list-style: disc;
+}
+
+.markdown ol {
+  list-style: decimal;
 }
 
 .markdown li.task {

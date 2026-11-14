@@ -1,4 +1,16 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { CodeBlock } from '@astryxdesign/core/CodeBlock';
+import { Divider } from '@astryxdesign/core/Divider';
+import { Heading } from '@astryxdesign/core/Heading';
+import { Link } from '@astryxdesign/core/Link';
+import { List, ListItem } from '@astryxdesign/core/List';
+import { MetadataList, MetadataListItem } from '@astryxdesign/core/MetadataList';
+import { Stack } from '@astryxdesign/core/Stack';
+import { StatusDot } from '@astryxdesign/core/StatusDot';
+import { Switch } from '@astryxdesign/core/Switch';
+import { Text } from '@astryxdesign/core/Text';
 import type { BarkDTO } from '../../../shared/types';
 import { sound } from '../alerts';
 import { api } from '../api';
@@ -6,27 +18,27 @@ import { refreshPushState } from '../chat';
 import { disablePushHere, enableNotifications } from '../push';
 import { actions, useAppState } from '../store';
 import { Dialog } from './Dialog';
-import { VolumeIcon } from './icons';
 
 const BARK_APP_STORE = 'https://apps.apple.com/app/id1403753865';
 
-/** A value to type into another app, with a button that copies it. The text selects whole on a tap. */
+/** A value to type into another app, with a button that copies it. */
 export function CopyRow({ value, onCopied }: { value: string; onCopied: (note: string) => void }) {
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
-      onCopied('Copied.');
-    } catch {
-      onCopied('Tap the text, then copy it.');
-    }
-  }
   return (
-    <div className="copy-row">
-      <code>{value}</code>
-      <button type="button" className="button-secondary" onClick={() => void copy()}>
-        Copy
-      </button>
-    </div>
+    <CodeBlock
+      code={value}
+      onCopy={() => onCopied('Copied.')}
+      onCopyError={() => onCopied('Select the text, then copy it.')}
+    />
+  );
+}
+
+/** A setting's state, with a dot that says whether it is fine. */
+function State({ ok, children }: { ok?: boolean; children: ReactNode }) {
+  return (
+    <Stack direction="horizontal" gap={2} vAlign="center">
+      {ok !== undefined && <StatusDot variant={ok ? 'success' : 'warning'} label={ok ? 'Fine' : 'Needs attention'} />}
+      <Text>{children}</Text>
+    </Stack>
   );
 }
 
@@ -82,49 +94,53 @@ export function NotificationDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <Dialog title="Notifications" onClose={onClose}>
-      <p className="dialog-intro">
+      <Text as="p" color="secondary">
         New messages show up instantly while this tab is open. With push turned on, they also reach this device when the
         tab or browser window is closed.
-      </p>
+      </Text>
 
-      <dl className="settings">
-        <div>
-          <dt>Browser permission</dt>
-          <dd className={push?.permission === 'granted' ? 'ok' : 'warn'}>{permissionText}</dd>
-        </div>
-        <div>
-          <dt>Push on this device</dt>
-          <dd className={push?.subscribed ? 'ok' : 'warn'}>
+      <MetadataList>
+        <MetadataListItem label="Browser permission">
+          <State ok={push?.permission === 'granted'}>{permissionText}</State>
+        </MetadataListItem>
+        <MetadataListItem label="Push on this device">
+          <State ok={!!push?.subscribed}>
             {push?.subscribed ? 'On' : push?.pushSupported ? 'Off' : 'Not available'}
-          </dd>
-        </div>
-      </dl>
+          </State>
+        </MetadataListItem>
+      </MetadataList>
 
       {push?.needsInstall && (
-        <p className="callout">
-          On iPhone and iPad, push works only from the Home Screen app. In Safari, tap Share, then “Add to Home Screen”,
-          and open WebChat from there. Before iOS 16.4, use Bark below instead.
-        </p>
+        <Banner
+          status="warning"
+          title="On iPhone and iPad, push works only from the Home Screen app."
+          description="In Safari, tap Share, then “Add to Home Screen”, and open WebChat from there. Before iOS 16.4, use Bark below instead."
+        />
       )}
       {push?.permission === 'denied' && (
-        <p className="callout">
-          This browser blocked notifications for this site. Click the icon left of the address bar, set Notifications
-          to Allow, then reload the page.
-        </p>
+        <Banner
+          status="warning"
+          title="This browser blocked notifications for this site."
+          description="Click the icon left of the address bar, set Notifications to Allow, then reload the page."
+        />
       )}
 
-      <div className="dialog-actions">
+      <Stack direction="horizontal" gap={2} wrap="wrap">
         {/* Without Web Push the permission still lets the open tab notify, so only a browser with no
             Notification at all, such as iOS before 16.4, loses the button. */}
         {push?.permission !== 'denied' && push?.permission !== 'unsupported' && !push?.subscribed && (
-          <button className="button-primary" disabled={busy} onClick={() => void act(enableNotifications)}>
-            Turn on notifications
-          </button>
+          <Button
+            variant="primary"
+            isDisabled={busy}
+            onClick={() => void act(enableNotifications)}
+            label="Turn on notifications"
+          />
         )}
         {canTest && (
-          <button
-            className="button-primary"
-            disabled={busy}
+          <Button
+            variant="primary"
+            isDisabled={busy}
+            label="Send a test notification"
             onClick={() =>
               void act(async () => {
                 const { sent, failed } = await api.testPush();
@@ -135,97 +151,99 @@ export function NotificationDialog({ onClose }: { onClose: () => void }) {
                 );
               })
             }
-          >
-            Send a test notification
-          </button>
+          />
         )}
         {push?.subscribed && (
-          <button className="button-secondary" disabled={busy} onClick={() => void act(disablePushHere)}>
-            Turn off on this device
-          </button>
+          <Button isDisabled={busy} onClick={() => void act(disablePushHere)} label="Turn off on this device" />
         )}
-      </div>
-      {note && <p className="dialog-note">{note}</p>}
+      </Stack>
+      {note && (
+        <Text as="p" weight="semibold">
+          {note}
+        </Text>
+      )}
 
       {bark !== null && (
-        <section className="bark">
-          <h3>iPhone without push: the Bark app</h3>
+        <Stack as="section" gap={3}>
+          <Divider />
+          <Heading level={3}>iPhone without push: the Bark app</Heading>
           {bark === undefined ? (
-            <p className="dialog-intro">Checking…</p>
+            <Text as="p" color="secondary">
+              Checking…
+            </Text>
           ) : !bark.configured ? (
-            <p className="dialog-intro">This server has no key for Bark yet. The README says how to add one.</p>
+            <Text as="p" color="secondary">
+              This server has no key for Bark yet. The README says how to add one.
+            </Text>
           ) : !bark.link ? (
             <>
-              <p className="dialog-intro">
+              <Text as="p" color="secondary">
                 An iPhone before iOS 16.4 cannot get Web Push. Install the free Bark app and link it here: alerts then
                 reach it through Apple with the chat and sender names, never the message text.
-              </p>
-              <div className="dialog-actions">
-                <button className="button-secondary" disabled={busy} onClick={() => void barkAct(api.linkBark)}>
-                  Link Bark
-                </button>
-              </div>
+              </Text>
+              <Stack direction="horizontal" gap={2}>
+                <Button isDisabled={busy} onClick={() => void barkAct(api.linkBark)} label="Link Bark" />
+              </Stack>
             </>
           ) : (
             <>
-              <ol className="steps">
-                <li>
-                  Install{' '}
-                  <a href={BARK_APP_STORE} target="_blank" rel="noreferrer">
-                    Bark
-                  </a>{' '}
-                  from the App Store.
-                </li>
-                <li>
-                  In Bark, open the server list and add this server URL:
-                  <CopyRow value={bark.link.serverUrl} onCopied={setNote} />
-                </li>
-                <li>
-                  Optional: turn on encryption below, then in Bark open Push Encryption, choose AES256 and GCM, and
-                  type the key. Apple then sees nothing of the alert.
-                </li>
-              </ol>
-              <dl className="settings">
-                <div>
-                  <dt>Phones linked</dt>
-                  <dd className={phones > 0 ? 'ok' : 'warn'}>{phones > 0 ? phones : 'None yet'}</dd>
-                </div>
-                <div>
-                  <dt>Encryption</dt>
-                  <dd className={bark.link.cipherKey ? 'ok' : ''}>{bark.link.cipherKey ? 'On' : 'Off'}</dd>
-                </div>
-              </dl>
+              <List listStyle="decimal" edge="flush">
+                <ListItem
+                  label={
+                    <Text>
+                      Install{' '}
+                      <Link href={BARK_APP_STORE} target="_blank">
+                        Bark
+                      </Link>{' '}
+                      from the App Store.
+                    </Text>
+                  }
+                />
+                <ListItem
+                  label="In Bark, open the server list and add this server URL:"
+                  description={<CopyRow value={bark.link.serverUrl} onCopied={setNote} />}
+                />
+                <ListItem
+                  label={
+                    <Text>
+                      Optional: turn on encryption below, then in Bark open Push Encryption, choose AES256 and GCM, and
+                      type the key. Apple then sees nothing of the alert.
+                    </Text>
+                  }
+                />
+              </List>
+              <MetadataList>
+                <MetadataListItem label="Phones linked">
+                  <State ok={phones > 0}>{phones > 0 ? phones : 'None yet'}</State>
+                </MetadataListItem>
+                <MetadataListItem label="Encryption">
+                  <State ok={bark.link.cipherKey ? true : undefined}>{bark.link.cipherKey ? 'On' : 'Off'}</State>
+                </MetadataListItem>
+              </MetadataList>
               {bark.link.cipherKey && <CopyRow value={bark.link.cipherKey} onCopied={setNote} />}
-              <div className="dialog-actions">
+              <Stack direction="horizontal" gap={2} wrap="wrap">
                 {phones === 0 && (
-                  <button className="button-secondary" disabled={busy} onClick={() => void barkAct(api.bark)}>
-                    Check again
-                  </button>
+                  <Button isDisabled={busy} onClick={() => void barkAct(api.bark)} label="Check again" />
                 )}
-                <button
-                  className="button-secondary"
-                  disabled={busy}
+                <Button
+                  isDisabled={busy}
                   onClick={() => void barkAct(() => api.setBarkEncryption(!bark.link?.cipherKey))}
-                >
-                  {bark.link.cipherKey ? 'Turn encryption off' : 'Turn encryption on'}
-                </button>
-                <button className="button-secondary" disabled={busy} onClick={() => void barkAct(api.unlinkBark)}>
-                  Unlink Bark
-                </button>
-              </div>
+                  label={bark.link.cipherKey ? 'Turn encryption off' : 'Turn encryption on'}
+                />
+                <Button isDisabled={busy} onClick={() => void barkAct(api.unlinkBark)} label="Unlink Bark" />
+              </Stack>
             </>
           )}
-        </section>
+        </Stack>
       )}
 
-      <label className="toggle-row">
-        <VolumeIcon />
-        <span>
-          <strong>Message sounds</strong>
-          <small>Urgent messages always ring, even with this off.</small>
-        </span>
-        <input type="checkbox" checked={soundOn} onChange={(e) => sound.setEnabled(e.target.checked)} />
-      </label>
+      <Divider />
+      <Switch
+        label="Message sounds"
+        description="Urgent messages always ring, even with this off."
+        value={soundOn}
+        onChange={(checked) => sound.setEnabled(checked)}
+      />
     </Dialog>
   );
 }

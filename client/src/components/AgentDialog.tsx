@@ -2,20 +2,35 @@
 // owner pastes into the agent. The page then waits for the agent's keys, which the code proves,
 // and the owner names the agent, picks its projects and approves. No invite code or password. It
 // also lists the owner's agents, so one can be removed (R-033).
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { List, ListItem } from '@astryxdesign/core/List';
+import { Stack } from '@astryxdesign/core/Stack';
+import { Text } from '@astryxdesign/core/Text';
+import { TextInput } from '@astryxdesign/core/TextInput';
 import { useEffect, useMemo, useState } from 'react';
 import { newPairingCode } from '../../../shared/e2ee';
-import { AGENT_RELEASES, LIMITS, PAIRING_TTL_MS, type PairingPick, type PublicKeysDTO, type UserDTO } from '../../../shared/types';
+import {
+  AGENT_RELEASES,
+  LIMITS,
+  PAIRING_TTL_MS,
+  type PairingPick,
+  type PublicKeysDTO,
+  type UserDTO,
+} from '../../../shared/types';
 import { ownAgents } from '../agents';
 import { api, ApiError } from '../api';
 import { holdReloadWhile } from '../build';
 import { connectAgent, pairingKeys, removeAgent } from '../chat';
 import { useAppState } from '../store';
 import { Dialog } from './Dialog';
+import { PickItem } from './PickItem';
 import { presenceText } from './format';
 import { CopyRow } from './NotificationDialog';
 
 /** The release's own installer, which checks the agent file against the release's checksum before it installs it (docs/decisions/agent-install.md). */
-const installLine = (release: string, pasted: string) => `curl -fsSL ${AGENT_RELEASES}/v${release}/install.sh | sh -s -- '${pasted}'`;
+const installLine = (release: string, pasted: string) =>
+  `curl -fsSL ${AGENT_RELEASES}/v${release}/install.sh | sh -s -- '${pasted}'`;
 
 export function AgentDialog({ onClose }: { onClose: () => void }) {
   const projects = useAppState((s) => s.projects);
@@ -37,7 +52,10 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
   const sorted = useMemo(() => Object.values(projects).sort((a, b) => a.name.localeCompare(b.name)), [projects]);
 
   useEffect(() => {
-    void api.config().then(({ release: found }) => setRelease(found), () => undefined);
+    void api.config().then(
+      ({ release: found }) => setRelease(found),
+      () => undefined,
+    );
   }, []);
 
   // The code lives only in this page. A reload after a deploy would lose it while the agent waits
@@ -92,7 +110,12 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
   }
 
   async function remove(agent: UserDTO) {
-    if (!confirm(`Remove ${agent.displayName}? It leaves every project, and its sessions stop taking cards. This cannot be undone.`)) return;
+    if (
+      !confirm(
+        `Remove ${agent.displayName}? It leaves every project, and its sessions stop taking cards. This cannot be undone.`,
+      )
+    )
+      return;
     setBusy(true);
     setError('');
     try {
@@ -109,7 +132,9 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
     setError('');
     try {
       const agent = await connectAgent(code, keys!, name.trim(), [...picked]);
-      setDone(`${agent.displayName} is connected. Ask it about your code here, or hand it a roadmap card with the play button.`);
+      setDone(
+        `${agent.displayName} is connected. Ask it about your code here, or hand it a roadmap card with the play button.`,
+      );
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -120,92 +145,103 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
   return (
     <Dialog title="Connect coding agent" onClose={onClose}>
       {done ? (
-        <p className="dialog-intro">{done}</p>
+        <Text as="p" color="secondary">
+          {done}
+        </Text>
       ) : !keys ? (
         <>
-          <p className="dialog-intro">
+          <Text as="p" color="secondary">
             Your coding agent runs on your laptop, with Claude Code or Codex. It answers your questions about your
             team’s code and works on the cards you hand it, and nobody else’s. It needs a Mac or Linux for now.
-          </p>
+          </Text>
           {release && (
             <>
-              <p className="dialog-intro">
+              <Text as="p" color="secondary">
                 In a terminal on your laptop, run this line. It installs the agent, asks before it installs anything
                 else, and keeps the agent running whenever you are logged in. It needs an account that can use sudo, or
                 an administrator on a Mac.
                 {/windows/i.test(navigator.userAgent) && ' On Windows, open Ubuntu on WSL2 and run it there.'}
-              </p>
+              </Text>
               <CopyRow value={installLine(release, `${location.origin}#${code}`)} onCopied={setNote} />
             </>
           )}
-          <p className="dialog-intro">
+          <Text as="p" color="secondary">
             Then run <code>webchat-agent connect</code> in your team’s repository, and approve it here.
-          </p>
-          {!error && <p className="dialog-note">{note || 'Waiting for the agent…'}</p>}
-          {mine.length > 0 && <p className="dialog-intro">Your agents:</p>}
-          <ul className="people-list">
-            {mine.map((agent) => (
-              <li key={agent.id} className="member">
-                <span className="member-name">
-                  <strong>{agent.displayName}</strong>
-                  <small>{presenceText(agent)}</small>
-                </span>
-                <span className="member-actions">
-                  <button className="member-remove" onClick={() => void remove(agent)} disabled={busy} aria-label={`Remove ${agent.displayName}`}>
-                    Remove
-                  </button>
-                </span>
-              </li>
-            ))}
-          </ul>
+          </Text>
+          {!error && (
+            <Text as="p" weight="semibold">
+              {note || 'Waiting for the agent…'}
+            </Text>
+          )}
+          {mine.length > 0 && (
+            <List edge="flush" header="Your agents">
+              {mine.map((agent) => (
+                <ListItem
+                  key={agent.id}
+                  label={agent.displayName}
+                  description={presenceText(agent)}
+                  endContent={
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      label="Remove"
+                      aria-label={`Remove ${agent.displayName}`}
+                      onClick={() => void remove(agent)}
+                      isDisabled={busy}
+                    />
+                  }
+                />
+              ))}
+            </List>
+          )}
         </>
       ) : (
-        <form
-          className="dialog-form"
-          onSubmit={(e) => {
+        <Stack
+          as="form"
+          gap={4}
+          onSubmit={(e: React.FormEvent) => {
             e.preventDefault();
             void approve();
           }}
         >
-          <p className="dialog-intro">The agent sent the code. Name it, and pick any projects it joins: it reads their channels. You can add it to a project later, like anyone.</p>
+          <Text as="p" color="secondary">
+            The agent sent the code. Name it, and pick any projects it joins: it reads their channels. You can add it to
+            a project later, like anyone.
+          </Text>
           {/* Display only: Unlink in Agent settings takes one back. */}
           {picks.length > 0 && (
-            <>
-              <p className="dialog-intro">It links these coding agents on its laptop, and runs your questions and cards with them:</p>
-              <ul className="people-list">
-                {picks.map((p) => (
-                  <li key={p.name} className="member">
-                    <span className="member-name">
-                      <strong>{p.name}</strong>
-                      <small>{[p.version, p.signedIn !== undefined && (p.signedIn ? 'signed in' : 'not signed in')].filter(Boolean).join(', ') || 'not installed yet'}</small>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </>
+            <List
+              edge="flush"
+              header="It links these coding agents on its laptop, and runs your questions and cards with them:"
+            >
+              {picks.map((p) => (
+                <ListItem
+                  key={p.name}
+                  label={p.name}
+                  description={
+                    [p.version, p.signedIn !== undefined && (p.signedIn ? 'signed in' : 'not signed in')]
+                      .filter(Boolean)
+                      .join(', ') || 'not installed yet'
+                  }
+                />
+              ))}
+            </List>
           )}
-          <label className="field">
-            Name
-            <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} maxLength={LIMITS.displayNameLength} />
-          </label>
-          <ul className="people-list">
+          <TextInput label="Name" value={name} onChange={(v) => setName(v.slice(0, LIMITS.displayNameLength))} />
+          <List edge="flush">
             {sorted.map((project) => (
-              <li key={project.id}>
-                <label className="person">
-                  <input type="checkbox" checked={picked.has(project.id)} onChange={() => toggle(project.id)} />
-                  <span>
-                    <strong>{project.name}</strong>
-                  </span>
-                </label>
-              </li>
+              <PickItem
+                key={project.id}
+                label={project.name}
+                checked={picked.has(project.id)}
+                onChange={() => toggle(project.id)}
+              />
             ))}
-          </ul>
-          <button className="button-primary" disabled={busy || !name.trim()}>
-            Approve
-          </button>
-        </form>
+          </List>
+          <Button variant="primary" type="submit" isLoading={busy} isDisabled={!name.trim()} label="Approve" />
+        </Stack>
       )}
-      {error && <p className="form-error">{error}</p>}
+      {error && <Banner status="error" title={error} />}
     </Dialog>
   );
 }

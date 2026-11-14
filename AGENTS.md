@@ -169,7 +169,7 @@ pull request as the change they describe.
   in the roadmap.
 
 The block below is written by `astryx init`. Its rules hold only for screens built with Astryx,
-which is the sign-in screen alone until the owner decides on the pilot (docs/decisions/new-astryx-pilot.md).
+which are more of them with each phase of docs/roadmap/new-astryx-migration.md.
 
 <!-- ASTRYX:START -->
 Astryx v0.7.16 · 174 components

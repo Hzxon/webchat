@@ -1,4 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { List, ListItem } from '@astryxdesign/core/List';
+import { RadioList, RadioListItem } from '@astryxdesign/core/RadioList';
+import { Selector } from '@astryxdesign/core/Selector';
+import { Stack } from '@astryxdesign/core/Stack';
+import { Text } from '@astryxdesign/core/Text';
+import { TextInput } from '@astryxdesign/core/TextInput';
 import { LIMITS, toChannelName, type ProjectReposDTO } from '../../../shared/types';
 import { api } from '../api';
 import { addGroupMembers, addProjectMembers, createChannel, openConversation } from '../chat';
@@ -7,6 +15,7 @@ import { createDoc } from '../docs';
 import { actions, useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
+import { PickItem } from './PickItem';
 import { GithubIcon, HashIcon } from './icons';
 import type { MembersTarget } from './MembersDialog';
 
@@ -58,37 +67,33 @@ export function NewChannelDialog({ projectId, onClose }: { projectId: number; on
   if (!project) return null;
   return (
     <Dialog title={`New channel in ${project.name}`} onClose={onClose}>
-      <form
-        className="dialog-form"
-        onSubmit={(e) => {
+      <Stack
+        as="form"
+        gap={4}
+        onSubmit={(e: React.FormEvent) => {
           e.preventDefault();
           if (channel) void create();
         }}
       >
-        <label className="field">
-          Channel name
-          <span className="channel-input">
-            <HashIcon width={16} height={16} />
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="design, slides, research"
-              maxLength={LIMITS.channelNameLength + 10}
-              autoFocus
-            />
-          </span>
-        </label>
+        <TextInput
+          label="Channel name"
+          startIcon={HashIcon}
+          value={name}
+          onChange={(v) => setName(v.slice(0, LIMITS.channelNameLength + 10))}
+          placeholder="design, slides, research"
+          hasAutoFocus
+        />
         {name && channel !== name && (
-          <p className="dialog-intro">
+          <Text as="p" color="secondary">
             It will be called <strong>#{channel || '…'}</strong>.
-          </p>
+          </Text>
         )}
-        <p className="dialog-intro">Everyone in the project can read it: {names.join(', ')}.</p>
-        {error && <p className="form-error">{error}</p>}
-        <button className="button-primary" type="submit" disabled={busy || !channel}>
-          Create channel
-        </button>
-      </form>
+        <Text as="p" color="secondary">
+          Everyone in the project can read it: {names.join(', ')}.
+        </Text>
+        {error && <Banner status="error" title={error} />}
+        <Button variant="primary" type="submit" isLoading={busy} isDisabled={!channel} label="Create channel" />
+      </Stack>
     </Dialog>
   );
 }
@@ -117,35 +122,32 @@ export function NewDocDialog({ projectId, onClose }: { projectId: number; onClos
   if (!project) return null;
   return (
     <Dialog title={`New doc in ${project.name}`} onClose={onClose}>
-      <form
-        className="dialog-form"
-        onSubmit={(e) => {
+      <Stack
+        as="form"
+        gap={4}
+        onSubmit={(e: React.FormEvent) => {
           e.preventDefault();
           if (title.trim()) void create();
         }}
       >
-        <label className="field">
-          Title
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Capstone PRD" maxLength={LIMITS.docTitleLength} />
-        </label>
-        <fieldset className="template-list">
-          <legend>Start from</legend>
+        <TextInput
+          label="Title"
+          value={title}
+          onChange={(v) => setTitle(v.slice(0, LIMITS.docTitleLength))}
+          placeholder="Capstone PRD"
+          hasAutoFocus
+        />
+        <RadioList label="Start from" value={String(template)} onChange={(v) => setTemplate(Number(v))}>
           {DOC_TEMPLATES.map((t, i) => (
-            <label key={t.name} className="template-option">
-              <input type="radio" name="template" checked={template === i} onChange={() => setTemplate(i)} />
-              <span>
-                <strong>{t.name}</strong>
-                <small>{t.description}</small>
-              </span>
-            </label>
+            <RadioListItem key={t.name} value={String(i)} label={t.name} description={t.description} />
           ))}
-        </fieldset>
-        <p className="dialog-intro">Everyone in the project can read and edit it. It is end-to-end encrypted.</p>
-        {error && <p className="form-error">{error}</p>}
-        <button className="button-primary" type="submit" disabled={busy || !title.trim()}>
-          Create doc
-        </button>
-      </form>
+        </RadioList>
+        <Text as="p" color="secondary">
+          Everyone in the project can read and edit it. It is end-to-end encrypted.
+        </Text>
+        {error && <Banner status="error" title={error} />}
+        <Button variant="primary" type="submit" isLoading={busy} isDisabled={!title.trim()} label="Create doc" />
+      </Stack>
     </Dialog>
   );
 }
@@ -172,7 +174,10 @@ export function ProjectReposDialog({ projectId, onClose }: { projectId: number; 
 
   // Oldest first, so #general, the project's first channel, is the default.
   const channels = useMemo(
-    () => Object.values(conversations).filter((c) => c.projectId === projectId).sort((a, b) => a.id - b.id),
+    () =>
+      Object.values(conversations)
+        .filter((c) => c.projectId === projectId)
+        .sort((a, b) => a.id - b.id),
     [conversations, projectId],
   );
   const channelId = picked || channels[0]?.id || 0;
@@ -200,102 +205,105 @@ export function ProjectReposDialog({ projectId, onClose }: { projectId: number; 
   const channelName = (id: number) => `#${conversations[id]?.title ?? 'channel'}`;
   return (
     <Dialog title={`Repositories in ${project.name}`} onClose={onClose}>
-      <p className="dialog-intro">
+      <Text as="p" color="secondary">
         When someone opens a pull request in a linked repository, WebChat posts it into the channel as a card. It posts
         again when the pull request is ready for review, merged or closed. GitHub sends these, so nobody has to connect
         GitHub.
-      </p>
-      <p className="dialog-intro">
+      </Text>
+      <Text as="p" color="secondary">
         Everyone in the project sees each card, even without access to the repository. The server writes the cards, so
         they are not end-to-end encrypted.
-      </p>
-      <ul className="people-list">
+      </Text>
+      <List edge="flush">
         {view?.repos.map((linked) => (
-          <li key={linked.repoId} className="member">
-            <span className="share-mark">
-              <GithubIcon width={18} height={18} />
-            </span>
-            <span className="member-name">
-              <strong>{linked.repo}</strong>
-              <small>Into {channelName(linked.conversationId)}</small>
-            </span>
-            {isOwner && (
-              <button
-                className="member-remove"
-                onClick={() => void run(() => api.unlinkRepo(projectId, linked.repoId))}
-                disabled={busy}
-                aria-label={`Unlink ${linked.repo}`}
-              >
-                Unlink
-              </button>
-            )}
-          </li>
+          <ListItem
+            key={linked.repoId}
+            startContent={
+              <span className="share-mark">
+                <GithubIcon width={18} height={18} />
+              </span>
+            }
+            label={linked.repo}
+            description={`Into ${channelName(linked.conversationId)}`}
+            endContent={
+              isOwner && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  label="Unlink"
+                  aria-label={`Unlink ${linked.repo}`}
+                  onClick={() => void run(() => api.unlinkRepo(projectId, linked.repoId))}
+                  isDisabled={busy}
+                />
+              )
+            }
+          />
         ))}
-        {view?.repos.length === 0 && <li className="people-empty">No repositories linked yet.</li>}
-        {!view && !error && <li className="people-empty">Loading…</li>}
-      </ul>
+      </List>
+      {view?.repos.length === 0 && (
+        <Text as="p" color="secondary">
+          No repositories linked yet.
+        </Text>
+      )}
+      {!view && !error && (
+        <Text as="p" color="secondary">
+          Loading…
+        </Text>
+      )}
       {!isOwner ? (
         <>
-          {error && <p className="form-error">{error}</p>}
-          <p className="dialog-intro">
+          {error && <Banner status="error" title={error} />}
+          <Text as="p" color="secondary">
             Only {users[project.ownerId]?.displayName ?? 'its owner'} can link or unlink repositories.
-          </p>
+          </Text>
         </>
       ) : view && !view.configured ? (
-        <p className="dialog-note">
+        <Text as="p" weight="semibold">
           The server owner has not set up the WebChat GitHub App yet, so repositories cannot be linked.
-        </p>
+        </Text>
       ) : choices.length > 0 ? (
-        <form
-          className="dialog-form"
-          onSubmit={(e) => {
+        <Stack
+          as="form"
+          gap={4}
+          onSubmit={(e: React.FormEvent) => {
             e.preventDefault();
-            if (choiceId && channelId) void run(() => api.linkRepo(projectId, { repoId: choiceId, conversationId: channelId }));
+            if (choiceId && channelId)
+              void run(() => api.linkRepo(projectId, { repoId: choiceId, conversationId: channelId }));
           }}
         >
-          <label className="field">
-            Repository
-            <select className="field-input" value={choiceId} onChange={(e) => setRepoId(Number(e.target.value))}>
-              {choices.map((c) => (
-                <option key={c.repoId} value={c.repoId}>
-                  {c.repo}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            Post into
-            <select className="field-input" value={channelId} onChange={(e) => setPicked(Number(e.target.value))}>
-              {channels.map((c) => (
-                <option key={c.id} value={c.id}>
-                  #{c.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          {error && <p className="form-error">{error}</p>}
-          <button className="button-primary" type="submit" disabled={busy || !choiceId || !channelId}>
-            Link repository
-          </button>
-          <button className="button-secondary" type="button" onClick={() => installOnGithub(projectId)}>
-            Add another repository on GitHub
-          </button>
-        </form>
+          <Selector
+            label="Repository"
+            value={String(choiceId)}
+            onChange={(v) => setRepoId(Number(v))}
+            options={choices.map((c) => ({ value: String(c.repoId), label: c.repo }))}
+          />
+          <Selector
+            label="Post into"
+            value={String(channelId)}
+            onChange={(v) => setPicked(Number(v))}
+            options={channels.map((c) => ({ value: String(c.id), label: `#${c.title}` }))}
+          />
+          {error && <Banner status="error" title={error} />}
+          <Button
+            variant="primary"
+            type="submit"
+            isLoading={busy}
+            isDisabled={!choiceId || !channelId}
+            label="Link repository"
+          />
+          <Button label="Add another repository on GitHub" onClick={() => installOnGithub(projectId)} />
+        </Stack>
       ) : (
         view && (
-          <div className="dialog-form">
-            <p className="dialog-intro">
+          <Stack gap={4}>
+            <Text as="p" color="secondary">
               First install the WebChat app on the repository on GitHub. Only someone who can manage the repository can
               install it.
-            </p>
-            {error && <p className="form-error">{error}</p>}
-            <button className="button-primary" onClick={() => installOnGithub(projectId)}>
-              Install on GitHub
-            </button>
-            <button className="button-secondary" onClick={() => chooseOnGithub(projectId)}>
-              Already installed? Choose a repository
-            </button>
-          </div>
+            </Text>
+            {error && <Banner status="error" title={error} />}
+            <Button variant="primary" label="Install on GitHub" onClick={() => installOnGithub(projectId)} />
+            <Button label="Already installed? Choose a repository" onClick={() => chooseOnGithub(projectId)} />
+          </Stack>
         )
       )}
     </Dialog>
@@ -337,7 +345,9 @@ export function AddPeopleDialog({ target, onClose }: { target: MembersTarget; on
     setError('');
     try {
       const ids = [...picked];
-      await (target.kind === 'project' ? addProjectMembers(target.projectId, ids) : addGroupMembers(target.conversationId, ids));
+      await (target.kind === 'project'
+        ? addProjectMembers(target.projectId, ids)
+        : addGroupMembers(target.conversationId, ids));
       onClose();
     } catch (err) {
       setError((err as Error).message);
@@ -351,41 +361,50 @@ export function AddPeopleDialog({ target, onClose }: { target: MembersTarget; on
   const tooMany = picked.size > LIMITS.addMembersAtOnce;
   return (
     <Dialog title={`Add people to ${chat.name}`} onClose={onClose}>
-      <p className="dialog-intro">In this {noun}: {names.join(', ')}.</p>
-      <p className="dialog-intro">
+      <Text as="p" color="secondary">
+        In this {noun}: {names.join(', ')}.
+      </Text>
+      <Text as="p" color="secondary">
         {target.kind === 'project'
           ? 'People you add join every channel and can read earlier messages too. Your browser shares the channel keys with them, so this works only while you can open every channel.'
           : 'People you add can read earlier messages too. Your browser shares the group’s key with them.'}
-      </p>
-      <input
-        className="field-input"
+      </Text>
+      <TextInput
+        label="Search people"
+        isLabelHidden
         placeholder="Search people"
+        type="search"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        autoFocus
+        onChange={setQuery}
+        hasAutoFocus
       />
-      <ul className="people-list">
+      <List edge="flush">
         {people.map((user) => (
-          <li key={user.id}>
-            <label className="person">
-              <input type="checkbox" checked={picked.has(user.id)} onChange={() => toggle(user.id)} disabled={!user.keys} />
-              <Avatar name={user.displayName} seed={user.id} size={38} online={user.online} />
-              <span>
-                <strong>{user.displayName}</strong>
-                <small>{user.keys ? `@${user.username}` : NO_KEYS}</small>
-              </span>
-            </label>
-          </li>
+          <PickItem
+            key={user.id}
+            label={user.displayName}
+            description={user.keys ? `@${user.username}` : NO_KEYS}
+            start={<Avatar name={user.displayName} seed={user.id} size={38} online={user.online} />}
+            checked={picked.has(user.id)}
+            onChange={() => toggle(user.id)}
+            isDisabled={!user.keys}
+          />
         ))}
-        {people.length === 0 && (
-          <li className="people-empty">{query ? 'Nobody matches.' : 'Everyone who has joined the site is already here.'}</li>
-        )}
-      </ul>
-      {tooMany && <p className="form-error">Add up to {LIMITS.addMembersAtOnce} people at a time.</p>}
-      {error && <p className="form-error">{error}</p>}
-      <button className="button-primary" onClick={() => void add()} disabled={busy || picked.size === 0 || tooMany}>
-        {picked.size > 1 ? `Add ${picked.size} people` : `Add to ${noun}`}
-      </button>
+      </List>
+      {people.length === 0 && (
+        <Text as="p" color="secondary">
+          {query ? 'Nobody matches.' : 'Everyone who has joined the site is already here.'}
+        </Text>
+      )}
+      {tooMany && <Banner status="error" title={`Add up to ${LIMITS.addMembersAtOnce} people at a time.`} />}
+      {error && <Banner status="error" title={error} />}
+      <Button
+        variant="primary"
+        onClick={() => void add()}
+        isLoading={busy}
+        isDisabled={picked.size === 0 || tooMany}
+        label={picked.size > 1 ? `Add ${picked.size} people` : `Add to ${noun}`}
+      />
     </Dialog>
   );
 }
