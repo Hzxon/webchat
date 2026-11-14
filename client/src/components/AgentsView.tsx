@@ -9,7 +9,7 @@ import { addProjectMembers, answerPermit, askAgent, askClone, askFix, cancelRun,
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { useLinkedRepos } from '../linkedRepos';
 import { actions, useAppState } from '../store';
-import { useAutoGrow, useDraft } from './ChatView';
+import { FileBubble, useAutoGrow, useDraft } from './ChatView';
 import { formatListTime, formatTime } from './format';
 import { AlertIcon, BackIcon, PlusIcon, SendIcon, SlidersIcon, TerminalIcon } from './icons';
 import { AgentBrief } from './AgentBrief';
@@ -434,6 +434,12 @@ function ThreadView({ thread, seat, agentId }: { thread: Thread; seat: Seat | un
                     <>
                       {message.run?.kind !== 'draft' && <Markdown text={message.text} />}
                       <AgentDraft message={message} draft={draft} thread={thread} agentId={agentId} />
+                    </>
+                  ) : message.file ? (
+                    // A run's screenshot (R-046): its caption is the model's, so it shows as plain text.
+                    <>
+                      <FileBubble file={message.file} sentAt={message.createdAt} />
+                      <span className="bubble-text">{message.text}</span>
                     </>
                   ) : (
                     <Markdown text={message.text} />

@@ -224,7 +224,7 @@ describe('the room', () => {
   test('a command may not use a runner\'s calls, and nobody speaks before hello, though lines come in one read', async () => {
     await runner();
     const turnId = 'x';
-    room.turns.set(turnId, { permit: { ask: async () => ({ allow: true }), quiet: new Quiet(), done: () => undefined } });
+    room.turns.set(turnId, { permit: { ask: async () => ({ allow: true }), quiet: new Quiet(), done: () => undefined }, uploads: new Map() });
     const line = (id: number, method: string, params: object) => `${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`;
     const ask = { id: turnId, ask: { kind: 'read', paths: [], detail: 'x' } };
     // As a command: approve is refused. Before hello: everything is. Both, and hello's answer, in one write.

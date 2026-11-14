@@ -24,7 +24,7 @@ import { Conversations, type Answerer, type Conversation } from './conversations
 import { LocalBench, NO_RUNNER, PrerequisitesMissing, type Bench, type Folder, type HarnessInfo } from './bench.ts';
 import type { Harness } from './harness.ts';
 import { Keep, repoHome } from './keep.ts';
-import { Permits } from './permits.ts';
+import { Permits, SEND_GAP_MS } from './permits.ts';
 import { messageOf, REQUEST_TTL_MS, Runs, type Runner, type RunResult } from './runs.ts';
 
 const exec = promisify(execFile);
@@ -83,8 +83,6 @@ export interface PluginOptions {
 
 /** The branch a board's copy goes to, in one draft pull request (R-040, D-117). */
 const BOARD_BRANCH = 'agent/board';
-/** The pause between two proposal drafts: 25 in 10 seconds, under the server's 30 sends, with room for the rest (K-71). */
-const PROPOSAL_GAP_MS = 400;
 
 /** A linked board's copy in its repository, as the agent keeps it on disk (R-040). */
 interface BoardCopy {
@@ -982,7 +980,7 @@ export class Plugin {
         ...(card && { replaces: { card: proposal.id!, doc: card.doc, section: card.section, seen: await textHash(card.text) } }),
         ...(card && proposal.status && { status: proposal.status }),
       };
-      if (sent++) await sleep(PROPOSAL_GAP_MS);
+      if (sent++) await sleep(SEND_GAP_MS);
       try {
         const message = await this.client!.send(chat, { text: `Proposed in ${copy.repo}: ${file}`, board: { kind: 'proposal', project, repo: copy.repo, card: draft } });
         copy.proposals[file] = { blob, draft: message.clientId! };

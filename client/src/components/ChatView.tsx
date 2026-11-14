@@ -1,10 +1,11 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
 import type { QuotedMessage } from '../../../shared/e2ee';
 import { githubCardEvent } from '../../../shared/github';
-import { LIMITS, RUN_PICKUP_MS, type CardNoteDTO, type GithubCardDTO, type PullCardDTO, type PullEvent, type RunReport, type RunRequest } from '../../../shared/types';
+import { FILE_EXTENSIONS, FILE_TYPE_LIST, isPhotoType, LIMITS, RUN_PICKUP_MS, type CardNoteDTO, type FileDTO, type GithubCardDTO, type PullCardDTO, type PullEvent, type RunReport, type RunRequest } from '../../../shared/types';
 import { seatFor } from '../agents';
 import { holdReloadWhile } from '../build';
-import { cancelRun, discardMessage, loadDraft, loadOlder, quoteOf, react, retryMessage, saveDraft, sendMessage } from '../chat';
+import { cancelRun, discardMessage, loadDraft, loadOlder, quoteOf, react, retryMessage, saveDraft, sendFile, sendMessage } from '../chat';
+import { downloadFile, formatSize, isExpired, openFile, prepareFile, RefusedFileError, type Attachment } from '../files';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { actions, chatTitle, otherMemberId, senderName, useAppState, type MessageReactions, type State } from '../store';
 import { Avatar, nameColor } from './Avatar';
@@ -15,8 +16,11 @@ import {
   BellRingIcon,
   ClockIcon,
   CloseIcon,
+  DownloadIcon,
+  FileIcon,
   LockIcon,
   LockOpenIcon,
+  PaperclipIcon,
   PullRequestIcon,
   ReplyIcon,
   SendIcon,
@@ -319,6 +323,8 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                     />
                   ) : message.card ? (
                     <CardNote note={message.card} text={message.text} />
+                  ) : message.file ? (
+                    <FileBubble file={message.file} sentAt={message.createdAt} />
                   ) : message.pull ? (
                     <PullCard pull={message.pull} />
                   ) : (
@@ -421,6 +427,56 @@ function CardNote({ note, text }: { note: CardNoteDTO; text: string }) {
     >
       {text}
     </button>
+  );
+}
+
+/**
+ * A photo shows inline from the bytes this page decrypted and checked; any other file only offers a
+ * download, and never opens inside the page. After 7 days the server has dropped it, which the
+ * page tells from the message's time (R-005, D-123).
+ */
+export function FileBubble({ file, sentAt }: { file: FileDTO; sentAt: number }) {
+  const photo = isPhotoType(file.type);
+  const gone = isExpired(sentAt);
+  const [url, setUrl] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const fail = (error: unknown) => setProblem(error instanceof RefusedFileError ? error.message : 'The file could not be opened. Try again.');
+  useEffect(() => {
+    // A photo still sending has no id yet; its preview stands in.
+    if (!photo || gone || !file.id) return;
+    let current = true;
+    openFile(file).then((opened) => current && setUrl(opened), (error: unknown) => current && fail(error));
+    return () => {
+      current = false;
+    };
+  }, [file.id]);
+  const about = (
+    <span className="file-about">
+      <span className="file-name">{file.name}</span>
+      <span className="file-size">{formatSize(file.size)}</span>
+    </span>
+  );
+  return (
+    <span className="file-bubble" onClick={(e) => e.stopPropagation()}>
+      {photo ? (
+        <span className="file-photo" style={file.width && file.height ? { aspectRatio: `${file.width} / ${file.height}` } : undefined}>
+          {url ? <img src={url} alt={file.name} /> : file.preview && <img className="file-preview" src={file.preview} alt="" />}
+        </span>
+      ) : (
+        <span className="file-card">
+          <FileIcon width={22} height={22} />
+          {about}
+          {!gone && (
+            <button className="file-download" disabled={!file.id} onClick={() => void downloadFile(file).catch(fail)} aria-label={`Download ${file.name}`}>
+              <DownloadIcon width={16} height={16} /> Download
+            </button>
+          )}
+        </span>
+      )}
+      {photo && gone && about}
+      {gone && <span className="file-note">No longer on the server</span>}
+      {problem && <span className="file-note">{problem}</span>}
+    </span>
   );
 }
 
@@ -663,10 +719,16 @@ export function useDraft(name: number | string) {
 function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: ComposerProps) {
   const [text, edit] = useDraft(conversationId);
   const [urgent, setUrgent] = useState(false);
+  const filesOn = useAppState((s) => s.files);
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
+  const [fileProblem, setFileProblem] = useState<string | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setUrgent(false);
+    setAttachment(null);
+    setFileProblem(null);
     // On a phone the keyboard would cover half of a chat just opened, so it waits for a tap.
     if (!touchOnly()) input.current?.focus();
   }, [conversationId]);
@@ -677,9 +739,22 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
 
   useAutoGrow(input, text);
 
+  async function pick(picked: File | undefined) {
+    setFileProblem(null);
+    if (!picked) return;
+    try {
+      setAttachment(await prepareFile(picked));
+    } catch (error) {
+      setFileProblem(error instanceof Error ? error.message : 'The file could not be read.');
+    }
+  }
+
   function submit() {
-    if (!text.trim() || blockedReason) return;
-    void sendMessage(conversationId, text, urgent, replyTo ? quoteOf(replyTo) : null);
+    if ((!text.trim() && !attachment) || blockedReason) return;
+    // The file goes as a message of its own, before the text that comes with it.
+    if (attachment) void sendFile(conversationId, attachment);
+    setAttachment(null);
+    if (text.trim()) void sendMessage(conversationId, text, urgent, replyTo ? quoteOf(replyTo) : null);
     edit('');
     setUrgent(false);
     onCancelReply();
@@ -710,6 +785,19 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
         </div>
       )}
       {urgent && <p className="composer-hint">Urgent: their device keeps ringing until they see it.</p>}
+      {fileProblem && <p className="composer-hint">{fileProblem}</p>}
+      {attachment && (
+        <div className="composer-attachment">
+          {attachment.file.preview ? <img src={attachment.file.preview} alt="" /> : <FileIcon width={22} height={22} />}
+          <span className="file-about">
+            <span className="file-name">{attachment.file.name}</span>
+            <span className="file-size">{formatSize(attachment.file.size)} · Kept for 7 days</span>
+          </span>
+          <button className="icon-button" onClick={() => setAttachment(null)} title="Remove file" aria-label="Remove file">
+            <CloseIcon width={18} height={18} />
+          </button>
+        </div>
+      )}
       <div className="composer-row">
         <button
           className={`icon-button urgent-toggle ${urgent ? 'is-on' : ''}`}
@@ -720,6 +808,29 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
         >
           <BellRingIcon />
         </button>
+        {filesOn && (
+          <>
+            <button
+              className="icon-button"
+              onClick={() => picker.current?.click()}
+              disabled={blockedReason !== null}
+              title="Attach a photo or file"
+              aria-label="Attach a photo or file"
+            >
+              <PaperclipIcon />
+            </button>
+            <input
+              ref={picker}
+              type="file"
+              hidden
+              accept={[...FILE_EXTENSIONS, ...FILE_TYPE_LIST].join(',')}
+              onChange={(e) => {
+                void pick(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+          </>
+        )}
         <textarea
           ref={input}
           rows={1}
@@ -729,7 +840,7 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
           onChange={(e) => edit(e.target.value)}
           onKeyDown={onKeyDown}
         />
-        <button className="send-button" onClick={submit} disabled={!text.trim() || blockedReason !== null} aria-label="Send">
+        <button className="send-button" onClick={submit} disabled={(!text.trim() && !attachment) || blockedReason !== null} aria-label="Send">
           <SendIcon />
         </button>
       </div>

@@ -512,7 +512,7 @@ export function readPull(raw: Partial<PullCardDTO> | undefined): PullCardDTO | u
 }
 
 const CARD_ID = /^[DRKQ]-\d{1,6}$/;
-const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed', 'fixing', 'review', 'ended', 'nocopy', 'stale', 'decision', 'merged', 'closed', 'draft', 'progress', 'paused', 'planned'];
+const REPORT_KINDS: ReadonlyArray<RunReport['kind']> = ['claimed', 'done', 'failed', 'fixing', 'review', 'ended', 'nocopy', 'stale', 'decision', 'merged', 'closed', 'draft', 'progress', 'paused', 'planned', 'note'];
 const short = (value: unknown, max: number) => (typeof value === 'string' && value.length <= max ? value : undefined);
 
 /** A run request or report, if it has the right shape. A pull request is named by repository and number only. */

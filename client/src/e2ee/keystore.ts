@@ -29,6 +29,8 @@ export interface StoredUnsent {
   urgent: boolean;
   createdAt: number;
   content: MessageContent;
+  /** A photo's or file's plain bytes, kept until it is sent, for a retry (R-005). */
+  blob?: Blob;
 }
 
 let opening: Promise<IDBDatabase> | undefined;

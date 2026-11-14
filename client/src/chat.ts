@@ -6,7 +6,7 @@
 //
 // Everything the server sends is decrypted on the way in, and every message is encrypted on the
 // way out (see e2ee/keyring.ts). The store only ever holds readable text.
-import { keyFingerprint, openPicks, pairingId, pairingProof, permitHash, type MessageContent, type QuotedMessage } from '../../shared/e2ee';
+import { encryptFile, keyFingerprint, openPicks, pairingId, pairingProof, permitHash, type MessageContent, type QuotedMessage } from '../../shared/e2ee';
 import {
   LIMITS,
   previewOf,
@@ -33,6 +33,7 @@ import { showUnreadInTab, sound } from './alerts';
 import { announceAccountChange, api, ApiError, sendAwayBeacon, setTabUser } from './api';
 import { attention } from './attention';
 import { holdReloadWhile, setReloadTarget } from './build';
+import { fileText, type Attachment } from './files';
 import {
   EncryptionUnavailableError,
   keyring,
@@ -78,6 +79,8 @@ let editing: { docId: string; section: string } | null = null;
 const seen = new Set<number>();
 /** Client ids of the messages this tab keeps on the device until the server has them (D-051). */
 const unsent = new Set<string>();
+/** The plain bytes of unsent photos and files, by client id, for a retry. */
+const unsentFiles = new Map<string, Blob>();
 // The server numbers messages as they arrive, so a chat's sends go out one at a time (D-075).
 const sendInOrder = keyedQueue();
 /**
@@ -359,6 +362,7 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
     .then(() => syncNow());
   // Once per load, not per check-in (D-004): only these phones' banner depends on Bark (K-1).
   if (oldIos) void api.bark().then(actions.setBark, () => undefined);
+  void api.config().then(({ files }) => actions.setFiles(files), () => undefined);
   cleanups.push(startGithub(() => pushActiveHere));
   void alertMissedUrgent(data.urgent, keysOf, run);
 
@@ -767,7 +771,7 @@ const sealAndSend = (
 ): Promise<MessageDTO> =>
   withChatKey(conversationId, async (key, keyId) => {
     const envelope = await keyring.seal(key, keyId, { conversationId, ...meta }, content);
-    const message = await api.sendMessage(conversationId, { envelope, ...meta });
+    const message = await api.sendMessage(conversationId, { envelope, ...meta, fileId: content.file?.id });
     // This device knows what it sent, so it never needs to decrypt it.
     keyring.rememberContent(message.id, { conversationId, senderId: meId, ...meta }, envelope, content);
     return message;
@@ -992,6 +996,7 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     ask: entry.content.ask ?? null,
     permit: entry.content.permit ?? null,
     card: entry.content.card ?? null,
+    file: entry.content.file ?? null,
     security: 'encrypted',
   };
 }
@@ -999,11 +1004,13 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
 // Writes go to the device in the order they are made, so a quick confirmation cannot be overtaken.
 function rememberUnsent(entry: StoredUnsent) {
   unsent.add(entry.clientId);
+  if (entry.blob) unsentFiles.set(entry.clientId, entry.blob);
   holdTabLock();
   keystore.setUnsent(entry).catch(() => undefined);
 }
 
 function forgetUnsent(clientId: string) {
+  unsentFiles.delete(clientId);
   if (!unsent.delete(clientId)) return;
   keystore.deleteUnsent(clientId).catch(() => undefined);
   if (unsent.size === 0) dropTabLock();
@@ -1027,15 +1034,27 @@ function dropTabLock() {
  * Encrypts and sends one message, showing it as sending until the server has it. Until then it
  * also stays on the device, so closing or reloading the tab does not lose it (D-051).
  */
-async function sendContent(conversationId: number, content: MessageContent, urgent: boolean, clientId = newClientId()) {
+async function sendContent(conversationId: number, content: MessageContent, urgent: boolean, clientId = newClientId(), blob?: Blob) {
   const me = store.get().me;
   if (!me) return;
-  const entry: StoredUnsent = { userId: me.id, tabId, conversationId, clientId, urgent, createdAt: Date.now(), content };
+  const entry: StoredUnsent = { userId: me.id, tabId, conversationId, clientId, urgent, createdAt: Date.now(), content, ...(blob && { blob }) };
   const sending = unsentMessage(entry);
   actions.addSending(sending);
   rememberUnsent(entry);
+  const send = () => sealAndSend(conversationId, { urgent, clientId, kind: 'message' }, content);
   try {
-    const message = await sendInOrder(conversationId, () => sealAndSend(conversationId, { urgent, clientId, kind: 'message' }, content));
+    const message = await sendInOrder(conversationId, async () => {
+      if (!blob) return send();
+      if (!content.file!.id) await uploadFile(entry, blob);
+      try {
+        return await send();
+      } catch (error) {
+        // Uploaded too long ago, before a send that failed: the server dropped it, so upload again.
+        if (!(error instanceof ApiError && error.code === 'file_gone')) throw error;
+        await uploadFile(entry, blob);
+        return send();
+      }
+    });
     seen.add(message.id);
     actions.addMessage({ ...sending, ...message }, false);
     actions.setPending(clientId, null);
@@ -1048,6 +1067,25 @@ async function sendContent(conversationId: number, content: MessageContent, urge
       actions.addToast({ conversationId, title: 'Message not sent', body: error.message });
     }
   }
+}
+
+/**
+ * Encrypts a file with a key of its own and uploads the ciphertext, then keeps its id and key with
+ * the unsent message. The upload goes straight to the address, not through `request`, whose timer
+ * would cut a slow upload after a minute (D-077).
+ */
+async function uploadFile(entry: StoredUnsent, blob: Blob) {
+  const sealed = await encryptFile(new Uint8Array(await blob.arrayBuffer()));
+  const { id, url } = await api.uploadAddress(entry.conversationId, sealed.data.length);
+  const res = await fetch(url, { method: 'PUT', body: sealed.data }).catch(() => null);
+  if (!res?.ok) throw new ApiError(res?.status ?? 0, 'The file did not upload. Check your connection and try again.');
+  entry.content.file = { ...entry.content.file!, id, key: sealed.key };
+  keystore.setUnsent(entry).catch(() => undefined);
+}
+
+/** Sends a photo or file (R-005) as a message of its own. Its text says the same in words. */
+export function sendFile(conversationId: number, { blob, file }: Attachment) {
+  return sendContent(conversationId, { text: fileText(file), file }, false, newClientId(), blob);
 }
 
 /** Takes a message that was not sent out of its chat and off this device, which keeps it until then. */
@@ -1069,7 +1107,8 @@ export function retryMessage(message: ChatMessage) {
   // A fresh send time, or the agent would refuse a retry made 10 minutes later. The client id still makes it one message (D-061, K-47).
   if (message.prompt) content.prompt = 'sentAt' in message.prompt ? { ...message.prompt, sentAt: Date.now() } : message.prompt;
   if (message.added) content.added = message.added;
-  void sendContent(message.conversationId, content, message.urgent, message.clientId!);
+  if (message.file) content.file = message.file;
+  void sendContent(message.conversationId, content, message.urgent, message.clientId!, unsentFiles.get(message.clientId!));
 }
 
 /** Puts an emoji on a message, or takes it back when it is already this user's reaction there. */

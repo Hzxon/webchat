@@ -6,9 +6,7 @@ This file is a copy of the Roadmap column of the project's board in WebChat, whi
 
 ### R-005: Photos and files
 
-Status: Running: Hzxon/webchat#236.
-
-Checked: 2026-11-14. Read R-005 and D-123 as on the board now and D-037; the card's facts were checked against shared/types.ts, server/app.ts, server/api.ts, vercel.json, package.json and server/migrations at 7305298, not reread this turn. Open pull request #229 by title only.
+Status: In review in #236 and #238. The Vercel path waits for a private Blob store.
 
 Why: students share drafts, slides and screenshots. WebChat sends text only.
 
@@ -38,11 +36,19 @@ Constraints:
 
 Needs D-123.
 
-Not yet confirmed: that a browser can fetch a presigned Blob URL from the page's origin (CORS), and which host a presigned upload goes to. Try both in a short spike before the rest.
+Not yet confirmed: that a browser can fetch a presigned Blob URL from the page's origin (CORS), and which host a presigned upload goes to. Try both in a short spike before the rest. #236 found from the SDK's source (`@vercel/blob` 2.9.0) that an upload goes to `https://vercel.com/api/blob/` and a download to `https://<store>.private.blob.vercel-storage.com`. CORS is still unconfirmed: there is no store to try it against.
 
 Done when, with two accounts that share a chat, one sending and the other receiving:
 
-- The first sends a photo and a PDF and the sec
+1. Alice sends a photo and a PDF, and Bob opens both. This works on Vercel and on a self-hosted server.
+2. The uploaded photo is at most 1600 pixels and carries no GPS data.
+3. The storage and the database hold no plain text, file name or key, and a test proves it.
+4. A file over the size limit, or of a type off the list, is refused before it uploads.
+5. A program renamed to `.pdf` that got past the sender's check is refused on Bob's page, and a test proves it.
+6. Someone outside the chat gets no download address.
+7. A file older than 7 days gets no download address either. Its ciphertext is gone after the next upload, and its message still shows the name and the preview.
+8. Deleting the chat deletes its stored files.
+9. The README and D-020 list what the server and the storage service see, and say that nobody scans files.
 
 ### R-045: R-045: The Coding agents row's name says nothing of board work
 
@@ -57,6 +63,63 @@ Scope: the row's subtitle says when proposals wait, such as "3 proposals wait fo
 Done when: with a proposal draft not yet added, the Coding agents row says so, and it stops once the draft is added. `test/agents.test.ts` proves the count.
 
 Status to set by hand: `Done in Hzxon/webchat#227`.
+
+### R-046: A run checks its work in a browser that reaches only its own dev server
+
+Status: In review: part 1, the browser, merged in #235; part 2, screenshots sealed to the owner, in #240. Proposed by the owner on 2026-11-14.
+
+Order: after K-73 (#233).
+
+Why: AGENTS.md asks for a browser check with two accounts, at desktop width and 375 pixels, in
+light and dark, and for screenshots in the pull request. A run cannot do either. Its tools are the
+shell, the file tools, web search and web fetch (`agent/claude.ts`), its only MCP server is the
+approval tool, and its shell reaches only the npm registry. So the owner does the visual check by
+hand, and the model never sees what it built.
+
+Scope:
+
+- The runner adds `chrome-devtools-mcp` to the `--mcp-config` file, beside the approval tool. Setup
+  installs one pinned version; a run never fetches it. It runs headless with a temporary profile,
+  never the owner's, and with usage statistics, CrUX lookups, update checks and `file:` navigation
+  off. It launches Chrome itself, so no debugging port is open for the shell to drive.
+- Chrome sends every request, loopback included, through a proxy in the runner. The proxy passes
+  only `localhost` names and loopback addresses, on the ports the run's dev server opened.
+- The rulebook allows a named list of the server's tools: pages, input, resize and emulate, the
+  snapshot, the screenshot, console and network lists, and script evaluation. Any other tool is
+  refused, so a new version adds nothing silently. A `url` must be loopback on a run port. An
+  argument that names a file, such as `filePath` or `filePaths`, is judged as a path, so it stays
+  in the working folders.
+- The runner starts the dev server, not the model's shell, as the owner decided on 2026-11-14. The
+  model asks for it through a tool of WebChat's own, naming the command. The runner picks free
+  ports, so two runs do not clash on 3000 and 5173, and runs the command in a sandbox it owns: it
+  writes only the working folder, binds only those ports, and connects to nothing but them. It
+  ends with the turn.
+- Screenshots go back to the model and, sealed, to the owner in the run's thread, through WebChat's
+  `send_screenshot` tool, as R-005 photos (docs/decisions/new-run-screenshots.md). The pull request
+  says they are there.
+
+Constraints: screenshots are content, so they travel sealed (rule 1). The dev server is the
+model's code, so the runner never starts it as a plain process of the owner: that would run a
+teammate-steered model's code outside every sandbox. Claude Code's own sandbox cannot hold it
+either: its `network.allowLocalBinding` opens every loopback port of the laptop, such as another
+project's dev server or a local database, and does nothing on Linux, where a sandboxed command's
+`localhost` is private to it (code.claude.com/docs/en/sandboxing, read 2026-11-13). So the runner's
+sandbox names the ports: a profile of WebChat's own on macOS, and on Linux a network namespace
+that the dev server and the browser share. The model's shell keeps no local network, so it checks
+the server through the browser's tools, not `curl`. Web Push cannot be tested, since it needs a
+push service outside the laptop. Claude Code only: Codex and ACP agents need the same filter by
+another route.
+
+Cost: a sandbox WebChat owns and must keep working on two systems, which
+docs/decisions/new-sandbox-owned.md once dropped. A dependency to pin and watch, with 63 tools at
+this reading, of which the default set goes into every turn's context. A Chrome per run, a few
+hundred MB of memory, started at first use and ended with the turn.
+
+Done when: on macOS, a card run that changes the client starts the dev server, opens it as two
+accounts on `alice.localhost` and `bob.localhost`, and the owner gets screenshots at desktop width
+and 375 pixels, light and dark, with no question asked; tests show the proxy refusing another host
+and another port, the dev server failing to reach a port that is not its own, and the rulebook
+refusing a `file:` URL, a file path outside the folder and a tool off the list.
 
 ## Ready
 
@@ -184,62 +247,6 @@ Constraints: a knob is offered only when the adapter honors it without running c
 
 Done when: a Claude Code agent behaves as before and the tests pass; Settings lists the harnesses the laptop has, each with its state and knobs; a card run and a conversation each show the harness the owner picked; a request from an old page runs on the host harness; a request naming a harness that is not enabled fails with the reason.
 
-### R-046: A run checks its work in a browser that reaches only its own dev server
-
-Status: Open: part 1, the browser, in #235; part 2, screenshots sealed to the owner, waits. Proposed by the owner on 2026-11-14.
-
-Order: after K-73 (#233).
-
-Why: AGENTS.md asks for a browser check with two accounts, at desktop width and 375 pixels, in
-light and dark, and for screenshots in the pull request. A run cannot do either. Its tools are the
-shell, the file tools, web search and web fetch (`agent/claude.ts`), its only MCP server is the
-approval tool, and its shell reaches only the npm registry. So the owner does the visual check by
-hand, and the model never sees what it built.
-
-Scope:
-
-- The runner adds `chrome-devtools-mcp` to the `--mcp-config` file, beside the approval tool. Setup
-  installs one pinned version; a run never fetches it. It runs headless with a temporary profile,
-  never the owner's, and with usage statistics, CrUX lookups, update checks and `file:` navigation
-  off. It launches Chrome itself, so no debugging port is open for the shell to drive.
-- Chrome sends every request, loopback included, through a proxy in the runner. The proxy passes
-  only `localhost` names and loopback addresses, on the ports the run's dev server opened.
-- The rulebook allows a named list of the server's tools: pages, input, resize and emulate, the
-  snapshot, the screenshot, console and network lists, and script evaluation. Any other tool is
-  refused, so a new version adds nothing silently. A `url` must be loopback on a run port. An
-  argument that names a file, such as `filePath` or `filePaths`, is judged as a path, so it stays
-  in the working folders.
-- The runner starts the dev server, not the model's shell, as the owner decided on 2026-11-14. The
-  model asks for it through a tool of WebChat's own, naming the command. The runner picks free
-  ports, so two runs do not clash on 3000 and 5173, and runs the command in a sandbox it owns: it
-  writes only the working folder, binds only those ports, and connects to nothing but them. It
-  ends with the turn.
-- Screenshots go back to the model and, sealed, to the owner in the run's thread. The pull request
-  says they are there.
-
-Constraints: screenshots are content, so they travel sealed (rule 1). The dev server is the
-model's code, so the runner never starts it as a plain process of the owner: that would run a
-teammate-steered model's code outside every sandbox. Claude Code's own sandbox cannot hold it
-either: its `network.allowLocalBinding` opens every loopback port of the laptop, such as another
-project's dev server or a local database, and does nothing on Linux, where a sandboxed command's
-`localhost` is private to it (code.claude.com/docs/en/sandboxing, read 2026-11-13). So the runner's
-sandbox names the ports: a profile of WebChat's own on macOS, and on Linux a network namespace
-that the dev server and the browser share. The model's shell keeps no local network, so it checks
-the server through the browser's tools, not `curl`. Web Push cannot be tested, since it needs a
-push service outside the laptop. Claude Code only: Codex and ACP agents need the same filter by
-another route.
-
-Cost: a sandbox WebChat owns and must keep working on two systems, which
-docs/decisions/new-sandbox-owned.md once dropped. A dependency to pin and watch, with 63 tools at
-this reading, of which the default set goes into every turn's context. A Chrome per run, a few
-hundred MB of memory, started at first use and ended with the turn.
-
-Done when: on macOS, a card run that changes the client starts the dev server, opens it as two
-accounts on `alice.localhost` and `bob.localhost`, and the owner gets screenshots at desktop width
-and 375 pixels, light and dark, with no question asked; tests show the proxy refusing another host
-and another port, the dev server failing to reach a port that is not its own, and the rulebook
-refusing a `file:` URL, a file path outside the folder and a tool off the list.
-
 ## Known issues
 
 ### K-69: An agent's board messages buzz the owner's phone and count as unread
@@ -261,20 +268,6 @@ Fix, on main in #198: a quiet message kind, `sync` (`MessageKind` in `shared/typ
 Decision: the quiet-sync decision is Proposed in `docs/decisions/quiet-sync-messages.md` and has no number on the board yet. The server now sees which messages are board traffic; `docs/decisions/D-020.md` adds that to D-020, and the board's D-020 does not have the line yet. The owner adds the decision from its proposal file.
 
 Tests: `test/chat.test.ts` (no push, never unread, no new preview, never urgent) and `test/agent.test.ts` (entries and claims go as `sync`).
-
-### K-74: An agent's card draft loses everything past 4,000 characters
-
-Status: Open.
-
-Seen: R-005 on the board ended mid-sentence, at "Done when: two accounts in a chat". The rest of
-the text the agent drafted was gone, and nothing said so.
-
-Cause: `draftOf` in `agent/plugin.ts` cut a draft's body to a chat message's 4,000 characters, and
-the page's `readDraft` dropped a longer one. A card holds 10,000. Each draft is already a message
-of its own, but that message had a chat message's size.
-
-Fix: a draft's body may be as long as a card, and the server takes a message from an agent up to a
-doc section's size. See `docs/decisions/draft-full-card.md`.
 
 ## Open questions
 
@@ -432,3 +425,4 @@ Status: Dropped on 2026-11-13. The owner no longer wants a teammate to run a car
 | R-044: Make and number a card from the terminal | #225 |
 | K-1: The iOS 16.4 banner stays after Bark is linked | #228 |
 | K-73: The owner is asked about shell commands the sandbox already holds | #233 |
+| K-74: An agent's card draft loses everything past 4,000 characters | Fixed |
