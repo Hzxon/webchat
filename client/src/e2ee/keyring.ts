@@ -28,6 +28,7 @@ import type {
   DocDTO,
   DocRevisionDTO,
   EnvelopeDTO,
+  FileDTO,
   GithubCardDTO,
   MessageDTO,
   MessageKind,
@@ -67,6 +68,8 @@ interface Opened {
   permit: MessageContent['permit'] | null;
   /** A request about a board card to the member asked (the card-notes decision). */
   card: MessageContent['card'] | null;
+  /** A photo or file, shown instead of the text (R-005). */
+  file: FileDTO | null;
   /**
    * "plain" for messages from before encryption; "github" for a card the server wrote, which
    * nobody signs; "failed" if decryption or the signature check failed.
@@ -132,6 +135,7 @@ const openedFrom = (content: MessageContent): Opened => ({
   ask: content.ask ?? null,
   permit: content.permit ?? null,
   card: content.card ?? null,
+  file: content.file ?? null,
   security: 'encrypted',
 });
 
@@ -318,7 +322,7 @@ export const keyring = {
 
   /** Decrypts a message and checks its signature. Never throws: failures come back as "failed". */
   async open(message: MessageDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup): Promise<ChatMessage> {
-    const none = { replyTo: null, reaction: null, pull: null, github: null, run: null, prompt: null, added: null, setupState: null, board: null, ask: null, permit: null, card: null };
+    const none = { replyTo: null, reaction: null, pull: null, github: null, run: null, prompt: null, added: null, setupState: null, board: null, ask: null, permit: null, card: null, file: null };
     if (message.kind === 'github') {
       // Shown as GitHub's, never as a person's, whatever sender the server names.
       const card = readGithubCard(message.body);

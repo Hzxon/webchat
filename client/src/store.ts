@@ -53,6 +53,8 @@ export interface State {
   push: PushState | null;
   /** The last Bark state the server gave; null until asked. Not in the sync fingerprint (D-054). */
   bark: BarkDTO | null;
+  /** The server keeps photos and files, so the message box offers them (R-005). */
+  files: boolean;
   /** People whose encryption keys differ from the ones this device saw first. */
   keyWarnings: Record<number, true>;
   /** The GitHub connector's state; null until loaded. */
@@ -94,6 +96,7 @@ const initialState: State = {
   toasts: [],
   push: null,
   bark: null,
+  files: false,
   keyWarnings: {},
   github: null,
   githubOpen: false,
@@ -390,6 +393,7 @@ export const actions = {
   setPush: (push: PushState) => store.set((s) => ({ ...s, push })),
 
   setBark: (bark: BarkDTO) => store.set((s) => ({ ...s, bark })),
+  setFiles: (files: boolean) => store.set((s) => ({ ...s, files })),
 
   setKeyWarnings: (ids: Set<number>) =>
     store.set((s) => {
