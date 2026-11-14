@@ -1,0 +1,6 @@
+/* Astryx's component styles live in cascade layers, and unlayered CSS beats every layer. Our
+   element rules, such as `button { color: inherit }`, would then restyle its components. So
+   styles.css goes in a layer under astryx-base, and Astryx's reset is left out: it would change
+   every screen that still relies on browser defaults. */
+@layer reset, app, astryx-base, astryx-theme;
+@import './styles.css' layer(app);

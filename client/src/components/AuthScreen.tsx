@@ -1,5 +1,17 @@
 import { useState, type FormEvent } from 'react';
+import '@astryxdesign/core/astryx.css';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { Card } from '@astryxdesign/core/Card';
+import { Center } from '@astryxdesign/core/Center';
+import { Heading } from '@astryxdesign/core/Heading';
+import { Stack } from '@astryxdesign/core/Stack';
+import { Tab, TabList } from '@astryxdesign/core/TabList';
+import { Text } from '@astryxdesign/core/Text';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { Theme } from '@astryxdesign/core/theme';
 import { register, signIn } from '../e2ee/account';
+import { webchatTheme } from '../astryxTheme';
 
 export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -13,6 +25,11 @@ export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError('');
+    // TextInput has no minLength, and the server never sees the password, so the page checks it.
+    if (mode === 'register' && password.length < 8) {
+      setError('Use a password of at least 8 characters.');
+      return;
+    }
     setBusy(true);
     try {
       if (mode === 'login') await signIn(username, password);
@@ -26,78 +43,72 @@ export function AuthScreen({ onSignedIn }: { onSignedIn: () => void }) {
   }
 
   return (
-    <main className="auth">
-      <div className="auth-card">
-        <div className="auth-brand">
-          <img src="/favicon.svg" alt="" width="48" height="48" />
-          <div>
-            <h1>WebChat</h1>
-            <p>Messages from friends, the moment they are sent.</p>
-          </div>
-        </div>
+    <Theme theme={webchatTheme}>
+      <Center height="100%">
+        <Stack as="main" gap={5} padding={4} width="min(400px, 100%)">
+          <Card>
+            <Stack gap={5}>
+              <Stack direction="horizontal" gap={3} align="center">
+                <img src="/favicon.svg" alt="" width="48" height="48" />
+                <Stack gap={0.5}>
+                  <Heading level={1}>WebChat</Heading>
+                  <Text color="secondary">Messages from friends, the moment they are sent.</Text>
+                </Stack>
+              </Stack>
 
-        <div className="segmented" role="tablist">
-          <button role="tab" aria-selected={mode === 'login'} onClick={() => setMode('login')} type="button">
-            Sign in
-          </button>
-          <button role="tab" aria-selected={mode === 'register'} onClick={() => setMode('register')} type="button">
-            Create account
-          </button>
-        </div>
+              <TabList value={mode} onChange={(value) => setMode(value as 'login' | 'register')} layout="fill" hasDivider>
+                <Tab value="login" label="Sign in" />
+                <Tab value="register" label="Create account" />
+              </TabList>
 
-        <form onSubmit={submit} className="auth-form">
-          <label>
-            Username
-            <input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
-              autoCapitalize="none"
-              required
-              minLength={3}
-              maxLength={24}
-            />
-          </label>
-          {mode === 'register' && (
-            <label>
-              Your name
-              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} required maxLength={40} />
-            </label>
-          )}
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              required
-              minLength={mode === 'register' ? 8 : 1}
-            />
-            {mode === 'register' && (
-              <small>
-                Your password also locks your encrypted messages. If you forget it, your message history cannot be
-                recovered.
-              </small>
-            )}
-          </label>
-          {mode === 'register' && (
-            <label>
-              Invite code
-              <input value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} required autoCapitalize="none" />
-              <small>Ask the person who runs this server.</small>
-            </label>
-          )}
-          {error && (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          )}
-          <button className="button-primary" disabled={busy}>
-            {busy ? 'Securing your keys…' : mode === 'login' ? 'Sign in' : 'Create account'}
-          </button>
-        </form>
-      </div>
-    </main>
+              <Stack as="form" gap={4} onSubmit={submit}>
+                <TextInput
+                  label="Username"
+                  value={username}
+                  onChange={setUsername}
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  isRequired
+                />
+                {mode === 'register' && (
+                  <TextInput label="Your name" value={displayName} onChange={setDisplayName} isRequired />
+                )}
+                <TextInput
+                  type="password"
+                  label="Password"
+                  value={password}
+                  onChange={setPassword}
+                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                  description={
+                    mode === 'register'
+                      ? 'Your password also locks your encrypted messages. If you forget it, your message history cannot be recovered.'
+                      : undefined
+                  }
+                  isRequired
+                />
+                {mode === 'register' && (
+                  <TextInput
+                    label="Invite code"
+                    value={inviteCode}
+                    onChange={setInviteCode}
+                    autoCapitalize="none"
+                    description="Ask the person who runs this server."
+                    isRequired
+                  />
+                )}
+                {error && <Banner status="error" title={error} />}
+                <Button
+                  type="submit"
+                  variant="primary"
+                  width="100%"
+                  isLoading={busy}
+                  label={busy ? 'Securing your keys…' : mode === 'login' ? 'Sign in' : 'Create account'}
+                />
+              </Stack>
+            </Stack>
+          </Card>
+        </Stack>
+      </Center>
+    </Theme>
   );
 }
