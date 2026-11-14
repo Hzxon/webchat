@@ -109,6 +109,15 @@ export interface HarnessState {
 export type HarnessRow = 'linked' | 'attention' | 'found' | 'missing';
 
 /** What each row says, for Settings and `doctor` alike. */
+/**
+ * What the owner reads before and after linking a harness that runs with neither a sandbox nor
+ * WebChat's isolation from their setup, by its name (docs/decisions/new-hermes-unconfined.md).
+ */
+export const HARNESS_WARNING: Record<string, string> = {
+  Hermes:
+    'Hermes runs with no sandbox and loads your own Hermes setup: your config, memory, plugins, hooks and MCP servers. A teammate’s question or card can make it read or change your files and use your tools, such as your email. The agent’s keys stay out of its reach.',
+};
+
 export const HARNESS_ROW_WORDS: Record<HarnessRow, string> = { linked: 'Linked', attention: 'Linked, needs attention', found: 'Found, not linked', missing: 'Not found' };
 
 /** Which of the four rows Settings shows for a harness, and `doctor` too. */

@@ -1,6 +1,6 @@
 ### R: Support Hermes as a harness
 
-Status: Blocked 2026-11-13: Hermes cannot run under WebChat's rules yet, see "Blocked because".
+Status: In review. Unblocked 2026-11-14: the owner chose to run Hermes without isolation or a sandbox, with a warning (docs/decisions/new-hermes-unconfined.md).
 Proposed 2026-11-12 from the agent host design.
 
 Order: later, after docs/roadmap/new-harness-linking.md, and after docs/roadmap/new-acp-adapter.md
@@ -13,23 +13,18 @@ Scope: first find how Hermes can be driven: whether it speaks ACP, how it takes 
 arguments, how it returns a final answer, what sandbox it has and how WebChat's rulebook reaches
 it. Then add it to the ACP list, or write a native adapter beside `claude.ts` and `codex.ts`.
 
-Constraints: until the locked room, Hermes answers only, as Codex does. Its login stays the
-owner's.
+Constraints: Hermes is linked like any harness and may take cards. Its login stays the owner's.
 
 Done when: Hermes appears in setup's pick list and in Settings, a linked Hermes answers a question,
 and `webchat-agent link hermes` no longer fails.
 
-Blocked because: the Hermes Agent source (NousResearch/hermes-agent at 72c88037, read 2026-11-13)
-shows three gaps. The owner chose to block the card until they close.
+Found on 2026-11-14, with Hermes 0.23.1 on this laptop and upstream main read the same day:
 
-- `hermes acp` runs inside a shared gateway daemon. It skips the owner's config, hooks, plugins and
-  MCP servers only through environment variables, which also need a model and provider for each
-  owner, so an entry on the shipped ACP list cannot hold them.
-- In that mode the MCP server that WebChat passes likely cannot load, so `submit_answer` cannot end
-  a turn; `--safe-mode` drops it outright.
-- Its shell runs with no sandbox and asks only for commands it judges dangerous, so `ls` or `curl`
-  run without a permission request.
+- Gap 2 was half WebChat's: `submit_answer` served the schema `{}` before the first turn, which is
+  no MCP tool schema, and Hermes dropped the server. It now serves `{ type: 'object' }`.
+- Gaps 1 and 2 remain in Hermes for an isolated session: `--safe-mode` and `--ignore-user-config`
+  run the turn in a managed worker, which cannot reach a client's MCP servers
+  (`launch_credentials_unavailable`). So Hermes runs with the owner's own setup.
+- Gap 3 stands: its shell has no sandbox. The README and the warning say so.
 
-It unblocks when Hermes has an isolated mode that keeps the MCP servers a client passes, and a
-sandboxed shell or a request before every command. Then a real run fills its dated check and it
-joins the list in `agent/acp-agents.ts`.
+A real turn through WebChat's adapter read `sum.js` and answered through `submit_answer` in 22 s.

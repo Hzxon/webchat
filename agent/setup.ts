@@ -14,7 +14,7 @@ import readline from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import pkg from '../package.json' with { type: 'json' };
-import { HARNESS_ROW_WORDS, harnessRow, type ConfigDTO, type HarnessState, type PairingPick, type SetupChoice } from '../shared/types.ts';
+import { HARNESS_ROW_WORDS, HARNESS_WARNING, harnessRow, type ConfigDTO, type HarnessState, type PairingPick, type SetupChoice } from '../shared/types.ts';
 import { Api } from './api.ts';
 import { onPath } from './claude.ts';
 import { AgentClient, readPairing, type AccountFile } from './client.ts';
@@ -544,7 +544,8 @@ export async function setup(pasted: string | undefined, { home, program, ask = a
     `install an updater that moves the agent to ${server ?? 'its server'}’s release, forward only, whenever nothing runs: it runs as root, ${mac() ? 'a LaunchDaemon' : 'a systemd timer'} in ${path.dirname(layout.updaterUnit)}`,
     `install a login service that runs the agent’s runner as you, a ${mac() ? 'LaunchAgent' : 'systemd user unit'} in ${path.dirname(mac() ? plistFile() : unitFile())}`,
   ];
-  const offer = pasted ? `\nCoding agents to link, which WebChat shows you before you approve:\n${found.map((f) => `  [${ticked.includes(f) ? 'x' : ' '}] ${describe(f)}`).join('\n')}\n` : '';
+  const warned = (f: Found) => (f.program && HARNESS_WARNING[f.name] ? `\n      Warning: ${HARNESS_WARNING[f.name]}` : '');
+  const offer = pasted ? `\nCoding agents to link, which WebChat shows you before you approve:\n${found.map((f) => `  [${ticked.includes(f) ? 'x' : ' '}] ${describe(f)}${warned(f)}`).join('\n')}\n` : '';
   const answer = await ask(`${offer}\nSetup will:\n${plan.map((line) => `  - ${line}`).join('\n')}\nIt changes no security setting. Continue? [y/N]${pasted ? ', or type the coding agents to link, such as "claude codex", or "none"' : ''} `);
   const picks = pasted ? linksFrom(answer, found) : yes(answer) ? [] : undefined;
   if (!picks) throw new Error('Nothing was changed.');

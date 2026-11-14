@@ -9,6 +9,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import pkg from '../package.json' with { type: 'json' };
+import { HARNESS_WARNING } from '../shared/types.ts';
 import type { AcpAgent } from './acp-agents.ts';
 import { listenForAnswers } from './answer.ts';
 import { isCredential, olderThan, secretDirs, type Harness, type Turn } from './harness.ts';
@@ -107,7 +108,7 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
   /** What the agent's shell inherits: no credential but those its own sign-in keeps. */
   const environment = () => ({
     ...Object.fromEntries(Object.entries(process.env).filter((entry) => !isCredential(entry) || agent.login?.includes(entry[0]))),
-    ...agent.isolation.env,
+    ...agent.isolation?.env,
   });
 
   async function close(live: Live) {
@@ -160,15 +161,16 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
     if (update.sessionUpdate === 'agent_message_chunk') turn.last = (turn.last + (update.content?.text ?? '')).slice(-2000);
     const word = update.kind && WORDS[update.kind];
     if (update.sessionUpdate === 'tool_call' && word && !turn.done) {
-      const where = update.locations?.[0]?.path;
-      turn.progress?.(where ? `${word} ${path.relative(turn.cwd, where)}` : word);
+      // Hermes reports the path its tool was given, which may be relative to the working folder.
+      const where = update.locations?.[0]?.path && path.relative(turn.cwd, path.resolve(turn.cwd, update.locations[0].path));
+      turn.progress?.(where ? `${word} ${where}` : word);
     }
   }
 
   /** Starts the agent and opens its session for `t`: a new one, or the one it kept. */
   async function open(t: Turn): Promise<Live> {
     const listener = await listenForAnswers();
-    const child = spawn(program, [...agent.args, ...agent.isolation.args], { cwd: t.cwd, env: environment(), stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(program, [...agent.args, ...(agent.isolation?.args ?? [])], { cwd: t.cwd, env: environment(), stdio: ['pipe', 'pipe', 'pipe'] });
     running.add(child);
     // Kept for the error text, and never forwarded.
     let stderr = '';
@@ -290,6 +292,9 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
       if (!program) return `I cannot find ${name} on this laptop.`;
       const old = olderThan(name, await versionOf(), agent.min);
       if (old) return old;
+    },
+    async warning() {
+      return HARNESS_WARNING[name];
     },
     // ACP has no switch for the owner's instructions, skills or any knob, and D-115 lets an adapter declare only what it honors.
     offers: () => ({ knobs: [] }),
