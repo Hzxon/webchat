@@ -394,11 +394,43 @@ a {
   flex-direction: column;
   min-width: 0;
   border-right: 1px solid var(--line);
-  /* The tint reaches every row, field and banner inside, because they read these same variables. */
+  /* The tint reaches every row, field and banner inside, because they read these same variables.
+     Astryx's tokens took their value where the theme set them, so they are pointed here again. */
   --panel: var(--sidebar);
   --panel-2: var(--sidebar-2);
   --hover: var(--sidebar-hover);
+  --color-background-surface: var(--panel);
+  --color-background-card: var(--panel);
+  --color-background-body: var(--panel);
   background: var(--panel);
+}
+
+.sidebar-me {
+  min-width: 0;
+}
+
+.sidebar-list {
+  flex: 1;
+  min-height: 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  overflow-y: auto;
+}
+
+.bell-warn {
+  position: relative;
+  display: inline-grid;
+  color: var(--warn);
+}
+
+.bell-warn .dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  border: 2px solid var(--panel);
 }
 
 .sidebar-header {

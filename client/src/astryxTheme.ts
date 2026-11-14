@@ -17,6 +17,8 @@ export const webchatTheme = defineTheme({
     '--color-text-secondary': 'var(--muted)',
     '--color-border': 'var(--line)',
     '--color-error': 'var(--danger)',
+    '--color-info': 'var(--accent)',
+    '--color-on-info': 'var(--on-accent)',
     '--color-success': 'var(--ok)',
     '--color-warning': 'var(--warn)',
     '--radius-inner': 'var(--radius)',

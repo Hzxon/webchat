@@ -1,4 +1,16 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Badge } from '@astryxdesign/core/Badge';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { Divider } from '@astryxdesign/core/Divider';
+import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
+import { IconButton } from '@astryxdesign/core/IconButton';
+import { List, ListItem } from '@astryxdesign/core/List';
+import { Stack } from '@astryxdesign/core/Stack';
+import { StatusDot } from '@astryxdesign/core/StatusDot';
+import { Tab, TabList } from '@astryxdesign/core/TabList';
+import { Text } from '@astryxdesign/core/Text';
+import { TextInput } from '@astryxdesign/core/TextInput';
 import { AGENT_LEVEL, type ProjectDTO } from '../../../shared/types';
 import { agentOf, ownAgents, proposalsWaiting, ready, THREAD_STATE, useAgentThreads } from '../agents';
 import { sound } from '../alerts';
@@ -48,7 +60,17 @@ const newestFirst = (a: ChatConversation, b: ChatConversation) =>
   (b.lastMessage?.createdAt ?? b.updatedAt) - (a.lastMessage?.createdAt ?? a.updatedAt);
 
 export function Sidebar(props: SidebarProps) {
-  const { onNewChat, onNewProject, onNewChannel, onAddPeople, onMembers, onRepos, onNewDoc, onRenameDoc, onNotifications } = props;
+  const {
+    onNewChat,
+    onNewProject,
+    onNewChannel,
+    onAddPeople,
+    onMembers,
+    onRepos,
+    onNewDoc,
+    onRenameDoc,
+    onNotifications,
+  } = props;
   const me = useAppState((s) => s.me);
   const conversations = useAppState((s) => s.conversations);
   const users = useAppState((s) => s.users);
@@ -106,7 +128,8 @@ export function Sidebar(props: SidebarProps) {
   const notificationsReady = push?.permission === 'granted';
 
   async function removeAccount() {
-    const warning = 'You leave every project and group, your direct chats are deleted for both people, and your username is freed.';
+    const warning =
+      'You leave every project and group, your direct chats are deleted for both people, and your username is freed.';
     if (!confirm(`Delete your account? ${warning} This cannot be undone.`)) return;
     try {
       await deleteAccount();
@@ -117,108 +140,146 @@ export function Sidebar(props: SidebarProps) {
 
   return (
     <aside className="sidebar">
-      <header className="sidebar-header">
+      <Stack direction="horizontal" gap={2} vAlign="center" paddingInline={3} paddingBlock={2}>
         <Avatar name={me.displayName} seed={me.id} size={38} />
-        <div className="sidebar-me">
-          <strong>{me.displayName}</strong>
-          <span>@{me.username}</span>
-        </div>
-        <button
-          className={`icon-button ${notificationsReady ? '' : 'icon-button-warn'}`}
+        <Stack gap={0} width="100%" className="sidebar-me">
+          <Text weight="semibold" maxLines={1}>
+            {me.displayName}
+          </Text>
+          <Text color="secondary" type="supporting" maxLines={1}>
+            @{me.username}
+          </Text>
+        </Stack>
+        <IconButton
+          variant="ghost"
+          label="Notification settings"
+          tooltip="Notification settings"
           onClick={onNotifications}
-          title="Notification settings"
-          aria-label="Notification settings"
-        >
-          {notificationsReady ? <BellRingIcon /> : <BellIcon />}
-          {!notificationsReady && <span className="dot" />}
-        </button>
-        <button
-          className="icon-button"
+          icon={
+            notificationsReady ? (
+              <BellRingIcon />
+            ) : (
+              <span className="bell-warn">
+                <BellIcon />
+                <span className="dot" />
+              </span>
+            )
+          }
+        />
+        <IconButton
+          variant="ghost"
+          label={tab === 'projects' ? 'New project' : 'New chat'}
+          tooltip={tab === 'projects' ? 'New project' : 'New chat'}
           onClick={tab === 'projects' ? onNewProject : onNewChat}
-          title={tab === 'projects' ? 'New project' : 'New chat'}
-          aria-label={tab === 'projects' ? 'New project' : 'New chat'}
-        >
-          <PlusIcon />
-        </button>
-        <button className="icon-button" onClick={() => void signOut()} title="Sign out" aria-label="Sign out">
-          <LogoutIcon />
-        </button>
-        <button className="icon-button" onClick={() => void removeAccount()} title="Delete account" aria-label="Delete account">
-          <TrashIcon />
-        </button>
-      </header>
+          icon={<PlusIcon />}
+        />
+        <IconButton
+          variant="ghost"
+          label="Sign out"
+          tooltip="Sign out"
+          onClick={() => void signOut()}
+          icon={<LogoutIcon />}
+        />
+        <IconButton
+          variant="ghost"
+          label="Delete account"
+          tooltip="Delete account"
+          onClick={() => void removeAccount()}
+          icon={<TrashIcon />}
+        />
+      </Stack>
+      <Divider />
 
-      {!connected && <div className="connection-bar">Connecting…</div>}
+      {!connected && <Banner status="info" container="section" title="Connecting…" />}
       <AlertSetupBanner onOpen={onNotifications} />
 
-      <div className="tabs" role="tablist">
-        <button role="tab" aria-selected={tab === 'chats'} onClick={() => actions.setTab('chats')}>
-          <ChatIcon width={18} height={18} />
-          Chats
-          {chatUnread > 0 && <span className="tab-count">{chatUnread}</span>}
-        </button>
-        <button role="tab" aria-selected={tab === 'projects'} onClick={() => actions.setTab('projects')}>
-          <FolderIcon width={18} height={18} />
-          Projects
-          {projectUnread > 0 && <span className="tab-count">{projectUnread}</span>}
-        </button>
-      </div>
-
-      <label className="search">
-        <SearchIcon width={18} height={18} />
-        <input
-          placeholder={tab === 'projects' ? 'Search projects and channels' : 'Search chats'}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+      <TabList
+        value={tab}
+        onChange={(value) => actions.setTab(value as 'chats' | 'projects')}
+        layout="fill"
+        hasDivider
+        role="tablist"
+      >
+        <Tab
+          value="chats"
+          label="Chats"
+          icon={<ChatIcon width={18} height={18} />}
+          endContent={chatUnread > 0 && <Badge variant="info" label={chatUnread} />}
         />
-      </label>
+        <Tab
+          value="projects"
+          label="Projects"
+          icon={<FolderIcon width={18} height={18} />}
+          endContent={projectUnread > 0 && <Badge variant="info" label={projectUnread} />}
+        />
+      </TabList>
 
-      {tab === 'chats' ? (
-        <ul className="chat-list">
-          {!query && <GithubListItem />}
-          {!query && <AgentsListItem />}
-          {sorted.map((c) => (
-            <ChatListItem key={c.id} conversation={c} />
-          ))}
-          {sorted.length === 0 && (
-            <li className="chat-list-empty">
-              {query ? 'No chats match.' : 'No chats yet. Press + to message a friend.'}
-            </li>
-          )}
-        </ul>
-      ) : (
-        <ul className="chat-list">
-          {projectList.map(({ project, channels, docs, boards }) => (
-            <ProjectSection
-              key={project.id}
-              project={project}
-              channels={channels}
-              docs={docs}
-              boards={boards}
-              onNewChannel={() => onNewChannel(project.id)}
-              onAddPeople={() => onAddPeople(project.id)}
-              onMembers={() => onMembers(project.id)}
-              onRepos={() => onRepos(project.id)}
-              onNewDoc={() => onNewDoc(project.id)}
-              onRenameDoc={onRenameDoc}
-            />
-          ))}
-          {projectList.length === 0 &&
-            (query ? (
-              <li className="chat-list-empty">No projects or channels match.</li>
-            ) : (
-              <li className="chat-list-empty projects-empty">
-                <p>
-                  A project gives a team its own channels, like #general for planning and #design for drafts. Everyone in
-                  the project can read every channel.
-                </p>
-                <button className="button-primary" onClick={onNewProject}>
-                  New project
-                </button>
-              </li>
+      <Stack padding={2}>
+        <TextInput
+          type="search"
+          label={tab === 'projects' ? 'Search projects and channels' : 'Search chats'}
+          isLabelHidden
+          placeholder={tab === 'projects' ? 'Search projects and channels' : 'Search chats'}
+          startIcon={SearchIcon}
+          value={query}
+          onChange={setQuery}
+        />
+      </Stack>
+
+      <Stack className="sidebar-list">
+        {tab === 'chats' ? (
+          <>
+            <List hasDividers>
+              {!query && <GithubListItem />}
+              {!query && <AgentsListItem />}
+              {sorted.map((c) => (
+                <ChatListItem key={c.id} conversation={c} />
+              ))}
+            </List>
+            {sorted.length === 0 && (
+              <Stack padding={6}>
+                <Text color="secondary" justify="center">
+                  {query ? 'No chats match.' : 'No chats yet. Press + to message a friend.'}
+                </Text>
+              </Stack>
+            )}
+          </>
+        ) : (
+          <>
+            {projectList.map(({ project, channels, docs, boards }) => (
+              <ProjectSection
+                key={project.id}
+                project={project}
+                channels={channels}
+                docs={docs}
+                boards={boards}
+                onNewChannel={() => onNewChannel(project.id)}
+                onAddPeople={() => onAddPeople(project.id)}
+                onMembers={() => onMembers(project.id)}
+                onRepos={() => onRepos(project.id)}
+                onNewDoc={() => onNewDoc(project.id)}
+                onRenameDoc={onRenameDoc}
+              />
             ))}
-        </ul>
-      )}
+            {projectList.length === 0 &&
+              (query ? (
+                <Stack padding={6}>
+                  <Text color="secondary" justify="center">
+                    No projects or channels match.
+                  </Text>
+                </Stack>
+              ) : (
+                <Stack padding={6} gap={4} hAlign="center">
+                  <Text as="p" color="secondary" justify="center">
+                    A project gives a team its own channels, like #general for planning and #design for drafts. Everyone
+                    in the project can read every channel.
+                  </Text>
+                  <Button variant="primary" label="New project" onClick={onNewProject} />
+                </Stack>
+              ))}
+          </>
+        )}
+      </Stack>
     </aside>
   );
 }
@@ -236,7 +297,8 @@ function ProjectSection(props: {
   onNewDoc: () => void;
   onRenameDoc: (doc: ChatDoc) => void;
 }) {
-  const { project, channels, docs, boards, onNewChannel, onAddPeople, onMembers, onRepos, onNewDoc, onRenameDoc } = props;
+  const { project, channels, docs, boards, onNewChannel, onAddPeople, onMembers, onRepos, onNewDoc, onRenameDoc } =
+    props;
   const activeId = useAppState((s) => s.activeId);
   const docOpen = useAppState((s) => s.docOpen);
   const boardOpen = useAppState((s) => s.boardOpen);
@@ -254,97 +316,123 @@ function ProjectSection(props: {
   const boardUpdated = boards.some(updatedSince);
 
   return (
-    <li className="project">
-      <div className="project-header">
-        <Avatar name={project.name} seed={project.id + 5} size={34} square />
-        <span className="project-name">
-          <strong>{project.name}</strong>
-          <small>
-            {people} {people === 1 ? 'member' : 'members'}
-          </small>
-        </span>
-        <button className="icon-button icon-button-small" onClick={onMembers} title="Members" aria-label={`Members of ${project.name}`}>
-          <UsersIcon width={18} height={18} />
-        </button>
-        <button className="icon-button icon-button-small" onClick={onAddPeople} title="Add people" aria-label={`Add people to ${project.name}`}>
-          <UserPlusIcon width={18} height={18} />
-        </button>
-        {github && (
-          <button className="icon-button icon-button-small" onClick={onRepos} title="GitHub repositories" aria-label={`GitHub repositories of ${project.name}`}>
-            <GithubIcon width={18} height={18} />
-          </button>
-        )}
-        <button className="icon-button icon-button-small" onClick={onNewChannel} title="New channel" aria-label={`New channel in ${project.name}`}>
-          <PlusIcon width={18} height={18} />
-        </button>
-      </div>
-      <ul className="channel-list">
+    <Stack as="section" className="project" gap={0.5} paddingBlock={2}>
+      <ListItem
+        startContent={<Avatar name={project.name} seed={project.id + 5} size={34} square />}
+        label={project.name}
+        description={`${people} ${people === 1 ? 'member' : 'members'}`}
+        endContent={
+          <Stack direction="horizontal" gap={0.5}>
+            <IconButton
+              variant="ghost"
+              size="sm"
+              label={`Members of ${project.name}`}
+              tooltip="Members"
+              onClick={onMembers}
+              icon={<UsersIcon width={18} height={18} />}
+            />
+            <IconButton
+              variant="ghost"
+              size="sm"
+              label={`Add people to ${project.name}`}
+              tooltip="Add people"
+              onClick={onAddPeople}
+              icon={<UserPlusIcon width={18} height={18} />}
+            />
+            {github && (
+              <IconButton
+                variant="ghost"
+                size="sm"
+                label={`GitHub repositories of ${project.name}`}
+                tooltip="GitHub repositories"
+                onClick={onRepos}
+                icon={<GithubIcon width={18} height={18} />}
+              />
+            )}
+            <IconButton
+              variant="ghost"
+              size="sm"
+              label={`New channel in ${project.name}`}
+              tooltip="New channel"
+              onClick={onNewChannel}
+              icon={<PlusIcon width={18} height={18} />}
+            />
+          </Stack>
+        }
+      />
+      <List density="compact">
         {channels.map((c) => {
           const hasUrgent = urgent.some((m) => m.conversationId === c.id);
           // #general stays as long as the project: its key opens the docs and the board (D-081).
           const deletable = owner && c.id !== generalId;
           return (
-            <li key={c.id} className={deletable ? 'menu-row' : undefined}>
-              <button
-                className={`channel-item ${activeId === c.id ? 'is-active' : ''} ${c.unread > 0 ? 'has-unread' : ''} ${hasUrgent ? 'is-urgent' : ''}`}
-                onClick={() => void openConversation(c.id)}
-              >
-                <HashIcon width={16} height={16} />
-                <span className="channel-name">{c.title}</span>
-                {hasUrgent && <span className="urgent-chip">URGENT</span>}
-                {c.unread > 0 && <span className="unread-badge">{c.unread}</span>}
-              </button>
-              {deletable && (
-                <RowMenu
-                  name={`#${c.title}`}
-                  question={`Delete #${c.title} for everyone? Every message in it will be deleted for all members.${github ? ' A repository linked to it will be unlinked.' : ''} This cannot be undone.`}
-                  onDelete={() => deleteChannel(project.id, c.id)}
-                />
-              )}
-            </li>
+            <ListItem
+              key={c.id}
+              className={rowClass(c.unread > 0, hasUrgent)}
+              startContent={<HashIcon width={16} height={16} />}
+              label={c.title ?? ''}
+              isSelected={activeId === c.id}
+              onClick={() => void openConversation(c.id)}
+              endContent={
+                (hasUrgent || c.unread > 0 || deletable) && (
+                  <Stack direction="horizontal" gap={1} vAlign="center">
+                    {hasUrgent && <Badge variant="error" label="URGENT" />}
+                    {c.unread > 0 && <Badge variant="info" label={c.unread} />}
+                    {deletable && (
+                      <RowMenu
+                        name={`#${c.title}`}
+                        question={`Delete #${c.title} for everyone? Every message in it will be deleted for all members.${github ? ' A repository linked to it will be unlinked.' : ''} This cannot be undone.`}
+                        onDelete={() => deleteChannel(project.id, c.id)}
+                      />
+                    )}
+                  </Stack>
+                )
+              }
+            />
           );
         })}
-        <li>
-          <button
-            className={`channel-item ${boardOpen === project.id ? 'is-active' : ''} ${boardUpdated ? 'has-unread' : ''}`}
-            onClick={() => actions.setBoardOpen(project.id)}
-          >
-            <BoardIcon width={16} height={16} />
-            <span className="channel-name">Board</span>
-            {boardUpdated && <span className="doc-dot" aria-label="Updated" />}
-          </button>
-        </li>
+        <ListItem
+          className={rowClass(boardUpdated)}
+          startContent={<BoardIcon width={16} height={16} />}
+          label="Board"
+          isSelected={boardOpen === project.id}
+          onClick={() => actions.setBoardOpen(project.id)}
+          endContent={boardUpdated && <StatusDot variant="accent" label="Updated" />}
+        />
         {docs.map((d) => {
           const updated = updatedSince(d);
           return (
-            <li key={d.id} className="menu-row">
-              <button
-                className={`channel-item ${docOpen === d.id ? 'is-active' : ''} ${updated ? 'has-unread' : ''}`}
-                onClick={() => actions.setDocOpen(d.id)}
-              >
-                <FileIcon width={16} height={16} />
-                <span className="channel-name">{d.name}</span>
-                {updated && <span className="doc-dot" aria-label="Updated" />}
-              </button>
-              <RowMenu
-                name={d.name}
-                question={`Delete “${d.name}” for everyone in the project? This cannot be undone.`}
-                onRename={() => onRenameDoc(d)}
-                onDelete={d.createdBy === meId || owner ? () => deleteDoc(d.id) : undefined}
-              />
-            </li>
+            <ListItem
+              key={d.id}
+              className={rowClass(updated)}
+              startContent={<FileIcon width={16} height={16} />}
+              label={d.name}
+              isSelected={docOpen === d.id}
+              onClick={() => actions.setDocOpen(d.id)}
+              endContent={
+                <Stack direction="horizontal" gap={1} vAlign="center">
+                  {updated && <StatusDot variant="accent" label="Updated" />}
+                  <RowMenu
+                    name={d.name}
+                    question={`Delete “${d.name}” for everyone in the project? This cannot be undone.`}
+                    onRename={() => onRenameDoc(d)}
+                    onDelete={d.createdBy === meId || owner ? () => deleteDoc(d.id) : undefined}
+                  />
+                </Stack>
+              }
+            />
           );
         })}
-        <li>
-          <button className="channel-item channel-add" onClick={onNewDoc}>
-            <PlusIcon width={16} height={16} />
-            <span className="channel-name">New doc</span>
-          </button>
-        </li>
-      </ul>
-    </li>
+        <ListItem startContent={<PlusIcon width={16} height={16} />} label="New doc" onClick={onNewDoc} />
+      </List>
+      <Divider />
+    </Stack>
   );
 }
+
+/** Bold for something new, and the red row for an urgent message, which Astryx's rows have no prop for. */
+const rowClass = (unread: boolean, urgent = false) =>
+  [unread && 'row-unread', urgent && 'row-urgent'].filter(Boolean).join(' ') || undefined;
 
 /**
  * The "⋮" at the end of a doc's or channel's row: Rename, when it can be renamed, and Delete, for
@@ -352,21 +440,6 @@ function ProjectSection(props: {
  */
 function RowMenu(props: { name: string; question: string; onRename?: () => void; onDelete?: () => Promise<void> }) {
   const { name, question, onRename, onDelete } = props;
-  const [open, setOpen] = useState(false);
-  const menu = useRef<HTMLDivElement>(null);
-
-  // A press outside the menu, or Escape, closes it.
-  useEffect(() => {
-    if (!open) return;
-    const onPress = (e: PointerEvent) => menu.current?.contains(e.target as Node) || setOpen(false);
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
-    document.addEventListener('pointerdown', onPress);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPress);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
 
   async function remove(run: () => Promise<void>) {
     if (!confirm(question)) return;
@@ -377,38 +450,26 @@ function RowMenu(props: { name: string; question: string; onRename?: () => void;
     }
   }
 
-  const pick = (action: () => void) => () => {
-    setOpen(false);
-    action();
-  };
-
   return (
-    <div className="menu" ref={menu}>
-      <button
-        className="icon-button icon-button-small"
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={`Options for ${name}`}
-        title="Options"
-      >
-        <MoreIcon width={18} height={18} />
-      </button>
-      {open && (
-        <div className="menu-list" role="menu">
-          {onRename && (
-            <button role="menuitem" onClick={pick(onRename)}>
-              <PencilIcon width={16} height={16} /> Rename
-            </button>
-          )}
-          {onDelete && (
-            <button role="menuitem" className="is-danger" onClick={pick(() => void remove(onDelete))}>
-              <TrashIcon width={16} height={16} /> Delete
-            </button>
-          )}
-        </div>
+    <DropdownMenu
+      alignment="end"
+      renderTrigger={(trigger) => (
+        <IconButton
+          {...trigger}
+          variant="ghost"
+          size="sm"
+          label={`Options for ${name}`}
+          tooltip="Options"
+          icon={<MoreIcon width={18} height={18} />}
+        />
       )}
-    </div>
+      items={[
+        ...(onRename ? [{ label: 'Rename', icon: <PencilIcon width={16} height={16} />, onClick: onRename }] : []),
+        ...(onDelete
+          ? [{ label: 'Delete', icon: <TrashIcon width={16} height={16} />, onClick: () => void remove(onDelete) }]
+          : []),
+      ]}
+    />
   );
 }
 
@@ -421,19 +482,16 @@ function AlertSetupBanner({ onOpen }: { onOpen: () => void }) {
   const text = push && notificationWarning(push, bark);
   if (text) {
     return (
-      <button className="banner banner-warn" onClick={onOpen}>
-        <BellIcon width={18} height={18} />
-        <span>{text}</span>
-      </button>
+      <Banner
+        status="warning"
+        container="section"
+        title={text}
+        endContent={<Button size="sm" label="Set up" onClick={onOpen} />}
+      />
     );
   }
-  if (!soundUnlocked) {
-    return (
-      <div className="banner">
-        <span>Click anywhere on the page to enable alert sounds.</span>
-      </div>
-    );
-  }
+  if (!soundUnlocked)
+    return <Banner status="info" container="section" title="Click anywhere on the page to enable alert sounds." />;
   return null;
 }
 
@@ -453,23 +511,27 @@ function GithubListItem() {
   }
 
   return (
-    <li>
-      <button className={`chat-item ${open ? 'is-active' : ''}`} onClick={() => actions.setGithubOpen(true)}>
+    <ListItem
+      startContent={
         <span className="github-mark">
           <PullRequestIcon />
         </span>
-        <span className="chat-item-main">
-          <span className="chat-item-row">
-            <strong className="chat-item-title">Pull requests</strong>
-            {github.account && <time>@{github.account.login}</time>}
-          </span>
-          <span className="chat-item-row">
-            <span className="chat-item-preview">{preview}</span>
-            {waiting > 0 && <span className="unread-badge">{waiting}</span>}
-          </span>
-        </span>
-      </button>
-    </li>
+      }
+      label="Pull requests"
+      description={preview}
+      isSelected={open}
+      onClick={() => actions.setGithubOpen(true)}
+      endContent={
+        <Stack gap={1} hAlign="end">
+          {github.account && (
+            <Text type="supporting" color="secondary">
+              @{github.account.login}
+            </Text>
+          )}
+          {waiting > 0 && <Badge variant="info" label={waiting} />}
+        </Stack>
+      }
+    />
   );
 }
 
@@ -484,32 +546,52 @@ function AgentsListItem() {
   const unread = chats.reduce((sum, c) => sum + c.unread, 0);
   const waiting = proposalsWaiting(threads);
   // A laptop that serves every folder is online with or without one (R-036).
-  const online = agents.some((agent) => (agent.protocol >= AGENT_LEVEL.answers ? agent.online : agent.agentRepos.some(ready)));
+  const online = agents.some((agent) =>
+    agent.protocol >= AGENT_LEVEL.answers ? agent.online : agent.agentRepos.some(ready),
+  );
 
   return (
-    <li>
-      <button className={`chat-item ${open ? 'is-active' : ''}`} onClick={() => actions.setAgentsOpen(true)}>
+    <ListItem
+      className={rowClass(unread > 0)}
+      startContent={
         <span className="github-mark agents-mark">
           <TerminalIcon />
           {online && <span className="avatar-online" aria-label="online" />}
         </span>
-        <span className="chat-item-main">
-          <span className="chat-item-row">
-            <strong className="chat-item-title">Coding agents</strong>
-            {newest && <time className={unread > 0 ? 'has-unread' : ''}>{formatListTime(newest.last)}</time>}
-          </span>
-          <span className="chat-item-row">
-            <span className="chat-item-preview">
-              {waiting > 0
-                ? `${waiting} ${waiting === 1 ? 'proposal waits' : 'proposals wait'} for the board`
-                : newest
-                  ? `${THREAD_STATE[newest.state].label} · ${newest.messages[0]!.text}` : agents.length ? 'Ask about your code' : 'Connect your coding agent'}
-            </span>
-            {unread > 0 && <span className="unread-badge">{unread}</span>}
-          </span>
-        </span>
-      </button>
-    </li>
+      }
+      label="Coding agents"
+      description={
+        waiting > 0
+          ? `${waiting} ${waiting === 1 ? 'proposal waits' : 'proposals wait'} for the board`
+          : newest
+            ? `${THREAD_STATE[newest.state].label} · ${newest.messages[0]!.text}`
+            : agents.length
+              ? 'Ask about your code'
+              : 'Connect your coding agent'
+      }
+      isSelected={open}
+      onClick={() => actions.setAgentsOpen(true)}
+      endContent={<ListEnd time={newest?.last} unread={unread} />}
+    />
+  );
+}
+
+/** A row's time and unread count, stacked at its end. */
+function ListEnd({ time, unread }: { time?: number; unread: number }) {
+  if (time === undefined && unread === 0) return null;
+  return (
+    <Stack gap={1} hAlign="end">
+      {time !== undefined && (
+        <Text
+          type="supporting"
+          color={unread > 0 ? 'accent' : 'secondary'}
+          weight={unread > 0 ? 'semibold' : undefined}
+        >
+          {formatListTime(time)}
+        </Text>
+      )}
+      {unread > 0 && <Badge variant="info" label={unread} />}
+    </Stack>
   );
 }
 
@@ -528,38 +610,28 @@ function ChatListItem({ conversation }: { conversation: ChatConversation }) {
   let preview: ReactNode = 'No messages yet';
   if (last) {
     const mine = last.senderId === meId;
-    const prefix =
-      conversation.type !== 'direct' && !mine ? `${senderName(users, last.senderId).split(' ')[0]}: ` : '';
+    const prefix = conversation.type !== 'direct' && !mine ? `${senderName(users, last.senderId).split(' ')[0]}: ` : '';
     preview = (
-      <>
+      <Stack direction="horizontal" gap={1} vAlign="center">
         {mine && <Ticks state={receiptState(conversation, last.id, meId)} />}
-        {last.urgent && <span className="urgent-chip">URGENT</span>}
-        {prefix}
-        {previewText(last)}
-      </>
+        {last.urgent && <Badge variant="error" label="URGENT" />}
+        <Text color="secondary" maxLines={1}>
+          {prefix}
+          {previewText(last)}
+        </Text>
+      </Stack>
     );
   }
 
   return (
-    <li>
-      <button
-        className={`chat-item ${activeId === conversation.id ? 'is-active' : ''} ${hasUrgent ? 'is-urgent' : ''}`}
-        onClick={() => void openConversation(conversation.id)}
-      >
-        <Avatar name={title} seed={otherId ?? conversation.id + 3} online={other?.online} />
-        <span className="chat-item-main">
-          <span className="chat-item-row">
-            <strong className="chat-item-title">{title}</strong>
-            {last && (
-              <time className={conversation.unread > 0 ? 'has-unread' : ''}>{formatListTime(last.createdAt)}</time>
-            )}
-          </span>
-          <span className="chat-item-row">
-            <span className="chat-item-preview">{preview}</span>
-            {conversation.unread > 0 && <span className="unread-badge">{conversation.unread}</span>}
-          </span>
-        </span>
-      </button>
-    </li>
+    <ListItem
+      className={rowClass(conversation.unread > 0, hasUrgent)}
+      startContent={<Avatar name={title} seed={otherId ?? conversation.id + 3} online={other?.online} />}
+      label={title}
+      description={preview}
+      isSelected={activeId === conversation.id}
+      onClick={() => void openConversation(conversation.id)}
+      endContent={<ListEnd time={last?.createdAt} unread={conversation.unread} />}
+    />
   );
 }
