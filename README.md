@@ -191,6 +191,15 @@ What it does not protect against:
   asks about, and says so in Settings when a setting of yours lets Claude Code's shell read more.
 - **An ACP agent's own tools, shell and network are its own.** Only the requests it asks about meet
   WebChat's rules, and only an agent that can skip your own settings and MCP servers is listed.
+- **Photos and files: who sent one, to which chat, when, and how large.** The browser encrypts a
+  file with a key of its own before it uploads it. The key, the name, the type and the preview of a
+  photo travel only inside the encrypted message. The server sees who uploaded a file, to which
+  chat, when, how large it is and which message names it. On Vercel, Vercel's Blob storage holds
+  the encrypted file; on your own server, a folder does. Files are deleted after 7 days.
+- **Nobody scans files.** The server holds only encrypted files, so it cannot look inside them. The
+  receiving device checks that a file's type is on the list and that its first bytes match that
+  type. That catches a file with the wrong name, not malware inside an allowed type, such as a PDF.
+  Your device's own protection is the only scanner.
 - **People who leave keep the keys they had.** Someone who left or was removed could still read the
   messages from before, if they got them another way, for example from a copy of the database.
   Everything sent after they left uses a new key they never get.
@@ -251,6 +260,13 @@ bell icon, then **Turn on notifications**, then **Send a test notification**.
    `BARK_APNS_KEY_ID` and `BARK_APNS_TEAM_ID` override them for a build of Bark with another key.
    Without the variable, the bell dialog says Bark is not set up.
 
+   Photos and files stay off until the project has a private Blob store. Create one and connect
+   it to the project, which sets `BLOB_STORE_ID`:
+
+   ```bash
+   npx vercel blob create-store webchat-files --access private --yes
+   ```
+
 3. Deploy:
 
    ```bash
@@ -271,6 +287,9 @@ Share the address and the invite code with your friends, or send a link that fil
 ### Free plan limits to know
 
 - Vercel Hobby is for personal, non-commercial use.
+- Hobby's Blob storage holds 1 GB and takes 2,000 uploads a month, and a store that goes over is
+  blocked for 30 days. WebChat refuses new files at 900 MB stored or 1,800 uploads a month, and
+  each person at a quarter of that: 225 MB stored and 450 uploads a month.
 - Supabase pauses a free project after about a week with no activity. Anyone using the chat keeps it
   awake. If it pauses, resume it from the Supabase dashboard.
 

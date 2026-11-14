@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import http from 'node:http';
 import http2 from 'node:http2';
 import type { AddressInfo } from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import ece from 'http_ece';
 import { createApp, type WebChatApp } from '../server/app.ts';
@@ -13,9 +16,11 @@ import {
   createIdentity,
   decryptContent,
   decryptDoc,
+  decryptFile,
   decryptMessage,
   deriveAccountSecrets,
   encryptDoc,
+  encryptFile,
   encryptMessage,
   importChatKey,
   importIdentity,
@@ -49,6 +54,7 @@ import type {
   PublicKeysDTO,
   SyncRequest,
   SyncResponse,
+  UploadDTO,
   UserDTO,
 } from '../shared/types.ts';
 import { LIMITS, toChannelName } from '../shared/types.ts';
@@ -267,11 +273,14 @@ class Client {
     const { keyId, key } = this.chatKeys.get(conversationId)!;
     const meta = { conversationId, senderId: this.id, urgent, clientId, kind };
     const envelope = await encryptMessage(key, keyId, this.identity!.signPrivate, meta, content);
+    // As a page does: the server ties the upload to the message, never seeing what the file is.
+    const fileId = typeof content === 'object' ? content.file?.id : undefined;
     return this.request<MessageDTO & { error?: string; code?: string }>('POST', `/conversations/${conversationId}/messages`, {
       envelope,
       urgent,
       clientId,
       kind,
+      fileId,
     });
   }
 
@@ -338,6 +347,15 @@ async function waitForPushes<T>(received: T[], count: number, timeoutMs = 3000):
   return received.slice(0, count);
 }
 
+/** Work after a response, such as deleting files, finishes a moment later. */
+async function waitFor(done: () => boolean, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!done()) {
+    if (Date.now() > deadline) assert.fail('timed out');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The member ids of a chat, in order, to compare with assert.deepEqual. */
@@ -355,6 +373,9 @@ describe('chat server', () => {
   let directChat: ConversationDTO;
   let weekend: ConversationDTO;
   let lab: ConversationDTO;
+  let config: Config;
+  /** The self-hosted file store's folder, where the tests look at everything the storage holds. */
+  const filesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'webchat-files-'));
   const keysOf = (c: Client) => c.identity!.publicKeys;
   /** A chat as this person's next bootstrap lists it, without moving their sync cursor. */
   const viewOf = async (client: Client, conversationId: number) =>
@@ -367,7 +388,7 @@ describe('chat server', () => {
     // Stands in for the key Bark publishes. The fake APNs never checks the signature.
     const apnsKey = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ type: 'pkcs8', format: 'pem' });
     const silent = { info() {}, warn() {}, error() {} };
-    const config: Config = {
+    config = {
       port: 0,
       host: '127.0.0.1',
       databaseUrl: undefined,
@@ -400,6 +421,8 @@ describe('chat server', () => {
       githubPollUrl: undefined,
       urgentRingUrl: undefined,
       build: 'test-build',
+      filesDir,
+      blobStore: false,
       logger: silent,
     };
     instance = await createApp(config);
@@ -416,6 +439,7 @@ describe('chat server', () => {
     await instance?.close();
     await pushService?.close();
     await apns?.close();
+    fs.rmSync(filesDir, { recursive: true, force: true });
   });
 
   test('every API response names the build, so old tabs can reload after a deploy', async () => {
@@ -2091,6 +2115,187 @@ describe('chat server', () => {
     const addBack = await bob.request<{ error?: string }>('POST', `/conversations/${study.data.id}/members`, { userIds: [deletedId] });
     assert.equal(addBack.data.error, 'Person not found.', 'a deleted account cannot be added to a chat');
     assert.ok(!(await alice.request<BootstrapDTO>('GET', '/bootstrap')).data.conversations.some((c) => c.id === direct.data.id));
+  });
+
+  /** Encrypts a file as a page does and uploads the ciphertext to the address the server gives. */
+  async function upload(client: Client, conversationId: number, plain: Uint8Array<ArrayBuffer>) {
+    const sealed = await encryptFile(plain);
+    const target = await client.request<UploadDTO & { error?: string }>('POST', `/conversations/${conversationId}/files`, {
+      size: sealed.data.length,
+    });
+    assert.equal(target.status, 201, JSON.stringify(target.data));
+    const put = await fetch(new URL(target.data.url, baseUrl), { method: 'PUT', body: sealed.data });
+    assert.equal(put.status, 204);
+    return { id: target.data.id, key: sealed.key, data: sealed.data };
+  }
+  /** Everything the file store holds, as one buffer to search. */
+  const stored = () => Buffer.concat(fs.readdirSync(filesDir).map((f) => fs.readFileSync(path.join(filesDir, f))));
+  const isStored = (id: string) => fs.existsSync(path.join(filesDir, id));
+  const daysAgo = (days: number) => Date.now() - days * 24 * 3_600_000;
+
+  test('a file reaches the store only as ciphertext, and only members get its address (R-005)', async () => {
+    assert.equal((await alice.request<ConfigDTO>('GET', '/config')).data.files, true);
+    const plain = new TextEncoder().encode('%PDF-1.7 Lab report, the answer is 7731');
+    const outsider = await carol.request('POST', `/conversations/${directChat.id}/files`, { size: 100 });
+    assert.equal(outsider.status, 404, 'someone outside the chat gets no upload address');
+    const tooLarge = await alice.request('POST', `/conversations/${directChat.id}/files`, { size: LIMITS.fileBytes + 29 });
+    assert.equal(tooLarge.status, 400);
+
+    const file = await upload(alice, directChat.id, plain);
+    const again = await fetch(new URL(`/api/files/${file.id}/data`, baseUrl), { method: 'PUT', body: file.data });
+    assert.equal(again.status, 403, 'an unsigned address takes nothing');
+    const content: MessageContent = {
+      text: '📎 report.pdf, 39 bytes',
+      file: { id: file.id, key: file.key, name: 'report.pdf', type: 'application/pdf', size: plain.length },
+    };
+    const sent = await alice.send(directChat.id, content);
+    assert.equal(sent.status, 201, JSON.stringify(sent.data));
+
+    const bobSync = await bob.sync(true);
+    assert.ok(bobSync.changed);
+    const message = bobSync.messages.find((m) => m.id === sent.data.id)!;
+    assert.deepEqual((await bob.readContent(message, keysOf(alice))).file, content.file);
+    assert.equal((await carol.request('GET', `/files/${file.id}`)).status, 404, 'someone outside the chat gets no download address');
+    const address = await bob.request<{ url: string }>('GET', `/files/${file.id}`);
+    assert.equal(address.status, 200);
+    const download = await fetch(new URL(address.data.url, baseUrl));
+    assert.equal(download.headers.get('content-type'), 'application/octet-stream');
+    assert.deepEqual(await decryptFile(file.key, new Uint8Array(await download.arrayBuffer())), plain);
+
+    const everything = Buffer.concat([stored(), Buffer.from(JSON.stringify(await instance.sql.query('SELECT * FROM webchat.files')))]);
+    for (const secret of ['7731', 'report.pdf', file.key]) assert.ok(!everything.includes(secret), `the server never holds ${secret}`);
+    assert.ok(!everything.includes(Buffer.from(file.key, 'base64url')), 'nor the raw key');
+  });
+
+  test("a photo's push stays under 3,000 bytes with its envelope, and holds no name, key or preview (D-017)", async () => {
+    const tablet = makeSubscription(`http://${pushService.host}/bob-tablet`);
+    assert.equal((await bob.request('POST', '/push/subscribe', tablet.json)).status, 204);
+    await bob.sync(false);
+    pushService.received.length = 0;
+    await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+    const photo = await upload(alice, directChat.id, new Uint8Array([0xff, 0xd8, 0xff, 0xe0]));
+    const name = `${'n'.repeat(LIMITS.fileNameLength - 4)}.jpg`;
+    const preview = `data:image/jpeg;base64,${'A'.repeat(LIMITS.previewLength - 23)}`;
+    const file = { id: photo.id, key: photo.key, name, type: 'image/jpeg', size: 4, width: 1600, height: 1200, preview };
+    assert.equal((await alice.send(directChat.id, { text: '📷 Photo', file })).status, 201);
+    const pushed = (await waitForPushes(pushService.received, 10, 1000)).find((p) => p.path === '/bob-tablet')!;
+    const serialized = JSON.stringify(tablet.decrypt(pushed.body));
+    assert.ok(Buffer.byteLength(serialized) <= 3000, `this one is ${Buffer.byteLength(serialized)} bytes`);
+    assert.notEqual(tablet.decrypt(pushed.body).envelope, null, 'the device can still show "📷 Photo"');
+    for (const secret of [name, photo.key, 'AAAAAAAA']) assert.ok(!serialized.includes(secret));
+    await bob.request('POST', '/push/unsubscribe', { endpoint: tablet.json.endpoint });
+  });
+
+  test('the server drops a file after 7 days, and an upload no message followed after an hour; the message stays', async () => {
+    const old = await upload(alice, directChat.id, new TextEncoder().encode('old slides'));
+    const sent = await alice.send(directChat.id, { text: '📎 slides.pdf', file: { id: old.id, key: old.key, name: 'slides.pdf', type: 'application/pdf', size: 10 } });
+    const unsent = await upload(alice, directChat.id, new TextEncoder().encode('never sent'));
+    await instance.sql.query('UPDATE webchat.files SET created_at = $1 WHERE id = $2', [daysAgo(7) - 60_000, old.id]);
+    await instance.sql.query('UPDATE webchat.files SET created_at = $1 WHERE id = $2', [Date.now() - 3_600_001, unsent.id]);
+    const expired = await bob.request<{ code?: string }>('GET', `/files/${old.id}`);
+    assert.deepEqual([expired.status, expired.data.code], [410, 'expired']);
+    assert.ok(isStored(old.id) && isStored(unsent.id), 'with no scheduler, nothing goes before the next upload address');
+
+    await upload(alice, directChat.id, new TextEncoder().encode('new'));
+    assert.ok(!isStored(old.id) && !isStored(unsent.id));
+    const retry = await alice.send(directChat.id, { text: '📎 notes.txt', file: { id: unsent.id, key: unsent.key, name: 'notes.txt', type: 'text/plain', size: 10 } });
+    assert.deepEqual([retry.status, retry.data.code], [409, 'file_gone'], 'a page that retries learns to upload again');
+    const history = await bob.request<MessageDTO[]>('GET', `/conversations/${directChat.id}/messages`);
+    assert.ok(history.data.some((m) => m.id === sent.data.id), 'the message stays');
+  });
+
+  /** Charges stored bytes to someone, as a file of theirs would, and returns a function that takes it back. */
+  async function charge(uploader: Client, size: number) {
+    const id = crypto.randomBytes(16).toString('base64url');
+    await instance.sql.query('INSERT INTO webchat.files (id, conversation_id, uploader_id, size, created_at, sent) VALUES ($1, $2, $3, $4, $5, true)', [
+      id,
+      directChat.id,
+      uploader.id,
+      size,
+      Date.now(),
+    ]);
+    return () => instance.sql.query('DELETE FROM webchat.files WHERE id = $1', [id]);
+  }
+  const month = () => `uploads:${new Date().toISOString().slice(0, 7)}`;
+  const counted = async (key: string) =>
+    Number((await instance.sql.query<{ value: string }>('SELECT value FROM webchat.meta WHERE key = $1', [key]))[0]?.value ?? 0);
+  const setCount = (key: string, value: number) =>
+    instance.sql.query('INSERT INTO webchat.meta (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [key, String(value)]);
+  const askUpload = (client: Client) => client.request<{ code?: string; error?: string }>('POST', `/conversations/${directChat.id}/files`, { size: 100 });
+
+  test("uploads stop before the store's monthly or size limit (D-123)", async () => {
+    const before = await counted(month());
+    await setCount(month(), LIMITS.uploadsPerMonth);
+    const monthly = await askUpload(alice);
+    assert.deepEqual([monthly.status, monthly.data.code], [429, 'upload_limit']);
+    await setCount(month(), before);
+
+    // Bob's share is full too, but Alice asks: the server's pool is what stops her.
+    const takeBack = await charge(bob, LIMITS.storedBytes - 99);
+    const full = await askUpload(alice);
+    assert.deepEqual([full.status, full.data.code], [507, 'storage_full']);
+    await takeBack();
+  });
+
+  test("one person's uploads stop at their share of the month, and others in the chat go on (D-123)", async () => {
+    const mine = `${month()}:${alice.id}`;
+    const shared = await counted(month());
+    await setCount(mine, LIMITS.uploadsPerPerson);
+    const refused = await askUpload(alice);
+    assert.deepEqual([refused.status, refused.data.code], [429, 'own_upload_limit']);
+    assert.match(refused.data.error!, /your share/i);
+    assert.equal(await counted(month()), shared, 'a refused person takes nothing from the shared count');
+    assert.equal((await askUpload(bob)).status, 201, 'Bob in the same chat still gets an address');
+    await setCount(mine, 0);
+  });
+
+  test("one person's stored files stop at their share, and others in the chat go on (D-123)", async () => {
+    const takeBack = await charge(alice, LIMITS.storedBytesPerPerson - 99);
+    const refused = await askUpload(alice);
+    assert.deepEqual([refused.status, refused.data.code], [507, 'own_storage_full']);
+    assert.match(refused.data.error!, /your share/i);
+    assert.equal((await askUpload(bob)).status, 201, 'Bob in the same chat still gets an address');
+    await takeBack();
+    assert.equal(LIMITS.uploadsPerPerson * 4, LIMITS.uploadsPerMonth, 'a share is a quarter of the pool');
+    assert.equal(LIMITS.storedBytesPerPerson * 4, LIMITS.storedBytes);
+  });
+
+  test("deleting a chat or an account deletes its files' ciphertext", async () => {
+    const gina = new Client(baseUrl, 'gina');
+    assert.equal((await gina.register()).status, 201);
+    const members = [gina, alice].map((c) => ({ id: c.id, keys: keysOf(c) }));
+    const group = await gina.request<ConversationDTO>('POST', '/conversations/group', { title: 'Poster', memberIds: [alice.id], key: await gina.newChatKey(members) });
+    const direct = await gina.request<ConversationDTO>('POST', '/conversations/direct', { userId: alice.id, key: await gina.newChatKey(members) });
+    const files: string[] = [];
+    for (const chat of [group.data, direct.data]) {
+      await gina.openChatKey((await gina.bootstrap()).conversations.find((c) => c.id === chat.id)!, keysOf(gina));
+      const file = await upload(gina, chat.id, new TextEncoder().encode('poster draft'));
+      const sent = await gina.send(chat.id, { text: '📎 poster.png', file: { id: file.id, key: file.key, name: 'poster.png', type: 'image/png', size: 12 } });
+      assert.equal(sent.status, 201, JSON.stringify(sent.data));
+      files.push(file.id);
+    }
+    assert.equal((await gina.request('DELETE', `/conversations/${group.data.id}`)).status, 204);
+    await waitFor(() => !isStored(files[0]!));
+    assert.ok(isStored(files[1]!));
+    assert.equal((await gina.request('DELETE', '/auth/account')).status, 204);
+    await waitFor(() => !isStored(files[1]!));
+  });
+
+  test('a server with no file store says so and gives no upload address', async () => {
+    const plain = await createApp({ ...config, filesDir: undefined });
+    const app = http.createServer(plain.app);
+    await new Promise<void>((resolve) => app.listen(0, '127.0.0.1', resolve));
+    try {
+      const url = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+      const dora = new Client(url, 'dora');
+      assert.equal((await dora.request<ConfigDTO>('GET', '/config')).data.files, false);
+      assert.equal((await dora.register()).status, 201);
+      const refused = await dora.request<{ code?: string }>('POST', '/conversations/1/files', { size: 100 });
+      assert.deepEqual([refused.status, refused.data.code], [404, 'files_off']);
+    } finally {
+      await new Promise<void>((resolve) => app.close(() => resolve()));
+      await plain.close();
+    }
   });
 
   test('logout ends the session', async () => {
