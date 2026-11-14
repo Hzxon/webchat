@@ -2100,6 +2100,8 @@ a {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  /* A tall image, such as a phone screenshot, shows its top, where a page starts (R-046). */
+  object-position: top;
 }
 
 .file-photo .file-preview {
