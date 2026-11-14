@@ -36,16 +36,25 @@ const TOOL = {
 const DEV_TOOL = {
   name: 'dev_server',
   description:
-    'Starts this project’s dev server, such as `npm run dev`, in WebChat’s sandbox, and ends the one started before. Your shell cannot reach it: open it with the browser tools. It gets two ports, PORT and PORT_2 in its environment, and may bind and reach only those, so pass them to the servers it starts, such as `PORT=$PORT npm run dev:server & npx vite --port $PORT_2 --strictPort`. It returns once a port answers, with its output so far, and ends with your turn. The browser is headless, and its window is never narrower than 500 pixels: for a phone width, emulate a viewport such as 375x812x2,mobile,touch.',
+    'Starts this project’s dev server, such as `npm run dev`, in WebChat’s sandbox, and ends the one started before. Your shell cannot reach it: open it with the browser tools. It gets two ports, PORT and PORT_2 in its environment, and may bind and reach only those, so pass them to the servers it starts, such as `PORT=$PORT npm run dev:server & npx vite --port $PORT_2 --strictPort`. It returns once a port answers, with its output so far, and ends with your turn. The browser is headless, and its window is never narrower than 500 pixels: for a phone width, emulate a viewport such as 375x812x1,mobile,touch, at device scale 1.',
   inputSchema: { type: 'object', properties: { command: { type: 'string', description: 'The shell command that starts the dev server.' } }, required: ['command'] },
+};
+
+/** The model's way to show its owner what it built (R-046): a screenshot, as a photo in the run's thread. */
+const SHOT_TOOL = {
+  name: 'send_screenshot',
+  description:
+    'Sends your owner a PNG screenshot that take_screenshot saved in the working folder, as a photo in this run’s thread, with a short caption. Take it at device scale 1: it must be at most 1600 pixels on its longer side and 10 MB. At most 12 a run.',
+  inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'The PNG file, in the working folder.' }, caption: { type: 'string', description: 'What it shows, in a line.' } }, required: ['path', 'caption'] },
 };
 
 const hashOf = (token: string) => createHash('sha256').update(token).digest('hex');
 
-/** What a token's process gets: its decider, and the dev server's start when it browses. */
+/** What a token's process gets: its decider, and the dev server's start and the screenshot's send when it browses. */
 interface Served {
   decide: (call: Call) => Promise<Reply>;
   start?: (command: string) => Promise<string>;
+  shot?: (file: string, caption: string) => Promise<string>;
 }
 
 const deciders = new Map<string, Served>();
@@ -74,15 +83,20 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     body += chunk;
     if (body.length > BODY_LIMIT) return void res.writeHead(413).end();
   }
-  const { id, method, params } = JSON.parse(body) as { id?: number | string; method?: string; params?: { protocolVersion?: string; name?: string; arguments?: Call & { command?: unknown } } };
+  const { id, method, params } = JSON.parse(body) as { id?: number | string; method?: string; params?: { protocolVersion?: string; name?: string; arguments?: Call & { command?: unknown; path?: unknown; caption?: unknown } } };
   const reply = (result: unknown) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id, result }));
   if (id === undefined) return void res.writeHead(202).end();
   if (method === 'initialize') return reply(mcpInit(params));
   if (method === 'ping') return reply({});
-  if (method === 'tools/list') return reply({ tools: served.start ? [TOOL, DEV_TOOL] : [TOOL] });
+  if (method === 'tools/list') return reply({ tools: [TOOL, ...(served.start ? [DEV_TOOL] : []), ...(served.shot ? [SHOT_TOOL] : [])] });
   // Claude Code asked `approve` first, and the rulebook let it through.
   if (method === 'tools/call' && params?.name === DEV_TOOL.name && served.start && typeof params.arguments?.command === 'string') {
     const text = await served.start(params.arguments.command).catch((error: unknown) => `It did not start: ${error instanceof Error ? error.message : String(error)}`);
+    return reply({ content: [{ type: 'text', text }] });
+  }
+  if (method === 'tools/call' && params?.name === SHOT_TOOL.name && served.shot && typeof params.arguments?.path === 'string') {
+    const caption = typeof params.arguments.caption === 'string' ? params.arguments.caption : '';
+    const text = await served.shot(params.arguments.path, caption).catch((error: unknown) => `It did not send: ${error instanceof Error ? error.message : String(error)}`);
     return reply({ content: [{ type: 'text', text }] });
   }
   if (method !== 'tools/call' || params?.name !== TOOL.name) return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Unknown method.' } }));
@@ -100,16 +114,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 /**
  * Serves the tool to one Claude process, and returns the `--mcp-config` file that names it. `decide`
  * answers each call; `close` ends the token and removes the file. With `browser`, the process also
- * gets the `dev_server` tool and the browser's own MCP server (R-046).
+ * gets the `dev_server` tool, the browser's own MCP server and, with `shot`, `send_screenshot` (R-046).
  */
-export async function openApprover(dir: string, decide: (call: Call) => Promise<Reply>, browser?: { start: (command: string) => Promise<string>; server: object }) {
+export async function openApprover(dir: string, decide: (call: Call) => Promise<Reply>, browser?: { start: (command: string) => Promise<string>; shot?: (file: string, caption: string) => Promise<string>; server: object }) {
   const port = await listen();
   const token = randomBytes(32).toString('hex');
   const file = path.join(dir, `${hashOf(token).slice(0, 16)}.json`);
   const server = { type: 'http', url: `http://127.0.0.1:${port}/mcp`, headers: { Authorization: `Bearer ${token}` }, timeout: TOOL_TIMEOUT_MS };
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
   await fs.writeFile(file, JSON.stringify({ mcpServers: { webchat: server, ...(browser && { browser: browser.server }) } }), { mode: 0o600 });
-  deciders.set(hashOf(token), { decide, start: browser?.start });
+  deciders.set(hashOf(token), { decide, start: browser?.start, shot: browser?.shot });
   return {
     file,
     close: async () => {

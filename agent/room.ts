@@ -155,6 +155,8 @@ export async function askUpdater(file: string) {
 interface Turn {
   progress?: (sentence: string) => void;
   permit?: Permit;
+  /** The screenshots the runner was let put, by transfer id: the file each lands in (R-046). */
+  uploads: Map<string, string>;
 }
 
 /** The keyholder's end: the socket, and the one runner that holds it. */
@@ -163,7 +165,7 @@ export class Room {
   /** The runner that said hello first: a second is refused while this one is open. */
   runner?: { peer: Peer; gone: AbortController; hello: Hello };
   private readonly waiting: Array<(signal: AbortSignal) => void> = [];
-  private readonly transfers = new Map<string, { file: string; op: 'get' | 'put'; at: number }>();
+  private readonly transfers = new Map<string, { file: string; op: 'get' | 'put'; at: number; max: number }>();
   readonly turns = new Map<string, Turn>();
   readonly bench = new SocketBench(this);
   private handlers?: Handlers;
@@ -193,12 +195,12 @@ export class Room {
     this.sockets.forEach((socket) => socket.destroy());
   }
 
-  /** Lets one side connection fetch or put `file`, once, soon. */
-  transfer(file: string, op: 'get' | 'put') {
+  /** Lets one side connection fetch or put `file`, once, soon, and put at most `max` bytes. */
+  transfer(file: string, op: 'get' | 'put', max = BUNDLE_MAX) {
     const now = Date.now();
     for (const [id, t] of this.transfers) if (now - t.at > (this.options.transferMs ?? TRANSFER_MS)) this.transfers.delete(id);
     const id = randomBytes(16).toString('hex');
-    this.transfers.set(id, { file, op, at: now });
+    this.transfers.set(id, { file, op, at: now, max });
     return id;
   }
 
@@ -228,7 +230,7 @@ export class Room {
     if (!t || t.op !== header.op || Date.now() - t.at > (this.options.transferMs ?? TRANSFER_MS)) return void socket.destroy();
     if (t.op === 'get') return void pipeline(createReadStream(t.file), socket).catch(() => socket.destroy());
     const size = Number(header.size);
-    if (!Number.isInteger(size) || size < 1 || size > BUNDLE_MAX) return void socket.destroy();
+    if (!Number.isInteger(size) || size < 1 || size > t.max) return void socket.destroy();
     // Mode 600, and a file of its own: a bundle is the owner's work, not for other accounts.
     const out = createWriteStream(t.file, { mode: 0o600 }).on('error', () => socket.destroy());
     let got = 0;
@@ -295,6 +297,20 @@ export class Room {
 
   private async fromRunner(method: string, params: Record<string, unknown>) {
     const turn = this.turns.get(String(params.id));
+    // A screenshot comes as bytes on a side connection, then as a `shot` that names it, for a live turn only (R-046).
+    if (method === 'upload' && turn?.permit?.shot) {
+      const file = path.join(os.tmpdir(), `webchat-shot-${randomUUID()}`);
+      const transfer = this.transfer(file, 'put', LIMITS.fileBytes);
+      turn.uploads.set(transfer, file);
+      return { transfer };
+    }
+    if (method === 'shot' && turn?.permit?.shot) {
+      const file = turn.uploads.get(String(params.transfer));
+      if (!file) throw mismatch();
+      turn.uploads.delete(String(params.transfer));
+      const png = await fs.readFile(file).finally(() => fs.rm(file, { force: true }));
+      return turn.permit.shot(new Uint8Array(png), text(params.caption) ?? '');
+    }
     if (method !== 'approve' || !turn?.permit) throw new RpcError(-32601, `The runner may not ask ${method} now.`);
     const ask = record(params.ask);
     if (!KINDS.includes(String(ask.kind)) || typeof ask.detail !== 'string') throw mismatch();
@@ -452,7 +468,7 @@ export class SocketBench implements Bench {
     const id = randomUUID();
     const asked = permit?.();
     // Before the request goes, so no line the runner sends for it comes first.
-    this.room.turns.set(id, { progress, permit: asked });
+    this.room.turns.set(id, { progress, permit: asked, uploads: new Map() });
     const cancel = () => this.room.runner?.peer.notify('cancel', { id });
     signal.aborted ? cancel() : signal.addEventListener('abort', cancel, { once: true });
     try {
@@ -463,6 +479,7 @@ export class SocketBench implements Bench {
       return { answer, applied: { claudeMd, skills: strings(skills, LIMITS.setupSkills).filter((n) => SKILL_NAME.test(n)), noAttribution } };
     } finally {
       signal.removeEventListener('abort', cancel);
+      for (const file of this.room.turns.get(id)!.uploads.values()) await fs.rm(file, { force: true });
       this.room.turns.delete(id);
       asked?.done();
     }
@@ -490,6 +507,16 @@ export async function connectRunner({ file, bench, version }: { file: string; be
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+  };
+  /** Puts bytes on a side connection, under a transfer id the keyholder gave, and waits for its `ok`. */
+  const put = async (transfer: unknown, size: number, bytes: NodeJS.ReadableStream | Uint8Array) => {
+    const socket = await connect(file);
+    socket.write(`${JSON.stringify({ transfer, op: 'put', size })}\n`);
+    const answered = new Promise<string>((resolve, reject) => socket.once('data', (d: Buffer) => resolve(d.toString())).once('close', () => reject(new Error('The keyholder did not take the bytes.'))));
+    if (bytes instanceof Uint8Array) socket.write(bytes);
+    else await pipeline(bytes, socket, { end: false });
+    if ((await answered).trim() !== 'ok') throw new Error('The keyholder did not take the bytes.');
+    socket.destroy();
   };
   const { peer, gone, socket } = await dial(
     file,
@@ -532,12 +559,7 @@ export async function connectRunner({ file, bench, version }: { file: string; be
             const file_ = path.join(dir, 'out.bundle');
             const made = await bench.bundle({ worktree: String(params.worktree), branch: String(params.branch), since: String(params.since), file: file_ });
             if (!made) return { empty: true };
-            const socket = await connect(file);
-            socket.write(`${JSON.stringify({ transfer: params.transfer, op: 'put', size: made.bytes })}\n`);
-            const answered = new Promise<string>((resolve, reject) => socket.once('data', (d: Buffer) => resolve(d.toString())).once('close', () => reject(new Error('The keyholder did not take the bundle.'))));
-            await pipeline(createReadStream(file_), socket, { end: false });
-            if ((await answered).trim() !== 'ok') throw new Error('The keyholder did not take the bundle.');
-            socket.destroy();
+            await put(params.transfer, made.bytes, createReadStream(file_));
             return made;
           } finally {
             await fs.rm(dir, { recursive: true, force: true });
@@ -555,7 +577,12 @@ export async function connectRunner({ file, bench, version }: { file: string; be
           const permit = params.asks
             ? () => {
                 const quiet = new Quiet();
-                return { quiet, ask: (ask: Ask) => quiet.during(peer.request<Reply>('approve', { id, ask })), done: () => undefined };
+                const shot = async (png: Uint8Array<ArrayBuffer>, caption: string) => {
+                  const { transfer } = record(await peer.request('upload', { id }));
+                  await put(transfer, png.length, png);
+                  return String(await peer.request('shot', { id, transfer, caption }));
+                };
+                return { quiet, ask: (ask: Ask) => quiet.during(peer.request<Reply>('approve', { id, ask })), done: () => undefined, shot };
               }
             : undefined;
           try {

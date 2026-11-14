@@ -21,6 +21,7 @@ import type { Ask, Harness, Reply, Turn } from '../agent/harness.ts';
 import { Conversations, parts, type Answerer } from '../agent/conversations.ts';
 import { LocalBench, worktreeGit } from '../agent/bench.ts';
 import { repoHome } from '../agent/keep.ts';
+import { Permits, SHOT } from '../agent/permits.ts';
 import { Plugin } from '../agent/plugin.ts';
 import { callRoom, connectRunner, Room, type RoomStatus } from '../agent/room.ts';
 import { layoutFor, programOf, updateConfigOf, type Cmd } from '../agent/lockroom.ts';
@@ -32,7 +33,7 @@ import { REQUEST_TTL_MS, Runs, type Runner } from '../agent/runs.ts';
 import { createApp, type WebChatApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import { openDb, toUserDTO } from '../server/db.ts';
-import { createIdentity, keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, openPicks, sealPicks, textHash, permitHash, wrapChatKey, type MessageContent } from '../shared/e2ee.ts';
+import { createIdentity, decryptFile, keyFingerprint, newChatKeyBytes, newKeyId, newPairingCode, pairingId, pairingProof, openPicks, sealPicks, textHash, permitHash, wrapChatKey, type MessageContent } from '../shared/e2ee.ts';
 import { briefText, harnessRow, LIMITS, type AskDTO, type RunReport, type ConversationDTO, type CreateProjectResponse, type FirstChatKeyInput, type DocDTO, type PairingDTO, type PermitDTO, type RunDTO, type PromptDTO, type RunRequest, type SetupChoice, type UserDTO } from '../shared/types.ts';
 import { copyOf, readCard } from '../shared/board.ts';
 import { fakeRoom, testLayout } from './fakeRoom.ts';
@@ -226,12 +227,12 @@ describe('agent client (R-027)', () => {
   const runOfK2 = async () => runOf({ card: 'K-2', title: 'Sums are off', section: k2, hash: await textHash(briefText(k2Text, [])) });
 
   before(async () => {
-    const config = loadConfig({ PGLITE_DIR: ':memory:', INVITE_CODE: 'friends-only', GITHUB_POLL_SECONDS: '0', SESSION_DAYS: '1' });
+    home = await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-agent-'));
+    const config = loadConfig({ PGLITE_DIR: ':memory:', INVITE_CODE: 'friends-only', GITHUB_POLL_SECONDS: '0', SESSION_DAYS: '1', FILES_DIR: path.join(home, 'files') });
     instance = await createApp({ ...config, logger: { info() {}, warn() {}, error() {} } });
     server = http.createServer(instance.app);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    home = await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-agent-'));
     botFile = path.join(home, 'bot', 'account.json');
   });
 
@@ -508,6 +509,62 @@ describe('agent client (R-027)', () => {
     await alice.editSection(roadmap, cardId, () => ({ text: cardText, pos: 1 }));
     await trust(alice, direct);
     await bot.sync();
+  });
+
+  test("sends a run's screenshots to its owner through the socket, sealed, as photos in the run's thread (R-046)", { timeout: 30_000 }, async () => {
+    const root = await fs.realpath(await fs.mkdtemp(path.join(home, 'shots-')));
+    const work = path.join(root, 'work');
+    await fs.mkdir(work);
+    // A PNG as a browser writes one, 1 by 1 pixel.
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+    const wide = Buffer.from(png);
+    wide.writeUInt32BE(LIMITS.photoPixels + 1, 16);
+    await fs.writeFile(path.join(work, 'desktop.png'), png);
+    await fs.writeFile(path.join(work, 'wide.png'), wide);
+    await fs.writeFile(path.join(work, 'photo.png'), Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10]));
+    await fs.writeFile(path.join(root, 'outside.png'), png);
+    await fs.writeFile(path.join(work, 'huge.png'), png);
+    await fs.truncate(path.join(work, 'huge.png'), LIMITS.fileBytes + 1);
+    const shots: Array<[string, string]> = [['desktop.png', 'Desktop'], ['photo.png', 'A JPEG'], ['wide.png', 'Too wide'], ['huge.png', 'Too large'], [path.join(root, 'outside.png'), 'Outside']];
+    const harness = {
+      name: 'Claude Code',
+      asks: true,
+      refusal: async () => undefined,
+      offers: () => ({ knobs: [] }),
+      found: async () => ({}),
+      apply: async () => undefined,
+      turn: async (t: Turn) => ({ replies: await Promise.all(shots.map(([file, caption]) => t.shot!(path.resolve(t.cwd, file), caption))) }),
+    } as unknown as Harness;
+    const room = new Room({ version: pkg.version });
+    const file = path.join(root, 'k.sock');
+    await room.listen(file, {} as Parameters<Room['listen']>[1]);
+    const runner = await connectRunner({ file, bench: new LocalBench([harness], undefined, path.join(root, 'keys')), version: pkg.version });
+    try {
+      const direct = (await alice.request<{ id: number }>('POST', '/conversations/direct', { userId: bot.id, key: await newChatKey(alice, [alice.id, bot.id]) })).id;
+      await bot.sync();
+      const permits = new Permits(bot, () => false);
+      const schema = { type: 'object', properties: { replies: { type: 'array' } }, required: ['replies'] };
+      const job = { harness: 'Claude Code', cwd: work, session: 'shots', resume: false, message: 'Check the page.', schema, schemas: [schema], setup: { claudeMd: false, skills: [], noAttribution: false } };
+      const { answer } = await room.bench.turn(job, { signal: new AbortController().signal, permit: () => permits.forTurn({ session: 'shots', chat: direct, thread: { request: 4242 } }) });
+      assert.deepEqual((answer as { replies: string[] }).replies, [SHOT.sent, SHOT.type, SHOT.size, SHOT.size, 'That path is outside the working folder.']);
+
+      // Alice's page gets one sealed photo in the run's thread, and it opens to the same bytes.
+      const photos = (await alice.sync()).filter((m) => m.senderId === bot.id && m.content?.file);
+      assert.equal(photos.length, 1);
+      const { file: sent, run, text } = photos[0]!.content!;
+      assert.deepEqual([run, text, sent!.name, sent!.type, sent!.size, sent!.width, sent!.height], [{ kind: 'note', request: 4242 }, '📷 Screenshot: Desktop', 'screenshot.png', 'image/png', png.length, 1, 1]);
+      const { url } = await alice.request<{ url: string }>('GET', `/files/${sent!.id}`);
+      const sealed = new Uint8Array(await (await fetch(new URL(url, baseUrl))).arrayBuffer());
+      assert.deepEqual(Buffer.from(await decryptFile(sent!.key, sealed)), png);
+      // The store and the server hold neither the bytes nor the name, the key or the caption.
+      const stored = Buffer.concat(await Promise.all((await fs.readdir(path.join(home, 'files'))).map((f) => fs.readFile(path.join(home, 'files', f)))));
+      assert.ok(!stored.includes(png.subarray(8, 24)), 'the store holds ciphertext');
+      const rows = JSON.stringify([await instance.sql.query('SELECT * FROM webchat.files'), await instance.sql.query('SELECT * FROM webchat.messages WHERE id = $1', [photos[0]!.id])]);
+      for (const secret of ['screenshot.png', sent!.key, 'Desktop', 'IHDR']) assert.ok(!rows.includes(secret), secret);
+    } finally {
+      runner.close();
+      room.close();
+    }
   });
 
   test('stops a run when its owner cancels it, and for nobody else (R-030)', async () => {
@@ -1582,7 +1639,7 @@ describe('agent client (R-027)', () => {
           assert.equal((await post({ authorization: server.headers.Authorization, origin: 'https://evil.example' })).status, 401, 'a page in a browser');
           const tools = (await (await post({ authorization: server.headers.Authorization })).json()) as { result: { tools: Array<{ name: string }> } };
           // On macOS the run browses (R-046): the dev server's tool, and the browser's own server beside it.
-          assert.deepEqual(tools.result.tools.map((t) => t.name), process.platform === 'darwin' ? ['approve', 'dev_server'] : ['approve']);
+          assert.deepEqual(tools.result.tools.map((t) => t.name), process.platform === 'darwin' ? ['approve', 'dev_server', 'send_screenshot'] : ['approve']);
           assert.equal(!!(check!.mcp!.mcpServers as Record<string, unknown>).browser, process.platform === 'darwin');
 
           // Deny stops that action: the fake writes nothing and commits nothing, so the run has no work to push.

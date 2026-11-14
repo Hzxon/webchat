@@ -22,6 +22,7 @@ export const RUN_TAGS: Record<RunReport['kind'], [Tone, string]> = {
   progress: ['info', 'Working…'],
   paused: ['warn', 'Stopped'],
   planned: ['warn', 'Plan ready'],
+  note: ['info', 'Working…'],
 };
 
 const CHECKS: Record<NonNullable<PullChecks>, [Tone, string]> = {

@@ -435,7 +435,7 @@ function CardNote({ note, text }: { note: CardNoteDTO; text: string }) {
  * download, and never opens inside the page. After 7 days the server has dropped it, which the
  * page tells from the message's time (R-005, D-123).
  */
-function FileBubble({ file, sentAt }: { file: FileDTO; sentAt: number }) {
+export function FileBubble({ file, sentAt }: { file: FileDTO; sentAt: number }) {
   const photo = isPhotoType(file.type);
   const gone = isExpired(sentAt);
   const [url, setUrl] = useState<string | null>(null);

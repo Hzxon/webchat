@@ -15,6 +15,7 @@ import {
   decryptDoc,
   deriveAccountSecrets,
   encryptDoc,
+  encryptFile,
   encryptMessage,
   importIdentity,
   keyFingerprint,
@@ -48,6 +49,7 @@ import {
   type PublicKeysDTO,
   type SyncRequest,
   type SyncResponse,
+  type UploadDTO,
   type UserDTO,
 } from '../shared/types.ts';
 import { Api, ApiError } from './api.ts';
@@ -442,7 +444,7 @@ export class AgentClient {
   }
 
   /** Sends a sealed message. Throws an ApiError with code stale_key or needs_new_key when the chat's key moved on. */
-  async send(conversationId: number, content: MessageContent, options: { urgent?: boolean; kind?: Exclude<MessageKind, 'github'> } = {}): Promise<MessageDTO> {
+  async send(conversationId: number, content: MessageContent, options: { urgent?: boolean; kind?: Exclude<MessageKind, 'github'>; fileId?: string } = {}): Promise<MessageDTO> {
     const { keyId, key } = await this.currentKey(conversationId);
     // Board traffic with the owner's page is quiet; only a proposal is news to them (K-69).
     const { urgent = false, kind = content.board && content.board.kind !== 'proposal' ? 'sync' : 'message' } = options;
@@ -450,12 +452,24 @@ export class AgentClient {
     const meta = { conversationId, senderId: this.id, urgent, clientId, kind };
     const envelope = await encryptMessage(key, keyId, this.identity.signPrivate, meta, content);
     try {
-      return await this.request<MessageDTO>('POST', `/conversations/${conversationId}/messages`, { envelope, urgent, clientId, kind });
+      return await this.request<MessageDTO>('POST', `/conversations/${conversationId}/messages`, { envelope, urgent, clientId, kind, fileId: options.fileId });
     } catch (error) {
       // A server from before K-69 knows no sync kind; there the message goes as it used to.
       if (kind === 'sync' && error instanceof ApiError && error.message === 'Unknown message kind.') return this.send(conversationId, content, { urgent, kind: 'message' });
       throw error;
     }
+  }
+
+  /**
+   * Encrypts a file with a key of its own and uploads the ciphertext, as the page does (R-005, D-123).
+   * The address is the server's own route on a self-hosted server, so it resolves against it.
+   */
+  async uploadFile(conversationId: number, plain: Uint8Array<ArrayBuffer>) {
+    const sealed = await encryptFile(plain);
+    const { id, url } = await this.request<UploadDTO>('POST', `/conversations/${conversationId}/files`, { size: sealed.data.length });
+    const res = await fetch(new URL(url, this.api.baseUrl), { method: 'PUT', body: sealed.data, signal: AbortSignal.timeout(5 * 60_000) }).catch(() => null);
+    if (!res?.ok) throw new ApiError(res?.status ?? 0, 'The file did not upload.');
+    return { id, key: sealed.key };
   }
 
   /** Decrypts a doc revision and checks its author's signature. Null when either fails. */

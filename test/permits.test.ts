@@ -6,7 +6,8 @@ import { permitHash } from '../shared/e2ee.ts';
 import { ASK_WAIT_MS, type PermitDTO } from '../shared/types.ts';
 import type { AgentClient, OpenedMessage } from '../agent/client.ts';
 import type { Ask, Reply } from '../agent/harness.ts';
-import { Permits } from '../agent/permits.ts';
+import { ApiError } from '../agent/api.ts';
+import { Permits, SHOT } from '../agent/permits.ts';
 import { Quiet, watchdog } from '../agent/runner.ts';
 import { REQUEST_TTL_MS } from '../agent/runs.ts';
 
@@ -219,5 +220,51 @@ describe('questions to the owner', () => {
     await sleep(60);
     assert.equal(stalled, 1, 'and then fires');
     dog.stop();
+  });
+});
+
+describe('screenshots to the owner (R-046)', () => {
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  /** A client whose upload fails as `refuse` says, and that keeps what it sends. */
+  const permitsWith = (refuse?: ApiError) => {
+    const sent: unknown[] = [];
+    const client = {
+      uploadFile: async () => {
+        if (refuse) throw refuse;
+        return { id: 'a'.repeat(22), key: 'b'.repeat(43) };
+      },
+      send: async (_chat: number, content: unknown) => (sent.push(content), { clientId: 'c' }),
+    } as unknown as AgentClient;
+    return { sent, turn: new Permits(client, () => false).forTurn({ session: 's', chat: 7, thread: { to: 'root-1' } }) };
+  };
+
+  test('sends at most 12 a run, in the question’s thread', async () => {
+    const { sent, turn } = permitsWith();
+    const replies = [];
+    for (let i = 0; i < 13; i++) replies.push(await turn.shot(png, `Shot ${i}`));
+    assert.deepEqual(replies, [...Array(12).fill(SHOT.sent), SHOT.many]);
+    assert.equal(sent.length, 12);
+    assert.deepEqual((sent[0] as { prompt: unknown }).prompt, { kind: 'note', to: 'root-1' });
+  });
+
+  test('tells the model a fixed sentence for each refusal of the server, and sends nothing', async () => {
+    const cases: Array<[ApiError, string]> = [
+      [new ApiError(404, 'This server keeps no files.', 'files_off'), SHOT.off],
+      ...['own_upload_limit', 'own_storage_full', 'upload_limit', 'storage_full'].map((code): [ApiError, string] => [new ApiError(429, `raw ${code}`, code), SHOT.full]),
+      [new ApiError(429, 'Slow down a little.'), SHOT.busy],
+      [new ApiError(500, 'raw failure'), SHOT.failed],
+    ];
+    for (const [error, sentence] of cases) {
+      const { sent, turn } = permitsWith(error);
+      assert.equal(await turn.shot(png, 'Desktop'), sentence, error.message);
+      assert.equal(sent.length, 0);
+    }
+  });
+
+  test('sends nothing once the turn is done', async () => {
+    const { sent, turn } = permitsWith();
+    turn.done();
+    assert.equal(await turn.shot(png, 'Late'), SHOT.ended);
+    assert.equal(sent.length, 0);
   });
 });
