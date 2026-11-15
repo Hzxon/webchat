@@ -229,7 +229,7 @@ export function Sidebar(props: SidebarProps) {
       <Stack className="sidebar-list">
         {tab === 'chats' ? (
           <>
-            <List hasDividers>
+            <List>
               {!query && <GithubListItem />}
               {!query && <AgentsListItem />}
               {sorted.map((c) => (
@@ -626,7 +626,7 @@ function ChatListItem({ conversation }: { conversation: ChatConversation }) {
   return (
     <ListItem
       className={rowClass(conversation.unread > 0, hasUrgent)}
-      startContent={<Avatar name={title} seed={otherId ?? conversation.id + 3} online={other?.online} />}
+      startContent={<Avatar name={title} seed={otherId ?? conversation.id + 3} size={36} online={other?.online} />}
       label={title}
       description={preview}
       isSelected={activeId === conversation.id}
