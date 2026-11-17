@@ -5,7 +5,11 @@
 # Usage, on a new branch cut from main whose name carries the item:
 #   scripts/claim.sh -c "<what you checked>" K-12 "fix(push): Drop a subscription with bad keys"
 #   scripts/claim.sh -c "<what you checked>" K-14 "fix(auth): Count only failed sign-ins" D-068
+#   scripts/claim.sh -c "<what you checked>" -t "server/push.ts, client/src/push/" K-12 "fix(push): ..."
 #
+# -t lists the files and folders (ending in /) you expect to change. They go into the draft as a
+# "Touches:" line, which CI's overlap check reads while the draft has no diff, to fail a pull request
+# that changes a file an earlier open one also changes (docs/decisions/new-overlap-blocks.md).
 # -c says, in a line, why the item still holds: what was read on main and in
 # decisions.md, and what overlap was looked for (D-107). It goes into the draft.
 # The script refuses an item with no entry, one whose status says Done, Fixed
@@ -26,11 +30,13 @@
 # D-117).
 set -eu
 
-usage='usage: scripts/claim.sh -c "<what you checked>" <K-12|R-005|Q-1> "<pull request title>" [D-077]'
+usage='usage: scripts/claim.sh -c "<what you checked>" [-t "<files you expect to change>"] <K-12|R-005|Q-1> "<pull request title>" [D-077]'
 checked=
-while getopts c: opt; do
+touches=
+while getopts c:t: opt; do
   case "$opt" in
     c) checked=$OPTARG ;;
+    t) touches=$OPTARG ;;
     *) echo "$usage" >&2; exit 1 ;;
   esac
 done
@@ -85,6 +91,9 @@ if ! printf '%s' "$branch" | grep -qi -- "$slug"; then
   exit 1
 fi
 
+if [ -z "$touches" ]; then
+  echo "Warning: no -t, so CI's overlap check cannot see this draft's files until it has a diff." >&2
+fi
 git fetch -q origin
 # Open pull requests whose title or body names the id, as a whole word.
 named_by_open_pr() {
@@ -129,6 +138,11 @@ fi
 # WebChat's agent reads open pull requests for this start, "Claims K-12", and sets the card Running (R-040).
 body="Claims $item. Checked $(date +%Y-%m-%d): $checked"
 [ -n "$decision" ] && body="$body Reserves $decision."
+body="$body Work in progress: the diff comes with later commits."
+# Its own line, after the one the agent reads, which stays as it is.
+[ -n "$touches" ] && body="$body
+
+Touches: $touches"
 git commit -q --allow-empty -m "chore: Claim $item"
 git push -q -u origin "$branch"
-gh pr create --draft --title "$title" --body "$body Work in progress: the diff comes with later commits."
+gh pr create --draft --title "$title" --body "$body"
