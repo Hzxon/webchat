@@ -1,7 +1,9 @@
 ---
 paths:
   - "server/api.ts"
+  - "server/api/**"
   - "server/db.ts"
+  - "server/db/**"
   - "client/src/chat.ts"
   - "client/src/components/**"
   - "test/channelName.test.ts"

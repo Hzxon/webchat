@@ -3,6 +3,7 @@ paths:
   - "server/bark.ts"
   - "server/apns.ts"
   - "server/db.ts"
+  - "server/db/**"
 ---
 # Bark push
 
