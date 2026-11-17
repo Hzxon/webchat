@@ -1,0 +1,292 @@
+/* A photo or file in a chat (R-005). */
+.file-bubble {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 2px 0 4px;
+}
+
+.file-photo {
+  display: block;
+  width: min(280px, 60vw);
+  max-height: 360px;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: var(--quote-bg);
+}
+
+.file-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* A tall image, such as a phone screenshot, shows its top, where a page starts (R-046). */
+  object-position: top;
+}
+
+.file-photo .file-preview {
+  filter: blur(8px);
+  transform: scale(1.1);
+}
+
+.file-card,
+.composer-attachment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--quote-bg);
+  color: var(--text);
+}
+
+.file-about {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.file-name {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-size,
+.file-note {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.composer-attachment {
+  margin: 0 0 8px;
+}
+
+.composer-attachment img {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  object-fit: cover;
+  filter: blur(2px);
+}
+
+/* A pull request shared into a chat. */
+.pull-card {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  margin: 2px 0 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--quote-bg);
+  color: var(--text);
+  font-size: 13.5px;
+  text-decoration: none;
+}
+
+@media (hover: hover) {
+  .pull-card:hover {
+    background: var(--quote-hover);
+  }
+}
+
+/* A request about a board card: one line, whose click opens the card. */
+.card-note {
+  display: block;
+  width: 100%;
+  border: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pull-card-head {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* Who still has to review a shared pull request, and who it is assigned to. */
+.pull-people {
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.pull-people-label {
+  font-weight: 600;
+}
+
+.pull-you {
+  color: var(--accent-strong);
+}
+
+@media (hover: hover) {
+  .pull:hover {
+    background: var(--hover);
+  }
+}
+
+.pull-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--ok);
+}
+
+.pull-icon.is-draft {
+  color: var(--muted);
+}
+
+.pull-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 3px;
+}
+
+.pull-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pull-meta {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.pull-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 12px;
+}
+
+.tag-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.tag-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.tag-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.tag-muted {
+  background: var(--panel-2);
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.tag-info {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.pull-size {
+  font-variant-numeric: tabular-nums;
+}
+
+.pull-add {
+  color: var(--ok);
+}
+
+.pull-del {
+  color: var(--danger);
+}
+
+.pull-comments {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted);
+}
+
+.activity-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.activity-dot.tone-ok {
+  background: var(--ok);
+}
+
+.activity-dot.tone-danger {
+  background: var(--danger);
+}
+
+.activity-dot.tone-warn {
+  background: var(--warn);
+}
+
+.activity-dot.tone-info {
+  background: var(--read);
+}
+
+.github-settings {
+  display: grid;
+  gap: 12px;
+  padding: 0 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.github-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.github-account span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.github-account strong {
+  color: var(--text);
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 760px) {
+  .github-body {
+    padding: 14px 10px calc(24px + env(safe-area-inset-bottom));
+  }
+
+  .github-card {
+    margin-top: 2vh;
+    padding: 22px 18px;
+  }
+}

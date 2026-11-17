@@ -1,0 +1,240 @@
+/* Auth and splash */
+
+.field-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  font-weight: 400;
+}
+
+.field-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--panel);
+}
+
+/* Layout */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 400px) 1fr;
+  /* The part of the screen the on-screen keyboard leaves free, from viewport.ts. */
+  height: var(--visible-height, 100%);
+  max-width: 1600px;
+  margin: 0 auto;
+  /* viewport-fit=cover lets the page run under an iPhone's notch in landscape. */
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  background: var(--panel);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+@media (min-width: 1640px) {
+  .layout {
+    height: calc(100% - 38px);
+    margin-top: 19px;
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+}
+
+/* Sidebar */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--line);
+  /* The tint reaches every row, field and banner inside, because they read these same variables.
+     Astryx's tokens took their value where the theme set them, so they are pointed here again. */
+  --panel: var(--sidebar);
+  --panel-2: var(--sidebar-2);
+  --hover: var(--sidebar-hover);
+  --color-background-surface: var(--panel);
+  --color-background-card: var(--panel);
+  --color-background-body: var(--panel);
+  background: var(--panel);
+}
+
+.sidebar-rail {
+  border-right: 1px solid var(--line);
+  background: var(--sidebar);
+}
+
+.sidebar-me {
+  min-width: 0;
+}
+
+.sidebar-list {
+  flex: 1;
+  min-height: 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  overflow-y: auto;
+}
+
+.bell-warn,
+.icon-dot {
+  position: relative;
+  display: inline-grid;
+}
+
+.bell-warn {
+  color: var(--warn);
+}
+
+.bell-warn .dot,
+.icon-dot .dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  border: 2px solid var(--panel);
+}
+
+.sidebar-me {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  margin-left: 4px;
+}
+
+.sidebar-me strong,
+.sidebar-me span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-me span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Sidebar tabs: Chats and Projects */
+
+.chat-list {
+  flex: 1;
+  margin: 0;
+  padding: 0 0 env(safe-area-inset-bottom);
+  overflow-y: auto;
+  list-style: none;
+}
+
+.chat-list-empty {
+  padding: 32px 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.chat-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+@media (hover: hover) {
+  .chat-item:hover {
+    background: var(--hover);
+  }
+}
+
+.chat-item.is-urgent {
+  background: var(--danger-soft);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+.chat-item-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: -10px;
+}
+
+.chat-item-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.chat-item-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.chat-item time {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chat-item-preview {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Projects and their channels */
+
+.project {
+  padding: 4px 0 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.urgent-chip {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Avatar */
+
+.avatar {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border-radius: var(--radius);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.avatar-online {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 28%;
+  height: 28%;
+  border-radius: 50%;
+  background: var(--ok);
+  border: 2px solid var(--panel);
+}
