@@ -1892,10 +1892,6 @@ a {
   overscroll-behavior: contain;
 }
 
-.board-cards .doc-editor {
-  margin-bottom: 12px;
-}
-
 /* Ready, Running and In review side by side, above the Open drawer and the Done fold. */
 .board-lanes {
   display: grid;
@@ -2020,11 +2016,6 @@ a {
   color: var(--warn);
   font-size: 13px;
   font-weight: 600;
-}
-
-.board-card-body {
-  padding: 0 12px 10px;
-  border-top: 1px solid var(--line);
 }
 
 .board-card-body .doc-section-tools {

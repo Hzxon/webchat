@@ -382,7 +382,7 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
   const board = Number(query.get('board'));
   if (board && store.get().projects[board]) {
     history.replaceState(null, '', '/');
-    actions.setBoardOpen(board);
+    actions.setBoardOpen(board, query.get('card'));
   }
   const agents = query.get('agents');
   if (agents !== null) {

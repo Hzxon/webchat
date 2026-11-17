@@ -295,6 +295,9 @@ export const actions = {
   setBoardOpen: (boardOpen: number | null, boardCard: string | null = null) =>
     store.set((s) => (boardOpen === null ? { ...s, boardOpen } : show(s, { boardOpen, boardCard, tab: 'projects' }))),
 
+  /** Opens a card of the open board in its peek, or closes the peek. */
+  setBoardCard: (boardCard: string | null) => store.set((s) => ({ ...s, boardCard })),
+
   setDocsSeen: (docsSeen: Record<string, number>) => store.set((s) => ({ ...s, docsSeen })),
 
   upsertProject: (project: ProjectDTO) => editChats((s) => ({ ...s, projects: { ...s.projects, [project.id]: project } })),
@@ -458,7 +461,8 @@ export function generalOf(state: State, projectId: number): ChatConversation | u
 export function reloadPath(state: State): string {
   if (state.githubOpen) return '/?github=open';
   if (state.docOpen) return `/?doc=${state.docOpen}`;
-  if (state.boardOpen !== null) return `/?board=${state.boardOpen}`;
+  if (state.boardOpen !== null)
+    return `/?board=${state.boardOpen}${state.boardCard ? `&card=${encodeURIComponent(state.boardCard)}` : ''}`;
   if (state.agentsOpen) return `/?agents=${encodeURIComponent(state.agentThread ?? '')}`;
   return state.activeId === null ? '/' : `/?chat=${state.activeId}`;
 }

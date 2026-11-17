@@ -75,7 +75,8 @@ import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Avatar } from './Avatar';
-import { HistoryDialog, SectionEditor } from './DocView';
+import { CardPeek } from './CardPeek';
+import { SectionEditor, SectionHistory } from './DocView';
 import {
   BackIcon,
   BoardIcon,
@@ -184,6 +185,7 @@ export function BoardView({ project }: { project: ProjectDTO }) {
             check={check}
             elsewhere={editingIn && editingIn !== column ? COLUMN_TITLES[editingIn] : undefined}
             onEditing={(on) => setEditingIn(on ? column : null)}
+            onPeek={() => setShown(column)}
           />
         ))}
       </div>
@@ -297,6 +299,7 @@ function BoardColumnView({
   check,
   elsewhere,
   onEditing,
+  onPeek,
 }: {
   column: BoardColumn;
   projectId: number;
@@ -305,6 +308,8 @@ function BoardColumnView({
   /** The other column's title while it holds the open editor. */
   elsewhere?: string;
   onEditing: (on: boolean) => void;
+  /** Shows this column, whose card the peek opened, as a reload or a request may open a card of either. */
+  onPeek: () => void;
 }) {
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
@@ -318,18 +323,10 @@ function BoardColumnView({
       memberIds
         .map((id) => users[id])
         .filter((u): u is UserDTO => !!u && u.agentOwner === meId)
-        .flatMap(
-          (
-            agent,
-          ): Array<{
-            agent: UserDTO;
-            repo?: string;
-            online: boolean;
-            lastSeen: number | null;
-          }> =>
-            agent.agentRepos.length
-              ? agent.agentRepos.map((seat) => ({ agent, ...seat }))
-              : [{ agent, online: agent.online, lastSeen: agent.lastSeen }],
+        .flatMap((agent): Array<{ agent: UserDTO; repo?: string; online: boolean; lastSeen: number | null }> =>
+          agent.agentRepos.length
+            ? agent.agentRepos.map((seat) => ({ agent, ...seat }))
+            : [{ agent, online: agent.online, lastSeen: agent.lastSeen }],
         ),
     [memberIds, users, meId],
   );
@@ -340,9 +337,8 @@ function BoardColumnView({
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
-  // A request about a card opens the board on it, and a request to mark it ready finds it in the Open drawer.
+  // The card open in the peek, which a request about it or a reload names, and a request to mark it ready finds it in the Open drawer.
   const boardCard = useAppState((s) => s.boardCard);
-  const [open, setOpen] = useState<string | null>(boardCard);
   // Whether the Open drawer is open, once the cards first load or the user toggles it; until then it follows the lanes.
   const [drawer, setDrawer] = useState<boolean | null>(boardCard ? true : null);
   // The doc is kept with the editing state, because the first card's doc is made just before it.
@@ -355,7 +351,7 @@ function BoardColumnView({
   // The kind of card the new-card form is writing.
   const [adding, setAdding] = useState<CardKind | null>(null);
   const editorOpen = editing !== null || adding !== null;
-  const [historyOf, setHistoryOf] = useState<Card | null>(null);
+  const [history, setHistory] = useState(false);
   // In the open card: the member picked to ask for a review, and the note of a requested change being written.
   const [asking, setAsking] = useState('');
   const [changes, setChanges] = useState<string | null>(null);
@@ -397,6 +393,14 @@ function BoardColumnView({
   const drawers = groups.filter((group) => !group.lane);
   const lanesHold = lanes.some((lane) => lane.cards.length > 0);
   const drawerOpen = drawer ?? !lanesHold;
+  const peek = cards.find((c) => c.id === boardCard);
+  // A new card's editor opens before its card loads.
+  const editsPeek = editing?.section.id === boardCard;
+  const siblings = groups.find((group) => group.cards.some((c) => c.id === boardCard))?.cards ?? [];
+  const at = siblings.findIndex((c) => c.id === boardCard);
+  useEffect(() => {
+    if (peek || editsPeek) onPeek();
+  }, [!!peek || editsPeek]);
   // Open while the lanes are empty, so a new board's first card does not hide in it; then it stays as it was, so it never shuts on a reader.
   useEffect(() => {
     if (sections.length) setDrawer((d) => d ?? !lanesHold);
@@ -408,6 +412,19 @@ function BoardColumnView({
   const avatarOf = (id: number, size: number) => (
     <Avatar name={id === meId ? meName : senderName(users, id)} seed={id} size={size} />
   );
+  const titleOf = (card: Card) => (card.failed ? 'This card could not be decrypted.' : card.title || 'Untitled');
+
+  /** Opens a card in the peek, or closes it, which closes its editor too: the editor saves and frees the card as it goes. */
+  function openCard(id: string | null) {
+    if (editing) {
+      setEditing(null);
+      onEditing(false);
+    }
+    actions.setBoardCard(id);
+    setChanges(null);
+    setAsking('');
+    setHistory(false);
+  }
 
   /** What a Roadmap card's face shows at its right: who runs it, or the pull request it waits in. */
   function moveOf(card: Card) {
@@ -463,10 +480,12 @@ function BoardColumnView({
   /** Saves the new card once, with the next free number, which it takes under the column's lock (D-116). */
   async function add(kind: CardKind, title: string, body: string) {
     const target = doc ?? (await createBoard(projectId, column));
-    await addCard(target, newSectionId(), kind, (cardId) => cardText(cardId, title, NEW_STATUS[kind], body));
-    // A new card is open, so it shows in the Open drawer.
+    const id = newSectionId();
+    await addCard(target, id, kind, (cardId) => cardText(cardId, title, NEW_STATUS[kind], body));
+    // A new card is open, so it shows in the Open drawer; its peek shows once it loads.
     setDrawer(true);
     closeForm();
+    openCard(id);
     void syncNow();
   }
 
@@ -480,11 +499,8 @@ function BoardColumnView({
       }))
     )
       return;
-    await replaceSection(doc!, card.id, {
-      text: card.text,
-      pos: card.pos,
-      removed: true,
-    });
+    await replaceSection(doc!, card.id, { text: card.text, pos: card.pos, removed: true });
+    openCard(null);
     void syncNow();
   }
 
@@ -531,10 +547,9 @@ function BoardColumnView({
   const kinds: CardKind[] = column === 'decisions' ? ['D'] : ['R', 'K'];
   const edited = editing && cards.find((c) => c.id === editing.section.id);
 
-  const cardView = (card: Card) => {
-    if (editing?.section.id === card.id) return null;
+  /** A card's face in its lane, or with `inPeek` what the peek shows of it. */
+  const cardView = (card: Card, inPeek = false) => {
     const lock = lockOf(card.id);
-    const isOpen = open === card.id;
     const cardRun = runs?.get(card.id);
     const [runTone, runLabel] = RUN_STATES[cardRun?.state ?? 'waiting'];
     const request = cardRun && agentMessages.find((m) => m.id === cardRun.request);
@@ -578,17 +593,11 @@ function BoardColumnView({
         : [];
     // As `moved` allows approve and ask for changes.
     const reviewer = canMove && inReview && !!card.kind && card.reviews.some((r) => r.who === me.id);
-    // Its review lines show above the rest, as who said what.
-    const shown = isOpen && face ? withReviews(card.body, []) : card.body;
     const head = (
       <button
         className={`board-card-head ${face ? 'board-face' : ''}`}
-        onClick={() => {
-          setOpen(isOpen ? null : card.id);
-          setChanges(null);
-          setAsking('');
-        }}
-        aria-expanded={isOpen}
+        onClick={() => openCard(card.id)}
+        aria-haspopup="dialog"
       >
         {!face ? (
           card.kind && <span className="board-card-id">{card.cardId}</span>
@@ -597,7 +606,7 @@ function BoardColumnView({
         ) : (
           <span className="board-no-owner" role="img" title="No owner" aria-label="No owner" />
         )}
-        <strong>{card.failed ? 'This card could not be decrypted.' : card.title || 'Untitled'}</strong>
+        <strong>{titleOf(card)}</strong>
         {inReview && card.reviews.length > 0 ? (
           <span className="board-reviewers">
             {card.reviews.map((r) => {
@@ -618,275 +627,262 @@ function BoardColumnView({
         ) : (
           right && <span className="board-card-status">{right}</span>
         )}
-        {face && cardRun && !isOpen && <Tag tone={runTone}>{runLabel}</Tag>}
+        {face && cardRun && <Tag tone={runTone}>{runLabel}</Tag>}
       </button>
     );
-    return (
-      <article
-        key={card.id}
-        className={`board-card ${lock ? 'is-locked' : ''} ${isOpen ? 'is-open' : ''} ${face && card.status.startsWith(WAITING) ? 'is-waiting' : ''}`}
-      >
-        {pick ? (
-          <div className="board-face-row">
-            {head}
-            <Button size="sm" label="Pick" onClick={() => run(move(card, 'pick'))} />
-          </div>
-        ) : (
-          head
-        )}
-        {same.has(card.id) && <Banner status="warning" title="Another card has this number. Renumber one of them." />}
-        {isOpen && (
-          <div className="board-card-body">
-            <div className="doc-section-tools">
-              {lock && <span className="doc-lock">{nameOf(lock.userId)} is editing</span>}
-              <IconButton
-                variant="ghost"
-                size="sm"
-                // From the text that stands, so a typo fix never signs a status someone could not set.
-                onClick={() => run(edit(doc!, card.id, card.text, card.pos))}
-                isDisabled={editorOpen || !!elsewhere || !!lock || card.failed}
-                tooltip={elsewhere ? `Close the editor in ${elsewhere} first` : 'Edit'}
-                label="Edit card"
-                icon={<PencilIcon width={18} height={18} />}
-              />
-              <IconButton
-                variant="ghost"
-                size="sm"
-                onClick={() => setHistoryOf(card)}
-                tooltip="History"
-                label="Card history"
-                icon={<HistoryIcon width={18} height={18} />}
-              />
-              {stoppable && (
-                // The agent stops the run and reports it failed; a request it never took ends here (R-030).
-                <IconButton
-                  variant="ghost"
-                  size="sm"
-                  isDisabled={cardRun!.stopping}
-                  onClick={() =>
-                    run(
-                      cancelRun({
-                        ...request!,
-                        run: request!.run as RunRequest,
-                      }),
-                    )
-                  }
-                  tooltip={cardRun!.stopping ? 'Stopping…' : `Stop · ${nameOf(cardRun!.runtime)}`}
-                  label="Stop the run"
-                  icon={<StopIcon width={18} height={18} />}
-                />
-              )}
-              {!stoppable && canRun && card.kind && !card.failed && (
-                // The brief says what the agent will follow and who wrote it, and starts it (D-105).
-                <IconButton
-                  variant="ghost"
-                  size="sm"
-                  isDisabled={!!cardRun && GOING.has(cardRun.state)}
-                  onClick={() =>
-                    actions.openBrief({
-                      projectId,
-                      docId: doc!.id,
-                      section: card.id,
-                    })
-                  }
-                  tooltip={
-                    cardRun && GOING.has(cardRun.state)
-                      ? `${runLabel} · ${nameOf(cardRun.runtime)}`
-                      : 'Run with your agent'
-                  }
-                  label="Run with your agent"
-                  icon={<PlayIcon width={18} height={18} />}
-                />
-              )}
-              {canDelete(card) && (
-                <IconButton
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => run(remove(card))}
-                  isDisabled={editorOpen || !!lock}
-                  tooltip="Delete"
-                  label="Delete card"
-                  icon={<TrashIcon width={18} height={18} />}
-                />
-              )}
+    if (!inPeek)
+      return (
+        <article
+          key={card.id}
+          className={`board-card ${lock ? 'is-locked' : ''} ${face && card.status.startsWith(WAITING) ? 'is-waiting' : ''}`}
+        >
+          {pick ? (
+            <div className="board-face-row">
+              {head}
+              <Button size="sm" label="Pick" onClick={() => run(move(card, 'pick'))} />
             </div>
-            {card.refused && (
-              <Banner
-                status="warning"
-                title={`${nameOf(card.refused.by)} ${card.refused.status === null ? 'deleted this card' : `set “${card.refused.status}”`}. Only ${whom(card.owner!)}, who opened it, can do that.`}
+          ) : (
+            head
+          )}
+          {same.has(card.id) && <Banner status="warning" title="Another card has this number. Renumber one of them." />}
+        </article>
+      );
+    // Its review lines show above the rest, as who said what.
+    const shown = face ? withReviews(card.body, []) : card.body;
+    return (
+      <div className="board-card-body">
+        <div className="doc-section-tools">
+          {lock && <span className="doc-lock">{nameOf(lock.userId)} is editing</span>}
+          <IconButton
+            variant="ghost"
+            size="sm"
+            // From the text that stands, so a typo fix never signs a status someone could not set.
+            onClick={() => run(edit(doc!, card.id, card.text, card.pos))}
+            isDisabled={editorOpen || !!elsewhere || !!lock || card.failed}
+            tooltip={elsewhere ? `Close the editor in ${elsewhere} first` : 'Edit'}
+            label="Edit card"
+            icon={<PencilIcon width={18} height={18} />}
+          />
+          <IconButton
+            variant="ghost"
+            size="sm"
+            onClick={() => setHistory(true)}
+            tooltip="History"
+            label="Card history"
+            icon={<HistoryIcon width={18} height={18} />}
+          />
+          {stoppable && (
+            // The agent stops the run and reports it failed; a request it never took ends here (R-030).
+            <IconButton
+              variant="ghost"
+              size="sm"
+              isDisabled={cardRun!.stopping}
+              onClick={() => run(cancelRun({ ...request!, run: request!.run as RunRequest }))}
+              tooltip={cardRun!.stopping ? 'Stopping…' : `Stop · ${nameOf(cardRun!.runtime)}`}
+              label="Stop the run"
+              icon={<StopIcon width={18} height={18} />}
+            />
+          )}
+          {!stoppable && canRun && card.kind && !card.failed && (
+            // The brief says what the agent will follow and who wrote it, and starts it (D-105).
+            <IconButton
+              variant="ghost"
+              size="sm"
+              isDisabled={!!cardRun && GOING.has(cardRun.state)}
+              onClick={() => actions.openBrief({ projectId, docId: doc!.id, section: card.id })}
+              tooltip={
+                cardRun && GOING.has(cardRun.state)
+                  ? `${runLabel} · ${nameOf(cardRun.runtime)}`
+                  : 'Run with your agent'
+              }
+              label="Run with your agent"
+              icon={<PlayIcon width={18} height={18} />}
+            />
+          )}
+          {canDelete(card) && (
+            <IconButton
+              variant="ghost"
+              size="sm"
+              onClick={() => run(remove(card))}
+              isDisabled={editorOpen || !!lock}
+              tooltip="Delete"
+              label="Delete card"
+              icon={<TrashIcon width={18} height={18} />}
+            />
+          )}
+        </div>
+        {card.refused && (
+          <Banner
+            status="warning"
+            title={`${nameOf(card.refused.by)} ${card.refused.status === null ? 'deleted this card' : `set “${card.refused.status}”`}. Only ${whom(card.owner!)}, who opened it, can do that.`}
+          />
+        )}
+        {(moves.length > 0 || take) && (
+          <p className="board-card-run">
+            {take && (
+              <Button
+                size="sm"
+                label="Take"
+                tooltip="Become its owner, who marks it ready and closes it"
+                onClick={() => run(takeCard(doc!, card.id))}
               />
             )}
-            {(moves.length > 0 || take) && (
-              <p className="board-card-run">
-                {take && (
-                  <Button
-                    size="sm"
-                    label="Take"
-                    tooltip="Become its owner, who marks it ready and closes it"
-                    onClick={() => run(takeCard(doc!, card.id))}
-                  />
-                )}
-                {moves.map(([kind, label]) => {
-                  const ok = moved(card, kind, me!) !== null;
-                  const why =
-                    kind === 'ask'
-                      ? 'You asked already'
-                      : kind === 'review'
-                        ? 'An agent or a pull request runs it'
-                        : card.owner === undefined
-                          ? 'It has no owner'
-                          : card.owner !== meId
-                            ? `Only ${whom(card.owner)} can`
-                            : kind === 'again'
-                              ? 'Answer every requested change first'
-                              : openChange(card.reviews)
-                                ? 'A requested change is open'
-                                : 'It needs an approval';
-                  const act = () =>
-                    kind === 'ask'
-                      ? ask(card, card.owner!, 'ask', 'ready', `Asks you to mark ${card.cardId} ready: ${card.title}`)
-                      : kind === 'again'
-                        ? // Only the run whose pull request the card waits in: another draft of the user's is not this work.
-                          again(
-                            card,
-                            cardRun?.state === 'done' &&
-                              cardRun.pull &&
-                              runnerOf(card.status) === `${cardRun.pull.repo}#${cardRun.pull.number}`
-                              ? request
-                              : undefined,
-                          )
-                        : move(card, kind);
-                  return (
-                    <Button
-                      key={kind}
-                      size="sm"
-                      label={label}
-                      isDisabled={!ok}
-                      tooltip={
-                        ok
-                          ? kind === 'ask'
-                            ? 'Sends the card’s owner a message asking them to mark it ready'
-                            : undefined
-                          : why
-                      }
-                      onClick={() => run(act())}
-                    />
-                  );
-                })}
-              </p>
-            )}
-            {card.reviews.map((r) => (
-              <p key={r.who} className="board-card-run">
-                {avatarOf(r.who, 20)}
-                <span>{nameOf(r.who)}</span>
-                <Tag tone={REVIEWS[r.verdict][0]}>{REVIEWS[r.verdict][1]}</Tag>
-                {r.note && <span className="board-review-note">{r.note}</span>}
-                {r.answer && <span>{r.answer === 'accepted' ? 'Accepted' : 'Declined'}</span>}
-                {canMove && moved(card, { accept: r.who }, me) !== null && (
-                  <>
-                    <Button size="sm" label="Accept" onClick={() => run(move(card, { accept: r.who }))} />
-                    <Button size="sm" label="Decline" onClick={() => run(move(card, { decline: r.who }))} />
-                  </>
-                )}
-              </p>
-            ))}
-            {(reviewer || askable.length > 0) && (
-              <p className="board-card-run">
-                {reviewer && changes === null && (
-                  <>
-                    <Button size="sm" label="Approve" onClick={() => run(move(card, 'approve'))} />
-                    <Button size="sm" label="Ask for changes" onClick={() => setChanges('')} />
-                  </>
-                )}
-                {reviewer && changes !== null && (
-                  <>
-                    <TextInput
-                      label="What to change"
-                      isLabelHidden
-                      value={changes}
-                      onChange={(v) => setChanges(v.slice(0, 200))}
-                      placeholder="What to change, in one line"
-                      hasAutoFocus
-                    />
-                    <Button
-                      size="sm"
-                      label="Send"
-                      isDisabled={!changes.trim()}
-                      onClick={() => run(move(card, { changes }).then(() => setChanges(null)))}
-                    />
-                    <Button size="sm" label="Cancel" onClick={() => setChanges(null)} />
-                  </>
-                )}
-                {askable.length > 0 && changes === null && (
-                  <>
-                    <Selector
-                      label="Reviewer"
-                      isLabelHidden
-                      placeholder="Ask for a review…"
-                      options={askable.map((id) => ({
-                        value: String(id),
-                        label: nameOf(id),
-                      }))}
-                      value={asking}
-                      onChange={setAsking}
-                    />
-                    <Button
-                      size="sm"
-                      label="Ask"
-                      isDisabled={!asking}
-                      onClick={() => {
-                        const id = Number(asking);
-                        setAsking('');
-                        run(
-                          ask(
-                            card,
-                            id,
-                            { request: { id, username: usernames[id]! } },
-                            'review',
-                            `Asks you to review ${card.cardId}: ${card.title}`,
-                          ),
-                        );
-                      }}
-                    />
-                  </>
-                )}
-              </p>
-            )}
-            {face && (card.kind || about) && (
-              <p className="board-card-run">
-                {card.kind && <span className="board-card-id">{card.cardId}</span>}
-                {about && <span>{about}</span>}
-                {/* No agent checked it against the board, the code and the open pull requests yet (R-041). */}
-                {unchecked(card) && <Tag tone="muted">Not checked by an agent yet</Tag>}
-              </p>
-            )}
-            {cardRun && (
-              <p className="board-card-run">
-                <Tag tone={runTone}>{runLabel}</Tag>
-                <span>
-                  {nameOf(cardRun.runtime)}
-                  {cardRun.repo && ` in ${cardRun.repo}`}
-                  {cardRun.harness && ` with ${cardRun.harness}`}
-                  {cardRun.note && ` · ${cardRun.note}`}
-                </span>
+            {moves.map(([kind, label]) => {
+              const ok = moved(card, kind, me!) !== null;
+              const why =
+                kind === 'ask'
+                  ? 'You asked already'
+                  : kind === 'review'
+                    ? 'An agent or a pull request runs it'
+                    : card.owner === undefined
+                      ? 'It has no owner'
+                      : card.owner !== meId
+                        ? `Only ${whom(card.owner)} can`
+                        : kind === 'again'
+                          ? 'Answer every requested change first'
+                          : openChange(card.reviews)
+                            ? 'A requested change is open'
+                            : 'It needs an approval';
+              const act = () =>
+                kind === 'ask'
+                  ? ask(card, card.owner!, 'ask', 'ready', `Asks you to mark ${card.cardId} ready: ${card.title}`)
+                  : kind === 'again'
+                    ? // Only the run whose pull request the card waits in: another draft of the user's is not this work.
+                      again(
+                        card,
+                        cardRun?.state === 'done' &&
+                          cardRun.pull &&
+                          runnerOf(card.status) === `${cardRun.pull.repo}#${cardRun.pull.number}`
+                          ? request
+                          : undefined,
+                      )
+                    : move(card, kind);
+              return (
                 <Button
-                  variant="ghost"
+                  key={kind}
                   size="sm"
-                  label="Open the conversation"
-                  onClick={() => actions.setAgentsOpen(true, request?.clientId ?? null)}
+                  label={label}
+                  isDisabled={!ok}
+                  tooltip={
+                    ok
+                      ? kind === 'ask'
+                        ? 'Sends the card’s owner a message asking them to mark it ready'
+                        : undefined
+                      : why
+                  }
+                  onClick={() => run(act())}
                 />
-              </p>
-            )}
-            {check && card.kind && !card.failed && (
-              <p className="board-card-run">
-                <span>Your agent checks it against the board, the code and the open pull requests.</span>
-                <Button variant="ghost" size="sm" label="Check again" onClick={() => run(check(card.cardId))} />
-              </p>
-            )}
-            {shown ? <Markdown text={shown} /> : <p className="doc-note">Nothing more.</p>}
-          </div>
+              );
+            })}
+          </p>
         )}
-      </article>
+        {card.reviews.map((r) => (
+          <p key={r.who} className="board-card-run">
+            {avatarOf(r.who, 20)}
+            <span>{nameOf(r.who)}</span>
+            <Tag tone={REVIEWS[r.verdict][0]}>{REVIEWS[r.verdict][1]}</Tag>
+            {r.note && <span className="board-review-note">{r.note}</span>}
+            {r.answer && <span>{r.answer === 'accepted' ? 'Accepted' : 'Declined'}</span>}
+            {canMove && moved(card, { accept: r.who }, me) !== null && (
+              <>
+                <Button size="sm" label="Accept" onClick={() => run(move(card, { accept: r.who }))} />
+                <Button size="sm" label="Decline" onClick={() => run(move(card, { decline: r.who }))} />
+              </>
+            )}
+          </p>
+        ))}
+        {(reviewer || askable.length > 0) && (
+          <p className="board-card-run">
+            {reviewer && changes === null && (
+              <>
+                <Button size="sm" label="Approve" onClick={() => run(move(card, 'approve'))} />
+                <Button size="sm" label="Ask for changes" onClick={() => setChanges('')} />
+              </>
+            )}
+            {reviewer && changes !== null && (
+              <>
+                <TextInput
+                  label="What to change"
+                  isLabelHidden
+                  value={changes}
+                  onChange={(v) => setChanges(v.slice(0, 200))}
+                  placeholder="What to change, in one line"
+                  hasAutoFocus
+                />
+                <Button
+                  size="sm"
+                  label="Send"
+                  isDisabled={!changes.trim()}
+                  onClick={() => run(move(card, { changes }).then(() => setChanges(null)))}
+                />
+                <Button size="sm" label="Cancel" onClick={() => setChanges(null)} />
+              </>
+            )}
+            {askable.length > 0 && changes === null && (
+              <>
+                <Selector
+                  label="Reviewer"
+                  isLabelHidden
+                  placeholder="Ask for a review…"
+                  options={askable.map((id) => ({ value: String(id), label: nameOf(id) }))}
+                  value={asking}
+                  onChange={setAsking}
+                />
+                <Button
+                  size="sm"
+                  label="Ask"
+                  isDisabled={!asking}
+                  onClick={() => {
+                    const id = Number(asking);
+                    setAsking('');
+                    run(
+                      ask(
+                        card,
+                        id,
+                        { request: { id, username: usernames[id]! } },
+                        'review',
+                        `Asks you to review ${card.cardId}: ${card.title}`,
+                      ),
+                    );
+                  }}
+                />
+              </>
+            )}
+          </p>
+        )}
+        {face && (card.kind || about) && (
+          <p className="board-card-run">
+            {card.kind && <span className="board-card-id">{card.cardId}</span>}
+            {about && <span>{about}</span>}
+            {/* No agent checked it against the board, the code and the open pull requests yet (R-041). */}
+            {unchecked(card) && <Tag tone="muted">Not checked by an agent yet</Tag>}
+          </p>
+        )}
+        {cardRun && (
+          <p className="board-card-run">
+            <Tag tone={runTone}>{runLabel}</Tag>
+            <span>
+              {nameOf(cardRun.runtime)}
+              {cardRun.repo && ` in ${cardRun.repo}`}
+              {cardRun.harness && ` with ${cardRun.harness}`}
+              {cardRun.note && ` · ${cardRun.note}`}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              label="Open the conversation"
+              onClick={() => actions.setAgentsOpen(true, request?.clientId ?? null)}
+            />
+          </p>
+        )}
+        {check && card.kind && !card.failed && (
+          <p className="board-card-run">
+            <span>Your agent checks it against the board, the code and the open pull requests.</span>
+            <Button variant="ghost" size="sm" label="Check again" onClick={() => run(check(card.cardId))} />
+          </p>
+        )}
+        {shown ? <Markdown text={shown} /> : <p className="doc-note">Nothing more.</p>}
+      </div>
     );
   };
 
@@ -939,24 +935,6 @@ function BoardColumnView({
           )}
         </div>
         {error && <Banner status="error" title={error} />}
-        {adding && (
-          <NewCardForm kind={adding} onDone={(title, body) => add(adding, title, body)} onCancel={closeForm} />
-        )}
-        {/* The card being edited shows here, whatever its group, so its editor keeps its text and its lock. */}
-        {editing && (
-          <SectionEditor
-            key={editing.section.id}
-            doc={editing.doc}
-            editing={editing.section}
-            canDelete={!edited || canDelete(edited)}
-            toSave={column === 'roadmap' ? (text) => keepReviews(text, editing.lines) : undefined}
-            onClose={(message) => {
-              setEditing(null);
-              onEditing(false);
-              setError(message ?? '');
-            }}
-          />
-        )}
         {!doc && !editorOpen && (
           <p className="doc-note">No {column === 'decisions' ? 'decisions' : 'ideas or issues'} yet.</p>
         )}
@@ -991,8 +969,43 @@ function BoardColumnView({
             </details>
           ))}
       </div>
-      {historyOf && doc && (
-        <HistoryDialog doc={doc} section={historyOf} nameOf={nameOf} onClose={() => setHistoryOf(null)} />
+      {adding && (
+        <CardPeek title={`New ${KIND_NAMES[adding]}`} onOpen={openCard} onClose={closeForm}>
+          <NewCardForm kind={adding} onDone={(title, body) => add(adding, title, body)} onCancel={closeForm} />
+        </CardPeek>
+      )}
+      {(peek || editsPeek) && (
+        <CardPeek
+          title={peek ? titleOf(peek) : 'New card'}
+          // The editor stays on its card until it closes.
+          prev={editing ? undefined : siblings[at - 1]?.id}
+          next={editing ? undefined : siblings[at + 1]?.id}
+          onOpen={openCard}
+          onClose={() => openCard(null)}
+        >
+          {/* The card being edited shows here, whatever its group, so its editor keeps its text and its lock. */}
+          {editsPeek ? (
+            <SectionEditor
+              key={editing!.section.id}
+              doc={editing!.doc}
+              editing={editing!.section}
+              canDelete={!edited || canDelete(edited)}
+              toSave={column === 'roadmap' ? (text) => keepReviews(text, editing!.lines) : undefined}
+              onClose={(message) => {
+                setEditing(null);
+                onEditing(false);
+                setError(message ?? '');
+              }}
+            />
+          ) : history ? (
+            <>
+              <Button label="Back to the card" onClick={() => setHistory(false)} />
+              <SectionHistory doc={doc!} section={peek!} nameOf={nameOf} onClose={() => setHistory(false)} />
+            </>
+          ) : (
+            cardView(peek!, true)
+          )}
+        </CardPeek>
       )}
     </div>
   );
