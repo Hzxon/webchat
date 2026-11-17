@@ -376,7 +376,18 @@ export function RenameDialog({ doc, onClose }: { doc: ChatDoc; onClose: () => vo
 type History = Awaited<ReturnType<typeof sectionHistory>>;
 
 /** A section's editing sessions, newest first. Each shows what it changed, and an older one can come back. */
-export function HistoryDialog(props: { doc: ChatDoc; section: DocSection; nameOf: (id: number) => string; onClose: () => void }) {
+export function HistoryDialog(props: HistoryProps) {
+  return (
+    <Dialog title="Section history" onClose={props.onClose}>
+      <SectionHistory {...props} />
+    </Dialog>
+  );
+}
+
+type HistoryProps = { doc: ChatDoc; section: DocSection; nameOf: (id: number) => string; onClose: () => void };
+
+/** The history alone, for a board card's peek, which shows it in place of the card rather than in a second dialog. */
+export function SectionHistory(props: HistoryProps) {
   const { doc, section, nameOf, onClose } = props;
   const [entries, setEntries] = useState<History | null>(null);
   const [picked, setPicked] = useState(0);
@@ -404,7 +415,7 @@ export function HistoryDialog(props: { doc: ChatDoc; section: DocSection; nameOf
   }
 
   return (
-    <Dialog title="Section history" onClose={onClose}>
+    <>
       {entries === null && !error && (
         <Text as="p" color="secondary">
           Loading…
@@ -439,6 +450,6 @@ export function HistoryDialog(props: { doc: ChatDoc; section: DocSection; nameOf
       )}
       {error && <Banner status="error" title={error} />}
       {picked > 0 && entry?.content && <Button onClick={() => void restore()} isDisabled={busy} label="Restore this version" />}
-    </Dialog>
+    </>
   );
 }
