@@ -5,10 +5,11 @@
 // on an MCP server of ours (answer.ts). Its permission requests get the rulebook's answer, and the
 // owner's when the rulebook cannot decide and the owner's page can show a question.
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import pkg from '../package.json' with { type: 'json' };
+import { HARNESS_WARNING } from '../shared/types.ts';
 import type { AcpAgent } from './acp-agents.ts';
 import { listenForAnswers } from './answer.ts';
 import { isCredential, olderThan, secretDirs, type Harness, type Turn } from './harness.ts';
@@ -107,7 +108,7 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
   /** What the agent's shell inherits: no credential but those its own sign-in keeps. */
   const environment = () => ({
     ...Object.fromEntries(Object.entries(process.env).filter((entry) => !isCredential(entry) || agent.login?.includes(entry[0]))),
-    ...agent.isolation.env,
+    ...agent.isolation?.env,
   });
 
   async function close(live: Live) {
@@ -160,15 +161,19 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
     if (update.sessionUpdate === 'agent_message_chunk') turn.last = (turn.last + (update.content?.text ?? '')).slice(-2000);
     const word = update.kind && WORDS[update.kind];
     if (update.sessionUpdate === 'tool_call' && word && !turn.done) {
-      const where = update.locations?.[0]?.path;
-      turn.progress?.(where ? `${word} ${path.relative(turn.cwd, where)}` : word);
+      // Hermes reports the path its tool was given, which may be relative to the working folder.
+      const where = update.locations?.[0]?.path && path.relative(turn.cwd, path.resolve(turn.cwd, update.locations[0].path));
+      turn.progress?.(where ? `${word} ${where}` : word);
     }
   }
 
   /** Starts the agent and opens its session for `t`: a new one, or the one it kept. */
   async function open(t: Turn): Promise<Live> {
     const listener = await listenForAnswers();
-    const child = spawn(program, [...agent.args, ...agent.isolation.args], { cwd: t.cwd, env: environment(), stdio: ['pipe', 'pipe', 'pipe'] });
+    const home = path.join(dataDir, agent.id);
+    const isolation = (agent.isolation?.args ?? []).map((arg) => arg.replaceAll('{data}', home));
+    if (agent.isolation?.args.some((arg) => arg.includes('{data}'))) mkdirSync(home, { recursive: true });
+    const child = spawn(program, [...agent.args, ...isolation], { cwd: t.cwd, env: environment(), stdio: ['pipe', 'pipe', 'pipe'] });
     running.add(child);
     // Kept for the error text, and never forwarded.
     let stderr = '';
@@ -291,6 +296,9 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
       const old = olderThan(name, await versionOf(), agent.min);
       if (old) return old;
     },
+    async warning() {
+      return HARNESS_WARNING[name];
+    },
     // ACP has no switch for the owner's instructions, skills or any knob, and D-115 lets an adapter declare only what it honors.
     offers: () => ({ knobs: [] }),
     async found() {
@@ -299,6 +307,9 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
     async apply() {},
     async turn(t) {
       if (t.signal.aborted) throw new Error(CANCELLED);
+      // Checked on every turn: the agent reads such a file again for its next turn.
+      const unsafe = agent.refuseFiles?.find((file) => existsSync(path.join(t.cwd, file)));
+      if (unsafe) throw new Error(`${name} would run the commands in ${unsafe} outside its sandbox, so I do not run it in a folder that has one. Remove it, or pick another coding agent.`);
       let live = lives.get(t.session);
       if (live?.turn) throw new Error('a turn of this session is running already.');
       // A session that starts over, or moves to another folder, cannot keep its process.

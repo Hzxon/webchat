@@ -1,0 +1,56 @@
+/* Row states Astryx's list items have no prop for. This file's layer sits above Astryx's, so it
+   wins over a component's own styles (layers.css). Keep it to what a prop cannot say. */
+
+.row-unread {
+  font-weight: 700;
+}
+
+.row-urgent {
+  background: var(--danger-soft);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+/* The back button shows only where the chat covers the list, as in styles.css's narrow layout. */
+.back-button {
+  display: none;
+  margin-left: -8px;
+}
+
+@media (max-width: 760px) {
+  .back-button {
+    display: inline-flex;
+  }
+}
+
+/* The sidebar collapses to a rail only beside the chat; a phone shows one pane at a time instead. */
+.sidebar-rail,
+.collapse-button {
+  display: none;
+}
+
+@media (min-width: 761px) {
+  .collapse-button {
+    display: inline-flex;
+  }
+
+  .layout.sidebar-collapsed {
+    grid-template-columns: auto 1fr;
+  }
+
+  .layout.sidebar-collapsed .sidebar {
+    display: none;
+  }
+
+  .layout.sidebar-collapsed .sidebar-rail {
+    display: flex;
+  }
+}
+
+/* Safari before 17 has no Popover API, so nothing hides a closed popover until main.tsx has loaded
+   the polyfill, and every Astryx tooltip and menu sits in the layout meanwhile (D-052). The polyfill
+   marks an open popover with this class. */
+@supports not selector(:popover-open) {
+  [popover]:not(.\:popover-open) {
+    display: none;
+  }
+}

@@ -1,4 +1,10 @@
 import { useEffect, useState } from 'react';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { Divider } from '@astryxdesign/core/Divider';
+import { Heading } from '@astryxdesign/core/Heading';
+import { Stack } from '@astryxdesign/core/Stack';
+import { Text } from '@astryxdesign/core/Text';
 import { safetyCode } from '../../../shared/e2ee';
 import { trustKeys } from '../chat';
 import { keyring, type ChatConversation } from '../e2ee/keyring';
@@ -43,13 +49,14 @@ export function SecurityCodeDialog({ conversation, onClose }: { conversation: Ch
 
   return (
     <Dialog title="Security codes" onClose={onClose}>
-      <p className="dialog-intro">
+      <Text as="p" color="secondary">
         Messages in this chat are end-to-end encrypted. Compare the code with each person, in person or on a call. If it
         matches on both phones, no one in between, not even the server, can read your messages.
-      </p>
+      </Text>
       {rows.map((row) => (
-        <section key={row.userId} className="security-code">
-          <h3>{row.name}</h3>
+        <Stack key={row.userId} as="section" gap={2}>
+          <Divider />
+          <Heading level={3}>{row.name}</Heading>
           {row.code ? (
             <p className="security-code-digits" aria-label={`Security code with ${row.name}`}>
               {row.code.map((group, i) => (
@@ -57,26 +64,27 @@ export function SecurityCodeDialog({ conversation, onClose }: { conversation: Ch
               ))}
             </p>
           ) : (
-            <p className="dialog-note">{row.name} has not set up encryption yet.</p>
+            <Text as="p" weight="semibold">
+              {row.name} has not set up encryption yet.
+            </Text>
           )}
           {warnings[row.userId] && (
-            <div className="callout">
-              <p>
-                {row.name}’s security code changed since this device first saw it. If you did not expect this, ask them
-                before you trust it.
-              </p>
-              <button
-                className="button-secondary"
-                onClick={() => {
-                  const user = users[row.userId];
-                  if (user) void trustKeys(user);
-                }}
-              >
-                I checked the code, trust it
-              </button>
-            </div>
+            <Banner
+              status="warning"
+              title={`${row.name}’s security code changed since this device first saw it.`}
+              description="If you did not expect this, ask them before you trust it."
+              endContent={
+                <Button
+                  label="I checked the code, trust it"
+                  onClick={() => {
+                    const user = users[row.userId];
+                    if (user) void trustKeys(user);
+                  }}
+                />
+              }
+            />
           )}
-        </section>
+        </Stack>
       ))}
     </Dialog>
   );

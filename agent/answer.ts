@@ -66,7 +66,8 @@ export async function listenForAnswers() {
   const connections = new Set<net.Socket>();
   /** The turn waiting for its answer, and the schema the servers last served. */
   let turn: { schema: Schema; resolve: (answer: unknown) => void; reject: (error: Error) => void; misfits: number } | undefined;
-  let schema: Schema = {};
+  // An agent lists the tool when its session opens, before any turn: MCP requires an object schema, and Hermes drops a server that serves `{}`.
+  let schema: Schema = { type: 'object' };
   let served: string | undefined;
 
   const server = net.createServer((socket) => {

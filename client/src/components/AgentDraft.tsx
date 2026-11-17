@@ -4,6 +4,9 @@
 // change to the card it replaces, but only while that card says what the agent saw. Above the
 // button stand the cards, decisions and pull requests the agent's check found it repeats or goes
 // against, and the card it writes carries the check's line (R-041).
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { Selector } from '@astryxdesign/core/Selector';
 import { useEffect, useMemo, useState } from 'react';
 import { cardText, withReviews, type Card } from '../../../shared/board';
 import { textHash } from '../../../shared/e2ee';
@@ -36,7 +39,17 @@ function paragraphsOf(text: string) {
 /** Why a change cannot go on: its card changed or went since the agent drafted it. */
 type Stale = { by: string; at: number } | 'deleted';
 
-export function AgentDraft({ message, draft, thread, agentId }: { message: ChatMessage; draft: CardDraftDTO; thread: Thread; agentId: number }) {
+export function AgentDraft({
+  message,
+  draft,
+  thread,
+  agentId,
+}: {
+  message: ChatMessage;
+  draft: CardDraftDTO;
+  thread: Thread;
+  agentId: number;
+}) {
   const projects = useAppState((s) => s.projects);
   const docs = useAppState((s) => s.docs);
   const conversations = useAppState((s) => s.conversations);
@@ -47,13 +60,19 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
   // A new card goes to the board the question was about, else one the agent shares with the user;
   // a change, to its card's board.
   const shared = useMemo(
-    () => Object.values(projects).filter((p) => meId !== undefined && p.memberIds.includes(meId) && p.memberIds.includes(agentId)),
+    () =>
+      Object.values(projects).filter(
+        (p) => meId !== undefined && p.memberIds.includes(meId) && p.memberIds.includes(agentId),
+      ),
     [projects, meId, agentId],
   );
   const [picked, setPicked] = useState<number | null>(null);
   const named = threadProject(thread, docs, conversations);
-  const board = named !== undefined && shared.some((p) => p.id === named) ? named : shared.length === 1 ? shared[0]!.id : null;
-  const projectId = change ? (conversations[docs[change.doc]?.conversationId ?? 0]?.projectId ?? null) : (picked ?? board);
+  const board =
+    named !== undefined && shared.some((p) => p.id === named) ? named : shared.length === 1 ? shared[0]!.id : null;
+  const projectId = change
+    ? (conversations[docs[change.doc]?.conversationId ?? 0]?.projectId ?? null)
+    : (picked ?? board);
   const [redone, setRedone] = useState(false);
   // A decision goes in the Decisions column, an idea or issue in the Roadmap.
   const column = draft.kind === 'D' ? 'decisions' : 'roadmap';
@@ -65,7 +84,11 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
   const [error, setError] = useState('');
 
   // The draft's column, and the other one only when a related id is there, so most drafts load one doc.
-  const needed = COLUMNS.filter((c) => c === column || draft.related?.some((r) => (r.id.startsWith('D-') ? 'decisions' : 'roadmap') === c && !r.id.startsWith('#')));
+  const needed = COLUMNS.filter(
+    (c) =>
+      c === column ||
+      draft.related?.some((r) => (r.id.startsWith('D-') ? 'decisions' : 'roadmap') === c && !r.id.startsWith('#')),
+  );
 
   // The board as it is now, again whenever a column it reads changes, and whether a change's card
   // still says what the agent saw. A draft already added needs neither.
@@ -80,7 +103,10 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
       else if (change && card && (await textHash(card.written.trim())) !== change.seen) {
         const [newest] = await sectionHistory(target!, card.id);
         const author = newest?.revision.authorId ?? null;
-        gone = { by: author === meId ? 'You' : senderName(users, author, 'Someone'), at: newest?.revision.createdAt ?? Date.now() };
+        gone = {
+          by: author === meId ? 'You' : senderName(users, author, 'Someone'),
+          at: newest?.revision.createdAt ?? Date.now(),
+        };
       }
       if (!live) return;
       setCards(fresh);
@@ -112,13 +138,23 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
           // A proposal's file may set a new status, as one that finishes its card does (R-040). Without one
           // the status stays as written: `card.status` reads an older word as the new one.
           // Reviews keep the lines that stand, so the owner's page never signs one a draft copied (the card-review decision).
-          return cardText(card.cardId, draft.title, draft.status ?? cardStatus(card.text), withReviews(body, card.reviews.map((r) => r.line)));
+          return cardText(
+            card.cardId,
+            draft.title,
+            draft.status ?? cardStatus(card.text),
+            withReviews(
+              body,
+              card.reviews.map((r) => r.line),
+            ),
+          );
         });
         // Changed since the page last looked: the next load says how.
         if (!written) return void syncNow();
         id = change.card;
       } else {
-        ({ id } = await addCard(doc, newSectionId(), draft.kind, (cardId) => cardText(cardId, draft.title, NEW_STATUS[draft.kind], body)));
+        ({ id } = await addCard(doc, newSectionId(), draft.kind, (cardId) =>
+          cardText(cardId, draft.title, NEW_STATUS[draft.kind], body),
+        ));
       }
       await noteAdded(thread.conversationId, thread.root, message.clientId!, id);
       void syncNow();
@@ -147,7 +183,9 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
           <p className="agents-draft-label">After</p>
         </>
       )}
-      <strong className={marked(current?.title !== draft.title)}>{change ? `${change.card}: ${draft.title}` : draft.title}</strong>
+      <strong className={marked(current?.title !== draft.title)}>
+        {change ? `${change.card}: ${draft.title}` : draft.title}
+      </strong>
       {draft.status && <p className={marked(current?.status !== draft.status)}>Status: {draft.status}.</p>}
       {paragraphsOf(draft.body).map((p, i) => (
         <div key={i} className={marked(!now.has(p))}>
@@ -163,7 +201,11 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
               <strong>
                 {r.kind === 'conflict' ? 'Goes against' : 'Repeats'}{' '}
                 {r.id.startsWith('#') && thread.repo ? (
-                  <a href={`https://github.com/${thread.repo}/pull/${r.id.slice(1)}`} target="_blank" rel="noopener noreferrer">
+                  <a
+                    href={`https://github.com/${thread.repo}/pull/${r.id.slice(1)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
                     {r.id}
                   </a>
                 ) : (
@@ -179,48 +221,67 @@ export function AgentDraft({ message, draft, thread, agentId }: { message: ChatM
         <p className="agents-draft-done">
           {change ? `Updated ${added}` : `Added as ${kind} ${added}`}.{' '}
           {projectId !== null && (
-            <button className="board-card-run-link" onClick={() => actions.setBoardOpen(projectId)}>
-              Open the board
-            </button>
+            <Button variant="ghost" size="sm" label="Open the board" onClick={() => actions.setBoardOpen(projectId)} />
           )}
         </p>
       ) : change && stale ? (
         <>
-          <p className="composer-blocked">
-            {stale === 'deleted'
-              ? `${change.card} was deleted from the board after this draft.`
-              : `${stale.by} changed ${change.card} after this draft, at ${formatSince(stale.at)}.`}
-          </p>
-          {thread.kind === 'question' && <button
-            className="button-secondary"
-            disabled={redone || thread.state === 'working' || thread.state === 'ended'}
-            onClick={() => {
-              setRedone(true);
-              void tellAgent(thread.conversationId, thread.root, 'reply', `${change.card} changed on the board since your draft. Draft the change again from what it says now.`);
-            }}
-          >
-            Ask it to redo this
-          </button>}
+          <Banner
+            status="warning"
+            title={
+              stale === 'deleted'
+                ? `${change.card} was deleted from the board after this draft.`
+                : `${stale.by} changed ${change.card} after this draft, at ${formatSince(stale.at)}.`
+            }
+          />
+          {thread.kind === 'question' && (
+            <Button
+              label="Ask it to redo this"
+              isDisabled={redone || thread.state === 'working' || thread.state === 'ended'}
+              onClick={() => {
+                setRedone(true);
+                void tellAgent(
+                  thread.conversationId,
+                  thread.root,
+                  'reply',
+                  `${change.card} changed on the board since your draft. Draft the change again from what it says now.`,
+                );
+              }}
+            />
+          )}
         </>
       ) : (
         <div className="agents-draft-actions">
           {!change && shared.length > 1 && (
-            <select value={picked ?? ''} onChange={(e) => setPicked(Number(e.target.value) || null)}>
-              <option value="">Pick a board</option>
-              {shared.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            <Selector
+              label="Board"
+              isLabelHidden
+              placeholder="Pick a board"
+              value={picked === null ? undefined : String(picked)}
+              onChange={(v) => setPicked(Number(v))}
+              options={shared.map((p) => ({ value: String(p.id), label: p.name }))}
+            />
           )}
-          {!change && shared.length === 0 && <p className="composer-blocked">Add your agent to a project first, under the project’s people.</p>}
-          <button className="button-primary" disabled={busy || cards === null || projectId === null || (!!change && !current)} onClick={() => void add()}>
-            {change ? `Update ${change.card}` : `Add as ${kind} ${idOf((cards ?? []).map((c) => c.cardId), draft.kind)}`}
-          </button>
+          {!change && shared.length === 0 && (
+            <Banner status="warning" title="Add your agent to a project first, under the project’s people." />
+          )}
+          <Button
+            variant="primary"
+            label={
+              change
+                ? `Update ${change.card}`
+                : `Add as ${kind} ${idOf(
+                    (cards ?? []).map((c) => c.cardId),
+                    draft.kind,
+                  )}`
+            }
+            isDisabled={cards === null || projectId === null || (!!change && !current)}
+            isLoading={busy}
+            onClick={() => void add()}
+          />
         </div>
       )}
-      {error && <p className="form-error">{error}</p>}
+      {error && <Banner status="error" title={error} />}
     </div>
   );
 }

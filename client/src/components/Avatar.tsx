@@ -1,4 +1,5 @@
-const COLORS = ['#e17055', '#0984e3', '#6c5ce7', '#00a884', '#d6336c', '#e8a317', '#1098ad', '#7950f2', '#c2255c'];
+// Muted, warm tones that sit with the palette in styles.css and keep white initials readable.
+const COLORS = ['#b4532a', '#3d6e8c', '#5d7a45', '#a0662a', '#2f7a6b', '#9b4848', '#5a6474', '#86702f', '#8a5468'];
 
 function initials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);

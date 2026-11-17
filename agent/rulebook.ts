@@ -107,8 +107,8 @@ export function judge({ tool, kind, paths, urls = [] }: Action, { folders, secre
     if (!ports || !BROWSER_TOOLS.includes(browser)) return deny('WebChat does not let a run use that browser tool.');
     return urls.every((url) => onRunPort(url, ports)) ? { allow: true } : deny('The browser opens only this run’s dev server.');
   }
-  // A harness may prefix the name with its server's. An ACP agent writes the name itself, so only the whole name of a tool call counts.
-  const own = tool ? /^(?:mcp__[\w-]+__|[\w-]+: )?(\w+)$/.exec(tool)?.[1] : undefined;
+  // A harness may prefix the name with its server's; Antigravity writes `mcp_webchat_`, whose server name only WebChat's own fits. An ACP agent writes the name itself, so only the whole name of a tool call counts.
+  const own = tool ? /^(?:mcp__[\w-]+__|mcp_webchat_|[\w-]+: )?(\w+)$/.exec(tool)?.[1] : undefined;
   if (own && tools.includes(own) && (kind === 'other' || kind === 'think')) return { allow: true };
   // A read or a search that names no path could be of anything.
   if (kind === 'read' || kind === 'search') return paths.length ? { allow: true } : ask('I cannot tell what it reads.');

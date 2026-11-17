@@ -1,4 +1,6 @@
 import { useMemo } from 'react';
+import { List, ListItem } from '@astryxdesign/core/List';
+import { Text } from '@astryxdesign/core/Text';
 import type { PullRequestDTO } from '../../../shared/types';
 import { agentOf } from '../agents';
 import { openConversation, sharePull } from '../chat';
@@ -16,7 +18,10 @@ export function SharePullDialog({ pull, onClose }: { pull: PullRequestDTO; onClo
   const meId = me?.id;
   // A chat with the user's own agent is the Coding agents pane's, where a card would show nowhere (D-103).
   const sorted = useMemo(
-    () => Object.values(conversations).filter((c) => !agentOf({ users, me }, c)).sort((a, b) => b.updatedAt - a.updatedAt),
+    () =>
+      Object.values(conversations)
+        .filter((c) => !agentOf({ users, me }, c))
+        .sort((a, b) => b.updatedAt - a.updatedAt),
     [conversations, users, me],
   );
 
@@ -28,34 +33,50 @@ export function SharePullDialog({ pull, onClose }: { pull: PullRequestDTO; onClo
 
   return (
     <Dialog title="Share to" onClose={onClose}>
-      <p className="dialog-intro">
+      <Text as="p" color="secondary">
         {pull.title} ({pull.repo}#{pull.number})
-      </p>
+      </Text>
       {sorted.length === 0 ? (
-        <p className="dialog-note">No chats yet. Start one from the chat list first.</p>
+        <Text as="p" weight="semibold">
+          No chats yet. Start one from the chat list first.
+        </Text>
       ) : (
-        <ul className="people-list">
+        <List edge="flush">
           {sorted.map((conversation) => {
-            const other = conversation.type === 'direct' ? conversation.members.find((m) => m.userId !== meId) : undefined;
+            const other =
+              conversation.type === 'direct' ? conversation.members.find((m) => m.userId !== meId) : undefined;
             const user = other && users[other.userId];
             const project = conversation.projectId === null ? undefined : projects[conversation.projectId];
             return (
-              <li key={conversation.id}>
-                <button className="person" onClick={() => void pick(conversation.id)}>
-                  {conversation.type === 'direct' ? (
-                    <Avatar name={user?.displayName ?? '?'} seed={other?.userId ?? 0} size={38} online={user?.online ?? false} />
+              <ListItem
+                key={conversation.id}
+                onClick={() => void pick(conversation.id)}
+                startContent={
+                  conversation.type === 'direct' ? (
+                    <Avatar
+                      name={user?.displayName ?? '?'}
+                      seed={other?.userId ?? 0}
+                      size={38}
+                      online={user?.online ?? false}
+                    />
                   ) : (
                     <span className="share-mark">{conversation.type === 'channel' ? <HashIcon /> : <UsersIcon />}</span>
-                  )}
-                  <span>
-                    <strong>{conversation.type === 'channel' ? `#${conversation.title ?? 'channel'}` : chatTitle(conversation)}</strong>
-                    <small>{conversation.type === 'channel' ? (project?.name ?? 'Project') : conversation.type === 'group' ? 'Group' : `@${user?.username ?? ''}`}</small>
-                  </span>
-                </button>
-              </li>
+                  )
+                }
+                label={
+                  conversation.type === 'channel' ? `#${conversation.title ?? 'channel'}` : chatTitle(conversation)
+                }
+                description={
+                  conversation.type === 'channel'
+                    ? (project?.name ?? 'Project')
+                    : conversation.type === 'group'
+                      ? 'Group'
+                      : `@${user?.username ?? ''}`
+                }
+              />
             );
           })}
-        </ul>
+        </List>
       )}
     </Dialog>
   );

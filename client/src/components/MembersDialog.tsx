@@ -1,4 +1,9 @@
 import { useState } from 'react';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { List, ListItem } from '@astryxdesign/core/List';
+import { Stack } from '@astryxdesign/core/Stack';
+import { Text } from '@astryxdesign/core/Text';
 import {
   deleteGroup,
   deleteProject,
@@ -38,7 +43,13 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
   const rank = (id: number) => (id === ownerId ? 0 : id === me.id ? 1 : 2);
   const people = memberIds
     .map((id) => ({ id, user: id === me.id ? me : users[id] }))
-    .map(({ id, user }) => ({ id, name: user?.displayName ?? 'Someone', username: user?.username ?? '', online: user?.online, agent: user?.agentOwner != null }))
+    .map(({ id, user }) => ({
+      id,
+      name: user?.displayName ?? 'Someone',
+      username: user?.username ?? '',
+      online: user?.online,
+      agent: user?.agentOwner != null,
+    }))
     .sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));
   const owner = people.find((p) => p.id === ownerId);
   // The owner hands it over first, so it always has one. The last person in it deletes it instead.
@@ -65,27 +76,39 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
         : 'They cannot read anything sent after this. You can add them again later.';
     if (!confirm(`Remove ${person.name} from ${name}? ${after}`)) return;
     void run(() =>
-      target.kind === 'project' ? removeProjectMember(target.projectId, person.id) : removeGroupMember(target.conversationId, person.id),
+      target.kind === 'project'
+        ? removeProjectMember(target.projectId, person.id)
+        : removeGroupMember(target.conversationId, person.id),
     );
   }
 
   function handOver(person: { id: number; name: string }) {
-    if (!confirm(`Make ${person.name} the owner of ${name}? Only they can then remove people or delete it, and you can leave.`)) return;
+    if (
+      !confirm(
+        `Make ${person.name} the owner of ${name}? Only they can then remove people or delete it, and you can leave.`,
+      )
+    )
+      return;
     void run(() =>
-      target.kind === 'project' ? handOverProject(target.projectId, person.id) : handOverGroup(target.conversationId, person.id),
+      target.kind === 'project'
+        ? handOverProject(target.projectId, person.id)
+        : handOverGroup(target.conversationId, person.id),
     );
   }
 
   async function leave() {
     const warning = 'You stop getting its messages and cannot read anything sent after you leave.';
     if (!confirm(`Leave ${name}? ${warning} Someone in it can add you again later.`)) return;
-    const left = await run(() => (target.kind === 'project' ? leaveProject(target.projectId) : leaveGroup(target.conversationId)));
+    const left = await run(() =>
+      target.kind === 'project' ? leaveProject(target.projectId) : leaveGroup(target.conversationId),
+    );
     if (left) onClose();
   }
 
   async function deleteForEveryone() {
     const what = target.kind === 'project' ? 'Every channel and message in it' : 'Every message in it';
-    if (!confirm(`Delete ${name} for everyone? ${what} will be deleted for all members. This cannot be undone.`)) return;
+    if (!confirm(`Delete ${name} for everyone? ${what} will be deleted for all members. This cannot be undone.`))
+      return;
     const deleted = await run(() =>
       target.kind === 'project' ? deleteProject(target.projectId) : deleteGroup(target.conversationId),
     );
@@ -94,68 +117,74 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
 
   return (
     <Dialog title={name} onClose={onClose}>
-      <p className="dialog-intro">
+      <Text as="p" color="secondary">
         {people.length} {people.length === 1 ? 'member' : 'members'}
         {owner && `. ${owner.id === me.id ? 'You own' : `${owner.name} owns`} this ${noun}.`}
-      </p>
-      <ul className="people-list">
+      </Text>
+      <List edge="flush">
         {people.map((person) => (
-          <li key={person.id} className="member">
-            <Avatar name={person.name} seed={person.id} size={38} online={person.id !== me.id && person.online} />
-            <span className="member-name">
-              <strong>{person.id === me.id ? 'You' : person.name}</strong>
-              <small>{person.id === ownerId ? 'Owner' : `@${person.username}`}</small>
-            </span>
-            {canManage && person.id !== me.id && person.id !== ownerId && (
-              <span className="member-actions">
-                {/* An agent can neither remove people nor hand it back, so it never owns one (D-114). */}
-                {!person.agent && (
-                  <button
-                    className="member-hand-over"
-                    onClick={() => handOver(person)}
-                    disabled={busy}
-                    aria-label={`Make ${person.name} the owner of ${name}`}
-                  >
-                    Make owner
-                  </button>
-                )}
-                <button
-                  className="member-remove"
-                  onClick={() => remove(person)}
-                  disabled={busy}
-                  aria-label={`Remove ${person.name} from ${name}`}
-                >
-                  Remove
-                </button>
-              </span>
-            )}
-          </li>
+          <ListItem
+            key={person.id}
+            startContent={
+              <Avatar name={person.name} seed={person.id} size={38} online={person.id !== me.id && person.online} />
+            }
+            label={person.id === me.id ? 'You' : person.name}
+            description={person.id === ownerId ? 'Owner' : `@${person.username}`}
+            endContent={
+              canManage &&
+              person.id !== me.id &&
+              person.id !== ownerId && (
+                <Stack direction="horizontal" gap={1}>
+                  {/* An agent can neither remove people nor hand it back, so it never owns one (D-114). */}
+                  {!person.agent && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      label="Make owner"
+                      aria-label={`Make ${person.name} the owner of ${name}`}
+                      onClick={() => handOver(person)}
+                      isDisabled={busy}
+                    />
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    label="Remove"
+                    aria-label={`Remove ${person.name} from ${name}`}
+                    onClick={() => remove(person)}
+                    isDisabled={busy}
+                  />
+                </Stack>
+              )
+            }
+          />
         ))}
-      </ul>
-      {error && <p className="form-error">{error}</p>}
+      </List>
+      {error && <Banner status="error" title={error} />}
       {(canLeave || canManage) && (
-        <div className="dialog-actions">
-          {canLeave && (
-            <button className="button-secondary" onClick={() => void leave()} disabled={busy}>
-              Leave {noun}
-            </button>
-          )}
+        <Stack direction="horizontal" gap={2} wrap="wrap">
+          {canLeave && <Button label={`Leave ${noun}`} onClick={() => void leave()} isDisabled={busy} />}
           {canManage && (
-            <button className="button-danger" onClick={() => void deleteForEveryone()} disabled={busy}>
-              Delete {noun}
-            </button>
+            <Button
+              variant="destructive"
+              label={`Delete ${noun}`}
+              onClick={() => void deleteForEveryone()}
+              isDisabled={busy}
+            />
           )}
-        </div>
+        </Stack>
       )}
-      {ownerId === me.id ? (
-        people.length > 1 && <p className="dialog-intro">To leave, make someone else the owner first.</p>
-      ) : (
-        owner && (
-          <p className="dialog-intro">
-            Only {owner.name} can remove people or delete this {noun}.
-          </p>
-        )
-      )}
+      {ownerId === me.id
+        ? people.length > 1 && (
+            <Text as="p" color="secondary">
+              To leave, make someone else the owner first.
+            </Text>
+          )
+        : owner && (
+            <Text as="p" color="secondary">
+              Only {owner.name} can remove people or delete this {noun}.
+            </Text>
+          )}
     </Dialog>
   );
 }

@@ -233,6 +233,40 @@ Constraints: a knob is offered only when the adapter honors it without running c
 
 Done when: a Claude Code agent behaves as before and the tests pass; Settings lists the harnesses the laptop has, each with its state and knobs; a card run and a conversation each show the harness the owner picked; a request from an old page runs on the host harness; a request naming a harness that is not enabled fails with the reason.
 
+### R-047: A card opens as a peek that holds its run
+
+Status: Idea.
+
+Checked: 2026-11-17. 2026-11-17: read the board's cards and decisions, docs/roadmap/new-board-lanes.md, new-pause-redirect.md, new-astryx-migration.md, board-tab-hides-editor.md and decisions new-board-lanes, new-card-owner/review/notes, stop-pauses-run, redirect-plan-gate, new-astryx-migration; BoardView.tsx, AgentsView.tsx, chat.ts, store.ts, sw.ts on main at d588a8a; open pull requests #255, #253, #229 by title.
+
+Status: Ready. Proposed 2026-11-17.
+
+Why: a card opens inside its lane, which is too narrow to read. Its run lives in the Coding agents
+pane, which replaces the board. An owner who runs cards goes back and forth between the two: the
+board says a card runs, and the pane holds the question, the plan and the words that redirect it.
+
+Scope, four pull requests in a row:
+
+- The peek: a click on a card opens it in a large dialog over the board, and a full page at phone
+  width. The lanes keep faces only. Editing, history, reviews and asks move into the peek, and the
+  one-editor lock follows it. Arrows step to the next card in the lane. The address names the open
+  card, so a reload keeps it.
+- The run column: for a card with a run of the user's own, the peek shows the run beside the card's
+  text: its progress, a waiting question with its answers, the plan gate, pause and redirect. It is
+  the same view the Coding agents pane shows, which still lists the conversation. A notification
+  for a card's run opens the board on that card.
+- Needs you: a row above the lanes lists the cards that wait for the user, and each such card's
+  face says so.
+- Proposals: a draft from a proposal file shows as a dashed card in the Open drawer, with a button
+  that adds it.
+
+Constraints: nothing new reaches the server. Run messages stay in the owner's direct chat with
+their agent, so a teammate sees the peek with the card only. The peek is built with Astryx.
+
+Done when: an owner answers a run's question, redirects it and pauses it without leaving the
+board; a teammate sees the same card with no run; a reload reopens the same card; at 375 pixels the
+peek fills the page; tests cover the address and the list of cards that wait.
+
 ## Known issues
 
 ### K-69: An agent's board messages buzz the owner's phone and count as unread

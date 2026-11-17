@@ -1,6 +1,6 @@
 {
   "name": "webchat",
-  "version": "0.13.0",
+  "version": "0.14.1",
   "description": "The last release of the WebChat plugin: skills that run webchat-agent. The agent itself runs from webchat-agent setup, and the plugin hosts nothing.",
   "author": {
     "name": "Hzxon"

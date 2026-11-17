@@ -15,7 +15,7 @@ import { fits, listenForAnswers } from '../agent/answer.ts';
 import { Peer } from '../agent/rpc.ts';
 import { acpRow, harnessFinder, SUPPORTED, supported, supportedList } from '../agent/harnesses.ts';
 import type { Ask, Harness, Reply, Turn } from '../agent/harness.ts';
-import { LIMITS } from '../shared/types.ts';
+import { HARNESS_WARNING, LIMITS } from '../shared/types.ts';
 
 /**
  * Stands in for an ACP agent. It is also the MCP client that a real agent is: at a session's start
@@ -66,7 +66,7 @@ let authed = false;
 async function prompt(params) {
   const n = prompts++;
   log({ prompt: params.prompt[0].text, n });
-  if (env.FAKE_ACP_NOTE) out({ method: 'session/update', params: { sessionId: 'acp-1', update: { sessionUpdate: 'tool_call', toolCallId: 't1', kind: 'read', title: 'Reading secrets', locations: [{ path: process.cwd() + '/sum.js' }] } } });
+  if (env.FAKE_ACP_NOTE) out({ method: 'session/update', params: { sessionId: 'acp-1', update: { sessionUpdate: 'tool_call', toolCallId: 't1', kind: 'read', title: 'Reading secrets', locations: [{ path: 'sum.js' }] } } });
   if (env.FAKE_ACP_TEXT) out({ method: 'session/update', params: { sessionId: 'acp-1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: env.FAKE_ACP_TEXT } } } });
   for (const item of JSON.parse(env.FAKE_ACP_ASK ?? '[]')) {
     const reply = await ask('session/request_permission', { sessionId: 'acp-1', toolCall: item.toolCall, options: item.options ?? OPTIONS });
@@ -146,7 +146,9 @@ function entryProblem(agent: AcpAgent, others: AcpAgent[] = []) {
   if (!/^\d+(\.\d+)*$/.test(agent.min)) return 'its minimum version is no version';
   if (!/^\d{4}-\d\d-\d\d: \S/.test(agent.checked)) return 'it has no dated check';
   const { isolation } = agent;
-  if (!isolation || (!isolation.args?.length && !Object.keys(isolation.env ?? {}).length)) return 'it has no flag or variable that skips the owner\'s settings and MCP servers';
+  // An agent that cannot run isolated ships only with a warning the owner reads before linking it.
+  if (!isolation) return HARNESS_WARNING[agent.name] ? undefined : 'it has no isolation and no warning for the owner';
+  if (!isolation.args?.length && !Object.keys(isolation.env ?? {}).length) return 'it has no flag or variable that skips the owner\'s settings and MCP servers';
   if (!/^\d{4}-\d\d-\d\d: \S/.test(isolation.checked)) return 'its isolation has no dated check';
 }
 
@@ -234,6 +236,9 @@ describe('the ACP adapter', () => {
       const lines = readline.createInterface({ input: socket })[Symbol.asyncIterator]();
       socket.write(`${JSON.stringify({ token: 'wrong', id: 1, op: 'schema' })}\n`);
       assert.deepEqual(JSON.parse((await lines.next()).value as string), { id: 1, error: 'No.' });
+      // An agent lists the tool before the first turn; Hermes drops a server whose schema is not an object.
+      socket.write(`${JSON.stringify({ token: listener.env[1].value, id: 2, op: 'schema' })}\n`);
+      assert.deepEqual(JSON.parse((await lines.next()).value as string), { id: 2, schema: { type: 'object' } });
       socket.destroy();
     } finally {
       await listener.close();
@@ -447,22 +452,40 @@ describe('the ACP adapter', () => {
     assert.deepEqual([env.GH_TOKEN, env.NPM_TOKEN, env.FAKE_LOGIN_TOKEN, env.EDITOR], [undefined, undefined, 'canary-login', 'vim']);
   });
 
+  test('an agent kept apart in a folder of its own gets that folder, and no turn runs where a file would let it out', async () => {
+    const kept = { ...FAKE, isolation: { ...FAKE.isolation!, args: ['--home', '{data}'] }, refuseFiles: ['.agents/mcp_config.json'] };
+    const harness = adapter({}, kept);
+    assert.deepEqual(await harness.turn(turn()), { reply: 'It adds.' });
+    const home = path.join(data, 'fake');
+    assert.deepEqual((await logged('start'))[0]!.start.argv, ['--acp', '--home', home]);
+    assert.ok((await fs.stat(home)).isDirectory(), 'the folder exists before the agent starts');
+    // A file written between turns counts too, since the agent reads it again for the next turn.
+    await fs.mkdir(path.join(work, '.agents'));
+    await fs.writeFile(path.join(work, '.agents', 'mcp_config.json'), '{}');
+    await assert.rejects(harness.turn(turn({ resume: true })), /\.agents\/mcp_config\.json/);
+    assert.equal((await logged('in')).filter((e) => e.in === 'session/prompt').length, 1, 'no prompt reached the agent');
+  });
+
   test('refusal and found say what this laptop has', async () => {
     assert.equal(await acpHarness({ agent: FAKE, program: '', self: SELF, dataDir: data }).refusal(), 'I cannot find Fake on this laptop.');
     const harness = adapter();
     assert.equal(await harness.refusal(), undefined);
     assert.deepEqual(await harness.found(), { path: program, version: '0.3.1' });
     assert.deepEqual(harness.offers(), { knobs: [] });
+    assert.equal(await harness.warning?.(), undefined);
+    const hermes = ACP_AGENTS.find((a) => a.id === 'hermes')!;
+    assert.equal(await acpHarness({ agent: hermes, program: '', self: SELF, dataDir: data }).warning?.(), HARNESS_WARNING.Hermes, 'Settings shows the owner what an unconfined agent can reach');
     assert.equal(await acpHarness({ agent: { ...FAKE, min: '0.4.0' }, program, self: SELF, dataDir: data }).refusal(), 'Fake 0.3.1 is older than 0.4.0, which I need. Update it.');
   });
 
-  test('the shipped list holds only entries that isolate the agent from the owner\'s setup', () => {
+  test('the shipped list holds only entries that isolate the agent from the owner\'s setup, or warn the owner', () => {
     ACP_AGENTS.forEach((agent, i) => assert.equal(entryProblem(agent, ACP_AGENTS.slice(0, i) as AcpAgent[]), undefined, agent.id));
     // `readHarnesses` drops what passes LIMITS.harnesses, the two built-in adapters among them.
     assert.ok(2 + ACP_AGENTS.length <= LIMITS.harnesses);
     assert.equal(entryProblem(FAKE), undefined);
     const bad: [Partial<AcpAgent>, RegExp][] = [
       [{ isolation: { args: [], env: {}, checked: '2026-11-13: x' } }, /no flag or variable/],
+      [{ isolation: undefined }, /no isolation and no warning/],
       [{ isolation: { args: ['--bare'], env: {}, checked: 'checked' } }, /isolation has no dated check/],
       [{ program: '/usr/bin/fake' }, /path or a launcher/],
       [{ program: 'npx' }, /path or a launcher/],
@@ -477,12 +500,11 @@ describe('the ACP adapter', () => {
   });
 
   test('an agent that is not on the list cannot be linked, found or run', async () => {
-    assert.equal(supported('hermes'), undefined);
     assert.equal(supported('gemini'), undefined);
-    assert.equal(supportedList(), 'claude (Claude Code), codex (Codex)');
+    assert.equal(supportedList(), 'claude (Claude Code), codex (Codex), hermes (Hermes), antigravity (Antigravity)');
     // A program of that name on the PATH is never started, not even to read its version.
-    const marker = path.join(root, `hermes-ran-${randomUUID()}`);
-    await fs.writeFile(path.join(root, 'bin', 'hermes'), `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 });
+    const marker = path.join(root, `gemini-ran-${randomUUID()}`);
+    await fs.writeFile(path.join(root, 'bin', 'gemini'), `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 });
     process.env.PATH = `${path.join(root, 'bin')}${path.delimiter}${saved.PATH}`;
     const found = await harnessFinder({ dataDir: data })();
     await Promise.all(found.map((harness) => harness.found()));
@@ -493,7 +515,7 @@ describe('the ACP adapter', () => {
   test('an agent on the list is found by its file name, linked by its id, and runs a turn', async () => {
     const kinds = [...SUPPORTED, acpRow(FAKE)];
     assert.equal(supported('fake', kinds)?.name, 'Fake');
-    assert.equal(supportedList(kinds), 'claude (Claude Code), codex (Codex), fake (Fake)');
+    assert.equal(supportedList(kinds), 'claude (Claude Code), codex (Codex), hermes (Hermes), antigravity (Antigravity), fake (Fake)');
     process.env.PATH = `${path.join(root, 'bin')}${path.delimiter}${saved.PATH}`;
     const found = await harnessFinder({ dataDir: data, self: SELF }, kinds)();
     const fake = found.at(-1)!;

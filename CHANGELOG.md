@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.14.1](https://github.com/Hzxon/webchat/compare/v0.14.0...v0.14.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **agents:** Approve an agent with no project ([#245](https://github.com/Hzxon/webchat/issues/245)) ([95c916a](https://github.com/Hzxon/webchat/commit/95c916a89ead76bd676db2cd40569fb54273ddd1))
+
+## [0.14.0](https://github.com/Hzxon/webchat/compare/v0.13.0...v0.14.0) (2026-11-14)
+
+
+### Features
+
+* **agent:** Support Antigravity as a coding agent ([#244](https://github.com/Hzxon/webchat/issues/244)) ([26ac68a](https://github.com/Hzxon/webchat/commit/26ac68a487a584ced7231d2601ff69906a64cf80))
+* **agent:** Support Hermes as a coding agent ([#243](https://github.com/Hzxon/webchat/issues/243)) ([58183a0](https://github.com/Hzxon/webchat/commit/58183a041ee86da80bb63bbde0870c5b1e01c485))
+
+
+### Bug Fixes
+
+* **chat:** Show a tall photo from its top ([#241](https://github.com/Hzxon/webchat/issues/241)) ([5a79297](https://github.com/Hzxon/webchat/commit/5a79297986e68939ed547f955c38ec046731bcc3))
+
 ## [0.13.0](https://github.com/Hzxon/webchat/compare/v0.12.0...v0.13.0) (2026-11-14)
 
 
