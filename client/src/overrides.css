@@ -22,6 +22,40 @@
   }
 }
 
+/* A card's peek: the card and its run share the dialog's height, half each, and each scrolls on its
+   own; at phone width the run goes under the card, a screen high, and the page scrolls. */
+.card-peek {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.card-peek > * {
+  flex: 1 1 0;
+}
+
+.card-peek-run {
+  min-width: 0;
+  border-inline-start: 1px solid var(--line);
+  background: var(--chat-bg);
+}
+
+@media (max-width: 760px) {
+  .card-peek {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .card-peek > * {
+    flex: none;
+  }
+
+  .card-peek-run {
+    height: 100%;
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--line);
+  }
+}
+
 /* The sidebar collapses to a rail only beside the chat; a phone shows one pane at a time instead. */
 .sidebar-rail,
 .collapse-button {

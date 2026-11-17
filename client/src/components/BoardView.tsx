@@ -75,6 +75,7 @@ import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Avatar } from './Avatar';
+import { AgentThread } from './AgentThread';
 import { CardPeek } from './CardPeek';
 import { SectionEditor, SectionHistory } from './DocView';
 import {
@@ -358,7 +359,7 @@ function BoardColumnView({
   const pending = useAppState((s) => s.pending);
   const messages = useAppState((s) => s.messages);
   // A card's runs are messages in the user's chats with their agents, which load at start (D-105).
-  const chats = useAgentChats();
+  const { chats, threads } = useAgentThreads();
   // In id order across chats, so the newest request of a card is the one that counts.
   const agentMessages = useMemo(() => inOrder(chats.flatMap((c) => messages[c.id] ?? [])), [chats, messages]);
   // Read on every render, so a request nobody answered stops blocking once its time is up.
@@ -398,6 +399,9 @@ function BoardColumnView({
   const editsPeek = editing?.section.id === boardCard;
   const siblings = groups.find((group) => group.cards.some((c) => c.id === boardCard))?.cards ?? [];
   const at = siblings.findIndex((c) => c.id === boardCard);
+  // The user's own run of the open card shows beside it; run messages reach only their owner, so a teammate sees the card alone (D-100).
+  const peekRun = peek && runs?.get(peek.id);
+  const runThread = peekRun && threads.find((t) => t.request === peekRun.request);
   useEffect(() => {
     if (peek || editsPeek) onPeek();
   }, [!!peek || editsPeek]);
@@ -867,12 +871,6 @@ function BoardColumnView({
               {cardRun.harness && ` with ${cardRun.harness}`}
               {cardRun.note && ` · ${cardRun.note}`}
             </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              label="Open the conversation"
-              onClick={() => actions.setAgentsOpen(true, request?.clientId ?? null)}
-            />
           </p>
         )}
         {check && card.kind && !card.failed && (
@@ -982,6 +980,16 @@ function BoardColumnView({
           next={editing ? undefined : siblings[at + 1]?.id}
           onOpen={openCard}
           onClose={() => openCard(null)}
+          run={
+            runThread && (
+              <AgentThread
+                key={runThread.root}
+                thread={runThread}
+                seat={users[peekRun!.runtime] && seatFor(users[peekRun!.runtime]!, runThread.repo)}
+                agentId={peekRun!.runtime}
+              />
+            )
+          }
         >
           {/* The card being edited shows here, whatever its group, so its editor keeps its text and its lock. */}
           {editsPeek ? (
