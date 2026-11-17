@@ -1,4 +1,4 @@
-// Draws the app icons as PNG files with no image library: a green tile with a white chat bubble.
+// Draws the app icons as PNG files with no image library: an accent tile with a white chat bubble.
 // Run with `npm run icons`; the output goes to client/public/icons.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,7 +7,8 @@ import zlib from 'node:zlib';
 type Rgba = [number, number, number, number];
 type Shape = (x: number, y: number) => boolean;
 
-const GREEN: Rgba = [0, 168, 132, 255];
+// The light-mode --accent in styles.css (D-083), as in favicon.svg.
+const ACCENT: Rgba = [194, 65, 12, 255];
 const WHITE: Rgba = [255, 255, 255, 255];
 
 function roundedRect(cx: number, cy: number, w: number, h: number, r: number): Shape {
@@ -93,14 +94,14 @@ function bubble(scale: number): Array<[Shape, Rgba]> {
     triangle(s(0.28), s(0.6), s(0.4), s(0.66), s(0.24), s(0.78)),
   );
   const dots = [0.37, 0.5, 0.63].map((x) => circle(s(x), s(0.47), 0.045 * scale));
-  return [[body, WHITE], ...dots.map((d): [Shape, Rgba] => [d, GREEN])];
+  return [[body, WHITE], ...dots.map((d): [Shape, Rgba] => [d, ACCENT])];
 }
 
 const outDir = path.resolve('client', 'public', 'icons');
 fs.mkdirSync(outDir, { recursive: true });
 
-const tile: [Shape, Rgba] = [roundedRect(0.5, 0.5, 1, 1, 0.22), GREEN];
-const fullBleed: [Shape, Rgba] = [() => true, GREEN];
+const tile: [Shape, Rgba] = [roundedRect(0.5, 0.5, 1, 1, 0.22), ACCENT];
+const fullBleed: [Shape, Rgba] = [() => true, ACCENT];
 const outputs: Record<string, [number, Array<[Shape, Rgba]>]> = {
   'icon-192.png': [192, [tile, ...bubble(1)]],
   'icon-512.png': [512, [tile, ...bubble(1)]],

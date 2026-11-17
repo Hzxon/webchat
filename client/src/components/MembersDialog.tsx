@@ -17,6 +17,7 @@ import {
 import { useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
+import { confirmAction } from './ConfirmHost';
 
 /** Whose members to show or add to: a project's or a group's. */
 export type MembersTarget = { kind: 'project'; projectId: number } | { kind: 'group'; conversationId: number };
@@ -69,12 +70,19 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
     }
   }
 
-  function remove(person: { id: number; name: string }) {
+  async function remove(person: { id: number; name: string }) {
     const after =
       target.kind === 'project'
         ? 'They leave every channel and cannot read anything sent after this. You can add them again later.'
         : 'They cannot read anything sent after this. You can add them again later.';
-    if (!confirm(`Remove ${person.name} from ${name}? ${after}`)) return;
+    if (
+      !(await confirmAction({
+        title: `Remove ${person.name} from ${name}?`,
+        body: after,
+        confirmLabel: 'Remove',
+      }))
+    )
+      return;
     void run(() =>
       target.kind === 'project'
         ? removeProjectMember(target.projectId, person.id)
@@ -82,13 +90,14 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
     );
   }
 
-  function handOver(person: { id: number; name: string }) {
-    if (
-      !confirm(
-        `Make ${person.name} the owner of ${name}? Only they can then remove people or delete it, and you can leave.`,
-      )
-    )
-      return;
+  async function handOver(person: { id: number; name: string }) {
+    const yes = await confirmAction({
+      title: `Make ${person.name} the owner of ${name}?`,
+      body: 'Only they can then remove people or delete it, and you can leave.',
+      confirmLabel: 'Make owner',
+      destructive: false,
+    });
+    if (!yes) return;
     void run(() =>
       target.kind === 'project'
         ? handOverProject(target.projectId, person.id)
@@ -98,7 +107,14 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
 
   async function leave() {
     const warning = 'You stop getting its messages and cannot read anything sent after you leave.';
-    if (!confirm(`Leave ${name}? ${warning} Someone in it can add you again later.`)) return;
+    if (
+      !(await confirmAction({
+        title: `Leave ${name}?`,
+        body: `${warning} Someone in it can add you again later.`,
+        confirmLabel: `Leave ${target.kind}`,
+      }))
+    )
+      return;
     const left = await run(() =>
       target.kind === 'project' ? leaveProject(target.projectId) : leaveGroup(target.conversationId),
     );
@@ -107,8 +123,12 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
 
   async function deleteForEveryone() {
     const what = target.kind === 'project' ? 'Every channel and message in it' : 'Every message in it';
-    if (!confirm(`Delete ${name} for everyone? ${what} will be deleted for all members. This cannot be undone.`))
-      return;
+    const yes = await confirmAction({
+      title: `Delete ${name} for everyone?`,
+      body: `${what} will be deleted for all members. This cannot be undone.`,
+      confirmLabel: `Delete ${target.kind}`,
+    });
+    if (!yes) return;
     const deleted = await run(() =>
       target.kind === 'project' ? deleteProject(target.projectId) : deleteGroup(target.conversationId),
     );

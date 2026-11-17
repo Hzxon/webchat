@@ -45,3 +45,12 @@
     display: flex;
   }
 }
+
+/* The account menu's trigger holds the avatar and two lines of name, taller than any Button size. */
+.account-button {
+  height: auto;
+  min-width: 0;
+  justify-content: flex-start;
+  padding-block: 4px;
+  text-align: start;
+}

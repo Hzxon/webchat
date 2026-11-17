@@ -1147,6 +1147,17 @@ export function createApiRouter({ db, push, bark, github, githubApp, files, conf
     res.status(204).end();
   });
 
+  /** Mutes a chat for the signed-in member only; urgent messages still push (the mute decision, proposed). */
+  router.put('/conversations/:id/mute', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const conversationId = positiveInt(req.params.id, 'Chat id');
+    const muted = req.body?.muted;
+    if (typeof muted !== 'boolean') throw new HttpError(400, 'muted must be true or false.');
+    await requireMember(conversationId, me.id);
+    await db.setMuted(conversationId, me.id, muted);
+    res.status(204).end();
+  });
+
   /** Called by the service worker when a push arrives, so the sender sees "delivered" even with the app closed. */
   router.post('/delivered', requireAuth, async (req, res) => {
     const me = currentUser(res);

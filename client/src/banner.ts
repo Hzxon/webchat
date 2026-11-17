@@ -16,3 +16,7 @@ export function notificationWarning(
   if (push.needsInstall) return 'On iPhone, add this site to your Home Screen to get notifications.';
   return 'Turn on notifications so urgent messages reach you when this tab is closed.';
 }
+
+/** The warning to show, unless this device closed that same one; a different warning shows again. */
+export const shownWarning = (warning: string | null, dismissed: string | null) =>
+  warning === dismissed ? null : warning;

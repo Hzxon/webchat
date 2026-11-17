@@ -56,7 +56,7 @@ import {
 import type { Card } from '../../shared/board';
 import { keyedQueue } from './queue';
 import { agentChats, agentOf, ownAgents, threadsOf } from './agents';
-import { actions, chatTitle, localEditCount, reloadPath, senderName, store, type State } from './store';
+import { actions, chatTitle, localEditCount, loudUnread, reloadPath, senderName, store, type State } from './store';
 
 const newClientId = () =>
   typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -506,7 +506,8 @@ function onIncoming(message: ChatMessage) {
   }
 
   const conversation = state.conversations[message.conversationId];
-  if (!conversation) return;
+  // Urgent ones ignore mute, as their push does (the mute decision, proposed).
+  if (!conversation || (conversation.muted && !message.urgent)) return;
   const sender = senderName(state.users, message.senderId);
   const isGroup = conversation.type !== 'direct';
   const title = isGroup ? chatTitle(conversation) : sender;
@@ -534,7 +535,7 @@ let lastAlertState = '';
 /** Keeps the tab title, favicon, app badge and urgent ringing in step with the store. */
 function syncAlerts() {
   const state = store.get();
-  const unread = Object.values(state.conversations).reduce((sum, c) => sum + c.unread, 0);
+  const unread = Object.values(state.conversations).reduce((sum, c) => sum + loudUnread(c), 0);
   const first = state.urgent[0];
   const urgentFrom = first ? senderName(state.users, first.senderId) : null;
   const key = `${unread}|${urgentFrom}`;
@@ -1266,6 +1267,17 @@ export async function leaveProject(projectId: number) {
   await api.leaveProject(projectId);
   actions.dropProject(projectId);
   void syncNow();
+}
+
+/** Mutes or unmutes a chat for this user on all their devices; a failure puts the old state back. */
+export async function setMuted(conversationId: number, muted: boolean) {
+  actions.setMuted(conversationId, muted);
+  try {
+    await api.setMuted(conversationId, muted);
+  } catch (error) {
+    actions.setMuted(conversationId, !muted);
+    actions.addToast({ conversationId, title: muted ? 'Not muted' : 'Not unmuted', body: (error as Error).message });
+  }
 }
 
 /** Leaves a group. A member who stays gives it a new key, as for a project. */
