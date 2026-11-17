@@ -45,3 +45,12 @@
     display: flex;
   }
 }
+
+/* Safari before 17 has no Popover API, so nothing hides a closed popover until main.tsx has loaded
+   the polyfill, and every Astryx tooltip and menu sits in the layout meanwhile (D-052). The polyfill
+   marks an open popover with this class. */
+@supports not selector(:popover-open) {
+  [popover]:not(.\:popover-open) {
+    display: none;
+  }
+}

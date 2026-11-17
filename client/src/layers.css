@@ -1,7 +1,8 @@
 /* Astryx's styles live in cascade layers, and unlayered CSS beats every layer. Our element rules,
    such as `button { color: inherit }`, would then restyle its components. So styles.css goes in a
    layer above Astryx's reset and under its components, and overrides.css, which must beat a
-   component's own styles, in the layer above them all. */
-@layer reset, app, astryx-base, astryx-theme, app-overrides;
+   component's own styles, in the layer above them all. The popover polyfill's stand-in for the
+   browser's popover styles goes below everything, where the browser's own would sit. */
+@layer popover-polyfill, reset, app, astryx-base, astryx-theme, app-overrides;
 @import './styles.css' layer(app);
 @import './overrides.css' layer(app-overrides);

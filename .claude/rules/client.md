@@ -37,6 +37,7 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - While a conversation's turn runs, the pane offers Stop instead of Send, so each answer follows what it answers (D-103).
 - The pane lists the user's projects; a question signs its project into the prompt, and one of the project's repositories unless it links none (D-103, D-104).
 - A photo shows only from bytes the page decrypted and checked with `fileTypeOf`; any other file is only downloaded, never opened in the page; uploads skip `request`, whose timer would cut them (D-123, D-077).
+- Safari before 17 runs Astryx's layers on `@oddbird/popover-polyfill`: keep its layer first in `layers.css`, and style an open layer with `.\:popover-open` too, since `:popover-open` in CSS fails there (D-052).
 - `styles.css` loads through `layers.css` in the `app` layer, above Astryx's reset and under its components; a stylesheet imported any other way stays unlayered and restyles every Astryx component (the astryx-migration decision, proposed in #248).
 - An Astryx field has no `maxLength` or native `required`: cut the value in `onChange` and check empty fields before a request (the astryx-migration decision, proposed in #248).
 - A class on an Astryx component wins only from `overrides.css`, the layer above Astryx's; keep it to states no prop covers (the astryx-migration decision, proposed in #248).
