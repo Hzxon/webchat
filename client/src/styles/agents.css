@@ -1,0 +1,177 @@
+/* The Coding agents pane (D-103) */
+
+.agents-ask {
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.agents-repo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* The harness picker beside the repository, on the same line. */
+.agents-repo .agents-repo {
+  max-width: 100%;
+  margin: 0;
+}
+
+/* A long reason on a greyed option would widen the select past its card. */
+.agents-repo select {
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.agents-project {
+  margin-bottom: 16px;
+}
+
+.agents-project-head {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.agents-empty {
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.agents-failed {
+  box-shadow: inset 3px 0 0 var(--danger);
+  padding-left: 13px;
+}
+
+.agents-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agents-ended {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agents-mark {
+  position: relative;
+}
+
+.agents-draft {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agents-draft-head,
+.agents-draft-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agents-draft-label {
+  margin-top: 6px;
+}
+
+/* What the agent's check found the draft repeats or goes against; a conflict warns (R-041). */
+.agents-related {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.agents-related-conflict {
+  color: var(--warn);
+}
+
+/* A paragraph the change adds or rewrites. */
+.agents-changed {
+  margin: 0 -6px;
+  padding: 0 6px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+
+.agents-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.agents-draft-actions select {
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.agents-brief {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+/* The brief as the agent gets it, raw, so nothing Markdown hides goes unseen (D-105). */
+.agents-brief-text {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  font-family: var(--mono);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agents-draft-done {
+  margin: 4px 0 0;
+  color: var(--ok);
+  font-weight: 600;
+}
+
+/* Answers hold code, so they take more of the width, and a long line scrolls inside its block. */
+.agents-pane .bubble-line,
+.card-peek-run .bubble-line {
+  max-width: min(92%, 760px);
+}
+
+/* The header holds Put to sleep, Settings and Connect: the button keeps one line, and on a phone the
+   pane's icon makes room for them. */
+
+@media (max-width: 480px) {
+  .agents-pane .chat-header > .github-mark {
+    display: none;
+  }
+}
+
+.bubble .markdown {
+  min-width: 0;
+}
+
+.bubble .markdown pre {
+  overflow-x: auto;
+}
