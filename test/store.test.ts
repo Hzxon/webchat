@@ -47,6 +47,13 @@ describe('The address a reload after a deploy opens, in client/src/store.ts (D-0
     actions.setBoardOpen(null);
     assert.equal(reloadPath(store.get()), '/');
   });
+
+  test('names the card open in the peek, and the board alone once the peek closes', () => {
+    actions.setBoardOpen(3, 's1');
+    assert.equal(reloadPath(store.get()), '/?board=3&card=s1');
+    actions.setBoardCard(null);
+    assert.equal(reloadPath(store.get()), '/?board=3');
+  });
 });
 
 describe('The sidebar tab, in client/src/store.ts (K-62)', () => {
