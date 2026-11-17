@@ -55,7 +55,7 @@ import {
 } from './push';
 import type { Card } from '../../shared/board';
 import { keyedQueue } from './queue';
-import { agentChats, agentOf, ownAgents, threadsOf } from './agents';
+import { agentChats, agentOf, ownAgents, threadCard, threadsOf } from './agents';
 import { actions, chatTitle, localEditCount, reloadPath, senderName, store, type State } from './store';
 
 const newClientId = () =>
@@ -580,10 +580,15 @@ export async function openConversation(conversationId: number) {
   else actions.setAgentsOpen(true);
   await loadChat(conversationId);
   // A notification is for the chat's newest message, so it opens that message's conversation, unless
-  // the user went elsewhere while it loaded. A request has none: it waits in the list.
+  // the user went elsewhere while it loaded. A request has none: it waits in the list. A card's run
+  // opens on its card in the board, which shows the run beside it (the card-run-in-peek decision).
   const now = store.get();
   const list = now.messages[conversationId] ?? [];
-  if (agent && now.agentsOpen && now.agentThread === null) actions.setAgentsOpen(true, list.at(-1)?.ask ? null : threadsOf(list, meId, agent.id, now.pending)[0]?.root ?? null);
+  if (!agent || !now.agentsOpen || now.agentThread !== null) return;
+  const thread = list.at(-1)?.ask ? undefined : threadsOf(list, meId, agent.id, now.pending)[0];
+  const card = thread && threadCard(thread, now.docs, now.conversations);
+  if (card) actions.setBoardOpen(card.projectId, card.section);
+  else actions.setAgentsOpen(true, thread?.root ?? null);
 }
 
 /** Loads a chat's newest messages when the page has none yet, and marks it read while the user looks. */
