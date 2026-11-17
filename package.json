@@ -23,6 +23,7 @@
   "dependencies": {
     "@astryxdesign/core": "^0.7.16",
     "@electric-sql/pglite": "^0.5.14",
+    "@oddbird/popover-polyfill": "^0.7.3",
     "@stylexjs/stylex": "^0.19.2",
     "@vercel/blob": "^2.9.0",
     "@vercel/functions": "^3.10.5",
