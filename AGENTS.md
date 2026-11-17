@@ -94,9 +94,11 @@ its own roadmap item. Nothing coordinates them except what is on GitHub (D-062).
    the board is linked, WebChat's agent reads that to mark the card Running on the board. If it
    refuses, pick another item or number. Work that is not a roadmap item, such as a process change,
    claims the same way by hand: a draft first, with a title and body that say what it covers.
-2. **Work on that branch** and push to the same pull request. Do not merge or rebase on main to stay
-   ahead of other pull requests. Resolve conflicts once, when GitHub reports them: merge main, fix,
-   push. A branch stacked on another one is the exception: when the branch under it lands, run
+2. **Work on that branch** and push to the same pull request. Do not merge or rebase on main while
+   you work. Merge main when the work is done, before you mark the pull request ready, and again
+   when GitHub says the branch is behind: main's ruleset lets a pull request merge only when it
+   holds the newest main and its checks passed there (D-076). Resolve conflicts then: merge main,
+   fix, push. A branch stacked on another one is the exception: when the branch under it lands, run
    `scripts/restack.sh <parent-branch>` instead of merging main, because the squash makes the
    parent's own lines conflict (D-106).
 3. **Change the roadmap and the decisions.** The way depends on whether the project's board is

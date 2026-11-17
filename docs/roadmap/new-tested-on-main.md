@@ -1,6 +1,7 @@
 ### Q: How does a pull request get tested on the main it lands on?
 
-Status: Open. Raised 2026-11-17 from the parallel work design.
+Status: Running. Raised 2026-11-17 from the parallel work design. The owner chose the second way
+that day, and #262 set it in main's ruleset. The day's measurement is still open.
 
 CI checks a pull request against the main it started from, and nothing checks it again after main
 moves (D-076). The overlap gate (docs/roadmap/new-overlap-gate.md) and the wait edge
