@@ -3,6 +3,7 @@ paths:
   - "server/**"
   - "api/**"
   - "shared/types.ts"
+  - "shared/types/**"
   - "test/api.test.ts"
   - "test/chat.test.ts"
   - "test/sql.test.ts"
