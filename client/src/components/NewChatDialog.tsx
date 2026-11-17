@@ -77,6 +77,7 @@ export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode
           value={groupName}
           onChange={(v) => setGroupName(v.slice(0, nameLimit))}
           placeholder={mode === 'project' ? 'Capstone, Thesis, Robotics club' : undefined}
+          hasAutoFocus
         />
       )}
       {mode === 'project' && (
@@ -93,7 +94,7 @@ export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode
         type="search"
         value={query}
         onChange={setQuery}
-        hasAutoFocus
+        hasAutoFocus={mode === 'person'}
       />
 
       <List edge="flush">

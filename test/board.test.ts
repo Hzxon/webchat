@@ -21,6 +21,14 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.deepEqual(parseCard(section('d', cardTemplate('Q', 'Q-6'))).status, 'Open');
   });
 
+  test('a card from the new-card form reads back as typed, even one titled Title', () => {
+    const prompts = parseCard(section('a', cardTemplate('R', 'R-1'))).body;
+    const card = parseCard(section('b', cardText('R-4', 'Title', 'Idea', prompts)));
+    assert.deepEqual([card.cardId, card.title, card.status, card.body], ['R-4', 'Title', 'Idea', prompts]);
+    const typed = parseCard(section('c', cardText('K-2', 'Bad keys', 'Open', 'Seen: on a phone.')));
+    assert.equal(typed.body, 'Seen: on a phone.');
+  });
+
   test('a status keeps its date and loses its final period', () => {
     const card = parseCard(section('a', '### D-7: Keep the lock\n\nStatus: Accepted 2026-11-04.\n\nWhy: it works.'));
     assert.equal(card.status, 'Accepted 2026-11-04');

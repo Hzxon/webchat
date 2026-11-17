@@ -27,6 +27,7 @@ import { Dialog } from './Dialog';
 import { PickItem } from './PickItem';
 import { presenceText } from './format';
 import { CopyRow } from './NotificationDialog';
+import { confirmAction } from './ConfirmHost';
 
 /** The release's own installer, which checks the agent file against the release's checksum before it installs it (docs/decisions/agent-install.md). */
 const installLine = (release: string, pasted: string) =>
@@ -110,12 +111,12 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
   }
 
   async function remove(agent: UserDTO) {
-    if (
-      !confirm(
-        `Remove ${agent.displayName}? It leaves every project, and its sessions stop taking cards. This cannot be undone.`,
-      )
-    )
-      return;
+    const yes = await confirmAction({
+      title: `Remove ${agent.displayName}?`,
+      body: 'It leaves every project, and its sessions stop taking cards. This cannot be undone.',
+      confirmLabel: 'Remove',
+    });
+    if (!yes) return;
     setBusy(true);
     setError('');
     try {

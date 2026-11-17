@@ -34,38 +34,37 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0d0c07;
-    --panel: #14120b;
-    --panel-2: #1b1913;
-    --hover: #201e18;
-    --line: #2b2a23;
-    --text: #edecec;
-    --muted: #a3a199;
-    --accent: #f97a3d;
-    --accent-strong: #fb9a6a;
-    --accent-soft: #36231a;
-    --on-accent: #14120b;
-    --chat-bg: #14120b;
-    --bubble-in: #201e18;
-    --bubble-out: #33231a;
-    --read: #60a5fa;
-    --ok: #3fbf8f;
-    --ok-soft: #132a20;
-    --danger: #f0577b;
-    --danger-soft: #3a1720;
-    --warn: #fdb022;
-    --warn-soft: #33260c;
-    --sidebar: #1b1913;
-    --sidebar-2: #25231c;
-    --sidebar-hover: #2a2820;
-    --shadow: 0 4px 12px rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.45);
-    --backdrop: rgb(0 0 0 / 0.6);
-    --quote-bg: rgb(255 255 255 / 0.06);
-    --quote-hover: rgb(255 255 255 / 0.1);
-    color-scheme: dark;
-  }
+/* Dark follows the system unless the account menu chose (colorMode.ts); :where keeps the print rules winning. */
+:root:where([data-theme='dark']) {
+  --bg: #0d0c07;
+  --panel: #14120b;
+  --panel-2: #1b1913;
+  --hover: #201e18;
+  --line: #2b2a23;
+  --text: #edecec;
+  --muted: #a3a199;
+  --accent: #f97a3d;
+  --accent-strong: #fb9a6a;
+  --accent-soft: #36231a;
+  --on-accent: #14120b;
+  --chat-bg: #14120b;
+  --bubble-in: #201e18;
+  --bubble-out: #33231a;
+  --read: #60a5fa;
+  --ok: #3fbf8f;
+  --ok-soft: #132a20;
+  --danger: #f0577b;
+  --danger-soft: #3a1720;
+  --warn: #fdb022;
+  --warn-soft: #33260c;
+  --sidebar: #1b1913;
+  --sidebar-2: #25231c;
+  --sidebar-hover: #2a2820;
+  --shadow: 0 4px 12px rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.45);
+  --backdrop: rgb(0 0 0 / 0.6);
+  --quote-bg: rgb(255 255 255 / 0.06);
+  --quote-hover: rgb(255 255 255 / 0.1);
+  color-scheme: dark;
 }
 
 * {
@@ -842,18 +841,6 @@ a {
   max-width: 440px;
   color: var(--muted);
   text-align: center;
-}
-
-.chat-empty-card svg {
-  color: var(--accent);
-}
-
-.chat-empty-card h2 {
-  margin: 4px 0 0;
-  color: var(--text);
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
 }
 
 .chat-empty-card p {
@@ -2345,4 +2332,58 @@ a {
 
 .bubble .markdown pre {
   overflow-x: auto;
+}
+
+/* Board and doc editor: Delete on the left, the status and Cancel and Done on the right. */
+.doc-editor-actions .doc-editor-status {
+  margin-left: auto;
+}
+
+/* Chat messages: code in a message, the reaction tray's any-emoji field, and a tray that wraps on a phone. */
+
+.chat-code,
+.chat-code-block {
+  border-radius: var(--radius);
+  background: var(--quote-bg);
+  font: 0.9em var(--mono);
+}
+
+.chat-code {
+  padding: 1px 5px;
+}
+
+.chat-code-block {
+  display: block;
+  margin: 2px 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.tray-any {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 20px;
+  text-align: center;
+}
+
+.tray-any::placeholder {
+  color: var(--muted);
+}
+
+.tray-any:focus {
+  border-style: solid;
+  border-color: var(--accent);
+  outline: none;
+}
+
+.reaction-tray {
+  flex-wrap: wrap;
+  /* The phone's list pads 10px on each side; the tray stays inside it. */
+  max-width: calc(100vw - 20px);
 }

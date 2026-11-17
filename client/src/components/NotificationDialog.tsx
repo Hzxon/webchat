@@ -163,7 +163,8 @@ export function NotificationDialog({ onClose }: { onClose: () => void }) {
         </Text>
       )}
 
-      {bark !== null && (
+      {/* Bark matters only where Web Push cannot work: iOS before 16.4. */}
+      {push?.oldIos && bark !== null && (
         <Stack as="section" gap={3}>
           <Divider />
           <Heading level={3}>iPhone without push: the Bark app</Heading>
@@ -173,7 +174,7 @@ export function NotificationDialog({ onClose }: { onClose: () => void }) {
             </Text>
           ) : !bark.configured ? (
             <Text as="p" color="secondary">
-              This server has no key for Bark yet. The README says how to add one.
+              Alerts through the Bark app are not set up on this server. Ask the person who runs it.
             </Text>
           ) : !bark.link ? (
             <>

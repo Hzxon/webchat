@@ -80,6 +80,15 @@
   }
 }
 
+/* The account menu's trigger holds the avatar and two lines of name, taller than any Button size. */
+.account-button {
+  height: auto;
+  min-width: 0;
+  justify-content: flex-start;
+  padding-block: 4px;
+  text-align: start;
+}
+
 /* Safari before 17 has no Popover API, so nothing hides a closed popover until main.tsx has loaded
    the polyfill, and every Astryx tooltip and menu sits in the layout meanwhile (D-052). The polyfill
    marks an open popover with this class. */

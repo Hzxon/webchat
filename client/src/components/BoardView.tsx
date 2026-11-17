@@ -6,11 +6,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   cardsOf,
+  cardText,
   copyOf,
   GROUPS,
   groupOf,
   keepReviews,
   laneOf,
+  parseCard,
   usernamesOf,
   WAITING,
   withReviews,
@@ -18,7 +20,7 @@ import {
   type Card,
   type DocSection,
 } from '../../../shared/board';
-import type { CardNoteDTO, ProjectDTO, RunRequest, UserDTO } from '../../../shared/types';
+import { LIMITS, type CardNoteDTO, type ProjectDTO, type RunRequest, type UserDTO } from '../../../shared/types';
 import {
   boardDocs,
   cardRuns,
@@ -30,6 +32,7 @@ import {
   KIND_NAMES,
   MOVE_FROM,
   moved,
+  NEW_STATUS,
   openChange,
   runnerOf,
   takeable,
@@ -60,6 +63,7 @@ import {
 import type { ChatDoc, ChatMessage } from '../e2ee/keyring';
 import { importEntries } from '../boardLink';
 import { useLinkedRepos } from '../linkedRepos';
+import { holdReloadWhile } from '../build';
 import { actions, senderName, useAppState } from '../store';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
@@ -87,6 +91,7 @@ import {
 } from './icons';
 import { Markdown } from './Markdown';
 import { REVIEWS, RUN_TAGS, Tag, type Tone } from './PullTags';
+import { confirmAction } from './ConfirmHost';
 
 export function BoardView({ project }: { project: ProjectDTO }) {
   const docs = useAppState((s) => s.docs);
@@ -280,7 +285,7 @@ const RUN_STATES: Record<CardRun['state'], [Tone, string]> = {
 const FILTERS = { all: 'All', R: 'Ideas', K: 'Issues' };
 // Pick shows on a Ready card's face; the others in the opened card.
 const MOVES: Array<[keyof typeof MOVE_FROM, string]> = [
-  ['ask', 'Ask owner'],
+  ['ask', 'Ask owner to mark ready'],
   ['ready', 'Mark ready'],
   ['review', 'Send to review'],
   ['again', 'Run again'],
@@ -344,6 +349,9 @@ function BoardColumnView({
     /** The card's review lines that stood when its lock was taken, which no save changes. */
     lines: string[];
   } | null>(null);
+  // The kind of card the new-card form is writing.
+  const [adding, setAdding] = useState<CardKind | null>(null);
+  const editorOpen = editing !== null || adding !== null;
   const [history, setHistory] = useState(false);
   // In the open card: the member picked to ask for a review, and the note of a requested change being written.
   const [asking, setAsking] = useState('');
@@ -434,11 +442,11 @@ function BoardColumnView({
     work.catch((err: Error) => setError(err.message));
   }
 
-  async function edit(target: ChatDoc, id: string, saved: string, pos: number, isNew = false) {
+  async function edit(target: ChatDoc, id: string, saved: string, pos: number) {
     // Told before the lock is asked for, so the other column cannot open an editor meanwhile.
     onEditing(true);
     try {
-      const section = await beginEditing(target.id, id, saved, pos, isNew);
+      const section = await beginEditing(target.id, id, saved, pos, false);
       // Read again under the lock: the card may have changed since it was shown, and a draft on the device may be older still.
       const card =
         column === 'roadmap'
@@ -468,20 +476,33 @@ function BoardColumnView({
     }
   }
 
-  async function add(kind: CardKind) {
+  function closeForm() {
+    setAdding(null);
+    onEditing(false);
+  }
+
+  /** Saves the new card once, with the next free number, which it takes under the column's lock (D-116). */
+  async function add(kind: CardKind, title: string, body: string) {
     const target = doc ?? (await createBoard(projectId, column));
-    // Saved at once, under the column's lock on numbers, so no other page gives its number; Cancel takes it back (D-116).
     const id = newSectionId();
-    const { text, pos } = await addCard(target, id, kind, (cardId) => cardTemplate(kind, cardId));
-    // A new card is open, so it shows in the Open drawer once its editor closes.
+    await addCard(target, id, kind, (cardId) => cardText(cardId, title, NEW_STATUS[kind], body));
+    // A new card is open, so it shows in the Open drawer; its peek shows once it loads.
     setDrawer(true);
+    closeForm();
     openCard(id);
-    await edit(target, id, text, pos, true);
+    void syncNow();
   }
 
   /** Removes a card in an editing session of its own. Its revisions stay in the history. */
   async function remove(card: Card) {
-    if (!confirm(`Delete ${card.cardId || 'this card'} for everyone? Its history stays.`)) return;
+    if (
+      !(await confirmAction({
+        title: `Delete ${card.cardId || 'this card'} for everyone?`,
+        body: 'Its history stays.',
+        confirmLabel: 'Delete card',
+      }))
+    )
+      return;
     await replaceSection(doc!, card.id, { text: card.text, pos: card.pos, removed: true });
     openCard(null);
     void syncNow();
@@ -641,7 +662,7 @@ function BoardColumnView({
             size="sm"
             // From the text that stands, so a typo fix never signs a status someone could not set.
             onClick={() => run(edit(doc!, card.id, card.text, card.pos))}
-            isDisabled={editing !== null || !!elsewhere || !!lock || card.failed}
+            isDisabled={editorOpen || !!elsewhere || !!lock || card.failed}
             tooltip={elsewhere ? `Close the editor in ${elsewhere} first` : 'Edit'}
             label="Edit card"
             icon={<PencilIcon width={18} height={18} />}
@@ -687,7 +708,7 @@ function BoardColumnView({
               variant="ghost"
               size="sm"
               onClick={() => run(remove(card))}
-              isDisabled={editing !== null || !!lock}
+              isDisabled={editorOpen || !!lock}
               tooltip="Delete"
               label="Delete card"
               icon={<TrashIcon width={18} height={18} />}
@@ -746,7 +767,13 @@ function BoardColumnView({
                   size="sm"
                   label={label}
                   isDisabled={!ok}
-                  tooltip={ok ? undefined : why}
+                  tooltip={
+                    ok
+                      ? kind === 'ask'
+                        ? 'Sends the card’s owner a message asking them to mark it ready'
+                        : undefined
+                      : why
+                  }
                   onClick={() => run(act())}
                 />
               );
@@ -832,7 +859,7 @@ function BoardColumnView({
             {card.kind && <span className="board-card-id">{card.cardId}</span>}
             {about && <span>{about}</span>}
             {/* No agent checked it against the board, the code and the open pull requests yet (R-041). */}
-            {unchecked(card) && <Tag tone="muted">Unchecked</Tag>}
+            {unchecked(card) && <Tag tone="muted">Not checked by an agent yet</Tag>}
           </p>
         )}
         {cardRun && (
@@ -887,8 +914,11 @@ function BoardColumnView({
               size="sm"
               icon={<PlusIcon width={16} height={16} />}
               label={KIND_NAMES[kind]}
-              onClick={() => run(add(kind))}
-              isDisabled={editing !== null || !!elsewhere}
+              onClick={() => {
+                setAdding(kind);
+                onEditing(true);
+              }}
+              isDisabled={editorOpen || !!elsewhere}
               tooltip={elsewhere ? `Close the editor in ${elsewhere} first` : undefined}
             />
           ))}
@@ -903,7 +933,7 @@ function BoardColumnView({
           )}
         </div>
         {error && <Banner status="error" title={error} />}
-        {!doc && !editing && (
+        {!doc && !editorOpen && (
           <p className="doc-note">No {column === 'decisions' ? 'decisions' : 'ideas or issues'} yet.</p>
         )}
         {lanes.length > 0 && (
@@ -937,6 +967,11 @@ function BoardColumnView({
             </details>
           ))}
       </div>
+      {adding && (
+        <CardPeek title={`New ${KIND_NAMES[adding]}`} onOpen={openCard} onClose={closeForm}>
+          <NewCardForm kind={adding} onDone={(title, body) => add(adding, title, body)} onCancel={closeForm} />
+        </CardPeek>
+      )}
       {(peek || editsPeek) && (
         <CardPeek
           title={peek ? titleOf(peek) : 'New card'}
@@ -980,6 +1015,74 @@ function BoardColumnView({
           )}
         </CardPeek>
       )}
+    </div>
+  );
+}
+
+/** A new card's title and details. Nothing reaches the server, and no number is taken, until Done (D-116). */
+function NewCardForm({
+  kind,
+  onDone,
+  onCancel,
+}: {
+  kind: CardKind;
+  onDone: (title: string, body: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [needTitle, setNeedTitle] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  // The template's fields: an empty Details keeps them, so the card still asks for what it lacks.
+  const prompts = parseCard({ id: '', text: cardTemplate(kind, `${kind}-1`), pos: 0, failed: false }).body;
+  // A reload would lose what was typed (K-63).
+  useEffect(() => holdReloadWhile(() => true), []);
+
+  async function done() {
+    if (!title.trim()) return setNeedTitle(true);
+    setBusy(true);
+    try {
+      await onDone(title.trim(), body.trim() || prompts);
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="doc-section doc-editor"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onCancel();
+      }}
+    >
+      <TextInput
+        label="Title"
+        value={title}
+        onChange={(v) => {
+          setTitle(v);
+          setNeedTitle(false);
+        }}
+        status={needTitle ? { type: 'error', message: 'A card needs a title.' } : undefined}
+        hasAutoFocus
+      />
+      <textarea
+        className="field-input doc-textarea"
+        aria-label="Details"
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        rows={Math.max(6, body.split('\n').length + 1)}
+        maxLength={LIMITS.docSectionLength}
+        placeholder={prompts}
+      />
+      <div className="doc-editor-actions">
+        <Text color="secondary" className="doc-editor-status">
+          {error}
+        </Text>
+        <Button label="Cancel" onClick={onCancel} />
+        <Button variant="primary" label="Done" isDisabled={busy} onClick={() => void done()} />
+      </div>
     </div>
   );
 }
