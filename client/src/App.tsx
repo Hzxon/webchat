@@ -20,7 +20,7 @@ import { MembersDialog, type MembersTarget } from './components/MembersDialog';
 import { NewChatDialog, type NewChatMode } from './components/NewChatDialog';
 import { NotificationDialog } from './components/NotificationDialog';
 import { AddPeopleDialog, NewChannelDialog, NewDocDialog, ProjectReposDialog } from './components/ProjectDialogs';
-import { Sidebar } from './components/Sidebar';
+import { Sidebar, SidebarRail } from './components/Sidebar';
 import { UnlockScreen } from './components/UnlockScreen';
 import { BellRingIcon } from './components/icons';
 import { fitToVisualViewport } from './viewport';
@@ -92,6 +92,16 @@ type OpenDialog =
   | { kind: 'add-people'; target: MembersTarget }
   | { kind: 'members'; target: MembersTarget };
 
+const COLLAPSED_KEY = 'webchat.sidebarCollapsed';
+
+function rememberedCollapsed() {
+  try {
+    return localStorage.getItem(COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 function ChatLayout() {
   const activeId = useAppState((s) => s.activeId);
   const active = useAppState((s) => (s.activeId === null ? undefined : s.conversations[s.activeId]));
@@ -104,6 +114,15 @@ function ChatLayout() {
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const addPeople = (target: MembersTarget) => setDialog({ kind: 'add-people', target });
   const showMembers = (target: MembersTarget) => setDialog({ kind: 'members', target });
+  const [collapsed, setCollapsed] = useState(rememberedCollapsed);
+  const collapse = (value: boolean) => {
+    setCollapsed(value);
+    try {
+      localStorage.setItem(COLLAPSED_KEY, value ? '1' : '0');
+    } catch {
+      // A private window keeps the sidebar open on the next load.
+    }
+  };
 
   useEffect(fitToVisualViewport, []);
   // A card's status line follows its run from any page of its owner's (D-105).
@@ -111,8 +130,12 @@ function ChatLayout() {
   useEffect(() => void followRuns().catch(() => undefined), [runs]);
 
   return (
-    <div className={`layout ${activeId !== null || githubOpen || agentsOpen || doc || board ? 'has-active' : ''}`}>
+    <div
+      className={`layout ${activeId !== null || githubOpen || agentsOpen || doc || board ? 'has-active' : ''} ${collapsed ? 'sidebar-collapsed' : ''}`}
+    >
+      <SidebarRail onExpand={() => collapse(false)} onNotifications={() => setDialog({ kind: 'notifications' })} />
       <Sidebar
+        onCollapse={() => collapse(true)}
         onNewChat={() => setDialog({ kind: 'new-chat', mode: 'person' })}
         onNewProject={() => setDialog({ kind: 'new-chat', mode: 'project' })}
         onNewChannel={(projectId) => setDialog({ kind: 'new-channel', projectId })}

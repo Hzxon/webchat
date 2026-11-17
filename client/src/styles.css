@@ -217,6 +217,11 @@ a {
   background: var(--panel);
 }
 
+.sidebar-rail {
+  border-right: 1px solid var(--line);
+  background: var(--sidebar);
+}
+
 .sidebar-me {
   min-width: 0;
 }
@@ -228,13 +233,18 @@ a {
   overflow-y: auto;
 }
 
-.bell-warn {
+.bell-warn,
+.icon-dot {
   position: relative;
   display: inline-grid;
+}
+
+.bell-warn {
   color: var(--warn);
 }
 
-.bell-warn .dot {
+.bell-warn .dot,
+.icon-dot .dot {
   position: absolute;
   top: -2px;
   right: -2px;
@@ -2130,6 +2140,7 @@ a {
   }
 
   .sidebar,
+  .sidebar-rail,
   .chat-header,
   .doc-section-tools,
   .doc-lock,

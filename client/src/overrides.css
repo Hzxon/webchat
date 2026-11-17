@@ -21,3 +21,27 @@
     display: inline-flex;
   }
 }
+
+/* The sidebar collapses to a rail only beside the chat; a phone shows one pane at a time instead. */
+.sidebar-rail,
+.collapse-button {
+  display: none;
+}
+
+@media (min-width: 761px) {
+  .collapse-button {
+    display: inline-flex;
+  }
+
+  .layout.sidebar-collapsed {
+    grid-template-columns: auto 1fr;
+  }
+
+  .layout.sidebar-collapsed .sidebar {
+    display: none;
+  }
+
+  .layout.sidebar-collapsed .sidebar-rail {
+    display: flex;
+  }
+}

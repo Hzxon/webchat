@@ -64,6 +64,13 @@ export const BackIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const PanelLeftIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <path d="M9 3v18" />
+  </Icon>
+);
+
 export const LogoutIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />

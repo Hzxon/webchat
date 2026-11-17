@@ -18,7 +18,7 @@ import { notificationWarning } from '../banner';
 import { deleteAccount, deleteChannel, openConversation, previewText, signOut } from '../chat';
 import { deleteDoc } from '../docs';
 import type { ChatConversation, ChatDoc } from '../e2ee/keyring';
-import { actions, chatTitle, generalOf, otherMemberId, senderName, useAppState } from '../store';
+import { actions, chatTitle, generalOf, otherMemberId, senderName, useAppState, type SidebarTab, type State } from '../store';
 import { Avatar } from './Avatar';
 import { formatListTime } from './format';
 import {
@@ -32,6 +32,7 @@ import {
   HashIcon,
   LogoutIcon,
   MoreIcon,
+  PanelLeftIcon,
   PencilIcon,
   PlusIcon,
   PullRequestIcon,
@@ -54,7 +55,12 @@ interface SidebarProps {
   onNewDoc: (projectId: number) => void;
   onRenameDoc: (doc: ChatDoc) => void;
   onNotifications: () => void;
+  onCollapse: () => void;
 }
+
+/** Unread messages in a tab: channels count in Projects, every other chat in Chats. */
+const unreadIn = (tab: SidebarTab) => (s: State) =>
+  Object.values(s.conversations).reduce((sum, c) => ((c.type === 'channel') === (tab === 'projects') ? sum + c.unread : sum), 0);
 
 const newestFirst = (a: ChatConversation, b: ChatConversation) =>
   (b.lastMessage?.createdAt ?? b.updatedAt) - (a.lastMessage?.createdAt ?? a.updatedAt);
@@ -70,6 +76,7 @@ export function Sidebar(props: SidebarProps) {
     onNewDoc,
     onRenameDoc,
     onNotifications,
+    onCollapse,
   } = props;
   const me = useAppState((s) => s.me);
   const conversations = useAppState((s) => s.conversations);
@@ -78,17 +85,18 @@ export function Sidebar(props: SidebarProps) {
   const docs = useAppState((s) => s.docs);
   const tab = useAppState((s) => s.tab);
   const connected = useAppState((s) => s.connected);
-  const push = useAppState((s) => s.push);
   const [query, setQuery] = useState('');
 
-  const { chats, channels, chatUnread, projectUnread } = useMemo(() => {
+  const chatUnread = useAppState(unreadIn('chats'));
+  const projectUnread = useAppState(unreadIn('projects'));
+
+  const { chats, channels } = useMemo(() => {
     const all = Object.values(conversations);
     const chats = all.filter((c) => c.type !== 'channel');
     // The chats with this user's agents show in their own pane (D-103), and count in the Chats tab.
     const listed = chats.filter((c) => !agentOf({ users, me }, c));
     const channels = all.filter((c) => c.type === 'channel');
-    const total = (list: ChatConversation[]) => list.reduce((sum, c) => sum + c.unread, 0);
-    return { chats: listed, channels, chatUnread: total(chats), projectUnread: total(channels) };
+    return { chats: listed, channels };
   }, [conversations, users, me]);
 
   const q = query.trim().toLowerCase();
@@ -125,7 +133,6 @@ export function Sidebar(props: SidebarProps) {
   }, [projects, channels, docs, conversations, q]);
 
   if (!me) return null;
-  const notificationsReady = push?.permission === 'granted';
 
   async function removeAccount() {
     const warning =
@@ -141,6 +148,14 @@ export function Sidebar(props: SidebarProps) {
   return (
     <aside className="sidebar">
       <Stack direction="horizontal" gap={2} vAlign="center" paddingInline={3} paddingBlock={2}>
+        <IconButton
+          className="collapse-button"
+          variant="ghost"
+          label="Collapse sidebar"
+          tooltip="Collapse sidebar"
+          onClick={onCollapse}
+          icon={<PanelLeftIcon />}
+        />
         <Avatar name={me.displayName} seed={me.id} size={38} />
         <Stack gap={0} width="100%" className="sidebar-me">
           <Text weight="semibold" maxLines={1}>
@@ -150,22 +165,7 @@ export function Sidebar(props: SidebarProps) {
             @{me.username}
           </Text>
         </Stack>
-        <IconButton
-          variant="ghost"
-          label="Notification settings"
-          tooltip="Notification settings"
-          onClick={onNotifications}
-          icon={
-            notificationsReady ? (
-              <BellRingIcon />
-            ) : (
-              <span className="bell-warn">
-                <BellIcon />
-                <span className="dot" />
-              </span>
-            )
-          }
-        />
+        <NotificationBell onClick={onNotifications} />
         <IconButton
           variant="ghost"
           label={tab === 'projects' ? 'New project' : 'New chat'}
@@ -281,6 +281,61 @@ export function Sidebar(props: SidebarProps) {
         )}
       </Stack>
     </aside>
+  );
+}
+
+function NotificationBell({ onClick }: { onClick: () => void }) {
+  const ready = useAppState((s) => s.push?.permission === 'granted');
+  return (
+    <IconButton
+      variant="ghost"
+      label="Notification settings"
+      tooltip="Notification settings"
+      onClick={onClick}
+      icon={
+        ready ? (
+          <BellRingIcon />
+        ) : (
+          <span className="bell-warn">
+            <BellIcon />
+            <span className="dot" />
+          </span>
+        )
+      }
+    />
+  );
+}
+
+/** The collapsed sidebar on a wide screen: a tab's button opens the sidebar on that tab. Unread shows as a dot. */
+export function SidebarRail({ onExpand, onNotifications }: { onExpand: () => void; onNotifications: () => void }) {
+  return (
+    <Stack as="aside" className="sidebar-rail" gap={1} padding={2} hAlign="center">
+      <IconButton variant="ghost" label="Expand sidebar" tooltip="Expand sidebar" onClick={onExpand} icon={<PanelLeftIcon />} />
+      <RailTab tab="chats" label="Chats" icon={<ChatIcon />} onExpand={onExpand} />
+      <RailTab tab="projects" label="Projects" icon={<FolderIcon />} onExpand={onExpand} />
+      <NotificationBell onClick={onNotifications} />
+    </Stack>
+  );
+}
+
+function RailTab({ tab, label, icon, onExpand }: { tab: SidebarTab; label: string; icon: ReactNode; onExpand: () => void }) {
+  const unread = useAppState(unreadIn(tab)) > 0;
+  return (
+    <IconButton
+      variant="ghost"
+      label={unread ? `${label}, unread messages` : label}
+      tooltip={label}
+      onClick={() => {
+        actions.setTab(tab);
+        onExpand();
+      }}
+      icon={
+        <span className="icon-dot">
+          {icon}
+          {unread && <span className="dot" />}
+        </span>
+      }
+    />
   );
 }
 
