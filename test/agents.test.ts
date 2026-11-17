@@ -4,7 +4,7 @@ import { ASK_WAIT_MS, harnessRow, type HarnessState } from '../shared/types.ts';
 
 // In a variable, so the tools tsconfig, which has no DOM types, does not typecheck the client module.
 const clientAgents = '../client/src/agents.ts';
-const { agentOf, proposalsWaiting, seatFor, threadsOf, THREAD_TTL_MS, waitingProposals } = await import(clientAgents);
+const { agentOf, proposalsWaiting, seatFor, threadCard, threadsOf, THREAD_TTL_MS, waitingProposals } = await import(clientAgents);
 
 const ME = 1;
 const AGENT = 2;
@@ -109,6 +109,17 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     // Only the agent reports, and a card's conversation does not end after a day.
     assert.equal(state(sayRun(ME, { kind: 'done', request: request.id })).state, 'working');
     assert.equal(threadsOf([request], ME, AGENT, {}, 1 + THREAD_TTL_MS + 1)[0].state, 'working');
+  });
+
+  test("a card's run names its card on its board, and a question names none (the card-run-in-peek decision)", () => {
+    const request = { ...say(ME, {}, 'r0'), prompt: null, run: { kind: 'request', card: 'K-7', title: 'Sums', docId: 'd', section: 's', runtime: AGENT, repo: 'team/app', sentAt: 1, hash: 'h' } };
+    const [run] = threadsOf([request], ME, AGENT, {}, 100);
+    const [asked] = threadsOf([say(ME, { kind: 'prompt', sentAt: 1, project: 4 }, 'q0')], ME, AGENT, {}, 100);
+    const docs = { d: { conversationId: 3 } };
+    const conversations = { 3: { projectId: 4 } };
+    assert.deepEqual(threadCard(run, docs, conversations), { projectId: 4, section: 's' });
+    assert.equal(threadCard(run, {}, conversations), undefined, 'a board the page does not hold');
+    assert.equal(threadCard(asked, docs, conversations), undefined);
   });
 
   test('a run or a question waits for the owner while the laptop has no copy, and works once they have it cloned (R-036)', () => {
