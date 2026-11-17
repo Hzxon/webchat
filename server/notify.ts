@@ -36,17 +36,20 @@ async function payloadFor(
 ) {
   const isGroup = conversation.type !== 'direct';
   const name = await chatName(db, conversation, sender);
-  if (message.kind === 'reaction' || message.kind === 'sync') {
+  // A muted chat's message goes out as a sync, which alerts nobody but wakes the tab the recipient
+  // looks at. Urgent ones ignore mute: they alert as always (the mute decision, proposed).
+  if (message.kind === 'reaction' || message.kind === 'sync' || (conversation.muted && !message.urgent)) {
     // Only wakes the tab the recipient is looking at. No message id: neither is ever "delivered".
+    const kind = message.kind === 'reaction' ? 'reaction' : 'sync';
     const payload: PushPayload = {
-      kind: message.kind,
+      kind,
       title: name,
-      body: message.kind === 'reaction' ? `${sender?.display_name ?? 'Someone'} reacted to a message` : '',
+      body: kind === 'reaction' ? `${sender?.display_name ?? 'Someone'} reacted to a message` : '',
       bodyPrefix: '',
       urgent: false,
       // The service worker shows neither kind (D-070); this tag only keeps one from replacing the
       // chat's message notification if a browser ever shows it anyway.
-      tag: `${message.kind}-${conversation.id}`,
+      tag: `${kind}-${conversation.id}`,
       conversationId: conversation.id,
       messageId: null,
       senderId: sender?.id ?? null,

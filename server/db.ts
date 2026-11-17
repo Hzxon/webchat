@@ -193,6 +193,7 @@ interface ConversationRow {
   unread: number;
   key_id: string | null;
   needs_new_key: boolean;
+  muted: boolean;
   my_wrapped_by: number | null;
   my_iv: string | null;
   my_wrapped: string | null;
@@ -491,7 +492,7 @@ export async function openDb(sql: Sql) {
   async function conversations(userId: number, onlyId: number | null): Promise<ConversationDTO[]> {
     const [rows, members, lastMessages, links] = await Promise.all([
       sql.query<ConversationRow>(
-        `SELECT c.id, c.type, c.title, c.project_id, c.created_by, c.updated_at, c.key_id, c.needs_new_key,
+        `SELECT c.id, c.type, c.title, c.project_id, c.created_by, c.updated_at, c.key_id, c.needs_new_key, m.muted,
            k.wrapped_by AS my_wrapped_by, k.iv AS my_iv, k.wrapped AS my_wrapped,
            (SELECT COUNT(*)::int FROM webchat.messages x
              WHERE x.conversation_id = c.id AND x.id > m.last_read_id AND x.sender_id IS DISTINCT FROM m.user_id
@@ -555,6 +556,7 @@ export async function openDb(sql: Sql) {
           : null,
       keyLinks: linksByChat.get(row.id) ?? [],
       needsNewKey: row.needs_new_key,
+      muted: row.muted,
     }));
   }
 
@@ -1713,13 +1715,19 @@ export async function openDb(sql: Sql) {
       }
     },
 
+    /** Mutes or unmutes a chat for one member only. */
+    setMuted: async (conversationId: number, userId: number, muted: boolean) => {
+      await sql.query('UPDATE webchat.members SET muted = $1 WHERE conversation_id = $2 AND user_id = $3', [muted, conversationId, userId]);
+    },
+
+    /** Unread messages in the chats this user has not muted, for the app badge a push sets. */
     unreadTotal: async (userId: number) =>
       (
         await one(
           sql.query<{ total: number }>(
             `SELECT COUNT(*)::int AS total FROM webchat.messages x
              JOIN webchat.members m ON m.conversation_id = x.conversation_id
-             WHERE m.user_id = $1 AND x.id > m.last_read_id AND x.sender_id IS DISTINCT FROM $1 AND x.kind NOT IN ('reaction', 'sync')`,
+             WHERE m.user_id = $1 AND NOT m.muted AND x.id > m.last_read_id AND x.sender_id IS DISTINCT FROM $1 AND x.kind NOT IN ('reaction', 'sync')`,
             [userId],
           ),
         )
@@ -1748,28 +1756,29 @@ export async function openDb(sql: Sql) {
           repos: string | null;
           docs: string;
           locks: string;
+          muted: string;
         }>(
-          `WITH mine AS (SELECT conversation_id FROM webchat.members WHERE user_id = $1)
+          `WITH mine AS (SELECT conversation_id, muted FROM webchat.members WHERE user_id = $1)
            SELECT
-             (SELECT COALESCE(SUM(last_event_id), 0) FROM webchat.conversations WHERE id IN (SELECT * FROM mine)) AS messages,
+             (SELECT COALESCE(SUM(last_event_id), 0) FROM webchat.conversations WHERE id IN (SELECT conversation_id FROM mine)) AS messages,
              (SELECT COUNT(*)::int FROM webchat.conversations
-               WHERE id IN (SELECT * FROM mine) AND key_id IS NOT NULL) AS keyed,
+               WHERE id IN (SELECT conversation_id FROM mine) AND key_id IS NOT NULL) AS keyed,
              (SELECT COUNT(*)::int FROM webchat.users WHERE dh_public IS NOT NULL) AS "withKeys",
              -- BIGINT, so two INTEGER pointers near the top of their range cannot overflow the sum.
              (SELECT COALESCE(SUM(last_read_id::bigint + last_delivered_id), 0) FROM webchat.members
-               WHERE conversation_id IN (SELECT * FROM mine)) AS pointers,
+               WHERE conversation_id IN (SELECT conversation_id FROM mine)) AS pointers,
              (SELECT COUNT(*)::int FROM mine) AS chats,
              -- Join times rather than a count, so one person leaving and another joining between
              -- two check-ins still changes it.
              (SELECT COALESCE(SUM(joined_at), 0)::bigint FROM webchat.members
-               WHERE conversation_id IN (SELECT * FROM mine)) AS seats,
+               WHERE conversation_id IN (SELECT conversation_id FROM mine)) AS seats,
              -- Links are only ever added, one per new key, so their times change with every rotation.
              (SELECT COALESCE(SUM(created_at), 0)::bigint FROM webchat.key_links
-               WHERE conversation_id IN (SELECT * FROM mine)) AS rekeyed,
+               WHERE conversation_id IN (SELECT conversation_id FROM mine)) AS rekeyed,
              -- A hash of who owns each project and group, so a handover always shows, even two at once.
              (SELECT md5(COALESCE(string_agg(pair, ',' ORDER BY pair), '')) FROM (
                SELECT 'c' || id || ':' || created_by AS pair FROM webchat.conversations
-                 WHERE id IN (SELECT * FROM mine) AND created_by IS NOT NULL
+                 WHERE id IN (SELECT conversation_id FROM mine) AND created_by IS NOT NULL
                UNION ALL
                SELECT 'p' || p.id || ':' || p.created_by FROM webchat.projects p
                  JOIN webchat.project_members pm ON pm.project_id = p.id WHERE pm.user_id = $1
@@ -1784,16 +1793,18 @@ export async function openDb(sql: Sql) {
                FROM webchat.agent_repos) AS repos,
              -- Every save grows a doc's version, and a doc deleted leaves the list.
              (SELECT md5(COALESCE(string_agg(id || ':' || version, ',' ORDER BY id), '')) FROM webchat.docs
-               WHERE conversation_id IN (SELECT * FROM mine)) AS docs,
+               WHERE conversation_id IN (SELECT conversation_id FROM mine)) AS docs,
              -- Who edits which section, while the lock lasts.
              (SELECT md5(COALESCE(string_agg(l.doc_id || ':' || l.section || ':' || l.user_id, ',' ORDER BY l.doc_id, l.section), ''))
                FROM webchat.doc_locks l JOIN webchat.docs d ON d.id = l.doc_id
-               WHERE d.conversation_id IN (SELECT * FROM mine) AND l.expires_at > $3) AS locks`,
+               WHERE d.conversation_id IN (SELECT conversation_id FROM mine) AND l.expires_at > $3) AS locks,
+             -- Which chats this user muted, so another device of theirs follows.
+             (SELECT md5(COALESCE(string_agg(conversation_id::text, ',' ORDER BY conversation_id), '')) FROM mine WHERE muted) AS muted`,
           [userId, Date.now() - ONLINE_WINDOW_MS, Date.now(), Date.now() - AGENT_ONLINE_WINDOW_MS],
         ),
       );
       return row
-        ? `${row.messages}.${row.pointers}.${row.chats}.${row.seats}.${row.keyed}.${row.rekeyed}.${row.owners}.${row.people}.${row.withKeys}.${row.online ?? ''}.${row.agents ?? ''}.${row.repos ?? ''}.${row.docs}.${row.locks}`
+        ? `${row.messages}.${row.pointers}.${row.chats}.${row.seats}.${row.keyed}.${row.rekeyed}.${row.owners}.${row.people}.${row.withKeys}.${row.online ?? ''}.${row.agents ?? ''}.${row.repos ?? ''}.${row.docs}.${row.locks}.${row.muted}`
         : '';
     },
 

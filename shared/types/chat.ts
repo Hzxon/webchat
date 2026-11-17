@@ -98,6 +98,8 @@ export interface ConversationDTO {
    * replaces the key, which their browser does on its next check-in or before it sends.
    */
   needsNewKey: boolean;
+  /** The user this DTO was built for muted the chat: no push and no alert, except for urgent messages. */
+  muted: boolean;
 }
 
 /** A project: a team with its own channels. Every project member is a member of every channel in it. */
