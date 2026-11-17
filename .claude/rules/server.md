@@ -3,6 +3,7 @@ paths:
   - "server/**"
   - "api/**"
   - "shared/types.ts"
+  - "shared/types/**"
   - "test/api.test.ts"
   - "test/chat.test.ts"
   - "test/sql.test.ts"
@@ -47,6 +48,7 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - A `GET /api/urgent/ring` call runs only while an unread urgent message exists; urgent pushes carry a `Topic` header from the hashed tag; a Bark alert for an urgent message is critical (D-079).
 - `conversations.last_event_id` follows reactions, `last_message_id` does not (D-030).
 - A reaction push only wakes a tab the recipient is looking at and notifies nobody; a reaction push tag is `reaction-` plus the chat id (D-030, D-070).
+- A member's mute is theirs alone, set only by them and in the fingerprint; a muted chat's message pushes as a `sync`, never through Bark, unless it is urgent (the mute decision, proposed).
 - A `sync` message, an agent's board traffic with its owner's page, is pushed, counted and kept from the preview like a reaction, and is never urgent (the quiet-sync decision, proposed in #198).
 - Project and group invite pushes show even while the app is open; the server writes the project invite text, since project names are not encrypted (D-031, D-043).
 - Everyone on a deployment sees every other member's name and online status; sign-up needs the invite code from `INVITE_CODE` (D-002).

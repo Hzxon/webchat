@@ -1,0 +1,158 @@
+/* GitHub pull requests */
+
+.github-mark {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  background: var(--text);
+  color: var(--panel);
+}
+
+.chat-header .github-mark {
+  width: 40px;
+  height: 40px;
+}
+
+.github-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 6% calc(28px + env(safe-area-inset-bottom));
+  overscroll-behavior: contain;
+}
+
+.github-body > * {
+  max-width: 760px;
+  margin-inline: auto;
+}
+
+.github-card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  margin-top: 6vh;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--muted);
+  text-align: center;
+}
+
+.github-card h2 {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 21px;
+  font-weight: 600;
+}
+
+.github-card p {
+  max-width: 480px;
+  margin: 0;
+}
+
+.github-card-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius);
+  background: var(--text);
+  color: var(--panel);
+}
+
+.github-connect {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 4px;
+}
+
+.github-fineprint {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.github-section {
+  margin-bottom: 22px;
+}
+
+.github-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px 2px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.github-count {
+  min-width: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.github-empty {
+  margin: 0;
+  padding: 4px 2px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.pull-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.pull-list li + li {
+  border-top: 1px solid var(--line);
+}
+
+.pull {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.pull-row {
+  display: flex;
+  align-items: flex-start;
+}
+
+.pull-row .pull {
+  flex: 1;
+  min-width: 0;
+}
+
+.pull-share {
+  flex: none;
+  margin: 8px 6px 0 0;
+}
+
+.share-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--muted);
+}

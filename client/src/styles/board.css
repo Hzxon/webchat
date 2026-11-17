@@ -1,0 +1,303 @@
+/* Project board (R-021): two columns of cards, one at a time behind tabs. The Roadmap's lanes stack at phone width. */
+
+.board-view {
+  background: var(--panel);
+}
+
+.board-tabs {
+  display: flex;
+  margin-left: auto;
+}
+
+/* The owner's link of the board to a repository, until it is linked (R-040). */
+.board-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 14px;
+}
+
+.board-link p {
+  flex: 1 1 320px;
+  margin: 0;
+  color: var(--muted);
+}
+
+.board-columns {
+  flex: 1;
+  display: grid;
+  min-height: 0;
+}
+
+.board-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Both columns stay mounted, so a card being edited in one keeps its editor and its lock. */
+.board-columns.shows-decisions .board-roadmap,
+.board-columns.shows-roadmap .board-decisions {
+  display: none;
+}
+
+.board-column-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 60px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* The filter, where the column has one, and the new-card buttons at the right. */
+.board-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.board-filter {
+  margin-right: auto;
+}
+
+.board-filter button {
+  padding: 5px 12px;
+  font-size: 14px;
+}
+
+.board-column-head h2 {
+  margin: 0 auto 0 0;
+  font-size: 17px;
+}
+
+.board-column-head .doc-note {
+  margin: 0;
+}
+
+.board-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  font-size: 14px;
+}
+
+.board-cards {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px calc(24px + env(safe-area-inset-bottom));
+  overscroll-behavior: contain;
+}
+
+/* Ready, Running and In review side by side, above the Open drawer and the Done fold. */
+.board-lanes {
+  display: grid;
+  /* Lanes stack when the board is too narrow for three, as beside a wide sidebar. */
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 12px;
+  margin-bottom: 8px;
+}
+
+.board-lane h3,
+.board-group summary {
+  margin: 10px 0 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.board-group summary {
+  cursor: pointer;
+}
+
+.board-lane small,
+.board-group small {
+  font-weight: 400;
+}
+
+.board-card {
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+
+.board-card.is-locked {
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+
+.board-card-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* A Roadmap card's face: its owner, its title and whose move it is. */
+.board-face {
+  align-items: center;
+}
+
+/* Narrower than a row's title, so it stays beside the owner's face when Pick takes part of the lane. */
+.board-card-head.board-face strong {
+  flex-basis: 6em;
+}
+
+/* A Ready card's face, with Pick beside it rather than inside the button that opens the card. */
+.board-face-row {
+  display: flex;
+  align-items: center;
+}
+
+.board-face-row .board-card-head {
+  flex: 1;
+  min-width: 0;
+}
+
+.board-pick {
+  flex: none;
+  margin-right: 10px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.board-no-owner {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 1px dashed var(--muted);
+  border-radius: var(--radius);
+}
+
+/* The title keeps a few words' width, so a long status wraps to its own line instead of squeezing it. */
+.board-card-head strong {
+  flex: 1 1 12em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.board-card-id {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.board-card-status {
+  /* A status can hold a reason, as a stale run's does (R-042), so a long one wraps on a line of its own. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.board-card-warn {
+  margin: 0;
+  padding: 4px 12px 8px;
+  color: var(--warn);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.board-card-body .doc-section-tools {
+  margin-top: 6px;
+}
+
+/* Where the user's latest run of the card stands (R-027). */
+.board-card-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  clear: both;
+  margin: 0 0 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.board-card-run-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: 600;
+}
+
+@media (hover: hover) {
+  .board-card-run-link:hover {
+    text-decoration: underline;
+  }
+}
+
+/* A card in review shows its reviewers at its right, each in the color of their verdict's tag. */
+.board-reviewers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.board-reviewer {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--radius);
+}
+
+.board-review-note {
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.board-review-input {
+  flex: 1 1 12em;
+  width: auto;
+  min-width: 0;
+  padding: 5px 10px;
+}
+
+/* A run that waits for a decision, which its owner was pushed to make (R-042). */
+.board-card.is-waiting {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.board-card.is-waiting .board-card-status {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .board-column-head,
+  .board-cards {
+    padding-inline: 10px;
+  }
+}

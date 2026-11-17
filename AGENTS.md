@@ -41,7 +41,7 @@ keeps its number and says why.
 | `npm start` | Runs the built app in one Node process. |
 | `npm run build:agent` | Builds the agent as one file for this laptop, `dist/agent/webchat-agent`, with Node inside. Needs Node from nodejs.org. |
 | `npm run agent -- keyholder\|runner\|dev …` | The agent's command line: the keyholder and the runner, which setup installs as services, and `dev`, both in one process for working on WebChat (R-027, docs/decisions/locked-room.md). |
-| `scripts/claim.sh -c "<checked>" K-12 "<title>" [D-077]` | Claims a roadmap item after the check that it still holds and, until the board is linked, reserves the decision number given as the third argument. |
+| `scripts/claim.sh -c "<checked>" [-t "<files>"] K-12 "<title>" [D-077]` | Claims a roadmap item after the check that it still holds and, until the board is linked, reserves the decision number given as the third argument. `-t` lists the files you expect to change, which the `overlap` check reads. |
 
 The server log prints the invite code. Set `INVITE_CODE` to choose one. To test with two accounts in
 one browser, open the app on two hosts, such as `alice.localhost` and `bob.localhost`. Each host
