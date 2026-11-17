@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import type { UserDTO } from '../../../shared/types';
+import { chatSpans } from '../chatText';
 
 const DAY = 24 * 3600_000;
 
@@ -66,6 +67,23 @@ export function linkify(text: string): ReactNode[] {
       </a>
     ) : (
       part
+    ),
+  );
+}
+
+/** A chat message's text with its bold, italic and code, as elements: another person wrote it, so never as HTML. */
+export function chatText(text: string): ReactNode[] {
+  return chatSpans(text).map(({ style, text }, i) =>
+    style === 'plain' ? (
+      <Fragment key={i}>{linkify(text)}</Fragment>
+    ) : style === 'bold' ? (
+      <strong key={i}>{linkify(text)}</strong>
+    ) : style === 'italic' ? (
+      <em key={i}>{linkify(text)}</em>
+    ) : (
+      <code key={i} className={style === 'block' ? 'chat-code-block' : 'chat-code'}>
+        {text}
+      </code>
     ),
   );
 }

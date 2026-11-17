@@ -30,6 +30,7 @@ import {
 } from './icons';
 import { PullTags, type Tone } from './PullTags';
 import { SharePullDialog } from './SharePullDialog';
+import { confirmAction } from './ConfirmHost';
 
 /** The pull requests pane: takes the place of a chat, with a back button on phones. */
 export function GithubView() {
@@ -371,10 +372,13 @@ function Settings({ account }: { account: GithubAccountDTO }) {
         <Button
           label="Disconnect"
           isDisabled={busy}
-          onClick={() => {
-            if (confirm('Disconnect GitHub? WebChat deletes its access token and stops watching your pull requests.')) {
-              void act(disconnectGithub);
-            }
+          onClick={async () => {
+            const yes = await confirmAction({
+              title: 'Disconnect GitHub?',
+              body: 'WebChat deletes its access token and stops watching your pull requests.',
+              confirmLabel: 'Disconnect',
+            });
+            if (yes) void act(disconnectGithub);
           }}
         />
       </div>

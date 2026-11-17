@@ -126,6 +126,7 @@ export const api = {
   removeGroupMember: (conversationId: number, userId: number, input: RemoveGroupMemberInput) =>
     request<ConversationDTO>('DELETE', `/conversations/${conversationId}/members/${userId}`, input),
   leaveGroup: (conversationId: number) => request<void>('POST', `/conversations/${conversationId}/leave`),
+  setMuted: (conversationId: number, muted: boolean) => request<void>('PUT', `/conversations/${conversationId}/mute`, { muted }),
   handOverGroup: (conversationId: number, input: NewOwnerInput) =>
     request<ConversationDTO>('PUT', `/conversations/${conversationId}/owner`, input),
   deleteGroup: (conversationId: number) => request<void>('DELETE', `/conversations/${conversationId}`),

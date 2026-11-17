@@ -366,7 +366,7 @@ export function AddPeopleDialog({ target, onClose }: { target: MembersTarget; on
       </Text>
       <Text as="p" color="secondary">
         {target.kind === 'project'
-          ? 'People you add join every channel and can read earlier messages too. Your browser shares the channel keys with them, so this works only while you can open every channel.'
+          ? 'People you add join every channel and can read earlier messages too. You can add people only while you can open every channel yourself.'
           : 'People you add can read earlier messages too. Your browser shares the group’s key with them.'}
       </Text>
       <TextInput

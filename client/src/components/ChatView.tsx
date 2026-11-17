@@ -9,19 +9,23 @@ import type { QuotedMessage } from '../../../shared/e2ee';
 import { githubCardEvent } from '../../../shared/github';
 import { FILE_EXTENSIONS, FILE_TYPE_LIST, isPhotoType, LIMITS, RUN_PICKUP_MS, type CardNoteDTO, type FileDTO, type GithubCardDTO, type PullCardDTO, type PullEvent, type RunReport, type RunRequest } from '../../../shared/types';
 import { seatFor } from '../agents';
+import { firstEmoji } from '../chatText';
 import { holdReloadWhile } from '../build';
-import { cancelRun, discardMessage, loadDraft, loadOlder, quoteOf, react, retryMessage, saveDraft, sendFile, sendMessage } from '../chat';
+import { cancelRun, discardMessage, loadDraft, loadOlder, quoteOf, react, retryMessage, saveDraft, sendFile, sendMessage, setMuted } from '../chat';
 import { downloadFile, formatSize, isExpired, openFile, prepareFile, RefusedFileError, type Attachment } from '../files';
 import type { ChatConversation, ChatMessage } from '../e2ee/keyring';
 import { actions, chatTitle, otherMemberId, senderName, useAppState, type MessageReactions, type State } from '../store';
 import { Avatar, nameColor } from './Avatar';
-import { dayLabel, formatTime, linkify, presenceText } from './format';
+import { chatText, dayLabel, formatTime, presenceText } from './format';
 import {
   AlertIcon,
   BackIcon,
+  BellIcon,
+  BellOffIcon,
   BellRingIcon,
   ClockIcon,
   CloseIcon,
+  CopyIcon,
   DownloadIcon,
   FileIcon,
   LockIcon,
@@ -47,6 +51,16 @@ const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
 /** Phones and tablets: no hover, so tapping a message opens its reactions and reply. */
 const touchOnly = () => window.matchMedia('(hover: none)').matches;
+
+const copyText = (text: string) =>
+  navigator.clipboard.writeText(text).then(
+    () => actions.addToast({ conversationId: null, title: 'Copied', body: 'The message text is on your clipboard.' }),
+    () => actions.addToast({ conversationId: null, title: 'Not copied', body: 'This browser did not allow copying.' }),
+  );
+
+/** Messages one time and one name stand for: the same sender in the same minute, so no day divider between them. */
+const sameRun = (a: ChatMessage | undefined, b: ChatMessage | undefined) =>
+  !!a && !!b && a.senderId === b.senderId && Math.floor(a.createdAt / 60_000) === Math.floor(b.createdAt / 60_000);
 
 /**
  * Why messages cannot be sent here yet, if so. A chat from before encryption gets its key on the
@@ -75,6 +89,7 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
   const project = useAppState((s) => (conversation.projectId === null ? undefined : s.projects[conversation.projectId]));
   const [showCodes, setShowCodes] = useState(false);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [dropped, setDropped] = useState<File | null>(null);
 
   const isChannel = conversation.type === 'channel';
   const title = isChannel ? `#${conversation.title ?? 'channel'}` : chatTitle(conversation);
@@ -98,7 +113,17 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
         : null;
 
   return (
-    <section className="chat">
+    <section
+      className="chat"
+      // Without this the browser opens a dropped file itself, outside the checks the paperclip makes.
+      onDragOver={(e) => e.dataTransfer.types.includes('Files') && e.preventDefault()}
+      onDrop={(e) => {
+        const file = e.dataTransfer.files[0];
+        if (!file) return;
+        e.preventDefault();
+        setDropped(file);
+      }}
+    >
       <header className="chat-header">
         <IconButton
           className="back-button"
@@ -135,6 +160,13 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
           )}
           <IconButton
             variant="ghost"
+            label={conversation.muted ? 'Unmute' : 'Mute'}
+            tooltip={conversation.muted ? 'Unmute' : 'Mute'}
+            onClick={() => void setMuted(conversation.id, !conversation.muted)}
+            icon={conversation.muted ? <BellOffIcon /> : <BellIcon />}
+          />
+          <IconButton
+            variant="ghost"
             label="Encryption and security codes"
             tooltip="Encryption and security codes"
             onClick={() => setShowCodes(true)}
@@ -156,6 +188,7 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
         blockedReason={sendBlockedReason(conversation, { me, users })}
         replyTo={replyTo}
         onCancelReply={() => setReplyTo(null)}
+        dropped={dropped}
       />
       {showCodes && <SecurityCodeDialog conversation={conversation} onClose={() => setShowCodes(false)} />}
     </section>
@@ -274,12 +307,15 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
         if (trayFor !== null && !(e.target as Element).closest('.reaction-tray, .message-tools, .bubble')) setTrayFor(null);
       }}
     >
-      <button className="encryption-notice" onClick={onShowCodes}>
-        <LockIcon width={14} height={14} />
-        {conversation.keyId
-          ? 'Messages are end-to-end encrypted. No one outside this chat, not even the server, can read them.'
-          : 'Messages you send here will be end-to-end encrypted. Earlier ones were sent before encryption.'}
-      </button>
+      {/* The header's lock opens this in every chat; the notice shows only before the first message, or over unencrypted history. */}
+      {(!conversation.keyId || (messages.length === 0 && complete)) && (
+        <button className="encryption-notice" onClick={onShowCodes}>
+          <LockIcon width={14} height={14} />
+          {conversation.keyId
+            ? 'Messages are end-to-end encrypted. No one outside this chat, not even the server, can read them.'
+            : 'Messages you send here will be end-to-end encrypted. Earlier ones were sent before encryption.'}
+        </button>
+      )}
       {loaded && !complete && (
         <Stack hAlign="center">
           <Button variant="ghost" size="sm" onClick={() => void showOlder()} isLoading={loadingOlder} label="Show earlier messages" />
@@ -294,9 +330,11 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
         const previous = shown[i - 1];
         const newDay = !previous || dayLabel(previous.createdAt) !== dayLabel(message.createdAt);
         const mine = message.senderId === meId;
-        const firstOfRun = newDay || previous?.senderId !== message.senderId;
+        const firstOfRun = !sameRun(previous, message);
+        const lastOfRun = !sameRun(message, shown[i + 1]);
         const status = message.clientId ? pending[message.clientId] : undefined;
         const canAct = message.id > 0 && message.security !== 'failed';
+        const copyable = !message.file && message.text !== '';
         const marks = reactions[message.id];
         const rowClass = [
           'bubble-row',
@@ -347,23 +385,26 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                   ) : message.pull ? (
                     <PullCard pull={message.pull} />
                   ) : (
-                    <span className="bubble-text">{linkify(message.text)}</span>
+                    <span className="bubble-text">{chatText(message.text)}</span>
                   )}
-                  <span className="bubble-meta">
-                    {message.security === 'plain' && (
-                      <span className="not-encrypted" title="Sent before end-to-end encryption was turned on">
-                        <LockOpenIcon width={11} height={11} /> Not encrypted
-                      </span>
-                    )}
-                    {message.security === 'github' && (
-                      <span className="not-encrypted" title="WebChat wrote this from what GitHub sent, so it is not end-to-end encrypted">
-                        <LockOpenIcon width={11} height={11} /> Not encrypted
-                      </span>
-                    )}
-                    {formatTime(message.createdAt)}
-                    {mine && status === 'sending' && <ClockIcon width={13} height={13} aria-label="sending" />}
-                    {mine && !status && message.id > 0 && <Ticks state={receiptState(conversation, message.id, meId)} />}
-                  </span>
+                  {(lastOfRun || message.security === 'plain' || message.security === 'github' || status === 'sending') && (
+                    <span className="bubble-meta">
+                      {message.security === 'plain' && (
+                        <span className="not-encrypted" title="Sent before end-to-end encryption was turned on">
+                          <LockOpenIcon width={11} height={11} /> Not encrypted
+                        </span>
+                      )}
+                      {message.security === 'github' && (
+                        <span className="not-encrypted" title="WebChat wrote this from what GitHub sent, so it is not end-to-end encrypted">
+                          <LockOpenIcon width={11} height={11} /> Not encrypted
+                        </span>
+                      )}
+                      {lastOfRun && formatTime(message.createdAt)}
+                      {mine && status === 'sending' && <ClockIcon width={13} height={13} aria-label="sending" />}
+                      {/* A read pointer covers every message before it, so the run's last ticks speak for the run. */}
+                      {mine && !status && message.id > 0 && lastOfRun && <Ticks state={receiptState(conversation, message.id, meId)} />}
+                    </span>
+                  )}
                 </div>
                 {canAct && (
                   <span className="message-tools">
@@ -375,6 +416,9 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                       icon={<SmilePlusIcon width={17} height={17} />}
                     />
                     <IconButton size="sm" label="Reply" tooltip="Reply" onClick={() => onReply(message)} icon={<ReplyIcon width={17} height={17} />} />
+                    {copyable && (
+                      <IconButton size="sm" label="Copy text" tooltip="Copy text" onClick={() => void copyText(message.text)} icon={<CopyIcon width={17} height={17} />} />
+                    )}
                   </span>
                 )}
                 {trayFor === message.id && (
@@ -393,6 +437,18 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                         {emoji}
                       </button>
                     ))}
+                    <input
+                      className="tray-any"
+                      aria-label="React with another emoji"
+                      placeholder="+"
+                      title="Type or pick any emoji"
+                      onChange={(e) => {
+                        const emoji = firstEmoji(e.target.value);
+                        if (!emoji) return;
+                        setTrayFor(null);
+                        void react(message, emoji);
+                      }}
+                    />
                     <button
                       role="menuitem"
                       className="tray-reply"
@@ -403,6 +459,18 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                     >
                       <ReplyIcon width={16} height={16} /> Reply
                     </button>
+                    {copyable && (
+                      <button
+                        role="menuitem"
+                        className="tray-reply"
+                        onClick={() => {
+                          setTrayFor(null);
+                          void copyText(message.text);
+                        }}
+                      >
+                        <CopyIcon width={16} height={16} /> Copy
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -695,6 +763,8 @@ interface ComposerProps {
   blockedReason: string | null;
   replyTo: ChatMessage | null;
   onCancelReply: () => void;
+  /** A file dropped on the chat, attached as if picked with the paperclip. */
+  dropped: File | null;
 }
 
 /** Grows a message box with its text up to about six lines. */
@@ -738,7 +808,7 @@ export function useDraft(name: number | string) {
   return [text, edit] as const;
 }
 
-function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: ComposerProps) {
+function Composer({ conversationId, blockedReason, replyTo, onCancelReply, dropped }: ComposerProps) {
   const [text, edit] = useDraft(conversationId);
   const [urgent, setUrgent] = useState(false);
   const filesOn = useAppState((s) => s.files);
@@ -760,6 +830,11 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
   }, [replyTo]);
 
   useAutoGrow(input, text);
+
+  const canAttach = filesOn && blockedReason === null;
+  useEffect(() => {
+    if (dropped && canAttach) void pick(dropped);
+  }, [dropped]);
 
   async function pick(picked: File | undefined) {
     setFileProblem(null);
@@ -863,6 +938,13 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply }: Com
           placeholder={urgent ? 'Urgent message' : 'Type a message'}
           onChange={(e) => edit(e.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={(e) => {
+            // Text copied from an office app comes with a picture of itself; the text is what was meant.
+            const file = e.clipboardData.files[0];
+            if (!file || !canAttach || e.clipboardData.types.includes('text/plain')) return;
+            e.preventDefault();
+            void pick(file);
+          }}
         />
         <IconButton
           variant={urgent ? 'destructive' : 'primary'}
