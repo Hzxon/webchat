@@ -88,10 +88,7 @@ export interface Editing {
   saved: string;
   /** What the editor starts with: the server's text, or a draft this device kept. */
   text: string;
-  /**
-   * Just added, so the editor offers Cancel, which takes it back, instead of Delete. The server holds
-   * it already when `saved` has text, as a new card does (D-116).
-   */
+  /** Just added, so the server has it only once the editor saves, and Cancel takes it back. */
   isNew: boolean;
 }
 

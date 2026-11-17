@@ -55,8 +55,8 @@ import {
 } from './push';
 import type { Card } from '../../shared/board';
 import { keyedQueue } from './queue';
-import { agentChats, agentOf, ownAgents, threadsOf } from './agents';
-import { actions, chatTitle, localEditCount, reloadPath, senderName, store, type State } from './store';
+import { agentChats, agentOf, ownAgents, threadCard, threadsOf } from './agents';
+import { actions, chatTitle, localEditCount, loudUnread, reloadPath, senderName, store, type State } from './store';
 
 const newClientId = () =>
   typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -506,7 +506,8 @@ function onIncoming(message: ChatMessage) {
   }
 
   const conversation = state.conversations[message.conversationId];
-  if (!conversation) return;
+  // Urgent ones ignore mute, as their push does (the mute decision, proposed).
+  if (!conversation || (conversation.muted && !message.urgent)) return;
   const sender = senderName(state.users, message.senderId);
   const isGroup = conversation.type !== 'direct';
   const title = isGroup ? chatTitle(conversation) : sender;
@@ -534,7 +535,7 @@ let lastAlertState = '';
 /** Keeps the tab title, favicon, app badge and urgent ringing in step with the store. */
 function syncAlerts() {
   const state = store.get();
-  const unread = Object.values(state.conversations).reduce((sum, c) => sum + c.unread, 0);
+  const unread = Object.values(state.conversations).reduce((sum, c) => sum + loudUnread(c), 0);
   const first = state.urgent[0];
   const urgentFrom = first ? senderName(state.users, first.senderId) : null;
   const key = `${unread}|${urgentFrom}`;
@@ -580,10 +581,15 @@ export async function openConversation(conversationId: number) {
   else actions.setAgentsOpen(true);
   await loadChat(conversationId);
   // A notification is for the chat's newest message, so it opens that message's conversation, unless
-  // the user went elsewhere while it loaded. A request has none: it waits in the list.
+  // the user went elsewhere while it loaded. A request has none: it waits in the list. A card's run
+  // opens on its card in the board, which shows the run beside it (the card-run-in-peek decision).
   const now = store.get();
   const list = now.messages[conversationId] ?? [];
-  if (agent && now.agentsOpen && now.agentThread === null) actions.setAgentsOpen(true, list.at(-1)?.ask ? null : threadsOf(list, meId, agent.id, now.pending)[0]?.root ?? null);
+  if (!agent || !now.agentsOpen || now.agentThread !== null) return;
+  const thread = list.at(-1)?.ask ? undefined : threadsOf(list, meId, agent.id, now.pending)[0];
+  const card = thread && threadCard(thread, now.docs, now.conversations);
+  if (card) actions.setBoardOpen(card.projectId, card.section);
+  else actions.setAgentsOpen(true, thread?.root ?? null);
 }
 
 /** Loads a chat's newest messages when the page has none yet, and marks it read while the user looks. */
@@ -1266,6 +1272,17 @@ export async function leaveProject(projectId: number) {
   await api.leaveProject(projectId);
   actions.dropProject(projectId);
   void syncNow();
+}
+
+/** Mutes or unmutes a chat for this user on all their devices; a failure puts the old state back. */
+export async function setMuted(conversationId: number, muted: boolean) {
+  actions.setMuted(conversationId, muted);
+  try {
+    await api.setMuted(conversationId, muted);
+  } catch (error) {
+    actions.setMuted(conversationId, !muted);
+    actions.addToast({ conversationId, title: muted ? 'Not muted' : 'Not unmuted', body: (error as Error).message });
+  }
 }
 
 /** Leaves a group. A member who stays gives it a new key, as for a project. */

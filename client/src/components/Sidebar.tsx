@@ -3,7 +3,14 @@ import { Badge } from '@astryxdesign/core/Badge';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { Divider } from '@astryxdesign/core/Divider';
-import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
+import {
+  DropdownMenu,
+  DropdownMenuDivider,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+} from '@astryxdesign/core/DropdownMenu';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { Stack } from '@astryxdesign/core/Stack';
@@ -14,15 +21,17 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { AGENT_LEVEL, type ProjectDTO } from '../../../shared/types';
 import { agentOf, ownAgents, proposalsWaiting, ready, THREAD_STATE, useAgentThreads } from '../agents';
 import { sound } from '../alerts';
-import { notificationWarning } from '../banner';
+import { notificationWarning, shownWarning } from '../banner';
+import { colorChoice, setColorChoice, subscribeColorMode, type ColorChoice } from '../colorMode';
 import { deleteAccount, deleteChannel, openConversation, previewText, signOut } from '../chat';
 import { deleteDoc } from '../docs';
 import type { ChatConversation, ChatDoc } from '../e2ee/keyring';
-import { actions, chatTitle, generalOf, otherMemberId, senderName, useAppState, type SidebarTab, type State } from '../store';
+import { actions, chatTitle, generalOf, loudUnread, otherMemberId, senderName, useAppState, type SidebarTab, type State } from '../store';
 import { Avatar } from './Avatar';
 import { formatListTime } from './format';
 import {
   BellIcon,
+  BellOffIcon,
   BellRingIcon,
   BoardIcon,
   ChatIcon,
@@ -44,6 +53,7 @@ import {
   UsersIcon,
 } from './icons';
 import { receiptState } from './receipts';
+import { confirmAction } from './ConfirmHost';
 
 interface SidebarProps {
   onNewChat: () => void;
@@ -58,9 +68,12 @@ interface SidebarProps {
   onCollapse: () => void;
 }
 
-/** Unread messages in a tab: channels count in Projects, every other chat in Chats. */
+/** Unread messages in a tab: channels count in Projects, every other chat in Chats. Muted chats count in neither. */
 const unreadIn = (tab: SidebarTab) => (s: State) =>
-  Object.values(s.conversations).reduce((sum, c) => ((c.type === 'channel') === (tab === 'projects') ? sum + c.unread : sum), 0);
+  Object.values(s.conversations).reduce(
+    (sum, c) => ((c.type === 'channel') === (tab === 'projects') ? sum + loudUnread(c) : sum),
+    0,
+  );
 
 const newestFirst = (a: ChatConversation, b: ChatConversation) =>
   (b.lastMessage?.createdAt ?? b.updatedAt) - (a.lastMessage?.createdAt ?? a.updatedAt);
@@ -86,9 +99,11 @@ export function Sidebar(props: SidebarProps) {
   const tab = useAppState((s) => s.tab);
   const connected = useAppState((s) => s.connected);
   const [query, setQuery] = useState('');
+  const theme = useSyncExternalStore(subscribeColorMode, colorChoice);
 
   const chatUnread = useAppState(unreadIn('chats'));
   const projectUnread = useAppState(unreadIn('projects'));
+  const projectUpdated = useAppState((s) => Object.values(s.docs).some((d) => updatedSince(d, s.me?.id, s.docsSeen)));
 
   const { chats, channels } = useMemo(() => {
     const all = Object.values(conversations);
@@ -137,11 +152,22 @@ export function Sidebar(props: SidebarProps) {
   async function removeAccount() {
     const warning =
       'You leave every project and group, your direct chats are deleted for both people, and your username is freed.';
-    if (!confirm(`Delete your account? ${warning} This cannot be undone.`)) return;
+    if (
+      !(await confirmAction({
+        title: 'Delete your account?',
+        body: `${warning} This cannot be undone.`,
+        confirmLabel: 'Delete account',
+      }))
+    )
+      return;
     try {
       await deleteAccount();
     } catch (err) {
-      actions.addToast({ conversationId: null, title: 'Delete account', body: (err as Error).message });
+      actions.addToast({
+        conversationId: null,
+        title: 'Delete account',
+        body: (err as Error).message,
+      });
     }
   }
 
@@ -156,15 +182,49 @@ export function Sidebar(props: SidebarProps) {
           onClick={onCollapse}
           icon={<PanelLeftIcon />}
         />
-        <Avatar name={me.displayName} seed={me.id} size={38} />
-        <Stack gap={0} width="100%" className="sidebar-me">
-          <Text weight="semibold" maxLines={1}>
-            {me.displayName}
-          </Text>
-          <Text color="secondary" type="supporting" maxLines={1}>
-            @{me.username}
-          </Text>
-        </Stack>
+        <DropdownMenu
+          renderTrigger={(trigger) => (
+            <Button
+              {...trigger}
+              className="account-button"
+              variant="ghost"
+              label="Account"
+              width="100%"
+            >
+              <Stack as="span" direction="horizontal" gap={2} vAlign="center">
+                <Avatar name={me.displayName} seed={me.id} size={38} />
+                <Stack as="span" gap={0} className="sidebar-me">
+                  <Text weight="semibold" maxLines={1}>
+                    {me.displayName}
+                  </Text>
+                  <Text color="secondary" type="supporting" maxLines={1}>
+                    @{me.username}
+                  </Text>
+                </Stack>
+              </Stack>
+            </Button>
+          )}
+        >
+          <DropdownMenuGroup title="Theme">
+            <DropdownMenuRadioGroup
+              label="Theme"
+              value={theme}
+              onChange={(value) => setColorChoice(value as ColorChoice)}
+            >
+              <DropdownMenuRadioItem value="system" label="System" />
+              <DropdownMenuRadioItem value="light" label="Light" />
+              <DropdownMenuRadioItem value="dark" label="Dark" />
+            </DropdownMenuRadioGroup>
+          </DropdownMenuGroup>
+          <DropdownMenuDivider />
+          <DropdownMenuItem label="Sign out" icon={LogoutIcon} onClick={() => void signOut()} />
+          <DropdownMenuItem
+            label="Delete account"
+            variant="destructive"
+            icon={TrashIcon}
+            onClick={() => void removeAccount()}
+          />
+        </DropdownMenu>
         <NotificationBell onClick={onNotifications} />
         <IconButton
           variant="ghost"
@@ -172,20 +232,6 @@ export function Sidebar(props: SidebarProps) {
           tooltip={tab === 'projects' ? 'New project' : 'New chat'}
           onClick={tab === 'projects' ? onNewProject : onNewChat}
           icon={<PlusIcon />}
-        />
-        <IconButton
-          variant="ghost"
-          label="Sign out"
-          tooltip="Sign out"
-          onClick={() => void signOut()}
-          icon={<LogoutIcon />}
-        />
-        <IconButton
-          variant="ghost"
-          label="Delete account"
-          tooltip="Delete account"
-          onClick={() => void removeAccount()}
-          icon={<TrashIcon />}
         />
       </Stack>
       <Divider />
@@ -210,7 +256,13 @@ export function Sidebar(props: SidebarProps) {
           value="projects"
           label="Projects"
           icon={<FolderIcon width={18} height={18} />}
-          endContent={projectUnread > 0 && <Badge variant="info" label={projectUnread} />}
+          endContent={
+            projectUnread > 0 ? (
+              <Badge variant="info" label={projectUnread} />
+            ) : (
+              projectUpdated && <StatusDot variant="accent" label="Updated" />
+            )
+          }
         />
       </TabList>
 
@@ -366,9 +418,8 @@ function ProjectSection(props: {
   const generalId = useAppState((s) => generalOf(s, project.id)?.id);
   const owner = project.ownerId === meId;
   const people = project.memberIds.length;
-  /** Someone else saved it since this device last showed it. */
-  const updatedSince = (d: ChatDoc) => d.updatedBy !== meId && d.version > (docsSeen[d.id] ?? 0);
-  const boardUpdated = boards.some(updatedSince);
+  const updated = (d: ChatDoc) => updatedSince(d, meId, docsSeen);
+  const boardUpdated = boards.some(updated);
 
   return (
     <Stack as="section" className="project" gap={0.5} paddingBlock={2}>
@@ -378,39 +429,64 @@ function ProjectSection(props: {
         description={`${people} ${people === 1 ? 'member' : 'members'}`}
         endContent={
           <Stack direction="horizontal" gap={0.5}>
-            <IconButton
-              variant="ghost"
-              size="sm"
-              label={`Members of ${project.name}`}
-              tooltip="Members"
-              onClick={onMembers}
-              icon={<UsersIcon width={18} height={18} />}
+            <DropdownMenu
+              alignment="end"
+              renderTrigger={(trigger) => (
+                <IconButton
+                  {...trigger}
+                  variant="ghost"
+                  size="sm"
+                  label={`Add to ${project.name}`}
+                  tooltip="Add"
+                  icon={<PlusIcon width={18} height={18} />}
+                />
+              )}
+              items={[
+                {
+                  label: 'New channel',
+                  icon: <HashIcon width={16} height={16} />,
+                  onClick: onNewChannel,
+                },
+                {
+                  label: 'New doc',
+                  icon: <FileIcon width={16} height={16} />,
+                  onClick: onNewDoc,
+                },
+              ]}
             />
-            <IconButton
-              variant="ghost"
-              size="sm"
-              label={`Add people to ${project.name}`}
-              tooltip="Add people"
-              onClick={onAddPeople}
-              icon={<UserPlusIcon width={18} height={18} />}
-            />
-            {github && (
-              <IconButton
-                variant="ghost"
-                size="sm"
-                label={`GitHub repositories of ${project.name}`}
-                tooltip="GitHub repositories"
-                onClick={onRepos}
-                icon={<GithubIcon width={18} height={18} />}
-              />
-            )}
-            <IconButton
-              variant="ghost"
-              size="sm"
-              label={`New channel in ${project.name}`}
-              tooltip="New channel"
-              onClick={onNewChannel}
-              icon={<PlusIcon width={18} height={18} />}
+            <DropdownMenu
+              alignment="end"
+              renderTrigger={(trigger) => (
+                <IconButton
+                  {...trigger}
+                  variant="ghost"
+                  size="sm"
+                  label={`Options for ${project.name}`}
+                  tooltip="Options"
+                  icon={<MoreIcon width={18} height={18} />}
+                />
+              )}
+              items={[
+                {
+                  label: 'Members',
+                  icon: <UsersIcon width={16} height={16} />,
+                  onClick: onMembers,
+                },
+                {
+                  label: 'Add people',
+                  icon: <UserPlusIcon width={16} height={16} />,
+                  onClick: onAddPeople,
+                },
+                ...(github
+                  ? [
+                      {
+                        label: 'GitHub repositories',
+                        icon: <GithubIcon width={16} height={16} />,
+                        onClick: onRepos,
+                      },
+                    ]
+                  : []),
+              ]}
             />
           </Stack>
         }
@@ -423,20 +499,23 @@ function ProjectSection(props: {
           return (
             <ListItem
               key={c.id}
-              className={rowClass(c.unread > 0, hasUrgent)}
+              className={rowClass(loudUnread(c) > 0, hasUrgent)}
               startContent={<HashIcon width={16} height={16} />}
               label={c.title ?? ''}
               isSelected={activeId === c.id}
               onClick={() => void openConversation(c.id)}
               endContent={
-                (hasUrgent || c.unread > 0 || deletable) && (
+                (hasUrgent || c.unread > 0 || c.muted || deletable) && (
                   <Stack direction="horizontal" gap={1} vAlign="center">
                     {hasUrgent && <Badge variant="error" label="URGENT" />}
-                    {c.unread > 0 && <Badge variant="info" label={c.unread} />}
+                    <UnreadMark unread={c.unread} muted={c.muted} />
                     {deletable && (
                       <RowMenu
                         name={`#${c.title}`}
-                        question={`Delete #${c.title} for everyone? Every message in it will be deleted for all members.${github ? ' A repository linked to it will be unlinked.' : ''} This cannot be undone.`}
+                        question={{
+                          title: `Delete #${c.title} for everyone?`,
+                          body: `Every message in it will be deleted for all members.${github ? ' A repository linked to it will be unlinked.' : ''} This cannot be undone.`,
+                        }}
                         onDelete={() => deleteChannel(project.id, c.id)}
                       />
                     )}
@@ -455,21 +534,24 @@ function ProjectSection(props: {
           endContent={boardUpdated && <StatusDot variant="accent" label="Updated" />}
         />
         {docs.map((d) => {
-          const updated = updatedSince(d);
+          const isUpdated = updated(d);
           return (
             <ListItem
               key={d.id}
-              className={rowClass(updated)}
+              className={rowClass(isUpdated)}
               startContent={<FileIcon width={16} height={16} />}
               label={d.name}
               isSelected={docOpen === d.id}
               onClick={() => actions.setDocOpen(d.id)}
               endContent={
                 <Stack direction="horizontal" gap={1} vAlign="center">
-                  {updated && <StatusDot variant="accent" label="Updated" />}
+                  {isUpdated && <StatusDot variant="accent" label="Updated" />}
                   <RowMenu
                     name={d.name}
-                    question={`Delete “${d.name}” for everyone in the project? This cannot be undone.`}
+                    question={{
+                      title: `Delete “${d.name}” for everyone in the project?`,
+                      body: 'This cannot be undone.',
+                    }}
                     onRename={() => onRenameDoc(d)}
                     onDelete={d.createdBy === meId || owner ? () => deleteDoc(d.id) : undefined}
                   />
@@ -478,12 +560,15 @@ function ProjectSection(props: {
             />
           );
         })}
-        <ListItem startContent={<PlusIcon width={16} height={16} />} label="New doc" onClick={onNewDoc} />
       </List>
       <Divider />
     </Stack>
   );
 }
+
+/** Someone else saved the doc since this device last showed it: a row's dot, and the Projects tab's. */
+const updatedSince = (d: ChatDoc, meId: number | undefined, docsSeen: State['docsSeen']) =>
+  d.updatedBy !== meId && d.version > (docsSeen[d.id] ?? 0);
 
 /** Bold for something new, and the red row for an urgent message, which Astryx's rows have no prop for. */
 const rowClass = (unread: boolean, urgent = false) =>
@@ -493,15 +578,24 @@ const rowClass = (unread: boolean, urgent = false) =>
  * The "⋮" at the end of a doc's or channel's row: Rename, when it can be renamed, and Delete, for
  * those who may. Delete asks the question first, and shows a failure as a toast.
  */
-function RowMenu(props: { name: string; question: string; onRename?: () => void; onDelete?: () => Promise<void> }) {
+function RowMenu(props: {
+  name: string;
+  question: { title: string; body: string };
+  onRename?: () => void;
+  onDelete?: () => Promise<void>;
+}) {
   const { name, question, onRename, onDelete } = props;
 
   async function remove(run: () => Promise<void>) {
-    if (!confirm(question)) return;
+    if (!(await confirmAction({ ...question, confirmLabel: 'Delete' }))) return;
     try {
       await run();
     } catch (err) {
-      actions.addToast({ conversationId: null, title: name, body: (err as Error).message });
+      actions.addToast({
+        conversationId: null,
+        title: name,
+        body: (err as Error).message,
+      });
     }
   }
 
@@ -519,13 +613,37 @@ function RowMenu(props: { name: string; question: string; onRename?: () => void;
         />
       )}
       items={[
-        ...(onRename ? [{ label: 'Rename', icon: <PencilIcon width={16} height={16} />, onClick: onRename }] : []),
+        ...(onRename
+          ? [
+              {
+                label: 'Rename',
+                icon: <PencilIcon width={16} height={16} />,
+                onClick: onRename,
+              },
+            ]
+          : []),
         ...(onDelete
-          ? [{ label: 'Delete', icon: <TrashIcon width={16} height={16} />, onClick: () => void remove(onDelete) }]
+          ? [
+              {
+                label: 'Delete',
+                icon: <TrashIcon width={16} height={16} />,
+                onClick: () => void remove(onDelete),
+              },
+            ]
           : []),
       ]}
     />
   );
+}
+
+const CLOSED_WARNING_KEY = 'webchat.closedWarning';
+
+function closedWarning() {
+  try {
+    return localStorage.getItem(CLOSED_WARNING_KEY);
+  } catch {
+    return null;
+  }
 }
 
 /** Nudges the user until alerts can reach them: notifications allowed and sound unlocked. */
@@ -533,20 +651,40 @@ function AlertSetupBanner({ onOpen }: { onOpen: () => void }) {
   const push = useAppState((s) => s.push);
   const bark = useAppState((s) => s.bark);
   const soundUnlocked = useSyncExternalStore(sound.subscribe, sound.unlocked);
+  const [closed, setClosed] = useState(closedWarning);
 
-  const text = push && notificationWarning(push, bark);
+  const text = push && shownWarning(notificationWarning(push, bark), closed);
   if (text) {
     return (
       <Banner
+        // Each banner keeps its own closed state, so a new warning is not born closed.
+        key={text}
         status="warning"
         container="section"
         title={text}
         endContent={<Button size="sm" label="Set up" onClick={onOpen} />}
+        isDismissable
+        dismissLabel="Hide this warning"
+        onDismiss={() => {
+          setClosed(text);
+          try {
+            localStorage.setItem(CLOSED_WARNING_KEY, text);
+          } catch {
+            // A private window shows it again on the next load; the bell's dot stays either way.
+          }
+        }}
       />
     );
   }
   if (!soundUnlocked)
-    return <Banner status="info" container="section" title="Click anywhere on the page to enable alert sounds." />;
+    return (
+      <Banner
+        key="sound"
+        status="info"
+        container="section"
+        title="Click anywhere on the page to enable alert sounds."
+      />
+    );
   return null;
 }
 
@@ -632,21 +770,36 @@ function AgentsListItem() {
 }
 
 /** A row's time and unread count, stacked at its end. */
-function ListEnd({ time, unread }: { time?: number; unread: number }) {
-  if (time === undefined && unread === 0) return null;
+function ListEnd({ time, unread, muted = false }: { time?: number; unread: number; muted?: boolean }) {
+  if (time === undefined && unread === 0 && !muted) return null;
+  const loud = unread > 0 && !muted;
   return (
     <Stack gap={1} hAlign="end">
       {time !== undefined && (
-        <Text
-          type="supporting"
-          color={unread > 0 ? 'accent' : 'secondary'}
-          weight={unread > 0 ? 'semibold' : undefined}
-        >
+        <Text type="supporting" color={loud ? 'accent' : 'secondary'} weight={loud ? 'semibold' : undefined}>
           {formatListTime(time)}
         </Text>
       )}
-      {unread > 0 && <Badge variant="info" label={unread} />}
+      {(unread > 0 || muted) && (
+        <Stack direction="horizontal" gap={1} vAlign="center">
+          <UnreadMark unread={unread} muted={muted} />
+        </Stack>
+      )}
     </Stack>
+  );
+}
+
+/** A muted chat keeps its own unread count, in a quieter badge beside the muted bell. */
+function UnreadMark({ unread, muted }: { unread: number; muted: boolean }) {
+  return (
+    <>
+      {muted && (
+        <Text type="supporting" color="secondary">
+          <BellOffIcon width={14} height={14} role="img" aria-hidden={false} aria-label="Muted" />
+        </Text>
+      )}
+      {unread > 0 && <Badge variant={muted ? 'neutral' : 'info'} label={unread} />}
+    </>
   );
 }
 
@@ -680,13 +833,13 @@ function ChatListItem({ conversation }: { conversation: ChatConversation }) {
 
   return (
     <ListItem
-      className={rowClass(conversation.unread > 0, hasUrgent)}
+      className={rowClass(loudUnread(conversation) > 0, hasUrgent)}
       startContent={<Avatar name={title} seed={otherId ?? conversation.id + 3} size={36} online={other?.online} />}
       label={title}
       description={preview}
       isSelected={activeId === conversation.id}
       onClick={() => void openConversation(conversation.id)}
-      endContent={<ListEnd time={last?.createdAt} unread={conversation.unread} />}
+      endContent={<ListEnd time={last?.createdAt} unread={conversation.unread} muted={conversation.muted} />}
     />
   );
 }

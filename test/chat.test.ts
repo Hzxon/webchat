@@ -783,6 +783,51 @@ describe('chat server', () => {
     assert.equal(decrypted, text);
   });
 
+  test('a muted chat pushes its member only urgent messages, and the other member as before', async () => {
+    const mute = (client: Client, muted: unknown) => client.request('PUT', `/conversations/${directChat.id}/mute`, { muted });
+    assert.equal((await mute(carol, true)).status, 404, 'only a member mutes a chat');
+    assert.equal((await mute(bob, 'yes')).status, 400);
+    await bob.sync(false);
+    assert.equal((await bob.sync(false)).changed, false);
+    assert.equal((await mute(bob, true)).status, 204);
+    assert.equal((await bob.sync(false)).changed, true, 'his other devices follow');
+    assert.equal((await viewOf(bob, directChat.id)).muted, true);
+    assert.equal((await viewOf(alice, directChat.id)).muted, false, 'mute is his alone');
+
+    const alicePhone = makeSubscription(`http://${pushService.host}/alice-phone`);
+    assert.equal((await alice.request('POST', '/push/subscribe', alicePhone.json)).status, 204);
+    await alice.sync(false);
+    pushService.received.length = 0;
+    await alice.send(directChat.id, 'Muted for Bob');
+    assert.ok((await viewOf(bob, directChat.id)).unread > 0, 'the chat keeps its own count');
+    await bob.send(directChat.id, 'Not muted for Alice');
+    await waitForPushes(pushService.received, 1);
+    await sleep(300);
+    assert.deepEqual(pushService.received.map((p) => p.path), ['/alice-phone']);
+
+    pushService.received.length = 0;
+    const urgent = await alice.send(directChat.id, 'Urgent, muted or not', true);
+    const pushes = await waitForPushes(pushService.received, 3);
+    assert.deepEqual(pushes.map((p) => p.path).sort(), ['/bob-laptop', '/bob-phone', '/bob-phone-2']);
+
+    // While Bob looks, a muted message only wakes his tab, as a reaction does.
+    const tab = makeSubscription(`http://${pushService.host}/bob-muted-tab`);
+    assert.equal((await bob.request('POST', '/push/subscribe', tab.json)).status, 204);
+    await bob.sync(true, tab.json.endpoint);
+    pushService.received.length = 0;
+    await alice.send(directChat.id, 'Only a wake-up');
+    const wake = tab.decrypt((await waitForPushes(pushService.received, 1))[0]!.body);
+    assert.deepEqual([wake.kind, wake.messageId, wake.envelope], ['sync', null, null]);
+
+    assert.equal((await mute(bob, false)).status, 204);
+    assert.equal((await viewOf(bob, directChat.id)).muted, false);
+    await bob.request('POST', `/conversations/${directChat.id}/read`, { messageId: urgent.data.id });
+    await alice.request('POST', '/push/unsubscribe', { endpoint: alicePhone.json.endpoint });
+    await bob.request('POST', '/push/unsubscribe', { endpoint: tab.json.endpoint });
+    await bob.sync(false);
+    await instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+  });
+
   test('a push stays under 3,000 bytes for the longest message, and still carries no plain text (D-017)', async () => {
     const watch = makeSubscription(`http://${pushService.host}/bob-watch`);
     assert.equal((await bob.request('POST', '/push/subscribe', watch.json)).status, 204);
