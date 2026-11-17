@@ -1,0 +1,59 @@
+/* Export to PDF: the browser's print dialog saves the open doc alone, in black on white. */
+@media print {
+  :root {
+    color-scheme: light;
+    --text: #000;
+    --muted: #444;
+    --line: #bbb;
+    --panel: #fff;
+    --panel-2: #f2f2f2;
+    --quote-bg: #f2f2f2;
+    --read: #0645ad;
+  }
+
+  body,
+  .layout {
+    display: block;
+    height: auto;
+    background: #fff;
+    box-shadow: none;
+  }
+
+  .sidebar,
+  .sidebar-rail,
+  .chat-header,
+  .doc-section-tools,
+  .doc-lock,
+  .doc-add,
+  .toasts,
+  .urgent-overlay {
+    display: none !important;
+  }
+
+  .layout .doc-view {
+    display: block !important;
+  }
+
+  .doc-scroll {
+    overflow: visible;
+    padding: 0;
+  }
+
+  .doc-section,
+  .doc-section.is-locked {
+    padding: 0;
+    background: none;
+    box-shadow: none;
+  }
+
+  .markdown h1,
+  .markdown h2,
+  .markdown h3 {
+    break-after: avoid;
+  }
+
+  .markdown pre,
+  .markdown tr {
+    break-inside: avoid;
+  }
+}
