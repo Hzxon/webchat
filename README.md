@@ -200,6 +200,13 @@ What it does not protect against:
   setup, and its shell runs in its sandbox. Its file, web and MCP tools do not, and a repository's
   `.agents/mcp_config.json` runs a command as you. WebChat refuses a turn in a folder that has one,
   but a file the model writes during a turn can still load before the turn ends.
+- **Your own setup runs unconfined.** Once you turn on "Use my own setup" for a coding agent in
+  its Settings, a question you type in the Coding agents pane runs in your connected folder as your
+  terminal would: your settings, hooks, plugins, MCP servers and permission rules load, and
+  WebChat's sandbox and rules do not. The board's cards in its brief, which teammates write, and
+  the repository's files can steer it to read or change your files, use your own `gh` login and
+  change your working tree. Card runs and Check again stay restricted, and the agent's keys and
+  `gh` login stay in the locked room.
 - **Photos and files: who sent one, to which chat, when, and how large.** The browser encrypts a
   file with a key of its own before it uploads it. The key, the name, the type and the preview of a
   photo travel only inside the encrypted message. The server sees who uploaded a file, to which

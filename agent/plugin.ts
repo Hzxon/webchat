@@ -410,7 +410,8 @@ export class Plugin {
    */
   private async updateLevel() {
     const asks = this.linkedHarnesses().some((h) => h.asks) ? AGENT_LEVEL.asks : 0;
-    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | asks | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
+    const own = this.linkedHarnesses().some((h) => h.offers.knobs.includes('own')) ? AGENT_LEVEL.own : 0;
+    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | asks | own | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
   }
 
   /** The work that keeps an agent awake while it goes to sleep: its running cards and questions. */
@@ -1195,7 +1196,8 @@ export class Plugin {
       : undefined;
     // One process takes every turn of a session, so it gets every schema the session's turns use.
     const schemas = schema === CHECK || schema === ANSWER ? [CHECK, ANSWER] : [schema];
-    const { answer, applied } = await this.bench.turn({ harness: harness.name, cwd, session, resume, message, schema, schemas, setup: this.setup.choice }, { signal, progress: progress?.line, permit }).finally(() => {
+    const own = !taken && !!(who as { own?: boolean }).own;
+    const { answer, applied } = await this.bench.turn({ harness: harness.name, cwd, session, resume, message, schema, schemas, setup: this.setup.choice, ...(own && { own }) }, { signal, progress: progress?.line, permit }).finally(() => {
       progress?.end();
       // A conversation's run is its turn.
       if (!taken) this.permits!.drop(session);
@@ -1227,6 +1229,11 @@ export class Plugin {
     // The harness the prompt named, or the host: kept by name, so each reply resumes with it.
     const harness = await this.harnessFor(conversation.harness);
     conversation.harness = harness.name;
+    // Only a prompt its owner typed, and only while their signed setup turns it on for this harness (D-157).
+    const own = !!conversation.own && !!this.setup.choice.own?.includes(harness.name) && harness.offers.knobs.includes('own');
+    // A session cannot move between a scratch copy and the owner's folder, nor between setups.
+    if (resume && own !== !!conversation.ownSetup) throw new Error(`You turned your own setup ${own ? 'on' : 'off'} for ${harness.name} since this conversation started. Start a new one.`);
+    conversation.ownSetup = own;
     // A project that links no repository asks about its board alone, in an empty folder (R-038).
     const { repo } = conversation;
     const folder = repo ? await this.folderFor(repo, signal, () => this.client!.send(conversation.chat, { text: noCopy(repo), prompt: { kind: 'nocopy', to: conversation.root } })) : undefined;
@@ -1234,11 +1241,12 @@ export class Plugin {
     const listing = folder && openPulls(folder.repo);
     const board = await this.board(conversation.project);
     if (!folder && !board) throw new Error('I am not in that project, so I cannot read its board. Add me to it, then ask again.');
-    // Every turn fetches, so a reply after a merge reads the merged code, not the first turn's.
-    const base = folder && (await this.fetchBase(folder).catch(() => {
+    // Every turn fetches, so a reply after a merge reads the merged code, not the first turn's. In
+    // their own setup the turn works in their folder as it stands, which nothing here moves.
+    const base = folder && !own ? await this.fetchBase(folder).catch(() => {
       throw new Error('The laptop could not get your team’s code from GitHub. Check that it is online, then ask again.');
-    }));
-    const { scratch, fetched } = await this.bench.scratch({ scratch: conversation.scratch, dir: folder?.dir, base: base?.ref, tip: base?.tip, fetched: conversation.fetched });
+    }) : undefined;
+    const { scratch, fetched } = await this.bench.scratch({ scratch: conversation.scratch, dir: own ? undefined : folder?.dir, base: base?.ref, tip: base?.tip, fetched: conversation.fetched });
     // A new copy starts at the tip, so nothing moved under it.
     const was = scratch === conversation.scratch ? conversation.fetched : undefined;
     conversation.scratch = scratch;
@@ -1260,8 +1268,10 @@ export class Plugin {
           ...(changed.length ? ['', fence('Cards and decisions that changed on the board since', changed)] : []),
           ...(listed !== (conversation.pulls ?? '') ? ['', listed] : []),
         ].join('\n')
-      : promptBrief(input, board, folder?.repo, listed);
-    const answer = (await this.ask(scratch, conversation.session, resume, message, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks })) as { reply?: unknown; drafts?: unknown };
+      : promptBrief(input, board, folder?.repo, listed, own);
+    // Never the owner's folder as `scratch`, which an ended conversation removes.
+    const cwd = own && folder ? folder.dir : scratch;
+    const answer = (await this.ask(cwd, conversation.session, resume, message, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks, own })) as { reply?: unknown; drafts?: unknown };
     // Only once the turn read them, so a turn cut short tells the next one again.
     conversation.seen = seen;
     conversation.pulls = listed;

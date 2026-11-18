@@ -90,10 +90,15 @@ export async function seenOf(board: Board | undefined) {
 }
 
 /** A conversation's first brief: about a repository's code, or with none, about its project's board alone (R-038). */
-export function promptBrief(input: string, board: Board | undefined, repo: string | undefined, pulls: string) {
+export function promptBrief(input: string, board: Board | undefined, repo: string | undefined, pulls: string, own = false) {
   const decisions = (board?.decisions ?? []).map((d) => d.text);
   return [
-    ...(repo
+    ...(repo && own
+      ? [
+          `Your owner asks you this through WebChat, about ${repo}. You run in their own copy of it, with their own`,
+          'setup, as in their terminal: what you change stays in their working tree, and WebChat pushes nothing.',
+        ]
+      : repo
       ? [
           `Your owner asks you this through WebChat, about ${repo}. You are in a scratch copy of its default`,
           'branch, with only its latest commit: nothing you change here is kept or pushed. Your shell reaches',

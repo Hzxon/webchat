@@ -135,7 +135,8 @@ export const heldDecisions = (decisions: string[]) => decisions.filter(isHeld).m
 export type PromptDTO =
   // A prompt names its project's board and, unless the project links none, one of its repositories
   // (R-038), and the harness that answers, which every reply then resumes; none for the host harness.
-  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true }
+  // `own` says the owner typed it, so it may run in their own setup; Check again never sets it (D-157).
+  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true; own?: true }
   | { kind: 'reply'; to: string; sentAt: number }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }

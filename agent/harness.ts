@@ -30,6 +30,12 @@ export interface Turn {
   schemas?: object[];
   /** What of the owner's setup to load, as they chose (R-039): their instructions file, and a folder of copies of their chosen skills. */
   setup: { instructions?: string; skills?: string };
+  /**
+   * Runs in the owner's own setup, as their terminal would, with none of WebChat's sandbox or
+   * rules: only a session its owner started in their words, while their setup turns it on, and
+   * never a card run (D-157). Only an adapter whose `offers` has the `own` knob gets it.
+   */
+  own?: boolean;
   signal: AbortSignal;
   /** Takes what the model does now, in a sentence, each time the adapter can tell (docs/decisions/stop-pauses-run.md). */
   progress?: (sentence: string) => void;
@@ -69,7 +75,7 @@ export interface Harness {
    * What of the owner's setup it can load: the instructions file and the skills folder it reads,
    * and the knobs it honors, named as in `SetupChoice`, such as `noAttribution`. It declares a knob
    * only when it honors it without running code outside the sandbox and without changing
-   * permission or sandbox mode (D-115).
+   * permission or sandbox mode (D-115), except `own`, which says it can run `Turn.own` (D-157).
    */
   offers(): { instructions?: string; skills?: string; knobs: string[] };
   /** What the laptop has of it: where it is, its version, and whether it is signed in, each left out when it cannot tell. */

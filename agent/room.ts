@@ -474,9 +474,10 @@ export class SocketBench implements Bench {
     try {
       const { answer, applied } = record(await this.call('turn', { ...job, id, asks: !!asked }));
       const misfit = fits(job.schema, answer);
-      const { claudeMd, skills, noAttribution } = record(applied);
+      const { claudeMd, skills, noAttribution, own } = record(applied);
       if (misfit || typeof claudeMd !== 'boolean' || typeof noAttribution !== 'boolean') throw new Error(`The runner's answer does not fit: ${misfit ?? 'what it loaded'}.`);
-      return { answer, applied: { claudeMd, skills: strings(skills, LIMITS.setupSkills).filter((n) => SKILL_NAME.test(n)), noAttribution } };
+      // Only the harness this turn asked to run in the owner's own setup (D-157).
+      return { answer, applied: { claudeMd, skills: strings(skills, LIMITS.setupSkills).filter((n) => SKILL_NAME.test(n)), noAttribution, ...(job.own && strings(own, 1)[0] === job.harness && { own: [job.harness] }) } };
     } finally {
       signal.removeEventListener('abort', cancel);
       for (const file of this.room.turns.get(id)!.uploads.values()) await fs.rm(file, { force: true });

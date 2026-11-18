@@ -68,7 +68,20 @@ export function claudeSettings({ secrets, npmCache, env, noAttribution }: { secr
  * the config file of the approval endpoint, an action Claude Code would ask about is asked of the
  * owner; without it, it is refused.
  */
-export function claudeArgs({ settings, session, resume, schema, claudeMd, skills, mcp }: { settings: string; session: string; resume: boolean; schema: object; claudeMd?: string; skills?: string; mcp?: string }) {
+export function claudeArgs({ settings, session, resume, schema, claudeMd, skills, mcp, own }: { settings: string; session: string; resume: boolean; schema: object; claudeMd?: string; skills?: string; mcp?: string; own?: boolean }) {
+  const tail = [
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--json-schema',
+    JSON.stringify(schema),
+    resume ? '--resume' : '--session-id',
+    session,
+  ];
+  const asking = mcp ? ['--mcp-config', mcp, '--permission-prompt-tool', APPROVE_TOOL, '--disallowedTools', APPROVE_TOOL] : ['--permission-prompts', 'none'];
+  // The owner's own setup, as their terminal runs it: their settings, hooks, plugins, MCP servers,
+  // permission mode and rules load, and WebChat's endpoint only joins them to ask (D-157).
+  if (own) return ['-p', '--input-format', 'stream-json', ...asking, ...tail];
   return [
     '-p',
     '--input-format',
@@ -87,14 +100,8 @@ export function claudeArgs({ settings, session, resume, schema, claudeMd, skills
     '--permission-mode',
     'acceptEdits',
     // The tool is hidden from the model, which must not call it for itself.
-    ...(mcp ? ['--mcp-config', mcp, '--permission-prompt-tool', APPROVE_TOOL, '--disallowedTools', APPROVE_TOOL] : ['--permission-prompts', 'none']),
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    '--json-schema',
-    JSON.stringify(schema),
-    resume ? '--resume' : '--session-id',
-    session,
+    ...asking,
+    ...tail,
   ];
 }
 
@@ -271,7 +278,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
         })
       : undefined;
     // The skills' copies load as a plugin, which holds only `skills/`.
-    const args = claudeArgs({ settings, session: t.session, resume: t.resume, schema, claudeMd: t.setup.instructions, skills: t.setup.skills && path.dirname(t.setup.skills), mcp: live.approver?.file });
+    const args = claudeArgs({ settings, session: t.session, resume: t.resume, schema, claudeMd: t.setup.instructions, skills: t.setup.skills && path.dirname(t.setup.skills), mcp: live.approver?.file, own: t.own });
     const child = (live.child = spawn(program, args, { cwd: t.cwd, stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, ...(live.approver && { MCP_TOOL_TIMEOUT: String(TOOL_TIMEOUT_MS) }) } }));
     keep(child);
     // A process that exits before it reads closes the pipe; its exit says why.
@@ -347,7 +354,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
     // Nothing to check before the first `apply` writes the file.
     warning: async () => ((await fs.access(settings).then(() => true, () => false)) ? sandboxProblem(path.join(os.homedir(), 'WebChat'), secrets, restrictedSettings(settings)) : undefined),
     sandboxed: async () => !(await sandboxProblem(path.join(os.homedir(), 'WebChat'), secrets, restrictedSettings(settings))),
-    offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution', 'noPlan'] }),
+    offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution', 'noPlan', 'own'] }),
     async found() {
       if (!program) return {};
       // `auth status` prints its JSON and exits 1 when signed out.
@@ -366,7 +373,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
     async turn(t) {
       if (t.signal.aborted) throw new Error(CANCELLED);
       const schema = mergeSchemas((t.schemas ?? [t.schema]) as Schema[]);
-      const key = JSON.stringify([t.cwd, !!t.ask, t.setup, schema, t.lab?.proxy]);
+      const key = JSON.stringify([t.cwd, !!t.ask, t.setup, schema, t.lab?.proxy, !!t.own]);
       let live = lives.get(t.session);
       if (live?.turn) throw new Error('a turn of this session is running already.');
       // A session that starts over, or needs other arguments, cannot keep its process.

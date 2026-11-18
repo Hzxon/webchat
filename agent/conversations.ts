@@ -39,6 +39,10 @@ export interface Conversation {
   ended?: boolean;
   /** The owner's page can show a question of the agent, so a turn may ask before an action (docs/decisions/harness-approvals.md). */
   asks?: true;
+  /** Its owner typed the prompt, so it may run in their own setup; Check again and `webchat-agent card` never set it (D-157). */
+  own?: true;
+  /** Whether its turns ran in the owner's own setup, which every reply keeps. */
+  ownSetup?: boolean;
   /** The board its owner's page picked for the prompt, the only one its briefs hold (D-104). */
   project?: number;
   /** Each card and held decision in the brief, by its id, with its place and hash, so a draft names only what it saw (D-104, D-116). */
@@ -102,7 +106,7 @@ export class Conversations {
     const conversation =
       prompt.kind === 'prompt'
         ? message.clientId
-          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, harness: prompt.harness, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project, asks: prompt.asks }
+          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, harness: prompt.harness, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project, asks: prompt.asks, ...(prompt.own && { own: prompt.own }) }
           : undefined
         : this.list.find((c) => c.root === prompt.to && c.chat === message.conversationId);
     // A copy the server posted again under a new id does nothing (K-47).

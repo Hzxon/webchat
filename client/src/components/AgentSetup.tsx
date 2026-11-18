@@ -17,6 +17,7 @@ import {
   harnessRow,
   setupWords,
   takesAsks,
+  takesOwn,
   type HarnessRow,
   type HarnessState,
   type SetupChoice,
@@ -42,7 +43,12 @@ const same = (a: SetupChoice, b: SetupChoice) =>
   !a.noPlan === !b.noPlan &&
   sorted(a.skills) === sorted(b.skills) &&
   sorted(a.off) === sorted(b.off) &&
+  sorted(a.own) === sorted(b.own) &&
   (a.linked ?? []).join() === (b.linked ?? []).join();
+
+/** What the owner reads before turning on their own setup (D-157). */
+const OWN_WARNING =
+  'A question you type in the Coding agents pane runs in your folder with your own settings, hooks, plugins, MCP servers and permission rules, and no sandbox of WebChat’s. The board’s cards in its brief can steer it, and it can change your working tree. Card runs and Check again stay restricted.';
 
 const ROW_TONE: Record<HarnessRow, Tone> = { linked: 'ok', attention: 'warn', found: 'info', missing: 'muted' };
 
@@ -153,7 +159,7 @@ function SetupForm({ agent }: { agent: UserDTO }) {
     >
       <Text as="p" color="secondary">
         Each coding agent on your agent’s laptop, and what its runs and answers load from your setup there. Your
-        settings, hooks, MCP servers and plugins stay off, since a run follows cards your teammates wrote.{' '}
+        settings, hooks, MCP servers and plugins stay off in card runs, since a run follows cards your teammates wrote.{' '}
         {takesAsks(agent.protocol)
           ? 'It asks you in the Coding agents pane before an action its coding agent would ask about.'
           : 'Update your agent to be asked before such an action; until then it refuses it.'}
@@ -222,6 +228,14 @@ function SetupForm({ agent }: { agent: UserDTO }) {
                 description={`No “Co-Authored-By” or “Generated with ${h.name}” lines.`}
                 checked={choice.noAttribution}
                 onChange={() => setEdit({ ...choice, noAttribution: !choice.noAttribution })}
+              />
+            )}
+            {h.knobs.includes('own') && takesOwn(agent.protocol) && (
+              <PickItem
+                label="Use my own setup in sessions I start"
+                description={OWN_WARNING}
+                checked={!!choice.own?.includes(h.name)}
+                onChange={() => setEdit({ ...choice, own: flip(choice.own ?? [], h.name) })}
               />
             )}
             {h.knobs.includes('noPlan') && (

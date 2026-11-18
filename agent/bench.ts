@@ -99,7 +99,7 @@ export interface Bench {
   /** Removes a scratch copy. */
   drop(scratch: string): Promise<void>;
   /** Runs one turn, and returns its answer for the schema with what it loaded of the owner's setup (D-097). */
-  turn(turn: TurnJob, options: { signal: AbortSignal; progress?: (sentence: string) => void; permit?: () => Permit | undefined }): Promise<{ answer: unknown; applied: { claudeMd: boolean; skills: string[]; noAttribution: boolean } }>;
+  turn(turn: TurnJob, options: { signal: AbortSignal; progress?: (sentence: string) => void; permit?: () => Permit | undefined }): Promise<{ answer: unknown; applied: { claudeMd: boolean; skills: string[]; noAttribution: boolean; own?: string[] } }>;
   /** Ends what a harness keeps running for a session, or for all. */
   end(session?: string): Promise<void>;
 }
@@ -113,6 +113,8 @@ export interface TurnJob {
   schema: object;
   schemas: object[];
   setup: SetupChoice;
+  /** Runs in the owner's own setup (D-157); the plugin sets it only for a conversation its owner started in their words. */
+  own?: boolean;
 }
 
 /**
@@ -329,8 +331,19 @@ export class LocalBench implements Bench {
     return { instructions, skills: skills.length ? folder : undefined, applied: { claudeMd: !!instructions, skills, noAttribution: choice.noAttribution } };
   }
 
-  async turn({ harness: name, cwd, session, resume, message, schema, schemas, setup: choice }: TurnJob, { signal, progress, permit }: Parameters<Bench['turn']>[1]) {
+  async turn({ harness: name, cwd, session, resume, message, schema, schemas, setup: choice, own }: TurnJob, { signal, progress, permit }: Parameters<Bench['turn']>[1]) {
     const harness = this.harness(name);
+    if (own) {
+      if (!harness.offers().knobs.includes('own')) throw new Error(`${name} cannot run in your own setup.`);
+      // Their own rules decide; what they would ask about goes to the owner as it is, with no rulebook (D-157).
+      const asked = permit?.();
+      try {
+        const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: {}, own, signal, progress, ...(asked && { ask: asked.ask, quiet: asked.quiet }) });
+        return { answer, applied: { claudeMd: false, skills: [], noAttribution: false, own: [name] } };
+      } finally {
+        asked?.done();
+      }
+    }
     const { instructions, skills, applied } = await this.loadSetup(session, harness, choice);
     const asked = permit?.();
     // The rulebook runs here, where the owner's paths are; the owner's folders never reach the keyholder (docs/decisions/harness-rulebook.md).
