@@ -116,6 +116,11 @@ export function noteAdded(conversationId: number, to: string, draft: string, car
   return sendContent(conversationId, { text: `Added ${card} to the board.`, added: { to, draft, card } }, false);
 }
 
+/** Tells the user's devices that they dismissed a proposal's draft, which then waits no longer (R-047). The agent ignores it. */
+export function noteDismissed(conversationId: number, to: string, title: string) {
+  return sendContent(conversationId, { text: `Dismissed the proposal ${title}.`, dismissed: { to } }, false);
+}
+
 /**
  * Asks a member about a board card in the direct chat with them, so they alone get a push, an
  * ordinary message's (the card-notes decision).

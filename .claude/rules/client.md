@@ -34,6 +34,7 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - Alerts on iPhones without Web Push go through the Bark app; `client/src/ios.ts` spots iOS before 16.4 (D-054).
 - Bark link state is not in the sync fingerprint: the page fetches it once at load on iOS before 16.4 only, the bell dialog writes each answer to the store, and `notificationWarning` in `client/src/banner.ts` hides the warning once a phone registered (D-054, D-004).
 - The user's direct chats with their own agents show in the Coding agents pane, as conversations, and a card's run also beside its card in the board's peek, through the one `AgentThread`; a new list of chats leaves them out, and a notification for a card's run opens the board on that card, for any other the pane (D-103, the card-run-in-peek decision, proposed in #259).
+- A proposal draft waits until the owner's signed `added` or `dismissed` note names it, and only the newest copy of a card's change, or of a new card by kind and title, waits (the dismiss-proposals decision, proposed in #280).
 - While a conversation's turn runs, the pane offers Stop instead of Send, so each answer follows what it answers (D-103).
 - The pane lists the user's projects; a question signs its project into the prompt, and one of the project's repositories unless it links none (D-103, D-104).
 - A photo shows only from bytes the page decrypted and checked with `fileTypeOf`; any other file is only downloaded, never opened in the page; uploads skip `request`, whose timer would cut them (D-123, D-077).
