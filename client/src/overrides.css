@@ -117,10 +117,8 @@
 
 @media (max-width: 760px) {
   .agents-details-toggle {
-    position: absolute;
-    top: 8px;
-    inset-inline-end: 16px;
-    z-index: 2;
     display: inline-flex;
+    align-self: flex-end;
+    margin: var(--spacing-1) var(--spacing-4) 0;
   }
 }

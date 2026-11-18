@@ -176,9 +176,8 @@
   overflow-x: auto;
 }
 
-/* A session and what it runs with, side by side; on a phone the details show over the timeline's top, on demand (R-072). */
+/* A session and what it runs with, side by side; on a phone the details take the timeline's place, on demand (R-072). */
 .agents-session {
-  position: relative;
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
@@ -198,16 +197,23 @@
 }
 
 @media (max-width: 760px) {
+  .agents-session {
+    flex-direction: column;
+  }
+
   .agents-rail {
     display: none;
   }
 
+  /* Open, the details take the timeline's place, under their button. */
   .agents-rail.is-open {
-    position: absolute;
-    inset: 0;
-    z-index: 1;
     display: block;
+    flex: 1 1 auto;
     width: auto;
     border-inline-start: 0;
+  }
+
+  .agents-session:has(.agents-rail.is-open) > .messages {
+    display: none;
   }
 }
