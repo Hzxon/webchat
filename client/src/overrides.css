@@ -39,6 +39,12 @@
   background: var(--chat-bg);
 }
 
+/* The new card form's session comes before it, so its line is on its other side (R-071). */
+.card-peek-run.is-first {
+  border-inline-start: 0;
+  border-inline-end: 1px solid var(--line);
+}
+
 @media (max-width: 760px) {
   .card-peek {
     flex-direction: column;
@@ -53,6 +59,12 @@
     height: 100%;
     border-inline-start: 0;
     border-block-start: 1px solid var(--line);
+  }
+
+  /* On a phone the form comes first, as a card does, and its session under it. */
+  .card-peek-run.is-first {
+    order: 1;
+    border-inline-end: 0;
   }
 }
 

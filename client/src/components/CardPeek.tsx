@@ -24,6 +24,7 @@ export function CardPeek({
   onOpen,
   onClose,
   run,
+  runFirst,
   children,
 }: {
   title: string;
@@ -32,6 +33,8 @@ export function CardPeek({
   onOpen: (id: string) => void;
   onClose: () => void;
   run?: ReactNode;
+  /** The run before the card, as the new card form shows the session that drafts it (R-071). */
+  runFirst?: boolean;
   children: ReactNode;
 }) {
   const phone = useSyncExternalStore(onNarrow, () => narrow.matches);
@@ -75,13 +78,14 @@ export function CardPeek({
       />
       {/* Each column scrolls on its own, so the run's newest message and its box stay in view. */}
       <Stack direction="horizontal" className="card-peek">
+        {run && runFirst && <Stack className="card-peek-run is-first">{run}</Stack>}
         <StackItem size="fill" isScrollable>
           {/* The card's tools sit right under the header's line, so the top pads less than the sides. */}
           <Stack gap={4} padding={5} paddingBlockStart={2}>
             {children}
           </Stack>
         </StackItem>
-        {run && <Stack className="card-peek-run">{run}</Stack>}
+        {run && !runFirst && <Stack className="card-peek-run">{run}</Stack>}
       </Stack>
     </Dialog>
   );

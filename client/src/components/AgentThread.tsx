@@ -73,7 +73,7 @@ export function Box(props: {
 
 const isCancel = (m: ChatMessage) => m.prompt?.kind === 'cancel' || m.run?.kind === 'cancel';
 
-export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: Seat | undefined; agentId: number }) {
+export function AgentThread({ thread, seat, agentId, inForm }: { thread: Thread; seat: Seat | undefined; agentId: number; inForm?: boolean }) {
   const pending = useAppState((s) => s.pending);
   const meId = useAppState((s) => s.me?.id);
   const docs = useAppState((s) => s.docs);
@@ -367,7 +367,8 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
           (request && (thread.state === 'unsent' || nocopy)) ? null : (
           <>
             {!working && blocked && <Banner status="warning" title={blocked} />}
-            {thread.kind === 'question' && thread.project !== undefined && !working && !asking && !blocked && (
+            {/* In the new card form, the form's own box asks for the draft. */}
+            {thread.kind === 'question' && thread.project !== undefined && !inForm && !working && !asking && !blocked && (
               <div className="agents-draft-actions">
                 <Selector
                   label="Kind of card"

@@ -1112,7 +1112,8 @@ function BoardColumnView({
           title={`New ${KIND_NAMES[adding]}`}
           onOpen={openCard}
           onClose={closeForm}
-          // The session beside the form, as a card's peek shows its run (R-071).
+          // The session beside the form, before it, as a card's peek shows its run (R-071).
+          runFirst
           run={
             sessionThread && (
               <AgentThread
@@ -1120,6 +1121,7 @@ function BoardColumnView({
                 thread={sessionThread}
                 seat={asker?.seat}
                 agentId={asker?.seat.agent.id ?? 0}
+                inForm
               />
             )
           }
