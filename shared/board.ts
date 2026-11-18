@@ -176,22 +176,19 @@ function withWaits(cards: Card[]): Card[] {
     const on = card.cardId ? open(card) : [];
     if (!on.length) return card;
     const dropped = on.filter((id) => byKey.get(cardKey(id))?.status.startsWith('Dropped'));
-    // A breadth-first walk over the open After edges, from each card to the one that reached it, which finds the shortest way back.
+    // A depth-first walk over the open After edges that returns the way back to this card, if there is one.
     const self = cardKey(card.cardId);
-    const from = new Map<string, string>();
-    const queue: string[] = [];
-    const reach = (keys: string[], at: string) => keys.forEach((k) => from.has(k) || (from.set(k, at), queue.push(k)));
-    reach(on.map(cardKey), self);
-    for (let i = 0; i < queue.length && !from.has(self); i++) {
-      const next = byKey.get(queue[i]!);
-      if (next) reach(open(next).map(cardKey), queue[i]!);
-    }
-    const loop: string[] = [];
-    if (from.has(self)) {
-      loop.push(self);
-      for (let at = from.get(self)!; at !== self; at = from.get(at)!) loop.unshift(at);
-      loop.unshift(self);
-    }
+    const seen = new Set<string>();
+    const walk = (key: string, path: string[]): string[] | undefined => {
+      if (key === self && path.length) return [...path, key];
+      if (seen.has(key) || !byKey.has(key)) return;
+      seen.add(key);
+      for (const next of open(byKey.get(key)!)) {
+        const found = walk(cardKey(next), [...path, key]);
+        if (found) return found;
+      }
+    };
+    const loop = walk(self, []) ?? [];
     return { ...card, waits: { on, dropped, loop: loop.map((k) => byKey.get(k)?.cardId ?? k) } };
   });
 }

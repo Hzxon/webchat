@@ -329,10 +329,11 @@ export class Plugin {
       ((await signedIn()) ? undefined : 'Cards need the agent’s GitHub sign-in. Run `webchat-agent setup` and answer yes to its GitHub question.');
     if (refused || !run) return refused;
     // A card that an open pull request claims is taken, as `scripts/claim.sh` refuses it (R-042).
-    const claim = (await openPulls(run.repo!, 'number,title,body,headRefName'))?.find((p) => claimOf(p) === cardKey(run.card));
+    // A card also waits for the cards its After line names, as its owner's page shows (docs/roadmap/new-after-edge.md).
+    const [open, found] = await Promise.all([openPulls(run.repo!, 'number,title,body,headRefName'), this.boardCard(run)]);
+    const claim = open?.find((p) => claimOf(p) === cardKey(run.card));
     if (claim) return `${run.repo}#${claim.number} claims ${run.card} already. Pick another card, or ask whoever opened it.`;
-    // A card waits for the cards its After line names, as its owner's page shows (docs/roadmap/new-after-edge.md).
-    const waits = (await this.boardCard(run))?.card.waits;
+    const waits = found?.card.waits;
     return waits && `${run.card} waits for ${waits.on.join(', ')}, which must be Done or Fixed first. Start it once they are.`;
   }
 
@@ -653,8 +654,8 @@ export class Plugin {
     const [draft, then] = answer.drafts?.filter((d) => !d.replaces) ?? [];
     if (!draft) throw new Error(`Your agent drafted no card: ${answer.reply.trim() || 'it gave no reason.'}`);
     const sent = await client.send(chat, { text: `Proposed in ${repo}: ${file}`, board: { kind: 'proposal', project, repo, card: draft } });
-    if (then?.after === draft.title) await client.send(chat, { text: `Proposed in ${repo}: ${file}, after ${draft.title}`, board: { kind: 'proposal', project, repo, card: then } });
     const split = then?.after === draft.title ? ` Your agent split it: “${then.title}” waits on the board until it is done.` : '';
+    if (split) await client.send(chat, { text: `Proposed in ${repo}: ${file}, after ${draft.title}`, board: { kind: 'proposal', project, repo, card: then! } });
     const card = await new Promise<string | undefined>((resolve) => {
       this.adding.set(sent.clientId!, resolve);
       setTimeout(() => resolve(undefined), waitMs).unref();
