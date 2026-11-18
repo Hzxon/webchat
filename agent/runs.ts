@@ -5,7 +5,6 @@
 // that names the request, and pages fold them into one card. The owner can cancel a request the
 // same way (R-030).
 import { textHash } from '../shared/e2ee.ts';
-import { choiceLine } from '../shared/overlap.ts';
 import { briefText, heldDecisions, type CardDraftDTO, type RunReport, type RunRequest } from '../shared/types.ts';
 import type { AgentClient, OpenedMessage, TakenRequest } from './client.ts';
 
@@ -167,7 +166,7 @@ export class Runs {
       decision: `${taken.card} needs a decision first: ${card?.title}. Add it on the board, then tell me to go on.`,
       paused: `I stopped ${taken.card} as you asked. What I committed is on ${branch}${pull ? ` (${pull.repo}#${pull.number})` : ''}, and I keep where I was. Tell me what to change, or start the card over.`,
       planned: `${taken.card} holds. My plan:\n\n${note ?? 'I made none.'}\n\nSay go, or tell me what to change.`,
-      overlap: `${taken.card} waits for ${waits}, which changes ${note} too. Its owner and the owner of ${taken.card} choose on ${taken.card} with a line "${choiceLine(waits!, 'wait')}", or stack or fold in place of wait.`,
+      overlap: `${taken.card} waits for ${waits}, which changes ${note} too. The owners of the two cards choose on ${taken.card}: wait for ${waits}, stack on it, or fold into it.`,
     }[kind];
     await this.report(taken, { kind, branch, pull, card, waits, ...(note && { note }) }, text);
     for (const draft of drafts) await this.report(taken, { kind: 'draft', card: draft }, `${draft.kind === 'D' ? 'Decision' : 'Card'} draft: ${draft.title}`);

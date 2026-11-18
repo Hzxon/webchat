@@ -1050,7 +1050,7 @@ export function serveTests(w: World) {
           await who.sync();
           await who.editSection(roadmapDoc, section, (now) => ({ text: `${now!.text}\n\nOverlap with K-12: ${choice}`, pos: now!.pos }));
         };
-        const overlapSaid = 'K-7 waits for K-12, which changes sum.test.js too. Its owner and the owner of K-7 choose on K-7 with a line "Overlap with K-12: wait", or stack or fold in place of wait.';
+        const overlapSaid = 'K-7 waits for K-12, which changes sum.test.js too. The owners of the two cards choose on K-7: wait for K-12, stack on it, or fold into it.';
         const bodyOf = (pull: FakePull) => (pull.edited as { body?: string } | undefined)?.body ?? pull.body;
 
         // The second of two cards that touch one file waits before its work, and its owner hears why.

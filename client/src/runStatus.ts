@@ -8,7 +8,7 @@
 // expects, so a status a teammate set since stays, and only under the card's lock, read there,
 // never while anyone, another tab included, holds it.
 import { newStatus, WAITING, withStatus, type Card } from '../../shared/board';
-import { cardKey, choiceLine, choosers } from '../../shared/overlap';
+import { cardKey, choosers } from '../../shared/overlap';
 import type { BoardSyncDTO, RunRequest } from '../../shared/types';
 import { agentChats, inOrder } from './agents';
 import { boardDocs, cardRuns, dateOf, standsAt, startable, statusMove, waitsFor, workingStatus } from './board';
@@ -54,7 +54,7 @@ export async function followRuns() {
       if (!standsAt(from, card.status, to) || !(await move(doc, section, (status) => standsAt(from, status, to), to))) continue;
       for (const owner of owners.filter((id) => id !== me.id))
         await startDirectChat(owner)
-          .then((chat) => sendCardNote(chat, { kind: 'waiting', card: card.cardId, docId, section }, `${card.cardId} waits for ${run.waits}: both change the same files. Choose on ${card.cardId} with the line "${choiceLine(run.waits!, 'wait')}", or stack or fold in place of wait.`))
+          .then((chat) => sendCardNote(chat, { kind: 'waiting', card: card.cardId, docId, section }, `${card.cardId} waits for ${run.waits}: both change the same files. Open ${card.cardId} to choose: wait, stack or fold.`))
           .catch(() => undefined);
       // The owner decides for the card, so they get a push; only the requester's go resumes the run (D-118). A second tab finds it moved and sends none.
       // With a verdict on the card, a WAITING of anyone but its owner would not stand.

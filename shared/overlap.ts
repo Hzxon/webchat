@@ -70,7 +70,7 @@ export const choosers = (owner: number | undefined, other: number | undefined, r
 export const cardKey = (id: string) => id.replace(/-0+(?=\d)/, '-');
 
 /** The line a card owner writes on a waiting card, such as `Overlap with K-12: stack`. */
-export const choiceLine = (waits: string, choice: Choice) => `Overlap with ${waits}: ${choice}`;
+const choiceLine = (waits: string, choice: Choice) => `Overlap with ${waits}: ${choice}`;
 
 const CHOICE = /^Overlap with (\S+): (wait|stack|fold)\s*$/i;
 
