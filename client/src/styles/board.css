@@ -133,6 +133,12 @@
   background: var(--panel-2);
 }
 
+/* A proposal's draft, which is not a card until its owner adds it (R-047). */
+.board-card.is-proposal {
+  border: 1px dashed var(--muted);
+  background: none;
+}
+
 .board-card.is-locked {
   box-shadow: inset 3px 0 0 var(--warn);
 }

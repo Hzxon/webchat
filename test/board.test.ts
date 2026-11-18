@@ -6,7 +6,7 @@ import { describe, test } from 'node:test';
 const clientBoard = '../client/src/board.ts';
 const sharedBoard = '../shared/board.ts';
 
-const { cardRuns, cardTemplate, statusMove, GOING, duplicates, idOf, moved, needsYou, otherRun, runnerOf, startable, takeable, unchecked, withChecked, workingStatus } = await import(clientBoard);
+const { cardRuns, cardTemplate, statusMove, GOING, draftGroup, duplicates, idOf, moved, needsYou, otherRun, runnerOf, startable, takeable, unchecked, withChecked, workingStatus } = await import(clientBoard);
 const { cardOf, cardsOf, cardSections, cardText, groupOf, keepReviews, parseCard, standing, usernamesOf, withReviews, withStatus } = await import(sharedBoard);
 
 const section = (id: string, text: string) => ({ id, text, pos: 1, failed: false });
@@ -263,6 +263,17 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.equal(otherRun('Running', 'Ann'), false, 'set by hand, no run named');
     assert.equal(otherRun('Open', 'Ann'), false);
     assert.equal(otherRun('Waiting for a decision', 'Ann'), true, 'a run waits for a decision (R-042)');
+  });
+
+  test('a proposal’s draft shows where its card would land, or beside the card it changes (R-047)', () => {
+    const cards = [{ id: 's1', status: 'Running: Ann’s agent' }, { id: 's2', status: 'Accepted' }];
+    const draft = (kind: string, section?: string) => ({ kind, title: 't', body: '', ...(section && { replaces: { card: 'X-1', doc: 'd', section, seen: 'h' } }) });
+    assert.equal(draftGroup(draft('R'), cards), 3, 'a new idea in the Open drawer');
+    assert.equal(draftGroup(draft('K'), cards), 3, 'a new issue too');
+    assert.equal(draftGroup(draft('D'), cards), 0, 'a new decision with the Proposed ones');
+    assert.equal(draftGroup(draft('R', 's1'), cards), 1, 'a change in its card’s lane');
+    assert.equal(draftGroup(draft('D', 's2'), cards), 1, 'a change to an accepted decision with it');
+    assert.equal(draftGroup(draft('R', 'gone'), cards), 3, 'a change to a card that went, where a new one would land');
   });
 });
 
