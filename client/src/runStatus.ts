@@ -8,7 +8,7 @@
 // expects, so a status a teammate set since stays, and only under the card's lock, read there,
 // never while anyone, another tab included, holds it.
 import { newStatus, WAITING, withStatus, type Card } from '../../shared/board';
-import { choiceLine, choosers } from '../../shared/overlap';
+import { cardKey, choiceLine, choosers } from '../../shared/overlap';
 import type { BoardSyncDTO, RunRequest } from '../../shared/types';
 import { agentChats, inOrder } from './agents';
 import { boardDocs, cardRuns, dateOf, standsAt, startable, statusMove, waitsFor, workingStatus } from './board';
@@ -49,7 +49,7 @@ export async function followRuns() {
       const card = cards.find((c) => c.id === section);
       if (!card) continue;
       // Both card owners choose for a card that waits for another, and each but the user gets a push (docs/roadmap/new-overlap-gate.md).
-      const owners = run.state === 'overlap' ? choosers(card.owner, cards.find((c) => c.cardId.replace(/-0+(?=\d)/, '-') === run.waits)?.owner, me.id) : [];
+      const owners = run.state === 'overlap' ? choosers(card.owner, cards.find((c) => cardKey(c.cardId) === run.waits)?.owner, me.id) : [];
       const to = owners.length ? waitsFor(target, owners.map((id) => (id === me.id ? me.displayName : (state.users[id]?.displayName ?? 'someone')))) : target;
       if (!standsAt(from, card.status, to) || !(await move(doc, section, (status) => standsAt(from, status, to), to))) continue;
       for (const owner of owners.filter((id) => id !== me.id))

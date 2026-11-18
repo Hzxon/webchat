@@ -20,6 +20,7 @@ import {
   type Card,
   type DocSection,
 } from '../../../shared/board';
+import { cardKey, lineChoice, waitsOn, withChoice, type Choice } from '../../../shared/overlap';
 import { LIMITS, type CardNoteDTO, type ProjectDTO, type RunRequest, type UserDTO } from '../../../shared/types';
 import {
   boardDocs,
@@ -290,6 +291,12 @@ const MOVES: Array<[keyof typeof MOVE_FROM, string]> = [
   ['close', 'Close'],
 ];
 type Filter = keyof typeof FILTERS;
+/** What the owners of a card that waits for another can choose, with what each does (docs/roadmap/new-overlap-gate.md). */
+const CHOICES: Array<[Choice, (waits: string) => string, (waits: string) => string]> = [
+  ['wait', (w) => `Wait for ${w}`, (w) => `The run goes on once ${w}'s draft no longer holds the files`],
+  ['stack', (w) => `Stack on ${w}`, (w) => `The run goes on now, on ${w}'s branch`],
+  ['fold', (w) => `Fold into ${w}`, (w) => `The run ends and its draft closes; its work goes into ${w}`],
+];
 
 function BoardColumnView({
   column,
@@ -521,6 +528,24 @@ function BoardColumnView({
     void syncNow();
   }
 
+  /**
+   * Writes a card owner's choice for a card that waits for another, as a line the waiting run's agent
+   * reads from their signed revision (docs/roadmap/new-overlap-gate.md, D-081). A fold ends the run.
+   */
+  async function choose(card: Card, waits: string, choice: Choice) {
+    if (
+      choice === 'fold' &&
+      !(await confirmAction({
+        title: `Fold ${card.cardId} into ${waits}?`,
+        body: `The run of ${card.cardId} ends and its draft closes. Its branch stays, and its work goes into ${waits}.`,
+        confirmLabel: 'Fold',
+      }))
+    )
+      return;
+    await rewriteCard(doc!, card.id, (now) => withChoice(now.text, waits, choice));
+    void syncNow();
+  }
+
   /** Makes a move on a card under its lock, from the card as it stands there (the card-owner decision). */
   async function move(card: Card, kind: Move) {
     await rewriteCard(doc!, card.id, (now) => moved(now, kind, me!));
@@ -626,6 +651,13 @@ function BoardColumnView({
             .map(Number)
             .filter((id) => !card.reviews.some((r) => r.who === id))
         : [];
+    // The two card owners choose for a card that waits for another; the user's own run stands in for a card with no owner.
+    const waits = face ? waitsOn(card.status) : undefined;
+    const chooses =
+      !!waits &&
+      canMove &&
+      (card.owner === me.id || cards.find((c) => cardKey(c.cardId) === waits)?.owner === me.id || (card.owner === undefined && !!cardRun));
+    const chosen = waits ? lineChoice(card.text, waits) : undefined;
     // As `moved` allows approve and ask for changes.
     const reviewer = canMove && inReview && !!card.kind && card.reviews.some((r) => r.who === me.id);
     const head = (
@@ -809,6 +841,20 @@ function BoardColumnView({
                 />
               );
             })}
+          </p>
+        )}
+        {chooses && waits && (
+          <p className="board-card-run">
+            {CHOICES.map(([choice, label, tip]) => (
+              <Button
+                key={choice}
+                size="sm"
+                label={label(waits)}
+                isDisabled={chosen === choice}
+                tooltip={chosen === choice ? 'Chosen' : tip(waits)}
+                onClick={() => run(choose(card, waits, choice))}
+              />
+            ))}
           </p>
         )}
         {card.reviews.map((r) => (

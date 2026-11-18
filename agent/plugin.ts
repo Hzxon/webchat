@@ -25,7 +25,7 @@ import { Keep } from './keep.ts';
 import { Permits, SEND_GAP_MS } from './permits.ts';
 import { messageOf, REQUEST_TTL_MS, Runs, type Runner, type RunResult } from './runs.ts';
 import { type AgentStatus, type Answer, type Asked, type BoardCopy, type Filed, type Overlap, type Place, type Planned, type PluginOptions, type Pull, type PullView, type Watched, type Who } from './pluginTypes.ts';
-import { choiceOf, choosers, overlaps, stackedLine, type Pull as Footprint } from '../shared/overlap.ts';
+import { cardKey, choiceOf, choosers, overlaps, stackedLine, type Pull as Footprint } from '../shared/overlap.ts';
 import { ANSWER, CHECK, REPLY } from './pluginSchemas.ts';
 import { OWNER, checkBrief, fence, fixBrief, goBrief, inParts, overlapBrief, planBrief, promptBrief, pullList, seenOf, steerBrief, workBrief } from './briefs.ts';
 import { draftsOf, line } from './drafts.ts';
@@ -60,9 +60,6 @@ const slugOf = (text: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 40);
-
-/** A card's id with its number unpadded, such as K-5 for K-005, as ids from the page and from GitHub compare. */
-const cardKey = (id: string) => id.replace(/-0+(?=\d)/, '-');
 
 /** The card a pull request names, as its key: its body opens with "Claims K-12", as `scripts/claim.sh` and the agent write it, or its title names the card. */
 function cardOfPull(pull: Pull) {
