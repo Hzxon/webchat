@@ -290,6 +290,14 @@
   background: var(--warn-soft);
 }
 
+/* The cards that wait for the user (R-047): a few rows at most, which scroll, so many never push the lanes off the screen. */
+.board-needs {
+  max-height: 7.5rem;
+  margin-bottom: 0.5rem;
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+}
+
 .board-card.is-waiting .board-card-status {
   color: var(--warn);
   font-weight: 600;
