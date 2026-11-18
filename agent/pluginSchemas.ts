@@ -51,6 +51,7 @@ export const CHECK = {
     status: { type: 'string', enum: ['Done', 'Dropped'], description: 'For stale: Done when the code already does what the card asks, Dropped when a decision or another card rules it out or covers it.' },
     checked: { type: 'string', description: "One line on what your check read: the card's Checked line, the code at which commit, the decisions and the cards." },
     plan: { type: 'string', description: 'For holds: how you will do the work, in a few short lines: what you will change, and how you will test it.' },
+    touches: { type: 'array', items: { type: 'string' }, description: 'For holds: the files you expect to change, as paths from the root of the repository; a folder ends in /.' },
   },
   required: ['outcome', 'note', 'checked'],
 };

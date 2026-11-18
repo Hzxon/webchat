@@ -2,7 +2,7 @@
 # changes, and names that pull request and the files. The author passes it by writing `After #12` or
 # `Stacked on #12` in the body once the order is agreed. A draft with no diff yet holds the files of
 # its `Touches:` line instead. See docs/decisions/new-overlap-blocks.md; the comparison is in
-# scripts/overlap.ts.
+# shared/overlap.ts, which scripts/overlap.ts runs.
 #
 # It runs for a docs-only pull request too, unlike ci.yml: two pull requests that edit the same
 # README or AGENTS.md conflict just the same, and the check costs one `gh` call, not a build.

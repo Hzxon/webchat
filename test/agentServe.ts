@@ -20,8 +20,8 @@ import type { World } from './agentHelpers.ts';
 export function serveTests(w: World) {
   test(
     'serves every folder from one window, runs a card in a background Claude, fixes its pull request, and clones a repository on its owner\'s word (R-030, R-035, R-036)',
-    // A backlog of 40 proposals alone takes 16 seconds under the send limit (K-71).
-    { timeout: 90_000 },
+    // A backlog of 40 proposals alone takes 16 seconds under the send limit (K-71), and the overlap gate's runs as long.
+    { timeout: 120_000 },
     async () => {
       // A checkout whose origin is on GitHub, as its config says. Its pushes land in a bare repository here.
       const origin = path.join(w.home, 'app.git');
@@ -1026,6 +1026,92 @@ export function serveTests(w: World) {
         } finally {
           restoreAsk();
         }
+        // Two runs never hold the same file at once (docs/roadmap/new-overlap-gate.md). Carol owns K-12,
+        // whose draft #2, which scripts/claim.sh opened, holds sum.test.js by its Touches line. Only the
+        // plugin's drafts still open count from here, each with its body and the files it changes.
+        const fakeGh = async () => JSON.parse(await fs.readFile(ghState, 'utf8'));
+        const setGh = async (change: object) => fs.writeFile(ghState, JSON.stringify({ ...(await fakeGh()), ...change }));
+        const settle = async () => setGh({ pulls: (await fakeGh()).pulls.map((p: FakePull) => ({ ...p, gone: true })) });
+        const k12Pull = { number: 2, title: 'K-12: Totals', headRefName: 'claude/k12-totals', body: 'Claims K-12.\n\nTouches: sum.test.js', files: [] };
+        await sh('git', ['--git-dir', origin, 'branch', 'claude/k12-totals', 'main']);
+        await settle();
+        await setGh({ files: true, open: [k12Pull] });
+        const k12 = newKeyId().slice(0, 11);
+        await w.carol.sync();
+        await w.carol.editSection(roadmapDoc, k12, () => ({ text: '### K-12: Totals\n\nStatus: Running: acme/app#2.', pos: 12, opened: true }));
+        // The check names the files it will change; its work then commits sum.test.js.
+        const runTouching = async (...touches: string[]) => {
+          await unthrottle();
+          const run = await runK7({ FAKE_CLAUDE_CHECK: JSON.stringify({ outcome: 'holds', note: '', checked: 'Read K-7 and sum.js on main.', touches }) });
+          const pulls = await pullsNow();
+          return { ...run, pull: pulls.at(-1)!, number: pulls.length };
+        };
+        const choose = async (who: AgentClient, choice: string) => {
+          await who.sync();
+          await who.editSection(roadmapDoc, section, (now) => ({ text: `${now!.text}\n\nOverlap with K-12: ${choice}`, pos: now!.pos }));
+        };
+        const overlapSaid = 'K-7 waits for K-12, which changes sum.test.js too. The owners of the two cards choose on K-7: wait for K-12, stack on it, or fold into it.';
+        const bodyOf = (pull: FakePull) => (pull.edited as { body?: string } | undefined)?.body ?? pull.body;
+
+        // The second of two cards that touch one file waits before its work, and its owner hears why.
+        const turnsAtWait = (await turns()).length;
+        const waited = await runTouching('sum.test.js');
+        assert.deepEqual(waited.said.map((r) => [r.run.kind, r.run.waits, r.text]), [['claimed', undefined, 'I am on K-7: Sums are off by one'], ['overlap', 'K-12', overlapSaid]]);
+        assert.equal((await turns()).length, turnsAtWait + 1, 'only the check ran: the work did not start');
+        assert.match(waited.pull.body, /^Claims K-7\. Checked .*\n\nTouches: sum\.test\.js$/, 'the draft says what it will touch');
+        assert.deepEqual(await log(waited.pull.head), ['chore: Claim K-7'], 'only the claim is pushed');
+        // Wait changes nothing while K-12's draft holds the file; once it lets go, the work starts with its own brief.
+        await choose(w.alice, 'wait');
+        await plugin.pollPulls();
+        assert.equal((await turns()).length, turnsAtWait + 1, 'it still waits');
+        await setGh({ open: [] });
+        await plugin.pollPulls();
+        const [waitCheck, waitWork] = (await turns()).slice(turnsAtWait);
+        assert.equal(waitWork!.session, waitCheck!.session, 'the work resumes the check');
+        assert.ok(waitWork!.input.startsWith('K-12 no longer holds the files you need') && waitWork!.input.includes(`acme/app#${waited.number} claims it`), 'with the brief the work would have started with');
+        assert.deepEqual((await reports(waited.id)).map((r) => r.text), ['I am back on K-7: K-12 no longer holds its files', `I finished K-7 on ${waited.pull.head} (acme/app#${waited.number}). Sums add up now.`]);
+
+        // Stack, from Carol, who owns K-12: the draft names #2, which takes it out of the rule, and the work goes on on K-12's branch.
+        await settle();
+        await setGh({ open: [k12Pull] });
+        const stacked = await runTouching('sum.test.js');
+        assert.equal(stacked.said.at(-1)!.text, overlapSaid);
+        await choose(w.carol, 'stack');
+        await plugin.pollPulls();
+        const stackTurn = (await turns()).at(-1)!;
+        assert.ok(stackTurn.input.startsWith('Your card\'s owners stacked it on K-12: `origin/claude/k12-totals` is fetched.'), 'the brief says to merge the branch under it');
+        assert.equal((await git(project, 'rev-parse', 'refs/remotes/origin/claude/k12-totals')).stdout.trim(), (await sh('git', ['--git-dir', origin, 'rev-parse', 'claude/k12-totals'])).stdout.trim(), 'which is in the folder');
+        assert.equal((await git(project, 'symbolic-ref', 'refs/remotes/origin/HEAD')).stdout.trim(), 'refs/remotes/origin/main', 'and the default branch stays main');
+        assert.deepEqual((await reports(stacked.id)).map((r) => r.text), ['I am back on K-7: its owners stacked it on K-12', `I finished K-7 on ${stacked.pull.head} (acme/app#${stacked.number}). Sums add up now.`]);
+        assert.equal(bodyOf((await pullsNow()).at(-1)!), 'Sums were off by one.\n\nStacked on #2', 'the work\'s body keeps naming the draft under it');
+
+        // Fold, from Alice: the run ends, its draft closes and its branch stays. Carol's stack from before the wait does not count.
+        await settle();
+        const folded = await runTouching('sum.test.js');
+        assert.equal(folded.said.at(-1)!.run.kind, 'overlap');
+        await plugin.pollPulls();
+        assert.deepEqual(await reports(folded.id), [], 'a choice from before the wait chooses nothing');
+        await choose(w.alice, 'fold');
+        await plugin.pollPulls();
+        assert.deepEqual((await reports(folded.id)).map((r) => r.text), ['I could not run K-7: Its owners folded K-7 into K-12.']);
+        assert.equal((await pullsNow()).at(-1)!.closed, 'The agent stopped: Its owners folded K-7 into K-12. The branch stays.');
+
+        // A run that grows into a held file pauses before it pushes more, and pushes once the file is free.
+        await settle();
+        const grown = await runTouching('README.md');
+        assert.deepEqual(grown.said.map((r) => [r.run.kind, r.run.waits, r.text]), [['claimed', undefined, 'I am on K-7: Sums are off by one'], ['overlap', 'K-12', overlapSaid]]);
+        assert.deepEqual(await log(grown.pull.head), ['chore: Claim K-7'], 'its work is not pushed');
+        await setGh({ open: [] });
+        await plugin.pollPulls();
+        assert.ok((await turns()).at(-1)!.input.includes('Your work is committed but not pushed.'));
+        assert.deepEqual(await log(grown.pull.head), ['Change sum.test.js', 'Change sum.test.js', 'chore: Claim K-7'], 'both turns of work are pushed');
+
+        // Two cards with no shared file run at once.
+        await settle();
+        await setGh({ open: [{ ...k12Pull, body: 'Claims K-12.\n\nTouches: lib/' }] });
+        const apart = await runTouching('sum.test.js');
+        assert.deepEqual(apart.said.map((r) => r.run.kind), ['claimed', 'done']);
+
         // Ending the sessions ends the processes, and the token files go with them.
         await Promise.all(options.harnesses.map((h) => h.end?.()));
         assert.deepEqual(await fs.readdir(path.join(dataDir, 'laptop', 'approve')), []);

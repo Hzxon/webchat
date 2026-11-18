@@ -24,7 +24,8 @@ export function checkBrief(cardId: string, place: Place, card: string, decisions
     "line if it has one, then the code here, the decisions and the team's other cards below, as they are now. It no",
     'longer holds when the code already does what it asks, a decision settles or rules it out, or another card covers',
     'it. End with the outcome "stale" and why as the note, or with "holds"; either way, say in checked what you read.',
-    'With "holds", say in plan how you will do the work, in a few short lines, since your owner may read it first.',
+    'With "holds", say in plan how you will do the work, in a few short lines, since your owner may read it first,',
+    'and list in touches the files you expect to change: a run that would change a file an earlier draft holds waits.',
     "Change and commit nothing in this turn: once the card holds, your owner's laptop opens a draft pull request that",
     'claims it, and you do the work in the next turn.',
     '',
@@ -146,6 +147,21 @@ export function goBrief(pull: Watched, why: { details: string }) {
     ...RULES,
     '',
     why.details,
+  ].join('\n');
+}
+
+/**
+ * The turn of a run that waited because its files overlapped an earlier draft's, once that draft no
+ * longer holds them or its card owners chose to stack this card on it (docs/roadmap/new-overlap-gate.md).
+ * `start` is the brief of the work that has not started, if it has not.
+ */
+export function overlapBrief(pull: Watched, waits: string, stackedOn: string | undefined, start: string | undefined) {
+  return [
+    stackedOn
+      ? `Your card's owners stacked it on ${waits}: \`origin/${stackedOn}\` is fetched. Merge it into this branch first and resolve what conflicts. When ${waits} lands, \`scripts/restack.sh ${stackedOn}\` brings this branch onto ${pull.base}, if the repository has it.`
+      : `${waits} no longer holds the files you need. origin is fetched, so \`git log HEAD..${pull.base}\` shows what moved on the default branch: merge it into this branch first and resolve what conflicts.`,
+    '',
+    start ?? 'Your work is committed but not pushed. Check that it still holds after the merge, then end as the brief before said.',
   ].join('\n');
 }
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { describe, test } from 'node:test';
-import { overlaps, touches, type Pull } from '../scripts/overlap.ts';
+import { choiceOf, choosers, overlaps, touches, waitsOn, withChoice, type Pull } from '../shared/overlap.ts';
 
 const pull = (number: number, files: string[], body = '', headRefName = `claude/pr-${number}`): Pull => ({
   number,
@@ -67,6 +67,29 @@ describe('the overlap check in scripts/overlap.ts (docs/decisions/new-overlap-bl
   test('once a draft has a diff, its Touches line no longer counts', () => {
     const open = [pull(12, ['README.md'], 'Touches: server/api.ts'), pull(15, ['server/api.ts'])];
     assert.deepEqual(overlaps(open[1], open), []);
+  });
+
+  test("only a card owner's line written after the wait began chooses, for the card it waits for (docs/roadmap/new-overlap-gate.md)", () => {
+    const word = (id: number, authorId: number, line: string) => ({ id, authorId, text: `### K-7: Sums\n\nStatus: Waiting for K-12.\n\n${line}` });
+    const owners = choosers(1, 2, 3);
+    assert.deepEqual(owners, [1, 2], 'each card owner');
+    assert.deepEqual(choosers(undefined, undefined, 3), [3], 'whoever asked, for a card with no owner');
+    assert.equal(choiceOf([word(9, 2, 'Overlap with K-12: stack'), word(8, 1, 'Overlap with K-12: fold')], owners, 'K-12', 5), 'stack', 'the newest word wins');
+    assert.equal(choiceOf([word(9, 4, 'Overlap with K-12: fold')], owners, 'K-12', 5), undefined, 'a teammate who owns neither card does not choose');
+    assert.equal(choiceOf([word(4, 1, 'Overlap with K-12: fold')], owners, 'K-12', 5), undefined, 'a line from before the wait does not count');
+    assert.equal(choiceOf([word(9, 1, 'Overlap with K-9: fold')], owners, 'K-12', 5), undefined, 'a line for another card does not count');
+    assert.equal(choiceOf([word(9, 1, 'Overlap with K-12: wait\nOverlap with K-12: fold')], owners, 'K-12', 5), 'fold', 'the last line of a word, which an edit adds under the ones before');
+  });
+
+  test("a card owner's button writes one choice line, which the agent reads (docs/roadmap/new-overlap-gate.md)", () => {
+    assert.equal(waitsOn('Waiting for K-12: Ann and Bo choose'), 'K-12');
+    assert.equal(waitsOn('Waiting for #12: Ann chooses'), '#12');
+    assert.equal(waitsOn('Waiting for a decision'), undefined, 'a decision wait offers no choice');
+    const card = '### K-7: Sums\n\nStatus: Waiting for K-12: Ann and Bo choose.\n\nSeen: here\n\nOverlap with K-9: fold';
+    const stacked = withChoice(card, 'K-12', 'stack');
+    assert.equal(stacked, '### K-7: Sums\n\nStatus: Waiting for K-12: Ann and Bo choose.\n\nSeen: here\n\nOverlap with K-12: stack', 'it replaces a line left from another wait');
+    assert.equal(withChoice(stacked, 'K-12', 'wait'), stacked.replace('stack', 'wait'), 'a second choice replaces the first');
+    assert.equal(choiceOf([{ id: 9, authorId: 1, text: stacked }], [1], 'K-12', 5), 'stack');
   });
 
   test('the command prints the error and exits 1, and exits 0 when nothing is shared', () => {

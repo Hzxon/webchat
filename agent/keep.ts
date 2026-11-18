@@ -159,6 +159,11 @@ export class Keep {
     });
   }
 
+  /** The files `head` changes since it left `base`, such as `origin/main`, as its pull request lists them (docs/roadmap/new-overlap-gate.md). */
+  changed(repo: string, base: string, head: string) {
+    return this.locked(repo, async () => (await this.git(repo, ['diff', '--name-only', `refs/remotes/${base}...${head}`])).split('\n').filter(Boolean));
+  }
+
   /** Pushes a branch the clone holds, never forced. */
   push(repo: string, branch: string) {
     return this.locked(repo, () => this.git(repo, ['push', '-q', 'origin', `refs/heads/${branch}:refs/heads/${branch}`]));

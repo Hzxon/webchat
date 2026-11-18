@@ -2,7 +2,7 @@
 // the format of this repository's docs/decisions.md and docs/roadmap.md. A card is Markdown that
 // starts with "### D-3: Title" and a "Status:" line. This module only reads and writes that text,
 // so the tests run it without a browser.
-import { cardText, CHECKED, groupOf, laneOf, WAITING, withReviews, type Card, type CardKind, type Lane, type Review } from '../../shared/board';
+import { cardText, CHECKED, groupOf, laneOf, WAITING, WAITS, withReviews, type Card, type CardKind, type Lane, type Review } from '../../shared/board';
 import type { DocContent } from '../../shared/e2ee';
 import { RUN_PICKUP_MS, type CardDraftDTO, type RunReport, type UserDTO } from '../../shared/types';
 import type { Thread } from './agents';
@@ -144,7 +144,7 @@ export const runnerOf = (status: string) => /^(?:Running|In review):\s*(.*)$/.ex
  */
 export const otherRun = (status: string, name: string) =>
   status.startsWith('In review') ||
-  status.startsWith(WAITING) ||
+  status.startsWith(WAITS) ||
   (status.startsWith('Running:') && status !== workingStatus(name) && status !== `Running: ${name}`);
 
 /** A new card's id: the next free number of its kind, as wide as the widest id of that kind, so R-043 follows R-005 (R-040). */
@@ -209,6 +209,8 @@ export interface CardRun {
   at?: number;
   /** For a merged run: the Proposed decisions its work made true (R-042). */
   decisions?: string[];
+  /** For a run that waits for another card: that card, such as K-12, or its draft, such as #12. */
+  waits?: string;
   /** The user asked to stop a run the agent took, and the agent has not reported since. */
   stopping?: boolean;
 }
@@ -223,6 +225,8 @@ export function statusMove(run: CardRun, card: string, was: string, working: str
   const moves: Partial<Record<CardRun['state'], [string[], string]>> = {
     claimed: [[was], working],
     decision: [[was, working], WAITING],
+    // `waitsFor` adds who chooses (docs/roadmap/new-overlap-gate.md).
+    overlap: [[was, working, WAITING], `${WAITS}${run.waits}`],
     fixing: [[WAITING], working],
     done: [[was, working, WAITING], review],
     failed: [[working, WAITING], was],
@@ -233,6 +237,15 @@ export function statusMove(run: CardRun, card: string, was: string, working: str
   };
   return moves[run.state] ?? [[], ''];
 }
+
+/**
+ * Whether a card stands where a move to `to` starts; a move from WAITING also starts from a wait for
+ * another card, but not from the wait it makes, or each tab would make it again and push again.
+ */
+export const standsAt = (from: string[], status: string, to: string) => status !== to && (from.includes(status) || (from.includes(WAITING) && status.startsWith(WAITS)));
+
+/** The status of a card that waits for another, naming who chooses, as `Waiting for K-12: Ann and Bob choose`. */
+export const waitsFor = (to: string, names: string[]) => `${to}: ${names.join(' and ')} ${names.length > 1 ? 'choose' : 'chooses'}`;
 
 /**
  * The states in which a run may still go, so the page asks for no second one. A paused run goes on
@@ -276,7 +289,7 @@ export function cardRuns(messages: ChatMessage[], meId: number, docId: string, p
       if (target?.state === 'done') Object.assign(target, { state: 'fixing', at: m.id });
     } else if (run.kind !== 'clone' && run.kind !== 'draft' && run.kind !== 'note') {
       const target = latest(run.request);
-      if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull, decisions: run.decisions, at: m.id, stopping: false });
+      if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull, decisions: run.decisions, waits: run.waits, at: m.id, stopping: false });
     }
   }
   return runs;

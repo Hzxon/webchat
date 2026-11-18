@@ -91,9 +91,25 @@ export interface Watched extends Place {
    * its owner was reminded (R-042). `stopped` says the owner paused it instead, and it waits for
    * their words (docs/decisions/stop-pauses-run.md).
    */
-  unfinished?: { paused?: number; reminded?: boolean; stopped?: true };
+  unfinished?: { paused?: number; reminded?: boolean; stopped?: true; overlap?: Overlap };
+  /** The earlier draft its card owners stacked it on, which its body names as `Stacked on #12` (docs/roadmap/new-overlap-gate.md). */
+  stacked?: number;
   /** The Proposed decisions the work made true, which its merge accepts (R-042). */
   decisions?: string[];
+}
+
+/** Why a run waits: an earlier draft holds files it needs, until that draft lets them go or the two card owners choose (docs/roadmap/new-overlap-gate.md). */
+export interface Overlap {
+  /** The earlier draft, its card such as K-12, or `#12` when it claims none, and its branch. */
+  number: number;
+  waits: string;
+  branch: string;
+  /** The newest revision of the waiting card when the wait began: only a choice written after it counts. */
+  since: number;
+  /** For work that grew into a held file: the files its branch changes, which were not pushed. */
+  files?: string[];
+  /** For work that has not started: the brief it starts with. */
+  start?: string;
 }
 
 /**
@@ -123,7 +139,7 @@ export interface Answer {
   decisions?: unknown;
 }
 
-export type Pull = { number: number; title: string; body?: string; headRefName?: string };
+export type Pull = { number: number; title: string; body?: string; headRefName?: string; files?: { path: string }[] };
 
 export interface PullView {
   state: string;

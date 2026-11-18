@@ -76,11 +76,20 @@ if (args[0] === 'pr' && args[1] === 'create') {
   fs.writeFileSync(process.env.FAKE_GH_STATE, JSON.stringify(state));
 } else if (args[0] === 'pr' && args[1] === 'view') {
   const pull = state.pulls[Number(args[2]) - 1];
+  if (flag('--jq') === '.body') {
+    console.log(pull.edited?.body ?? pull.body);
+    process.exit(0);
+  }
   const head = execFileSync('git', ['--git-dir', state.origin, 'rev-parse', 'refs/heads/' + pull.head], { encoding: 'utf8' }).trim();
   console.log(JSON.stringify({ state: 'OPEN', isDraft: true, headRefOid: head, mergeable: 'MERGEABLE', statusCheckRollup: [], reviews: [], comments: [], ...pull.view }));
 } else if (args[0] === 'pr' && args[1] === 'list') {
-  // The pull requests the test opened, and the drafts the plugin opened, each on its head.
-  const all = [...(state.open ?? []), ...state.pulls.map((p, i) => ({ number: i + 1, title: '', headRefName: p.head }))];
+  // The pull requests the test opened, and the drafts the plugin opened, each on its head. With
+  // \`files\` set, only its drafts still open, each with its body and the files its branch changes,
+  // as the overlap gate reads them (docs/roadmap/new-overlap-gate.md).
+  const changed = (p) => execFileSync('git', ['--git-dir', state.origin, 'diff', '--name-only', 'main...' + p.head], { encoding: 'utf8' }).split('\\n').filter(Boolean).map((path) => ({ path }));
+  const mine = state.pulls.flatMap((p, i) => (state.files && (p.closed || p.gone) ? [] : [{ number: i + 1, title: '', headRefName: p.head, ...(state.files && { body: p.edited?.body ?? p.body, files: changed(p) }) }]));
+  // GitHub gives every field asked for, which the test's own entries may leave out.
+  const all = [...(state.open ?? []).map((p) => ({ headRefName: '', ...p })), ...mine];
   console.log(JSON.stringify(all.filter((p) => !args.includes('--head') || p.headRefName === flag('--head'))));
 } else if (args[0] === 'run') {
   console.log('FAIL test/sum.test.js: expected 3, got 4');

@@ -79,8 +79,11 @@ export interface Bench {
   folders(marks: Array<{ repo: string; dir: string }>): Promise<Folder[]>;
   /** Whether a folder exists, and the GitHub repository it pushes to, from origin's address as configured. */
   checkout(dir: string): Promise<{ exists: boolean; repo: string | null }>;
-  /** Takes a bundle of the default branch, `base` such as `origin/main`, into a checkout as its remote branch. */
-  take(dir: string, file: string, base: string): Promise<void>;
+  /**
+   * Takes a bundle of a remote branch, `base` such as `origin/main`, into a checkout. It becomes
+   * origin's default branch unless `other` says it is another branch, such as one a run stacks on.
+   */
+  take(dir: string, file: string, base: string, other?: boolean): Promise<void>;
   /** Makes a checkout at `dir` from a bundle of the default branch. */
   clone(dir: string, repo: string, file: string, base: string): Promise<void>;
   /** Adds a worktree on a new branch named after the card, apart from `taken` and the checkout's own, from `tip`. */
@@ -222,13 +225,13 @@ export class LocalBench implements Bench {
     return { exists: existsSync(dir), repo: repoOfUrl(await originUrl(dir)) };
   }
 
-  async take(dir: string, file: string, base: string) {
+  async take(dir: string, file: string, base: string, other = false) {
     const git = (...args: string[]) => exec('git', ['-C', dir, ...NO_HOOKS, ...args]);
     await git('bundle', 'verify', file).catch((error: { stderr?: string }) => {
       throw /prerequisite/i.test(error.stderr ?? '') ? new PrerequisitesMissing() : error;
     });
     await git('fetch', '-q', file, `+refs/remotes/${base}:refs/remotes/${base}`);
-    await git('symbolic-ref', 'refs/remotes/origin/HEAD', `refs/remotes/${base}`);
+    if (!other) await git('symbolic-ref', 'refs/remotes/origin/HEAD', `refs/remotes/${base}`);
   }
 
   async clone(dir: string, repo: string, file: string, base: string) {

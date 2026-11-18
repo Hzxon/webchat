@@ -344,6 +344,8 @@ export function standing(words: Word[], owner?: number, seen: string[] = []): { 
 
 /** The status of a card whose run waits for a decision nobody foresaw, so teammates see why it is held (R-042). */
 export const WAITING = 'Waiting for a decision';
+/** What every waiting status starts with: for a decision, or for another card whose files a run needs (docs/roadmap/new-overlap-gate.md). */
+export const WAITS = 'Waiting for ';
 
 /** The groups a column shows, in order. A folded group opens on a click. */
 /** A Roadmap group's fixed key, which code compares; its name is only what the board shows. */
@@ -359,7 +361,7 @@ export const GROUPS: Record<Column, Array<{ name: string; statuses: string[]; fo
   // outside the list goes.
   roadmap: [
     { key: 'ready', name: 'Ready', statuses: ['Ready'], lane: true },
-    { key: 'running', name: 'Running', statuses: ['Running', WAITING], lane: true },
+    { key: 'running', name: 'Running', statuses: ['Running', WAITS], lane: true },
     // A run that ended in a draft pull request waits here for its owner to review and merge it.
     { key: 'review', name: 'In review', statuses: ['In review'], lane: true },
     { key: 'open', name: 'Open', statuses: ['Idea', 'Open'] },

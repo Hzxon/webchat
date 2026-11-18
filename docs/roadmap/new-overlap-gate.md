@@ -1,7 +1,7 @@
 ### R: A run waits when its files overlap a running card's
 
-Status: Idea. Proposed 2026-11-17 by the owner, from the parallel work design. Needs the decision
-in docs/decisions/new-overlap-blocks.md.
+Status: Done in #276. Proposed 2026-11-17 by the owner, from the parallel work design. Needs the
+decision in docs/decisions/new-overlap-blocks.md.
 
 Order: after the hot files are split (docs/roadmap/new-split-hot-files.md), and beside the wait
 edge (docs/roadmap/new-after-edge.md), which touches the board and not the run.
