@@ -162,8 +162,10 @@ export class Conversations {
     return this.turn(conversation, text, prompt.card, handover?.harness);
   }
 
-  /** Takes a turn after the conversation's last one, and posts its answer, or why there is none. */
-  /** With `handover`, the turn writes the summary for that harness, which goes to the owner to read and edit first (D-156). */
+  /**
+   * Takes a turn after the conversation's last one, and posts its answer, or why there is none. With
+   * `handover`, the turn writes the summary for that harness, which goes to the owner to read and edit first (D-156).
+   */
   private turn(conversation: Conversation, input: string, card?: CardAskDTO, handover?: string) {
     const turns = this.turns.get(conversation.root) ?? { chain: Promise.resolve(), stops: new Set<AbortController>() };
     this.turns.set(conversation.root, turns);

@@ -14,6 +14,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { promisify } from 'node:util';
 import { LIMITS, type PermissionMode, type SessionAboutDTO, type SessionEventDTO, type TerminalSessionDTO } from '../shared/types.ts';
+import { SESSION_ID } from '../shared/e2ee.ts';
 import { fits } from './answer.ts';
 import { APPROVE_TOOL, openApprover, TOOL_TIMEOUT_MS, type Call } from './approve.ts';
 import { isCredential, olderThan, secretDirs, type Ask, type Harness, type Turn } from './harness.ts';
@@ -215,15 +216,16 @@ export function claudeEvents(output: string, cwd: string, open: Map<string, Sess
   }
   const blocks = Array.isArray(event?.message?.content) ? (event.message.content as Array<Record<string, unknown>>) : [];
   const steps: SessionEventDTO[] = [];
+  const said = event?.type === 'assistant';
   for (const block of blocks) {
     const words = typeof block.thinking === 'string' ? block.thinking : typeof block.text === 'string' ? block.text : '';
-    if (event!.type === 'assistant' && (block.type === 'thinking' || block.type === 'text') && words.trim()) {
+    if (said && (block.type === 'thinking' || block.type === 'text') && words.trim()) {
       steps.push({ kind: block.type, title: words.trim().split('\n')[0]!, detail: words, at });
-    } else if (event!.type === 'assistant' && block.type === 'tool_use' && typeof block.id === 'string') {
+    } else if (said && block.type === 'tool_use' && typeof block.id === 'string') {
       const step = toolStep(String(block.name), (block.input ?? {}) as Record<string, unknown>, cwd, at);
       if (step.kind === 'command') open.set(block.id, step);
       else steps.push(step);
-    } else if (event!.type === 'user' && block.type === 'tool_result' && open.has(String(block.tool_use_id))) {
+    } else if (!said && block.type === 'tool_result' && open.has(String(block.tool_use_id))) {
       steps.push({ ...open.get(String(block.tool_use_id))!, detail: resultText(block.content) });
       open.delete(String(block.tool_use_id));
     }
@@ -244,12 +246,13 @@ export function claudeAbout(output: string): SessionAboutDTO | undefined {
   } catch {
     return undefined;
   }
-  const list = (v: unknown) => (Array.isArray(v) ? v : undefined);
+  const list = (v: unknown) => (Array.isArray(v) ? (v as unknown[]) : undefined);
   if (event?.type === 'system' && event.subtype === 'init') {
-    const mcp = list(event.mcp_servers)?.map((s: { name?: unknown }) => String(s?.name ?? '')).filter(Boolean);
+    const [plugins, skills] = [list(event.plugins), list(event.skills)];
+    const mcp = list(event.mcp_servers)?.map((s) => String((s as { name?: unknown })?.name ?? '')).filter(Boolean);
     // Its own commands and skills, by name, which the box offers after a slash.
-    const commands = [...(list(event.slash_commands) ?? []), ...(list(event.skills) ?? [])].filter((c): c is string => typeof c === 'string');
-    return { ...(typeof event.model === 'string' && { model: event.model }), ...(list(event.plugins) && { plugins: list(event.plugins)!.length }), ...(list(event.skills) && { skills: list(event.skills)!.length }), ...(mcp && { mcp }), ...(commands.length && { commands: [...new Set(commands)] }) };
+    const commands = [...(list(event.slash_commands) ?? []), ...(skills ?? [])].filter((c): c is string => typeof c === 'string');
+    return { ...(typeof event.model === 'string' && { model: event.model }), ...(plugins && { plugins: plugins.length }), ...(skills && { skills: skills.length }), ...(mcp && { mcp }), ...(commands.length && { commands: [...new Set(commands)] }) };
   }
   const usage = event?.type === 'assistant' ? event.message?.usage : undefined;
   if (!usage) return undefined;
@@ -399,7 +402,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
       let done = false;
       // The commands of this turn that wait for their output, and the folder as the harness names it, past any link (R-072).
       const open = new Map<string, SessionEventDTO>();
-      const real = realpathSync(t.cwd);
+      const real = t.events ? realpathSync(t.cwd) : t.cwd;
       const dog = watchdog(IDLE_MS, t.quiet ?? new Quiet(), () => finish(new Error(`the agent printed nothing for ${IDLE_MS / 60_000} minutes.`)));
       const onAbort = () => finish(new Error(CANCELLED));
       function finish(error?: Error, answer?: unknown) {
@@ -478,6 +481,8 @@ export function claudeHarness(program: string, dataDir: string): Harness {
     },
     async turn(t) {
       if (t.signal.aborted) throw new Error(CANCELLED);
+      // A restricted run loads none of the owner's hooks (D-097); their own setup loads theirs.
+      t.about?.({ hooks: t.own ? await hookCount(t.cwd) : 0 });
       const schema = mergeSchemas((t.schemas ?? [t.schema]) as Schema[]);
       const key = JSON.stringify([t.cwd, !!t.ask, t.setup, schema, t.lab?.proxy, !!t.own, t.model, t.mode]);
       let live = lives.get(t.session);
@@ -504,16 +509,29 @@ export function claudeHarness(program: string, dataDir: string): Harness {
   };
 }
 
+/** The hooks the owner's Claude Code settings and the folder's own load, as a session in their own setup runs them (R-072). */
+async function hookCount(cwd: string) {
+  const read = async (file: string): Promise<Record<string, Array<{ hooks?: unknown[] }>>> => {
+    try {
+      return (JSON.parse(await fs.readFile(file, 'utf8')) as { hooks?: Record<string, Array<{ hooks?: unknown[] }>> }).hooks ?? {};
+    } catch {
+      // A file that is missing or does not parse loads no hooks.
+      return {};
+    }
+  };
+  const files = [path.join(claudeHome(), 'settings.json'), path.join(cwd, '.claude', 'settings.json'), path.join(cwd, '.claude', 'settings.local.json')];
+  return (await Promise.all(files.map(read))).flatMap((hooks) => Object.values(hooks)).flat().reduce((n, m) => n + (Array.isArray(m?.hooks) ? m.hooks.length : 0), 0);
+}
+
 /**
  * The newest sessions in a folder of Claude Code's own session files, one `<id>.jsonl` each: its id,
  * the first line of its first prompt and when it last changed (R-072). Only the start of each file
  * is read, and a file without a prompt there is left out.
  */
 export async function claudeSessions(dir: string, max = 10) {
-  const names = (await fs.readdir(dir).catch(() => [] as string[])).filter((n) => /^[0-9a-f-]{36}\.jsonl$/i.test(n));
+  const names = (await fs.readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith('.jsonl') && SESSION_ID.test(n.slice(0, -6)));
   const dated = await Promise.all(names.map(async (name) => ({ name, at: (await fs.stat(path.join(dir, name))).mtimeMs })));
-  const sessions: TerminalSessionDTO[] = [];
-  for (const { name, at } of dated.sort((a, b) => b.at - a.at).slice(0, max)) {
+  const read = async ({ name, at }: { name: string; at: number }): Promise<TerminalSessionDTO[]> => {
     const file = await fs.open(path.join(dir, name));
     const { buffer, bytesRead } = await file.read({ buffer: Buffer.alloc(64 * 1024) }).finally(() => file.close());
     const said = buffer
@@ -530,9 +548,9 @@ export async function claudeSessions(dir: string, max = 10) {
         }
       })
       .find((t) => t?.trim() && !t.startsWith('<'));
-    if (said) sessions.push({ id: name.slice(0, -6), title: said.trim().split('\n')[0]!.slice(0, LIMITS.eventTitleLength), at: Math.round(at) });
-  }
-  return sessions;
+    return said ? [{ id: name.slice(0, -6), title: said.trim().split('\n')[0]!.slice(0, LIMITS.eventTitleLength), at: Math.round(at) }] : [];
+  };
+  return (await Promise.all(dated.sort((a, b) => b.at - a.at).slice(0, max).map(read))).flat();
 }
 
 /** The absolute folders of the PATH only, since the background Claude starts in a worktree whose files the model writes. */

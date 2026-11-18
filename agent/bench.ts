@@ -340,15 +340,13 @@ export class LocalBench implements Bench {
     const harness = this.harness(name);
     // Only a model the harness offers, as data from the keyholder (R-072).
     const model = picked && harness.offers().models?.includes(picked) ? picked : undefined;
-    // A restricted run loads none of the owner's hooks (D-097).
-    if (!own) about?.({ hooks: 0 });
+    const common = { cwd, session, resume, message, schema, schemas, model, signal, progress, events, about };
     if (own) {
       if (!harness.offers().knobs.includes('own')) throw new Error(`${name} cannot run in your own setup.`);
       // Their own rules decide; what they would ask about goes to the owner as it is, with no rulebook (D-157).
-      about?.({ hooks: await hookCount(cwd) });
       const asked = permit?.();
       try {
-        const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: {}, own, model, ...(mode && { mode }), signal, progress, events, about, ...(asked && { ask: asked.ask, quiet: asked.quiet }) });
+        const answer = await harness.turn({ ...common, setup: {}, own, ...(mode && { mode }), ...(asked && { ask: asked.ask, quiet: asked.quiet }) });
         return { answer, applied: { claudeMd: false, skills: [], noAttribution: false, own: [name] } };
       } finally {
         asked?.done();
@@ -382,7 +380,7 @@ export class LocalBench implements Bench {
       }
     });
     try {
-      const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: { instructions, skills }, model, signal, progress, events, about, ask, quiet: asked?.quiet, ...(lab && { lab }), ...(shot && { shot }) });
+      const answer = await harness.turn({ ...common, setup: { instructions, skills }, ask, quiet: asked?.quiet, ...(lab && { lab }), ...(shot && { shot }) });
       return { answer, applied };
     } finally {
       asked?.done();
@@ -403,25 +401,6 @@ export class LocalBench implements Bench {
       await (await lab)?.close();
     }
   }
-}
-
-/** The hooks the owner's Claude Code settings and the folder's own load, as a session in their own setup runs them (R-072). */
-async function hookCount(cwd: string) {
-  const home = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
-  const files = [path.join(home, 'settings.json'), path.join(cwd, '.claude', 'settings.json'), path.join(cwd, '.claude', 'settings.local.json')];
-  let count = 0;
-  for (const file of files) {
-    // A file that is missing or does not parse loads no hooks.
-    const text = await fs.readFile(file, 'utf8').catch(() => '{}');
-    let hooks: Record<string, Array<{ hooks?: unknown[] }>> = {};
-    try {
-      hooks = (JSON.parse(text) as { hooks?: typeof hooks }).hooks ?? {};
-    } catch {
-      continue;
-    }
-    for (const matchers of Object.values(hooks)) for (const m of Array.isArray(matchers) ? matchers : []) count += Array.isArray(m?.hooks) ? m.hooks.length : 0;
-  }
-  return count;
 }
 
 /** A SKILL.md's description, from its front matter: one line, or the indented lines a block scalar folds. */

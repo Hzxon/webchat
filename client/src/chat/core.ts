@@ -616,14 +616,24 @@ export async function loadOlder(conversationId: number) {
   }
 }
 
-/** How far back each chat's session steps are loaded, by the oldest row fetched (R-072). */
+/** How far back each chat's session steps are loaded, by the oldest row fetched, and the load under way (R-072). */
 const stepsPagedTo = new Map<number, number>();
+const stepsLoading = new Map<number, Promise<void>>();
 
 /**
  * Loads the steps of an agent's sessions in a chat back to `since`, a thread's first message id,
  * page by page. They page apart from the history, which therefore does not grow with them (R-072).
+ * Two threads of one chat wait for one load, then go further back if they need to.
  */
-export async function loadSteps(conversationId: number, since: number) {
+export async function loadSteps(conversationId: number, since: number): Promise<void> {
+  const running = stepsLoading.get(conversationId);
+  if (running) return running.then(() => loadSteps(conversationId, since));
+  const load = pageSteps(conversationId, since).finally(() => stepsLoading.delete(conversationId));
+  stepsLoading.set(conversationId, load);
+  return load;
+}
+
+async function pageSteps(conversationId: number, since: number) {
   const conversation = store.get().conversations[conversationId];
   while (conversation && (stepsPagedTo.get(conversationId) ?? Infinity) > since) {
     const raw: MessageDTO[] = await api.messages(conversationId, stepsPagedTo.get(conversationId), true);

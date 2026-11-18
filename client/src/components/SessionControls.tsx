@@ -75,8 +75,8 @@ export function Controls({
 export function Summary({ thread, message }: { thread: Thread; message: ChatMessage }) {
   const harness = message.prompt?.kind === 'summary' ? message.prompt.harness : '';
   // Once handed over, the summary as the user sent it, edits and all.
-  const sent = thread.messages.find((m) => m.id > message.id && m.prompt?.kind === 'reply' && m.prompt.handover?.summary !== undefined);
-  const [text, setText] = useState(sent?.prompt?.kind === 'reply' ? (sent.prompt.handover?.summary ?? message.text) : message.text);
+  const sent = thread.messages.find((m) => m.id > message.id && m.prompt?.kind === 'reply' && m.prompt.handover?.summary !== undefined)?.prompt;
+  const [text, setText] = useState((sent?.kind === 'reply' && sent.handover?.summary) || message.text);
   // Only the newest summary hands over, and only once.
   const open = thread.messages.at(-1) === message && thread.state !== 'working';
   return (

@@ -610,6 +610,9 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
   return card ? { kind: 'answer', to, card } : { kind: 'answer', to };
 }
 
+/** A model's name, as a harness's command line takes it (R-072). */
+export const MODEL_NAME = /^[\w.:[\]-]{1,64}$/;
+
 /** A harness's session id, as Claude Code names its sessions (R-072). */
 export const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -622,7 +625,7 @@ export function readTerminalSessions(raw: unknown, max = 10): TerminalSessionDTO
 
 /** A session's model and permission mode, of the right shape, as the fields that carry them (R-072). */
 function readControls(raw: Record<string, unknown>): { model?: string; mode?: PermissionMode } {
-  const model = typeof raw.model === 'string' && /^[\w.:\[\]-]{1,64}$/.test(raw.model) ? raw.model : undefined;
+  const model = typeof raw.model === 'string' && MODEL_NAME.test(raw.model) ? raw.model : undefined;
   const mode = PERMISSION_MODES.find((m) => m === raw.mode);
   return { ...(model && { model }), ...(mode && { mode }) };
 }
@@ -710,7 +713,7 @@ function readHarnesses(raw: unknown): HarnessState[] | undefined {
     const name = field(h?.name);
     if (!h || !name) return [];
     const knobs = Array.isArray(h.knobs) ? h.knobs.filter((k): k is string => typeof k === 'string' && /^\w{1,32}$/.test(k)) : [];
-    const models = Array.isArray(h.models) ? h.models.filter((m): m is string => typeof m === 'string' && /^[\w.:\[\]-]{1,64}$/.test(m)).slice(0, 20) : undefined;
+    const models = Array.isArray(h.models) ? h.models.filter((m): m is string => typeof m === 'string' && MODEL_NAME.test(m)).slice(0, 20) : undefined;
     const signedIn = typeof h.signedIn === 'boolean' ? h.signedIn : undefined;
     const linked = typeof h.linked === 'boolean' ? h.linked : undefined;
     return [{ name, path: field(h.path), linked, attention: field(h.attention), answers: field(h.answers), version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs, ...(models?.length && { models }) }];

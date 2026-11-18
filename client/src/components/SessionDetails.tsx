@@ -4,6 +4,7 @@
 import { List, ListItem } from '@astryxdesign/core/List';
 import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
+import { useMemo } from 'react';
 import type { Thread } from '../agents';
 
 const PLAN_MARKS: Record<string, string> = { '[x]': 'Done', '[~]': 'Doing', '[ ]': 'To do' };
@@ -12,9 +13,13 @@ const PLAN_MARKS: Record<string, string> = { '[x]': 'Done', '[~]': 'Doing', '[ ]
 const counted = (n: number | undefined, one: string) => (n === undefined ? undefined : `${n} ${one}${n === 1 ? '' : 's'}`);
 
 export function SessionDetails({ thread }: { thread: Thread }) {
-  const events = (thread.steps ?? []).flatMap((s) => s.events);
-  const plan = events.findLast((e) => e.kind === 'plan')?.detail?.split('\n').filter(Boolean) ?? [];
-  const changed = [...new Set(events.filter((e) => e.kind === 'edit').map((e) => e.title))];
+  const { plan, changed } = useMemo(() => {
+    const events = (thread.steps ?? []).flatMap((s) => s.events);
+    return {
+      plan: events.findLast((e) => e.kind === 'plan')?.detail?.split('\n').filter(Boolean) ?? [],
+      changed: [...new Set(events.filter((e) => e.kind === 'edit').map((e) => e.title))],
+    };
+  }, [thread.steps]);
   const about = thread.about ?? {};
   const counts = [counted(about.plugins, 'plugin'), counted(about.skills, 'skill'), counted(about.hooks, 'hook'), counted(about.mcp?.length, 'MCP server')].filter(Boolean);
   return (

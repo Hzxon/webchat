@@ -17,7 +17,7 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isRepoName, LIMITS, SKILL_NAME, type SessionAboutDTO, type SessionEventDTO, type SetupChoice } from '../shared/types.ts';
-import { readAbout, readEvents, readTerminalSessions } from '../shared/e2ee.ts';
+import { MODEL_NAME, readAbout, readEvents, readTerminalSessions } from '../shared/e2ee.ts';
 import { fits } from './answer.ts';
 import { NO_RUNNER, PrerequisitesMissing, type Bench, type Folder, type HarnessInfo, type LocalBench, type Permit, type TurnJob } from './bench.ts';
 import type { Ask, Reply } from './harness.ts';
@@ -377,7 +377,7 @@ export class SocketBench implements Bench {
       const h = record(value);
       const offers = record(h.offers);
       if (!SUPPORTED.some((s) => s.name === h.name)) return [];
-      return [{ name: h.name as string, path: text(h.path, 1000), version: text(h.version, 100), signedIn: typeof h.signedIn === 'boolean' ? h.signedIn : undefined, offers: { instructions: text(offers.instructions, 1000), skills: text(offers.skills, 1000), knobs: strings(offers.knobs, 20), ...(Array.isArray(offers.models) && { models: strings(offers.models, 20).filter((m) => /^[\w.:\[\]-]{1,64}$/.test(m)) }) }, asks: h.asks === true, commits: h.commits !== false, ...(typeof h.warning === 'string' && { warning: h.warning.slice(0, 1000) }) }];
+      return [{ name: h.name as string, path: text(h.path, 1000), version: text(h.version, 100), signedIn: typeof h.signedIn === 'boolean' ? h.signedIn : undefined, offers: { instructions: text(offers.instructions, 1000), skills: text(offers.skills, 1000), knobs: strings(offers.knobs, 20), ...(Array.isArray(offers.models) && { models: strings(offers.models, 20).filter((m) => MODEL_NAME.test(m)) }) }, asks: h.asks === true, commits: h.commits !== false, ...(typeof h.warning === 'string' && { warning: h.warning.slice(0, 1000) }) }];
     });
   }
 

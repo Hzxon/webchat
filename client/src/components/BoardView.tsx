@@ -29,6 +29,8 @@ import {
   GOING,
   cardTemplate,
   withChecked,
+  withSession,
+  sessionOf,
   COLUMN_TITLES,
   columnOf,
   COLUMNS,
@@ -531,7 +533,7 @@ function BoardColumnView({
   async function add(kind: CardKind, title: string, body: string, from?: Drafted) {
     const target = doc ?? (await createBoard(projectId, column));
     const id = newSectionId();
-    const text = from ? `${from.draft.checked ? withChecked(body, from.draft.checked) : body}\n\nSession: ${from.thread.root}` : body;
+    const text = from ? withSession(from.draft.checked ? withChecked(body, from.draft.checked) : body, from.thread.root) : body;
     const { id: cardId } = await addCard(target, id, kind, (cardId) => cardText(cardId, title, NEW_STATUS[kind], text));
     if (from) await noteAdded(from.thread.conversationId, from.thread.root, from.message.clientId!, cardId);
     // A new card is open, so it shows in the Open drawer; its peek shows once it loads.
@@ -1196,9 +1198,6 @@ function BoardColumnView({
 }
 
 /** A new card's title and details. Nothing reaches the server, and no number is taken, until Done (D-116). */
-/** The session a card was drafted in, by the client id its `Session:` line names (R-071). */
-const sessionOf = (body: string) => /^Session: ([\w-]{1,64})$/m.exec(body)?.[1];
-
 /** The user's own agent in a project, ready to answer, and the repository it reads. */
 type Asker = { seat: Seat; repo?: string };
 /** The session's draft that filled the form, which the card that goes on the board came from. */
@@ -1240,7 +1239,7 @@ function NewCardForm({
   async function ask(text: string) {
     const card = { kind: kind as 'R' | 'K' | 'D', title, body };
     if (thread) return tellAgent(thread.conversationId, thread.root, 'reply', text, { card });
-    onSession(await askAgent(asker!.seat.agent.id, projectId, asker!.repo, text, undefined, true, card));
+    onSession(await askAgent(asker!.seat.agent.id, projectId, asker!.repo, text, { own: true, card }));
   }
   const working = thread?.state === 'working' || thread?.state === 'asking';
   const [needTitle, setNeedTitle] = useState(false);

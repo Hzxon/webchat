@@ -141,6 +141,12 @@ export const takeable = (card: Card, name: string) => card.owner === undefined &
 export const withChecked = (body: string, checked: string, today = new Date()) =>
   [`Checked: ${dateOf(today)}. ${checked}`, body.replace(new RegExp(CHECKED.source, 'gm'), '').trim()].filter(Boolean).join('\n\n');
 
+/** A card body with a line naming the session it was drafted in, by its prompt's client id, which only its owner's pane opens (R-071). */
+export const withSession = (body: string, session: string) => `${body}\n\nSession: ${session}`;
+
+/** The session a card was drafted in, from its `Session:` line (R-071). */
+export const sessionOf = (body: string) => /^Session: ([\w-]{1,64})$/m.exec(body)?.[1];
+
 /** A day as the cards write it, 2026-11-07, in the user's time zone. */
 export const dateOf = (day: Date) => `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
 

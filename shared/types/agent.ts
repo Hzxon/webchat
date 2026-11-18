@@ -23,7 +23,6 @@ export const runsCards = (level: number) => (level & AGENT_LEVEL.cards) !== 0;
 export const takesSetup = (level: number) => (level & AGENT_LEVEL.setup) !== 0;
 export const takesAsks = (level: number) => (level & AGENT_LEVEL.asks) !== 0;
 export const takesOwn = (level: number) => (level & AGENT_LEVEL.own) !== 0;
-export const sendsEvents = (level: number) => (level & AGENT_LEVEL.events) !== 0;
 export const takesControls = (level: number) => (level & AGENT_LEVEL.controls) !== 0;
 export const listsSessions = (level: number) => (level & AGENT_LEVEL.sessions) !== 0;
 

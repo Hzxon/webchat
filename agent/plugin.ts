@@ -1199,19 +1199,24 @@ export class Plugin {
     const flush = () => {
       clearTimeout(timer);
       timer = undefined;
-      let fresh = JSON.stringify(about) === told ? undefined : about;
-      told = JSON.stringify(about);
-      while (queue.length || fresh) {
+      const now = JSON.stringify(about);
+      // What it runs with goes with the first message, when it changed.
+      let extra = now === told ? undefined : about;
+      told = now;
+      const sizes = queue.map((e) => JSON.stringify(e).length);
+      let at = 0;
+      while (at < queue.length || extra) {
         // At least one step, each of which fits on its own.
-        let [n, size] = [0, 0];
-        while (n < queue.length && n < LIMITS.eventsPerMessage && (n === 0 || size + JSON.stringify(queue[n]).length <= LIMITS.eventsJsonLength)) size += JSON.stringify(queue[n++]).length;
-        const events = queue.slice(0, n);
-        queue = queue.slice(n);
+        let [end, size] = [at, 0];
+        while (end < queue.length && end - at < LIMITS.eventsPerMessage && (end === at || size + sizes[end]! <= LIMITS.eventsJsonLength)) size += sizes[end++]!;
+        const events = queue.slice(at, end);
+        at = end;
         const text = events.length === 0 ? 'What the session runs with' : events.length === 1 ? 'One step of the session' : `${events.length} steps of the session`;
-        const extra = fresh;
-        fresh = undefined;
-        sent = sent.then(() => this.client!.send(chat, { text, prompt: { kind: 'events', to, events, ...(extra && { about: extra }) } }, { kind: 'events' }).then(() => undefined, log));
+        const prompt = { kind: 'events' as const, to, events, ...(extra && { about: extra }) };
+        extra = undefined;
+        sent = sent.then(() => this.client!.send(chat, { text, prompt }, { kind: 'events' }).then(() => undefined, log));
       }
+      queue = [];
       return sent;
     };
     return {
@@ -1257,11 +1262,12 @@ export class Plugin {
       : undefined;
     // One process takes every turn of a session, so it gets every schema the session's turns use.
     const schemas = schema === CHECK || schema === ANSWER ? [CHECK, ANSWER] : [schema];
-    const own = !taken && !!(who as { own?: boolean }).own;
-    // The session's controls: a model, and a permission mode only in the owner's own setup (R-072).
-    const { model, mode } = 'taken' in who ? {} : who;
+    // A conversation's own setup and controls: a model, and a permission mode only in own setup (D-157, R-072).
+    const talk = 'taken' in who ? undefined : who;
+    const own = !!talk?.own;
+    const { model, mode } = talk ?? {};
     // Only a page that shows the steps asks for them; an older one would show each batch as a message (R-072).
-    const steps = !('taken' in who) && who.events ? this.steps(who.chat, who.to, { own, ...(who.branch && { branch: who.branch }) }) : undefined;
+    const steps = talk?.events ? this.steps(talk.chat, talk.to, { own, ...(talk.branch && { branch: talk.branch }) }) : undefined;
     const { answer, applied } = await this.bench.turn({ harness: harness.name, cwd, session, resume, message, schema, schemas, setup: this.setup.choice, ...(own && { own }), ...(model && { model }), ...(own && mode && { mode }) }, { signal, progress: progress?.line, events: steps?.add, about: steps?.about, permit }).finally(async () => {
       // Before the answer, so the timeline is whole when it ends.
       await steps?.end();
