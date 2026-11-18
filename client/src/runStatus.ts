@@ -47,11 +47,11 @@ export async function followRuns() {
       // Most reports moved their card already, so only a card that stands where the move starts takes its lock.
       const cards = await cardsOf(doc);
       const card = cards.find((c) => c.id === section);
-      if (!card || !standsAt(from, card.status)) continue;
+      if (!card) continue;
       // Both card owners choose for a card that waits for another, and each but the user gets a push (docs/roadmap/new-overlap-gate.md).
       const owners = run.state === 'overlap' ? choosers(card.owner, cards.find((c) => c.cardId.replace(/-0+(?=\d)/, '-') === run.waits)?.owner, me.id) : [];
       const to = owners.length ? waitsFor(target, owners.map((id) => (id === me.id ? me.displayName : (state.users[id]?.displayName ?? 'someone')))) : target;
-      if (!(await move(doc, section, (status) => standsAt(from, status), to))) continue;
+      if (!standsAt(from, card.status, to) || !(await move(doc, section, (status) => standsAt(from, status, to), to))) continue;
       for (const owner of owners.filter((id) => id !== me.id))
         await startDirectChat(owner)
           .then((chat) => sendCardNote(chat, { kind: 'waiting', card: card.cardId, docId, section }, `${card.cardId} waits for ${run.waits}: both change the same files. Choose on ${card.cardId} with the line "${choiceLine(run.waits!, 'wait')}", or stack or fold in place of wait.`))

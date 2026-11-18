@@ -110,7 +110,8 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
   });
 
   test('a run that waits for another card shows it in the Running lane, names who chooses, and goes on from there (docs/roadmap/new-overlap-gate.md)', () => {
-    const [from, to] = statusMove({ request: 1, runtime: 9, state: 'overlap', waits: 'K-12' }, 'K-7', 'Ready', workingStatus('Ann'));
+    const working = workingStatus('Ann');
+    const [from, to] = statusMove({ request: 1, runtime: 9, state: 'overlap', waits: 'K-12' }, 'K-7', 'Ready', working);
     assert.deepEqual([from, to], [['Ready', 'Running: Ann’s agent', 'Waiting for a decision'], 'Waiting for K-12']);
     const waiting = waitsFor(to, ['Ann', 'Bo']);
     assert.equal(waiting, 'Waiting for K-12: Ann and Bo choose');
@@ -118,8 +119,12 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.equal(groupOf('roadmap', waiting), groupOf('roadmap', 'Running: Ann’s agent'));
     assert.ok(otherRun(waiting, 'Bo'), 'nobody else starts it meanwhile');
     // Each choice goes on through a report the run already has: fixing when it goes on, failed for a fold.
-    for (const state of ['fixing', 'failed', 'done']) assert.ok(standsAt(statusMove({ request: 1, runtime: 9, state }, 'K-7', 'Ready', workingStatus('Ann'))[0], waiting), state);
-    assert.ok(!standsAt(['Ready'], waiting), 'a move that does not start from a wait leaves it');
+    for (const state of ['fixing', 'failed', 'done']) {
+      const [moveFrom, moveTo] = statusMove({ request: 1, runtime: 9, state }, 'K-7', 'Ready', workingStatus('Ann'));
+      assert.ok(standsAt(moveFrom, waiting, moveTo), state);
+    }
+    assert.ok(!standsAt(['Ready'], waiting, working), 'a move that does not start from a wait leaves it');
+    assert.ok(!standsAt(from, waiting, waiting), 'a card the move already made moves no more, so a second tab pushes nobody again');
   });
 
   test('a card reads its Checked line, and has an empty check without one (R-041)', () => {

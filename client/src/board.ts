@@ -231,8 +231,11 @@ export function statusMove(run: CardRun, card: string, was: string, working: str
   return moves[run.state] ?? [[], ''];
 }
 
-/** Whether a card stands where a move starts; a move from WAITING also starts from a wait for another card. */
-export const standsAt = (from: string[], status: string) => from.includes(status) || (from.includes(WAITING) && status.startsWith(WAITS));
+/**
+ * Whether a card stands where a move to `to` starts; a move from WAITING also starts from a wait for
+ * another card, but not from the wait it makes, or each tab would make it again and push again.
+ */
+export const standsAt = (from: string[], status: string, to: string) => status !== to && (from.includes(status) || (from.includes(WAITING) && status.startsWith(WAITS)));
 
 /** The status of a card that waits for another, naming who chooses, as `Waiting for K-12: Ann and Bob choose`. */
 export const waitsFor = (to: string, names: string[]) => `${to}: ${names.join(' and ')} ${names.length > 1 ? 'choose' : 'chooses'}`;
