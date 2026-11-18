@@ -11,8 +11,8 @@
 # So an earlier pull request that later grows into a later one's files is seen only at the later
 # one's next push or edit, and not before.
 #
-# It blocks a merge only once the owner adds `overlap` to the required checks of the "Protect main"
-# ruleset.
+# It is a required check of the "Protect main" ruleset, so a failure blocks the merge. A pull
+# request must therefore always get a run: keep the trigger free of path filters.
 name: overlap
 
 on:
