@@ -376,6 +376,8 @@ export interface MessageContent {
    * theirs knows (D-104). Outside `prompt`, which the agent would take as a reply.
    */
   added?: { to: string; draft: string; card: string };
+  /** The owner's note that they dismissed the proposal draft it names, so it waits on no device of theirs. The agent ignores it. */
+  dismissed?: { to: string };
   /** The owner has their agent forget its folder of a repository: the mark goes, never the files (R-038, D-101). */
   forget?: { repo: string; sentAt: number };
   /**
@@ -764,6 +766,7 @@ function readContent(value: unknown): MessageContent {
     run?: Record<string, unknown>;
     prompt?: Record<string, unknown>;
     added?: Record<string, unknown>;
+    dismissed?: Record<string, unknown>;
     forget?: { repo?: unknown; sentAt?: unknown };
     trust?: { user?: unknown; fingerprint?: unknown; sentAt?: unknown };
     sleep?: { sentAt?: unknown };
@@ -795,6 +798,8 @@ function readContent(value: unknown): MessageContent {
   if (prompt) content.prompt = prompt;
   const [to, draft, card] = [short(raw.added?.to, 64), short(raw.added?.draft, 64), short(raw.added?.card, 16)];
   if (to && draft && card) content.added = { to, draft, card };
+  const dismissed = short(raw.dismissed?.to, 64);
+  if (dismissed) content.dismissed = { to: dismissed };
   if (typeof raw.forget?.repo === 'string' && isRepoName(raw.forget.repo) && isId(raw.forget.sentAt)) content.forget = { repo: raw.forget.repo, sentAt: raw.forget.sentAt };
   const fingerprint = short(raw.trust?.fingerprint, 64);
   if (isId(raw.trust?.user) && fingerprint && isId(raw.trust.sentAt)) content.trust = { user: raw.trust.user, fingerprint, sentAt: raw.trust.sentAt };

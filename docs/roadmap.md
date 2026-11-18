@@ -381,4 +381,5 @@ Status: Dropped on 2026-11-13. The owner no longer wants a teammate to run a car
 | K-75: Two claims seconds apart both get the item | #271 |
 | R-049: A run waits when its files overlap a running card's | #276 |
 | R-048: A card waits for the cards it names | #277 |
+| K-76: Older copies of a proposal wait on the board for good | #280 |
 | K-74: An agent's card draft loses everything past 4,000 characters | Fixed |

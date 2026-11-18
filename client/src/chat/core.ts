@@ -795,6 +795,7 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     run: entry.content.run ?? null,
     prompt: entry.content.prompt ?? null,
     added: entry.content.added ?? null,
+    dismissed: entry.content.dismissed ?? null,
     setupState: null,
     board: entry.content.board ?? null,
     ask: entry.content.ask ?? null,
@@ -911,6 +912,7 @@ export function retryMessage(message: ChatMessage) {
   // A fresh send time, or the agent would refuse a retry made 10 minutes later. The client id still makes it one message (D-061, K-47).
   if (message.prompt) content.prompt = 'sentAt' in message.prompt ? { ...message.prompt, sentAt: Date.now() } : message.prompt;
   if (message.added) content.added = message.added;
+  if (message.dismissed) content.dismissed = message.dismissed;
   if (message.file) content.file = message.file;
   void sendContent(message.conversationId, content, message.urgent, message.clientId!, unsentFiles.get(message.clientId!));
 }

@@ -349,6 +349,15 @@ test('a heading without an id proposes a new card of the kind it names, or of it
   assert.equal(proposalOf('docs/decisions/y.md', '### Keep it too')?.kind, 'D');
 });
 
+test('a status that wraps over lines is the whole first paragraph, as the board reads it', () => {
+  assert.deepEqual(proposalOf('docs/roadmap/new-gate.md', '### K: Gate\n\nStatus: Done in #276. Needs the\ndecision in new-overlap-blocks.md.\n\nWhy: x.'), {
+    kind: 'K',
+    title: 'Gate',
+    status: 'Done in #276. Needs the decision in new-overlap-blocks.md',
+    body: 'Why: x.',
+  });
+});
+
 test('the README and a file with no heading propose nothing (R-040)', () => {
   assert.equal(proposalOf('docs/roadmap/README.md', '### R-1: Looks like a card\n\nStatus: Idea.'), null);
   assert.equal(proposalOf('README.md', '### Title'), null);
