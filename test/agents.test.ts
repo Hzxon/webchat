@@ -4,7 +4,7 @@ import { ASK_WAIT_MS, harnessRow, type HarnessState } from '../shared/types.ts';
 
 // In a variable, so the tools tsconfig, which has no DOM types, does not typecheck the client module.
 const clientAgents = '../client/src/agents.ts';
-const { agentOf, proposalsWaiting, seatFor, threadsOf, THREAD_TTL_MS, waitingProposals } = await import(clientAgents);
+const { agentOf, proposalsWaiting, seatFor, threadCard, threadsOf, THREAD_TTL_MS, waitingProposals } = await import(clientAgents);
 
 const ME = 1;
 const AGENT = 2;
@@ -111,6 +111,17 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.equal(threadsOf([request], ME, AGENT, {}, 1 + THREAD_TTL_MS + 1)[0].state, 'working');
   });
 
+  test("a card's run names its card on its board, and a question names none (the card-run-in-peek decision)", () => {
+    const request = { ...say(ME, {}, 'r0'), prompt: null, run: { kind: 'request', card: 'K-7', title: 'Sums', docId: 'd', section: 's', runtime: AGENT, repo: 'team/app', sentAt: 1, hash: 'h' } };
+    const [run] = threadsOf([request], ME, AGENT, {}, 100);
+    const [asked] = threadsOf([say(ME, { kind: 'prompt', sentAt: 1, project: 4 }, 'q0')], ME, AGENT, {}, 100);
+    const docs = { d: { conversationId: 3 } };
+    const conversations = { 3: { projectId: 4 } };
+    assert.deepEqual(threadCard(run, docs, conversations), { projectId: 4, section: 's' });
+    assert.equal(threadCard(run, {}, conversations), undefined, 'a board the page does not hold');
+    assert.equal(threadCard(asked, docs, conversations), undefined);
+  });
+
   test('a run or a question waits for the owner while the laptop has no copy, and works once they have it cloned (R-036)', () => {
     const sayRun = (senderId: number, run: object) => ({ ...say(senderId, {}, `r${++id}`), prompt: null, run });
     const request = sayRun(ME, { kind: 'request', card: 'K-7', title: 'Sums', docId: 'd', section: 's', runtime: AGENT, repo: 'team/app', sentAt: 1, hash: 'h' });
@@ -129,11 +140,13 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.deepEqual([thread.project, thread.repo], [4, '']);
   });
 
-  test("a board counts the proposals for it and its repository that wait for the owner's go (K-72)", () => {
+  test("a board shows the proposals for it and its repository that wait for the owner's go (K-72, R-047)", () => {
     const propose = (clientId: string, project: number, repo: string) => ({ ...say(AGENT, {}, clientId), prompt: null, board: { kind: 'proposal', project, repo, card: { kind: 'K', title: clientId, body: '' } } });
     const proposals = [propose('a', 4, 'team/app'), propose('b', 4, 'Team/App'), propose('c', 5, 'team/app'), propose('d', 4, 'team/web')];
-    const waiting = (...rest: object[]) => waitingProposals(threadsOf([...proposals, ...rest], ME, AGENT, {}, 100), 4, 'team/app').map((t: { root: string }) => t.root).sort();
+    const waiting = (...rest: object[]) => waitingProposals(threadsOf([...proposals, ...rest], ME, AGENT, {}, 100), 4, 'team/app').map((p: { thread: { root: string } }) => p.thread.root).sort();
     assert.deepEqual(waiting(), ['a', 'b'], 'its project and repository, whatever the case');
+    const [first] = waitingProposals(threadsOf(proposals, ME, AGENT, {}, 100), 4, 'team/app');
+    assert.deepEqual([first.message.clientId, first.draft], [first.thread.root, { kind: 'K', title: first.thread.root, body: '' }], 'with the message and the draft the board shows');
     assert.deepEqual(waiting({ ...say(ME, {}), prompt: null, added: { to: 'a', draft: 'a', card: 'K-9' } }), ['b'], 'an added draft no longer waits');
     assert.deepEqual(waiting({ ...say(AGENT, {}), prompt: null, added: { to: 'b', draft: 'b', card: 'K-9' } }), ['a', 'b'], 'only the owner adds');
   });

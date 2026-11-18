@@ -2,9 +2,10 @@
 // the format of this repository's docs/decisions.md and docs/roadmap.md. A card is Markdown that
 // starts with "### D-3: Title" and a "Status:" line. This module only reads and writes that text,
 // so the tests run it without a browser.
-import { cardText, CHECKED, laneOf, WAITING, withReviews, type Card, type CardKind, type Lane, type Review } from '../../shared/board';
+import { cardText, CHECKED, groupOf, laneOf, WAITING, WAITS, withReviews, type Card, type CardKind, type Lane, type Review, type Waits } from '../../shared/board';
 import type { DocContent } from '../../shared/e2ee';
-import { RUN_PICKUP_MS, type RunReport, type UserDTO } from '../../shared/types';
+import { RUN_PICKUP_MS, type CardDraftDTO, type RunReport, type UserDTO } from '../../shared/types';
+import type { Thread } from './agents';
 import type { ChatConversation, ChatDoc, ChatMessage } from './e2ee/keyring';
 import type { PendingStatus } from './store';
 
@@ -60,6 +61,8 @@ const pickedBy = (status: string) => (status.startsWith('Running:') && !/['’]s
 export function moved(card: Card, move: Move, me: Pick<UserDTO, 'id' | 'username' | 'displayName'>, today = new Date()): string | null {
   // A card that does not open has no kind.
   if (!card.kind || !(typeof move === 'string' ? MOVE_FROM[move] : ['review']).includes(laneOf(card.status))) return null;
+  // A card waits for the cards its After line names (docs/roadmap/new-after-edge.md).
+  if (move === 'pick' && card.waits) return null;
   const mine = card.owner === me.id;
   const asks = `@${me.username} asks its owner to mark it ready.`;
   const write = (status: string, body = card.body) => cardText(card.cardId, card.title, status, body);
@@ -108,11 +111,24 @@ export function moved(card: Card, move: Move, me: Pick<UserDTO, 'id' | 'username
 /**
  * Whether a run may start from the card as it stands, as the user's agent, a claim or a take starts
  * one (the card-owner decision): a Ready card, an Open one with no owner, or one the user picked by
- * hand (`Running: <name>`), which their agent then runs and a failure puts back.
+ * hand (`Running: <name>`), which their agent then runs and a failure puts back. Never a card that
+ * waits for the cards its After line names (docs/roadmap/new-after-edge.md).
  */
 export function startable(card: Card, name: string) {
   const lane = laneOf(card.status);
-  return !!card.kind && (lane === 'ready' || (lane === 'open' && card.owner === undefined) || card.status === `Running: ${name}`);
+  return !!card.kind && !card.waits && (lane === 'ready' || (lane === 'open' && card.owner === undefined) || card.status === `Running: ${name}`);
+}
+
+/** What a waiting card's face says: the cards its After line names that are not Done or Fixed (docs/roadmap/new-after-edge.md). */
+export const waitingFace = (waits: Waits) => `${WAITS}${waits.on.join(', ')}`;
+
+/** The warnings on a waiting card: a loop of After lines, which no card in it leaves alone, and each dropped card it names. */
+export function afterWarnings({ loop, dropped }: Waits) {
+  const [first, ...rest] = loop;
+  return [
+    ...(first ? [`${first}${rest.map((id, i) => `${i ? ', which waits for' : ' waits for'} ${id}`).join('')}. None of them can run until one After line goes.`] : []),
+    ...dropped.map((id) => `${id} was dropped. Remove it from the After line, or drop this card.`),
+  ];
 }
 
 /** Whether the user may take the card, which has no owner: only where a run may start, since a run names its section (D-100). */
@@ -143,7 +159,7 @@ export const runnerOf = (status: string) => /^(?:Running|In review):\s*(.*)$/.ex
  */
 export const otherRun = (status: string, name: string) =>
   status.startsWith('In review') ||
-  status.startsWith(WAITING) ||
+  status.startsWith(WAITS) ||
   (status.startsWith('Running:') && status !== workingStatus(name) && status !== `Running: ${name}`);
 
 /** A new card's id: the next free number of its kind, as wide as the widest id of that kind, so R-043 follows R-005 (R-040). */
@@ -162,6 +178,13 @@ export function duplicates(cards: Card[]): Set<string> {
 
 /** The status a new card of each kind starts with. */
 export const NEW_STATUS: Record<CardKind, string> = { D: 'Proposed', R: 'Idea', K: 'Open', Q: 'Open' };
+
+/** The column a card of this kind goes in: a decision in Decisions, an idea, issue or question in the Roadmap. */
+export const columnOf = (kind: CardKind): BoardColumn => (kind === 'D' ? 'decisions' : 'roadmap');
+
+/** The group of its column a draft shows in (R-047): beside the card it changes, or else where the card it adds lands. */
+export const draftGroup = (draft: CardDraftDTO, cards: Card[]) =>
+  groupOf(columnOf(draft.kind), cards.find((c) => c.id === draft.replaces?.section)?.status ?? NEW_STATUS[draft.kind]);
 
 /** What a new card starts with: the heading with its id, the status, and the fields of its kind. */
 export function cardTemplate(kind: CardKind, id: string): string {
@@ -201,6 +224,8 @@ export interface CardRun {
   at?: number;
   /** For a merged run: the Proposed decisions its work made true (R-042). */
   decisions?: string[];
+  /** For a run that waits for another card: that card, such as K-12, or its draft, such as #12. */
+  waits?: string;
   /** The user asked to stop a run the agent took, and the agent has not reported since. */
   stopping?: boolean;
 }
@@ -215,6 +240,8 @@ export function statusMove(run: CardRun, card: string, was: string, working: str
   const moves: Partial<Record<CardRun['state'], [string[], string]>> = {
     claimed: [[was], working],
     decision: [[was, working], WAITING],
+    // `waitsFor` adds who chooses (docs/roadmap/new-overlap-gate.md).
+    overlap: [[was, working, WAITING], `${WAITS}${run.waits}`],
     fixing: [[WAITING], working],
     done: [[was, working, WAITING], review],
     failed: [[working, WAITING], was],
@@ -225,6 +252,15 @@ export function statusMove(run: CardRun, card: string, was: string, working: str
   };
   return moves[run.state] ?? [[], ''];
 }
+
+/**
+ * Whether a card stands where a move to `to` starts; a move from WAITING also starts from a wait for
+ * another card, but not from the wait it makes, or each tab would make it again and push again.
+ */
+export const standsAt = (from: string[], status: string, to: string) => status !== to && (from.includes(status) || (from.includes(WAITING) && status.startsWith(WAITS)));
+
+/** The status of a card that waits for another, naming who chooses, as `Waiting for K-12: Ann and Bob choose`. */
+export const waitsFor = (to: string, names: string[]) => `${to}: ${names.join(' and ')} ${names.length > 1 ? 'choose' : 'chooses'}`;
 
 /**
  * The states in which a run may still go, so the page asks for no second one. A paused run goes on
@@ -268,8 +304,52 @@ export function cardRuns(messages: ChatMessage[], meId: number, docId: string, p
       if (target?.state === 'done') Object.assign(target, { state: 'fixing', at: m.id });
     } else if (run.kind !== 'clone' && run.kind !== 'draft' && run.kind !== 'note') {
       const target = latest(run.request);
-      if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull, decisions: run.decisions, at: m.id, stopping: false });
+      if (target && m.senderId === target.runtime) Object.assign(target, { state: run.kind, note: run.note, pull: run.pull, decisions: run.decisions, waits: run.waits, at: m.id, stopping: false });
     }
   }
   return runs;
+}
+
+/** The thread of the user's run of a card, which holds what the run's reports alone cannot say, such as a waiting question. */
+export const threadOf = (run: CardRun | undefined, threads: Thread[]) => run && threads.find((t) => t.request === run.request);
+
+/** Why a card waits for the user, in the order the board lists them, with the words its face and the Needs you row show (R-047). */
+export const NEEDS = {
+  asking: 'Asking you',
+  planned: 'Plan ready',
+  decision: 'Waiting for a decision',
+  paused: 'Stopped',
+  review: 'Asks for your review',
+  ready: 'Asks you to mark it ready',
+  // A proposal's draft, which only its owner adds; BoardView lists those after the cards.
+  proposal: 'Proposal to add',
+} as const;
+export type Need = keyof typeof NEEDS;
+const ORDER = Object.keys(NEEDS);
+
+/**
+ * The Roadmap's cards that wait for the user, and why, questions first (R-047). A run counts from its
+ * thread, which turns to working the moment the user answers, gives the go or redirects it, while
+ * the run's state waits for the agent's next report. A request counts while the card holds it: a
+ * review line of theirs with no verdict, on a card in review, or an ask on their own open card,
+ * which marking it ready drops.
+ */
+export function needsYou(cards: Card[], meId: number, runs: Map<string, CardRun>, threads: Thread[]) {
+  const needOf = (card: Card): Need | undefined => {
+    const run = runs.get(card.id);
+    const thread = run && !run.stopping ? threadOf(run, threads) : undefined;
+    if (thread?.state === 'asking' && !thread.ask?.answered) return 'asking';
+    if (thread?.state === 'planned' || thread?.state === 'paused') return thread.state;
+    // A waiting thread can wait for a review or a clone too, which the run's state tells apart.
+    if (thread?.state === 'waiting' && run!.state === 'decision') return 'decision';
+    const lane = laneOf(card.status);
+    if (lane === 'review' && card.reviews.some((r) => r.who === meId && r.verdict === 'review_required')) return 'review';
+    if (lane === 'open' && card.owner === meId && card.body.match(ASKED)) return 'ready';
+  };
+  return cards
+    .flatMap((card) => {
+      const need = needOf(card);
+      return need ? [{ card, need }] : [];
+    })
+    .sort((a, b) => ORDER.indexOf(a.need) - ORDER.indexOf(b.need));
 }

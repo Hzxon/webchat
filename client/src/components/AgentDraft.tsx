@@ -12,7 +12,7 @@ import { cardText, withReviews, type Card } from '../../../shared/board';
 import { textHash } from '../../../shared/e2ee';
 import { cardStatus, type CardDraftDTO } from '../../../shared/types';
 import { threadProject, type Thread } from '../agents';
-import { boardDocs, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, withChecked } from '../board';
+import { boardDocs, columnOf, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, withChecked } from '../board';
 import { noteAdded, syncNow, tellAgent } from '../chat';
 import { addCard, boardCards, createBoard, newSectionId, rewriteCard, sectionHistory } from '../docs';
 import type { ChatMessage } from '../e2ee/keyring';
@@ -55,6 +55,8 @@ export function AgentDraft({
   const conversations = useAppState((s) => s.conversations);
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
+  // On the board's peek the board is open already (R-047).
+  const boardOpen = useAppState((s) => s.boardOpen);
   const change = draft.replaces;
   const added = thread.added[message.clientId ?? ''];
   // A new card goes to the board the question was about, else one the agent shares with the user;
@@ -74,8 +76,7 @@ export function AgentDraft({
     ? (conversations[docs[change.doc]?.conversationId ?? 0]?.projectId ?? null)
     : (picked ?? board);
   const [redone, setRedone] = useState(false);
-  // A decision goes in the Decisions column, an idea or issue in the Roadmap.
-  const column = draft.kind === 'D' ? 'decisions' : 'roadmap';
+  const column = columnOf(draft.kind);
   const columns = projectId === null ? {} : boardDocs(docs, conversations, projectId);
   const target = columns[column];
   const [cards, setCards] = useState<Card[] | null>(null);
@@ -120,6 +121,10 @@ export function AgentDraft({
   const current = change ? cards?.find((c) => c.id === change.section) : undefined;
   // A card or decision the board no longer has is left out; a pull request the page cannot look up stays (R-041).
   const related = (draft.related ?? []).filter((r) => r.id.startsWith('#') || cards?.some((c) => c.cardId === r.id));
+  // A split's second card goes on only after its contract card, the newest of that title, whose number its After line names (docs/roadmap/new-after-edge.md).
+  const contract = draft.after
+    ? cards?.filter((c) => c.kind !== 'D' && c.title === draft.after).sort((a, b) => (b.number ?? 0) - (a.number ?? 0))[0]
+    : undefined;
 
   async function add() {
     if (projectId === null) return;
@@ -128,7 +133,8 @@ export function AgentDraft({
     try {
       const doc = target ?? (await createBoard(projectId, column));
       // The check's line goes on top, so the board shows the card checked (R-041).
-      const body = draft.checked ? withChecked(draft.body.trim(), draft.checked) : draft.body.trim();
+      const typed = contract ? `After: ${contract.cardId}\n\n${draft.body.trim()}` : draft.body.trim();
+      const body = draft.checked ? withChecked(typed, draft.checked) : typed;
       let id: string;
       if (change) {
         // Read and written under the card's lock, so nobody's save lands in between.
@@ -220,7 +226,7 @@ export function AgentDraft({
       {added ? (
         <p className="agents-draft-done">
           {change ? `Updated ${added}` : `Added as ${kind} ${added}`}.{' '}
-          {projectId !== null && (
+          {projectId !== null && projectId !== boardOpen && (
             <Button variant="ghost" size="sm" label="Open the board" onClick={() => actions.setBoardOpen(projectId)} />
           )}
         </p>
@@ -262,6 +268,9 @@ export function AgentDraft({
               options={shared.map((p) => ({ value: String(p.id), label: p.name }))}
             />
           )}
+          {draft.after && !contract && (
+            <Banner status="info" title={`This card waits for “${draft.after}”. Add that card first, so its number goes on this card’s After line.`} />
+          )}
           {!change && shared.length === 0 && (
             <Banner status="warning" title="Add your agent to a project first, under the project’s people." />
           )}
@@ -275,7 +284,7 @@ export function AgentDraft({
                     draft.kind,
                   )}`
             }
-            isDisabled={cards === null || projectId === null || (!!change && !current)}
+            isDisabled={cards === null || projectId === null || (!!change && !current) || (!!draft.after && !contract)}
             isLoading={busy}
             onClick={() => void add()}
           />

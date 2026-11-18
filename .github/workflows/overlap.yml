@@ -1,0 +1,50 @@
+# Fails a pull request that changes a file which an open pull request with a lower number also
+# changes, and names that pull request and the files. The author passes it by writing `After #12` or
+# `Stacked on #12` in the body once the order is agreed. A draft with no diff yet holds the files of
+# its `Touches:` line instead. See docs/decisions/new-overlap-blocks.md; the comparison is in
+# shared/overlap.ts, which scripts/overlap.ts runs.
+#
+# It runs for a docs-only pull request too, unlike ci.yml: two pull requests that edit the same
+# README or AGENTS.md conflict just the same, and the check costs one `gh` call, not a build.
+#
+# It runs when a pull request changes, and on an edit of the body, which is how an author passes it.
+# So an earlier pull request that later grows into a later one's files is seen only at the later
+# one's next push or edit, and not before.
+#
+# It is a required check of the "Protect main" ruleset, so a failure blocks the merge. A pull
+# request must therefore always get a run: keep the trigger free of path filters.
+name: overlap
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+# The check reads other pull requests through the API and never checks out or runs their code. What
+# it runs is this pull request's own scripts/overlap.ts, which the owner reviews as any change.
+permissions:
+  contents: read
+  pull-requests: read
+
+# A newer push or edit cancels the older run, which would hold a runner for nothing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  overlap:
+    # Either of the owner's runners, as ci.yml (docs/decisions/self-hosted-ci.md). It needs `gh`, which both have.
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      # Pinned to commits, like the actions in ci.yml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - name: Check that no earlier open pull request changes the same files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PULL: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr list --state open --limit 200 --json number,headRefName,body,files \
+            | node scripts/overlap.ts "$PULL"

@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Button } from '@astryxdesign/core/Button';
 import { Center } from '@astryxdesign/core/Center';
-import { Heading } from '@astryxdesign/core/Heading';
 import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import type { UserDTO } from '../../shared/types';
 import { ApiError } from './api';
-import { sessionExpired, signOut, startChat } from './chat';
+import { openConversation, sessionExpired, signOut, startChat } from './chat';
 import type { ChatDoc } from './e2ee/keyring';
-import { actions, useAppState } from './store';
+import { formatRoute, parseRoute, routeOf } from './route';
+import { actions, store, useAppState } from './store';
 import { Toasts, UrgentAlert } from './components/Alerts';
 import { AuthScreen } from './components/AuthScreen';
 import { ChatView } from './components/ChatView';
@@ -22,7 +23,6 @@ import { NotificationDialog } from './components/NotificationDialog';
 import { AddPeopleDialog, NewChannelDialog, NewDocDialog, ProjectReposDialog } from './components/ProjectDialogs';
 import { Sidebar, SidebarRail } from './components/Sidebar';
 import { UnlockScreen } from './components/UnlockScreen';
-import { BellRingIcon } from './components/icons';
 import { fitToVisualViewport } from './viewport';
 import { runSignature } from './agents';
 import { followRuns } from './runStatus';
@@ -50,7 +50,9 @@ export function App() {
           // Shows the sign-in screen once the keys are gone from this device.
           void sessionExpired();
         } else {
-          setError((err as Error).message);
+          // A proxy's 502 or a dropped connection says nothing useful in its own words.
+          const unreachable = err instanceof ApiError && (err.status === 0 || err.status >= 500);
+          setError(unreachable ? 'WebChat cannot reach the server. Check your connection and try again.' : (err as Error).message);
           setPhase('error');
         }
       });
@@ -102,10 +104,50 @@ function rememberedCollapsed() {
   }
 }
 
+/**
+ * Keeps the address hash and the open view in step: opening a view adds a history entry, and a
+ * reload, a pasted link, Back or Forward opens the view the hash names. Only mounted once the data
+ * has loaded, so the hash can be checked against what this user can see.
+ */
+function followHash() {
+  let opening = false;
+  const write = (change: typeof history.pushState) => {
+    const hash = formatRoute(routeOf(store.get()));
+    if (hash !== location.hash) change.call(history, null, '', location.pathname + location.search + hash);
+  };
+  const open = () => {
+    // The store changes several times on the way; none of them is a new history entry.
+    opening = true;
+    const route = parseRoute(location.hash);
+    const s = store.get();
+    if (route?.kind === 'chat' && s.conversations[route.id]) void openConversation(route.id);
+    else if (route?.kind === 'doc' && s.docs[route.id]) actions.setDocOpen(route.id);
+    else if (route?.kind === 'board' && s.projects[route.id]) actions.setBoardOpen(route.id);
+    else if (route?.kind === 'agents' || route?.kind === 'github') {
+      actions.setTab('chats');
+      if (route.kind === 'agents') actions.setAgentsOpen(true, route.thread);
+      else actions.setGithubOpen(true);
+    } else actions.closePanes();
+    opening = false;
+    // A hash naming something this user cannot see gives way to the landing pane's.
+    write(history.replaceState);
+  };
+  if (location.hash) open();
+  // A notification's /?chat= link may have opened a chat already.
+  else write(history.replaceState);
+  window.addEventListener('popstate', open);
+  const unsubscribe = store.subscribe(() => {
+    if (!opening) write(history.pushState);
+  });
+  return () => {
+    window.removeEventListener('popstate', open);
+    unsubscribe();
+  };
+}
+
 function ChatLayout() {
   const activeId = useAppState((s) => s.activeId);
   const active = useAppState((s) => (s.activeId === null ? undefined : s.conversations[s.activeId]));
-  const push = useAppState((s) => s.push);
   const githubOpen = useAppState((s) => s.githubOpen);
   const agentsOpen = useAppState((s) => s.agentsOpen);
   const doc = useAppState((s) => (s.docOpen === null ? undefined : s.docs[s.docOpen]));
@@ -125,6 +167,18 @@ function ChatLayout() {
   };
 
   useEffect(fitToVisualViewport, []);
+  useEffect(followHash, []);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'k' || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      event.preventDefault();
+      // A collapsed sidebar hides the field, which takes focus only once it shows.
+      flushSync(() => collapse(false));
+      document.querySelector<HTMLInputElement>('aside.sidebar input[type="search"]')?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   // A card's status line follows its run from any page of its owner's (D-105).
   const runs = useAppState(runSignature);
   useEffect(() => void followRuns().catch(() => undefined), [runs]);
@@ -159,15 +213,9 @@ function ChatLayout() {
       ) : (
         <section className="chat chat-empty">
           <Stack gap={3} hAlign="center" maxWidth={420} className="chat-empty-card">
-            <BellRingIcon width={36} height={36} />
-            <Heading level={2}>Never miss an urgent message</Heading>
             <Text as="p" color="secondary" justify="center">
-              Messages arrive here the moment they are sent, end-to-end encrypted. Mark a message as urgent with the bell
-              button, and the other person’s browser keeps ringing until they see it.
+              End-to-end encrypted chats, project channels and boards. Pick one from the sidebar to start.
             </Text>
-            {push?.permission !== 'granted' && (
-              <Button variant="primary" label="Set up notifications" onClick={() => setDialog({ kind: 'notifications' })} />
-            )}
           </Stack>
         </section>
       )}

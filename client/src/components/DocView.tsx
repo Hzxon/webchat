@@ -35,6 +35,7 @@ import { Dialog } from './Dialog';
 import { formatAgo, formatListTime } from './format';
 import { BackIcon, FileIcon, HistoryIcon, PencilIcon, PlusIcon, PrinterIcon } from './icons';
 import { Markdown } from './Markdown';
+import { confirmAction } from './ConfirmHost';
 
 // A section's saves go out one at a time, so an older one never lands after a newer one.
 const saveInOrder = keyedQueue();
@@ -217,10 +218,9 @@ export function SectionEditor({
   const latest = useRef(text);
   latest.current = text;
   const saved = useRef(editing.saved);
-  // A new section reaches the server on its first save, which a cancel takes back. A new card is on
-  // the server already, saved with its number (D-116). Once cancelled, nothing saves, not even the
-  // save on leaving.
-  const stored = useRef(!editing.isNew || editing.saved !== '');
+  // A new section reaches the server on its first save, which a cancel takes back. Once cancelled,
+  // nothing saves, not even the save on leaving.
+  const stored = useRef(!editing.isNew);
   const dropped = useRef(false);
   const mounted = useRef(true);
   const draft = draftName(doc.id, editing.id);
@@ -284,9 +284,22 @@ export function SectionEditor({
   }
 
   async function remove() {
-    if (!confirm('Delete this section from the doc? Its history stays.')) return;
+    if (
+      !(await confirmAction({
+        title: 'Delete this section from the doc?',
+        body: 'Its history stays.',
+        confirmLabel: 'Delete section',
+      }))
+    )
+      return;
     try {
-      await saveInOrder(editing.id, () => saveSection(doc, editing.id, { text: saved.current, pos: editing.pos, removed: true }));
+      await saveInOrder(editing.id, () =>
+        saveSection(doc, editing.id, {
+          text: saved.current,
+          pos: editing.pos,
+          removed: true,
+        }),
+      );
       saveDraft(draft, '');
       await stopEditing(doc.id, editing.id);
       onClose();
@@ -296,12 +309,17 @@ export function SectionEditor({
     }
   }
 
-  /** Drops a new section. A card starts from its template, which saves a second after it opens. */
+  /** Drops a new section, or puts an old one back as it was when the editor opened: a pause in typing saved over it. */
   async function cancel() {
     dropped.current = true;
     try {
       await saveInOrder(editing.id, async () => {
-        if (stored.current) await saveSection(doc, editing.id, { text: saved.current, pos: editing.pos, removed: true });
+        if (editing.isNew) {
+          if (stored.current)
+            await saveSection(doc, editing.id, { text: saved.current, pos: editing.pos, removed: true });
+        } else if (saved.current !== editing.saved) {
+          await saveSection(doc, editing.id, { text: editing.saved, pos: editing.pos });
+        }
       });
       saveDraft(draft, '');
       await stopEditing(doc.id, editing.id);
@@ -314,7 +332,12 @@ export function SectionEditor({
   }
 
   return (
-    <div className="doc-section doc-editor">
+    <div
+      className="doc-section doc-editor"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') void cancel();
+      }}
+    >
       <textarea
         className="field-input doc-textarea"
         value={text}
@@ -325,12 +348,11 @@ export function SectionEditor({
         autoFocus
       />
       <div className="doc-editor-actions">
-        <Text color="secondary">{status}</Text>
-        {editing.isNew ? (
-          <Button label="Cancel" onClick={() => void cancel()} />
-        ) : (
-          canDelete && <Button variant="destructive" label="Delete" onClick={() => void remove()} />
-        )}
+        {!editing.isNew && canDelete && <Button variant="destructive" label="Delete" onClick={() => void remove()} />}
+        <Text color="secondary" className="doc-editor-status">
+          {status}
+        </Text>
+        <Button label="Cancel" onClick={() => void cancel()} />
         <Button variant="primary" label="Done" onClick={() => void done()} />
       </div>
     </div>
@@ -376,7 +398,18 @@ export function RenameDialog({ doc, onClose }: { doc: ChatDoc; onClose: () => vo
 type History = Awaited<ReturnType<typeof sectionHistory>>;
 
 /** A section's editing sessions, newest first. Each shows what it changed, and an older one can come back. */
-export function HistoryDialog(props: { doc: ChatDoc; section: DocSection; nameOf: (id: number) => string; onClose: () => void }) {
+export function HistoryDialog(props: HistoryProps) {
+  return (
+    <Dialog title="Section history" onClose={props.onClose}>
+      <SectionHistory {...props} />
+    </Dialog>
+  );
+}
+
+type HistoryProps = { doc: ChatDoc; section: DocSection; nameOf: (id: number) => string; onClose: () => void };
+
+/** The history alone, for a board card's peek, which shows it in place of the card rather than in a second dialog. */
+export function SectionHistory(props: HistoryProps) {
   const { doc, section, nameOf, onClose } = props;
   const [entries, setEntries] = useState<History | null>(null);
   const [picked, setPicked] = useState(0);
@@ -404,7 +437,7 @@ export function HistoryDialog(props: { doc: ChatDoc; section: DocSection; nameOf
   }
 
   return (
-    <Dialog title="Section history" onClose={onClose}>
+    <>
       {entries === null && !error && (
         <Text as="p" color="secondary">
           Loading…
@@ -439,6 +472,6 @@ export function HistoryDialog(props: { doc: ChatDoc; section: DocSection; nameOf
       )}
       {error && <Banner status="error" title={error} />}
       {picked > 0 && entry?.content && <Button onClick={() => void restore()} isDisabled={busy} label="Restore this version" />}
-    </Dialog>
+    </>
   );
 }

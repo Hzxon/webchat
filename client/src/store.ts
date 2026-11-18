@@ -295,6 +295,9 @@ export const actions = {
   setBoardOpen: (boardOpen: number | null, boardCard: string | null = null) =>
     store.set((s) => (boardOpen === null ? { ...s, boardOpen } : show(s, { boardOpen, boardCard, tab: 'projects' }))),
 
+  /** Opens a card of the open board in its peek, or closes the peek. */
+  setBoardCard: (boardCard: string | null) => store.set((s) => ({ ...s, boardCard })),
+
   setDocsSeen: (docsSeen: Record<string, number>) => store.set((s) => ({ ...s, docsSeen })),
 
   upsertProject: (project: ProjectDTO) => editChats((s) => ({ ...s, projects: { ...s.projects, [project.id]: project } })),
@@ -390,6 +393,8 @@ export const actions = {
   setUnread: (conversationId: number, unread: number) =>
     store.set((s) => withConversation(s, conversationId, (c) => (c.unread === unread ? c : { ...c, unread }))),
 
+  setMuted: (conversationId: number, muted: boolean) => editChats((s) => withConversation(s, conversationId, (c) => ({ ...c, muted }))),
+
   setPush: (push: PushState) => store.set((s) => ({ ...s, push })),
 
   setBark: (bark: BarkDTO) => store.set((s) => ({ ...s, bark })),
@@ -414,6 +419,9 @@ export const actions = {
 
   /** Shows a card's brief in the Coding agents pane, which runs it once its owner presses Start (D-105). */
   openBrief: (agentBrief: NonNullable<State['agentBrief']>) => store.set((s) => show(s, { agentsOpen: true, agentThread: null, agentBrief })),
+
+  /** Closes whichever pane shows, back to the landing pane. */
+  closePanes: () => store.set((s) => show(s, {})),
 
   setReposFor: (reposFor: number | null) => store.set((s) => ({ ...s, reposFor })),
 
@@ -453,7 +461,8 @@ export function generalOf(state: State, projectId: number): ChatConversation | u
 export function reloadPath(state: State): string {
   if (state.githubOpen) return '/?github=open';
   if (state.docOpen) return `/?doc=${state.docOpen}`;
-  if (state.boardOpen !== null) return `/?board=${state.boardOpen}`;
+  if (state.boardOpen !== null)
+    return `/?board=${state.boardOpen}${state.boardCard ? `&card=${encodeURIComponent(state.boardCard)}` : ''}`;
   if (state.agentsOpen) return `/?agents=${encodeURIComponent(state.agentThread ?? '')}`;
   return state.activeId === null ? '/' : `/?chat=${state.activeId}`;
 }
@@ -462,6 +471,9 @@ export function reloadPath(state: State): string {
 export function senderName(users: State['users'], senderId: number | null, fallback = 'Someone'): string {
   return senderId === null ? 'GitHub' : (users[senderId]?.displayName ?? fallback);
 }
+
+/** The unread messages that alert: a muted chat keeps its count but adds to no total. */
+export const loudUnread = (c: Pick<ChatConversation, 'muted' | 'unread'>) => (c.muted ? 0 : c.unread);
 
 /**
  * Name shown for a chat: the group name, "#channel · Project" for a channel, or the other person's

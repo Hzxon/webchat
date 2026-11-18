@@ -1,0 +1,104 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { describe, test } from 'node:test';
+import { choiceOf, choosers, overlaps, touches, waitsOn, withChoice, type Pull } from '../shared/overlap.ts';
+
+const pull = (number: number, files: string[], body = '', headRefName = `claude/pr-${number}`): Pull => ({
+  number,
+  headRefName,
+  body,
+  files: files.map((path) => ({ path })),
+});
+
+describe('the overlap check in scripts/overlap.ts (docs/decisions/new-overlap-blocks.md)', () => {
+  test('a pull request sharing a file with a lower-numbered open one fails with both named', () => {
+    const open = [pull(12, ['server/api.ts', 'README.md']), pull(15, ['server/api.ts', 'client/src/app.ts'])];
+    assert.deepEqual(overlaps(open[1], open), [{ number: 12, files: ['server/api.ts'] }]);
+  });
+
+  test('the lower-numbered pull request is not blocked by the later one', () => {
+    const open = [pull(12, ['server/api.ts']), pull(15, ['server/api.ts'])];
+    assert.deepEqual(overlaps(open[0], open), []);
+  });
+
+  test('After #12 or Stacked on #12 in the body passes it', () => {
+    for (const body of ['After #12', 'Stacked on #12, since it uses its type.']) {
+      const open = [pull(12, ['server/api.ts']), pull(15, ['server/api.ts'], body)];
+      assert.deepEqual(overlaps(open[1], open), []);
+    }
+  });
+
+  test('naming another pull request does not pass the overlap with #12', () => {
+    const open = [pull(12, ['server/api.ts']), pull(13, ['server/db.ts']), pull(15, ['server/api.ts'], 'After #13')];
+    assert.equal(overlaps(open[2], open)[0].number, 12);
+  });
+
+  test('two pull requests with no shared file both pass', () => {
+    const open = [pull(12, ['server/api.ts']), pull(15, ['client/src/app.ts'])];
+    assert.deepEqual(overlaps(open[0], open), []);
+    assert.deepEqual(overlaps(open[1], open), []);
+  });
+
+  test('a pull request that only adds a roadmap or decision file passes', () => {
+    const open = [
+      pull(12, ['docs/roadmap/K-3.md', 'docs/decisions/new-x.md', 'server/api.ts']),
+      pull(15, ['docs/roadmap/K-3.md', 'docs/decisions/new-x.md']),
+    ];
+    assert.deepEqual(overlaps(open[1], open), []);
+  });
+
+  test('the board copy and the release pull request never count, on either side', () => {
+    const board = pull(5, ['README.md'], '', 'agent/board');
+    const release = pull(6, ['package.json'], '', 'release-please--branches--main');
+    const open = [board, release, pull(15, ['README.md', 'package.json'])];
+    assert.deepEqual(overlaps(open[2], open), []);
+    assert.deepEqual(overlaps(pull(20, ['README.md'], '', 'agent/board'), [pull(12, ['README.md']), board]), []);
+    assert.deepEqual(overlaps(pull(20, ['package.json'], '', 'release-please--branches--main'), [pull(12, ['package.json'])]), []);
+  });
+
+  test('a draft with no diff yet holds the files of its Touches line', () => {
+    const draft = pull(12, [], 'Claims K-12.\n\nTouches: server/api.ts, `client/src/`');
+    assert.deepEqual(touches(draft.body ?? ''), ['server/api.ts', 'client/src/']);
+    const open = [draft, pull(15, ['server/api.ts', 'client/src/chat.ts'])];
+    assert.deepEqual(overlaps(open[1], open), [{ number: 12, files: ['client/src/chat.ts', 'server/api.ts'] }]);
+    assert.deepEqual(overlaps(draft, [pull(8, ['server/api.ts']), draft]), [{ number: 8, files: ['server/api.ts'] }]);
+  });
+
+  test('once a draft has a diff, its Touches line no longer counts', () => {
+    const open = [pull(12, ['README.md'], 'Touches: server/api.ts'), pull(15, ['server/api.ts'])];
+    assert.deepEqual(overlaps(open[1], open), []);
+  });
+
+  test("only a card owner's line written after the wait began chooses, for the card it waits for (docs/roadmap/new-overlap-gate.md)", () => {
+    const word = (id: number, authorId: number, line: string) => ({ id, authorId, text: `### K-7: Sums\n\nStatus: Waiting for K-12.\n\n${line}` });
+    const owners = choosers(1, 2, 3);
+    assert.deepEqual(owners, [1, 2], 'each card owner');
+    assert.deepEqual(choosers(undefined, undefined, 3), [3], 'whoever asked, for a card with no owner');
+    assert.equal(choiceOf([word(9, 2, 'Overlap with K-12: stack'), word(8, 1, 'Overlap with K-12: fold')], owners, 'K-12', 5), 'stack', 'the newest word wins');
+    assert.equal(choiceOf([word(9, 4, 'Overlap with K-12: fold')], owners, 'K-12', 5), undefined, 'a teammate who owns neither card does not choose');
+    assert.equal(choiceOf([word(4, 1, 'Overlap with K-12: fold')], owners, 'K-12', 5), undefined, 'a line from before the wait does not count');
+    assert.equal(choiceOf([word(9, 1, 'Overlap with K-9: fold')], owners, 'K-12', 5), undefined, 'a line for another card does not count');
+    assert.equal(choiceOf([word(9, 1, 'Overlap with K-12: wait\nOverlap with K-12: fold')], owners, 'K-12', 5), 'fold', 'the last line of a word, which an edit adds under the ones before');
+  });
+
+  test("a card owner's button writes one choice line, which the agent reads (docs/roadmap/new-overlap-gate.md)", () => {
+    assert.equal(waitsOn('Waiting for K-12: Ann and Bo choose'), 'K-12');
+    assert.equal(waitsOn('Waiting for #12: Ann chooses'), '#12');
+    assert.equal(waitsOn('Waiting for a decision'), undefined, 'a decision wait offers no choice');
+    const card = '### K-7: Sums\n\nStatus: Waiting for K-12: Ann and Bo choose.\n\nSeen: here\n\nOverlap with K-9: fold';
+    const stacked = withChoice(card, 'K-12', 'stack');
+    assert.equal(stacked, '### K-7: Sums\n\nStatus: Waiting for K-12: Ann and Bo choose.\n\nSeen: here\n\nOverlap with K-12: stack', 'it replaces a line left from another wait');
+    assert.equal(withChoice(stacked, 'K-12', 'wait'), stacked.replace('stack', 'wait'), 'a second choice replaces the first');
+    assert.equal(choiceOf([{ id: 9, authorId: 1, text: stacked }], [1], 'K-12', 5), 'stack');
+  });
+
+  test('the command prints the error and exits 1, and exits 0 when nothing is shared', () => {
+    const open = JSON.stringify([pull(12, ['a.ts']), pull(15, ['a.ts']), pull(16, ['b.ts'])]);
+    const run = (number: string) =>
+      spawnSync('node', ['--import', 'tsx', 'scripts/overlap.ts', number], { input: open, encoding: 'utf8' });
+    const blocked = run('15');
+    assert.equal(blocked.status, 1);
+    assert.match(blocked.stderr, /#15 and the earlier #12 both change a\.ts/);
+    assert.equal(run('16').status, 0);
+  });
+});

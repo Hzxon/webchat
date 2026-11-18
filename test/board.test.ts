@@ -6,7 +6,7 @@ import { describe, test } from 'node:test';
 const clientBoard = '../client/src/board.ts';
 const sharedBoard = '../shared/board.ts';
 
-const { cardRuns, cardTemplate, statusMove, GOING, duplicates, idOf, moved, otherRun, runnerOf, startable, takeable, unchecked, withChecked, workingStatus } = await import(clientBoard);
+const { afterWarnings, cardRuns, cardTemplate, statusMove, standsAt, waitsFor, waitingFace, GOING, draftGroup, duplicates, idOf, moved, needsYou, otherRun, runnerOf, startable, takeable, unchecked, withChecked, workingStatus } = await import(clientBoard);
 const { cardOf, cardsOf, cardSections, cardText, groupOf, keepReviews, parseCard, standing, usernamesOf, withReviews, withStatus } = await import(sharedBoard);
 
 const section = (id: string, text: string) => ({ id, text, pos: 1, failed: false });
@@ -19,6 +19,14 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.deepEqual(parseCard(section('b', cardTemplate('R', 'R-012'))).status, 'Idea');
     assert.deepEqual(parseCard(section('c', cardTemplate('K', 'K-1'))).status, 'Open');
     assert.deepEqual(parseCard(section('d', cardTemplate('Q', 'Q-6'))).status, 'Open');
+  });
+
+  test('a card from the new-card form reads back as typed, even one titled Title', () => {
+    const prompts = parseCard(section('a', cardTemplate('R', 'R-1'))).body;
+    const card = parseCard(section('b', cardText('R-4', 'Title', 'Idea', prompts)));
+    assert.deepEqual([card.cardId, card.title, card.status, card.body], ['R-4', 'Title', 'Idea', prompts]);
+    const typed = parseCard(section('c', cardText('K-2', 'Bad keys', 'Open', 'Seen: on a phone.')));
+    assert.equal(typed.body, 'Seen: on a phone.');
   });
 
   test('a status keeps its date and loses its final period', () => {
@@ -99,6 +107,24 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     const old = parseCard(section('a', '### K-1: Bug\n\nStatus: In progress: Ann’s agent.')).status;
     for (const state of ['decision', 'done', 'failed', 'stale', 'merged']) assert.ok(move(state)[0].includes(old), state);
     assert.ok(!move('done')[0].includes(parseCard(section('a', '### K-1: Bug\n\nStatus: In progress: Bob’s agent.')).status), 'not a teammate’s run');
+  });
+
+  test('a run that waits for another card shows it in the Running lane, names who chooses, and goes on from there (docs/roadmap/new-overlap-gate.md)', () => {
+    const working = workingStatus('Ann');
+    const [from, to] = statusMove({ request: 1, runtime: 9, state: 'overlap', waits: 'K-12' }, 'K-7', 'Ready', working);
+    assert.deepEqual([from, to], [['Ready', 'Running: Ann’s agent', 'Waiting for a decision'], 'Waiting for K-12']);
+    const waiting = waitsFor(to, ['Ann', 'Bo']);
+    assert.equal(waiting, 'Waiting for K-12: Ann and Bo choose');
+    assert.equal(waitsFor(to, ['Ann']), 'Waiting for K-12: Ann chooses', 'one person owns both cards');
+    assert.equal(groupOf('roadmap', waiting), groupOf('roadmap', 'Running: Ann’s agent'));
+    assert.ok(otherRun(waiting, 'Bo'), 'nobody else starts it meanwhile');
+    // Each choice goes on through a report the run already has: fixing when it goes on, failed for a fold.
+    for (const state of ['fixing', 'failed', 'done']) {
+      const [moveFrom, moveTo] = statusMove({ request: 1, runtime: 9, state }, 'K-7', 'Ready', workingStatus('Ann'));
+      assert.ok(standsAt(moveFrom, waiting, moveTo), state);
+    }
+    assert.ok(!standsAt(['Ready'], waiting, working), 'a move that does not start from a wait leaves it');
+    assert.ok(!standsAt(from, waiting, waiting), 'a card the move already made moves no more, so a second tab pushes nobody again');
   });
 
   test('a card reads its Checked line, and has an empty check without one (R-041)', () => {
@@ -196,6 +222,56 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.deepEqual(state([ask(1, 'a'), report(1, 'done'), fix(500), { ...report(1, 'fixing'), id: 600 }, { ...report(1, 'done'), id: 700 }]), ['done', false], 'the agent’s reports land as before');
   });
 
+  test('the cards that wait for the user, questions first, then plans, decisions, stops and requests (R-047)', () => {
+    const now = 1_000_000_000;
+    // Ann (1) runs cards with her agent (9); Bo (2) is a teammate.
+    const ask = (id: number, section: string, senderId = 1) => ({ id, senderId, clientId: `c${id}`, run: { kind: 'request', docId: 'doc', section, runtime: 9, sentAt: now } });
+    const report = (request: number, kind: string) => ({ id: request + 100, senderId: 9, run: { kind, request } });
+    const card = (id: string, status: string, extra = {}) => ({ id, cardId: id, status, owner: 2, body: '', reviews: [], ...extra });
+    const cards = [
+      card('ready', 'Open', { owner: 1, body: 'Asked: 2026-11-12. @bo asks its owner to mark it ready.' }),
+      card('review', 'In review', { reviews: [{ who: 1, verdict: 'review_required' }] }),
+      card('paused', 'Running: Ann’s agent'),
+      card('decision', 'Waiting for a decision'),
+      card('planned', 'Running: Ann’s agent'),
+      card('asking', 'Running: Ann’s agent'),
+      card('done', 'In review: o/r#3'),
+      card('theirs', 'Running: Bo’s agent'),
+    ];
+    const messages = [
+      ask(1, 'paused'), report(1, 'paused'),
+      ask(2, 'decision'), report(2, 'decision'),
+      ask(3, 'planned'), report(3, 'planned'),
+      ask(4, 'asking'), report(4, 'claimed'),
+      ask(5, 'done'), report(5, 'done'),
+      ask(6, 'theirs', 2), { ...report(6, 'paused'), id: 106 },
+    ];
+    const threads = [
+      { request: 1, state: 'paused' },
+      { request: 2, state: 'waiting' },
+      { request: 3, state: 'planned' },
+      { request: 4, state: 'asking', ask: { answered: false } },
+      { request: 5, state: 'draft' },
+    ];
+    const needs = (list = cards, t = threads, me = 1): string[][] => needsYou(list, me, cardRuns(messages, me, 'doc', {}, now), t).map((n: { card: { id: string }; need: string }) => [n.card.id, n.need]);
+    assert.deepEqual(needs(), [
+      ['asking', 'asking'],
+      ['planned', 'planned'],
+      ['decision', 'decision'],
+      ['paused', 'paused'],
+      ['review', 'review'],
+      ['ready', 'ready'],
+    ], 'a finished run and a teammate’s run do not count');
+    // The thread turns to working as the user answers, gives the go or redirects, before the agent reports.
+    const answered = threads.map((t) => (t.request === 4 ? { ...t, ask: { answered: true } } : t.request === 3 ? { ...t, state: 'working' } : t));
+    assert.deepEqual(needs(cards, answered).map(([id]) => id), ['decision', 'paused', 'review', 'ready']);
+    assert.deepEqual(needs(cards, [{ request: 2, state: 'working' }]).map(([id]) => id), ['review', 'ready'], 'a decision added and gone on with, and runs with no thread, count for nothing');
+    const stopped = cardRuns([...messages, { id: 200, senderId: 1, run: { kind: 'cancel', request: 1 } }], 1, 'doc', {}, now);
+    assert.equal(needsYou(cards, 1, stopped, threads).some((n: { need: string }) => n.need === 'paused'), false, 'a stop the agent has not reported yet');
+    assert.deepEqual(needs(cards, [{ request: 6, state: 'paused' }], 2), [['theirs', 'paused']], 'Bo sees his own run, and none of Ann’s runs or requests');
+    assert.deepEqual(needs([card('r', 'In review', { reviews: [{ who: 1, verdict: 'approved' }] }), card('o', 'Ready', { owner: 1, body: cards[0]!.body })]), [], 'an answered review and an ask on a card marked ready do not count');
+  });
+
   test('a status that shows another run of the card refuses a second one (K-59)', () => {
     assert.equal(otherRun('Running: Ann’s agent', 'Bob'), true, 'a teammate’s agent runs it');
     assert.equal(otherRun('Running: o/r#3', 'Ann'), true, 'a pull request claims it');
@@ -205,6 +281,65 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.equal(otherRun('Running', 'Ann'), false, 'set by hand, no run named');
     assert.equal(otherRun('Open', 'Ann'), false);
     assert.equal(otherRun('Waiting for a decision', 'Ann'), true, 'a run waits for a decision (R-042)');
+  });
+
+  test('a proposal’s draft shows where its card would land, or beside the card it changes (R-047)', () => {
+    const cards = [{ id: 's1', status: 'Running: Ann’s agent' }, { id: 's2', status: 'Accepted' }];
+    const draft = (kind: string, section?: string) => ({ kind, title: 't', body: '', ...(section && { replaces: { card: 'X-1', doc: 'd', section, seen: 'h' } }) });
+    assert.equal(draftGroup(draft('R'), cards), 3, 'a new idea in the Open drawer');
+    assert.equal(draftGroup(draft('K'), cards), 3, 'a new issue too');
+    assert.equal(draftGroup(draft('D'), cards), 0, 'a new decision with the Proposed ones');
+    assert.equal(draftGroup(draft('R', 's1'), cards), 1, 'a change in its card’s lane');
+    assert.equal(draftGroup(draft('D', 's2'), cards), 1, 'a change to an accepted decision with it');
+    assert.equal(draftGroup(draft('R', 'gone'), cards), 3, 'a change to a card that went, where a new one would land');
+  });
+});
+
+describe('A card waits for the cards its After line names (docs/roadmap/new-after-edge.md)', async () => {
+  const { copyOf } = await import('../shared/board.ts');
+  const me = { id: 1, username: 'ann', displayName: 'Ann' };
+  const board = (...texts: string[]) => cardsOf(texts.map((t, i) => ({ id: `s${i}`, text: t, pos: i, failed: false })), [1], { 1: 'ann' });
+  const byId = (cards: any[], id: string): any => cards.find((c) => c.cardId === id);
+
+  test('a card that waits cannot be picked or run, and can once the card it names is Done or Fixed', () => {
+    const waiting = board('### K-12: Totals type\n\nStatus: Ready.', '### R-30: Sync it\n\nStatus: Open.', '### K-7: Sums\n\nStatus: Ready.\n\nAfter: K-12, R-30\n\nWhy: it uses the type.');
+    const k7 = byId(waiting, 'K-7');
+    assert.deepEqual(k7.after, ['K-12', 'R-30'], 'read as the Checked line is');
+    assert.deepEqual(k7.waits, { on: ['K-12', 'R-30'], dropped: [], loop: [] });
+    assert.equal(waitingFace(k7.waits), 'Waiting for K-12, R-30', "the face names the cards, in the overlap wait's words");
+    assert.equal(startable(k7, 'Ann'), false, 'no run starts, from the brief or a claim');
+    assert.equal(moved(k7, 'pick', me), null, 'nobody picks it');
+    assert.equal(byId(waiting, 'K-12').waits, undefined);
+    const done = board('### K-12: Totals type\n\nStatus: Done in o/r#3.', '### R-030: Sync it\n\nStatus: Fixed on 2026-11-18.', '### K-7: Sums\n\nStatus: Ready.\n\nAfter: K-12, R-30');
+    const free = byId(done, 'K-7');
+    assert.equal(free.waits, undefined, 'a padded id matches, and Fixed counts as Done');
+    assert.equal(startable(free, 'Ann'), true);
+    assert.ok(moved(free, 'pick', me)?.includes('Status: Running: Ann.'));
+    assert.deepEqual(byId(board('### K-7: Sums\n\nStatus: Ready.\n\nAfter: K-99'), 'K-7').waits?.on, ['K-99'], 'a card the board lacks still holds it, so a typo shows');
+  });
+
+  test('a loop of After lines shows a warning on each card in it and blocks them all', () => {
+    const cards = board('### K-1: One\n\nStatus: Ready.\n\nAfter: K-2', '### K-2: Two\n\nStatus: Ready.\n\nAfter: K-3', '### K-3: Three\n\nStatus: Ready.\n\nAfter: K-1', '### K-4: Four\n\nStatus: Ready.\n\nAfter: K-1');
+    assert.deepEqual(byId(cards, 'K-1').waits!.loop, ['K-1', 'K-2', 'K-3', 'K-1']);
+    assert.deepEqual(byId(cards, 'K-3').waits!.loop, ['K-3', 'K-1', 'K-2', 'K-3']);
+    assert.deepEqual(afterWarnings(byId(cards, 'K-2').waits!), ['K-2 waits for K-3, which waits for K-1, which waits for K-2. None of them can run until one After line goes.']);
+    for (const id of ['K-1', 'K-2', 'K-3']) assert.equal(startable(byId(cards, id), 'Ann'), false, id);
+    assert.deepEqual(byId(cards, 'K-4').waits, { on: ['K-1'], dropped: [], loop: [] }, 'a card that waits on a loop is not in it');
+    assert.deepEqual(afterWarnings(byId(board('### K-5: Self\n\nStatus: Ready.\n\nAfter: K-5'), 'K-5').waits!), ['K-5 waits for K-5. None of them can run until one After line goes.']);
+    // A loop through a card that is done blocks nothing.
+    assert.equal(byId(board('### K-1: One\n\nStatus: Ready.\n\nAfter: K-2', '### K-2: Two\n\nStatus: Done on 2026-11-18.\n\nAfter: K-1'), 'K-1').waits, undefined);
+  });
+
+  test('a dropped card it names shows a warning on the waiting card, and still holds it', () => {
+    const k7 = byId(board('### K-12: Totals type\n\nStatus: Dropped: K-9 covers it.', '### K-7: Sums\n\nStatus: Ready.\n\nAfter: K-12'), 'K-7');
+    assert.deepEqual(k7.waits, { on: ['K-12'], dropped: ['K-12'], loop: [] });
+    assert.deepEqual(afterWarnings(k7.waits!), ['K-12 was dropped. Remove it from the After line, or drop this card.']);
+    assert.equal(startable(k7, 'Ann'), false);
+  });
+
+  test("the repository copy keeps the After line, so a session that works from it sees the order (D-117)", () => {
+    const text = '### K-7: Sums\n\nStatus: Ready.\n\nAfter: K-12';
+    assert.ok(copyOf('roadmap', [text]).includes('After: K-12'));
   });
 });
 

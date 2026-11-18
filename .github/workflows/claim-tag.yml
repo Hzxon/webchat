@@ -1,0 +1,36 @@
+# Deletes the tag claim/<item> of a pull request that merges or closes, which frees an abandoned
+# item for a new claim (docs/roadmap/new-atomic-claim.md). `scripts/claim.sh` and the agent push the
+# tag before the draft opens, so that two claims seconds apart cannot both get the item.
+#
+# The tag's subject names the claim's branch ("Claim K-12 for claude/k12-title"), which is how this
+# finds it: the body that said "Claims K-12" may be rewritten by then.
+name: claim-tag
+
+on:
+  pull_request:
+    types: [closed]
+
+# Deleting a tag is a push. It reads and runs nothing of the pull request but its branch name.
+permissions:
+  contents: write
+
+jobs:
+  free:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Delete the claim tags of this branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          dir=$(mktemp -d "$RUNNER_TEMP/claims.XXXXXX")
+          git init -q --bare "$dir"
+          git -C "$dir" remote add origin "https://x-access-token:$GH_TOKEN@github.com/$REPO.git"
+          git -C "$dir" fetch -q origin '+refs/tags/claim/*:refs/tags/claim/*'
+          git -C "$dir" for-each-ref --format='%(refname) %(subject)' refs/tags/claim |
+            while read -r ref subject; do
+              [ "${subject##* for }" = "$BRANCH" ] && git -C "$dir" push -q origin ":$ref"
+            done
+          true

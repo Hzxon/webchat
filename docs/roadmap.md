@@ -50,62 +50,29 @@ Done when, with two accounts that share a chat, one sending and the other receiv
 8. Deleting the chat deletes its stored files.
 9. The README and D-020 list what the server and the storage service see, and say that nobody scans files.
 
-### R-046: A run checks its work in a browser that reaches only its own dev server
+### Q-6: How does a pull request get tested on the main it lands on?
 
-Status: In review: part 1, the browser, merged in #235; part 2, screenshots sealed to the owner, in #240. Proposed by the owner on 2026-11-14.
+Status: Running. Raised 2026-11-17 from the parallel work design. The owner chose the second way that day, and #262 set it in main's ruleset. The day's measurement is still open.
 
-Order: after K-73 (#233).
+CI checks a pull request against the main it started from, and nothing checks it again after main
+moves (D-076). The overlap gate (docs/roadmap/new-overlap-gate.md) and the wait edge
+(docs/roadmap/new-after-edge.md) keep runs apart, but nothing proves they did: two pull requests
+that clash in a way neither sees still pass and both merge. D-076 records that GitHub's merge
+queue needs a repository an organization owns.
 
-Why: AGENTS.md asks for a browser check with two accounts, at desktop width and 375 pixels, in
-light and dark, and for screenshots in the pull request. A run cannot do either. Its tools are the
-shell, the file tools, web search and web fetch (`agent/claude.ts`), its only MCP server is the
-approval tool, and its shell reaches only the npm registry. So the owner does the visual check by
-hand, and the model never sees what it built.
+The ways to answer it:
 
-Scope:
+- Move the repository to an organization and turn on the merge queue. Which plans offer the queue,
+  and for which repositories, is not checked.
+- Protect main with "require branches to be up to date". Each pull request then merges main and
+  runs CI again before it lands, one at a time. Which plans offer this for a private repository is
+  not checked.
+- The agent lands cards in a row: before a card's pull request merges, its own run merges main,
+  runs the checks again and retakes its screenshots if client files changed, and only that commit
+  merges. This needs no GitHub plan, and holds only for cards the agent runs.
 
-- The runner adds `chrome-devtools-mcp` to the `--mcp-config` file, beside the approval tool. Setup
-  installs one pinned version; a run never fetches it. It runs headless with a temporary profile,
-  never the owner's, and with usage statistics, CrUX lookups, update checks and `file:` navigation
-  off. It launches Chrome itself, so no debugging port is open for the shell to drive.
-- Chrome sends every request, loopback included, through a proxy in the runner. The proxy passes
-  only `localhost` names and loopback addresses, on the ports the run's dev server opened.
-- The rulebook allows a named list of the server's tools: pages, input, resize and emulate, the
-  snapshot, the screenshot, console and network lists, and script evaluation. Any other tool is
-  refused, so a new version adds nothing silently. A `url` must be loopback on a run port. An
-  argument that names a file, such as `filePath` or `filePaths`, is judged as a path, so it stays
-  in the working folders.
-- The runner starts the dev server, not the model's shell, as the owner decided on 2026-11-14. The
-  model asks for it through a tool of WebChat's own, naming the command. The runner picks free
-  ports, so two runs do not clash on 3000 and 5173, and runs the command in a sandbox it owns: it
-  writes only the working folder, binds only those ports, and connects to nothing but them. It
-  ends with the turn.
-- Screenshots go back to the model and, sealed, to the owner in the run's thread, through WebChat's
-  `send_screenshot` tool, as R-005 photos (docs/decisions/new-run-screenshots.md). The pull request
-  says they are there.
-
-Constraints: screenshots are content, so they travel sealed (rule 1). The dev server is the
-model's code, so the runner never starts it as a plain process of the owner: that would run a
-teammate-steered model's code outside every sandbox. Claude Code's own sandbox cannot hold it
-either: its `network.allowLocalBinding` opens every loopback port of the laptop, such as another
-project's dev server or a local database, and does nothing on Linux, where a sandboxed command's
-`localhost` is private to it (code.claude.com/docs/en/sandboxing, read 2026-11-13). So the runner's
-sandbox names the ports: a profile of WebChat's own on macOS, and on Linux a network namespace
-that the dev server and the browser share. The model's shell keeps no local network, so it checks
-the server through the browser's tools, not `curl`. Web Push cannot be tested, since it needs a
-push service outside the laptop. Claude Code only: Codex and ACP agents need the same filter by
-another route.
-
-Cost: a sandbox WebChat owns and must keep working on two systems, which
-docs/decisions/new-sandbox-owned.md once dropped. A dependency to pin and watch, with 63 tools at
-this reading, of which the default set goes into every turn's context. A Chrome per run, a few
-hundred MB of memory, started at first use and ended with the turn.
-
-Done when: on macOS, a card run that changes the client starts the dev server, opens it as two
-accounts on `alice.localhost` and `bob.localhost`, and the owner gets screenshots at desktop width
-and 375 pixels, light and dark, with no question asked; tests show the proxy refusing another host
-and another port, the dev server failing to reach a port that is not its own, and the rulebook
-refusing a `file:` URL, a file path outside the folder and a tool off the list.
+Answered when one way is chosen, its cost on the self-hosted runners is measured for a day with
+ten open pull requests, and a card or a settings change carries it out.
 
 ## Ready
 
@@ -233,40 +200,6 @@ Constraints: a knob is offered only when the adapter honors it without running c
 
 Done when: a Claude Code agent behaves as before and the tests pass; Settings lists the harnesses the laptop has, each with its state and knobs; a card run and a conversation each show the harness the owner picked; a request from an old page runs on the host harness; a request naming a harness that is not enabled fails with the reason.
 
-### R-047: A card opens as a peek that holds its run
-
-Status: Idea.
-
-Checked: 2026-11-17. 2026-11-17: read the board's cards and decisions, docs/roadmap/new-board-lanes.md, new-pause-redirect.md, new-astryx-migration.md, board-tab-hides-editor.md and decisions new-board-lanes, new-card-owner/review/notes, stop-pauses-run, redirect-plan-gate, new-astryx-migration; BoardView.tsx, AgentsView.tsx, chat.ts, store.ts, sw.ts on main at d588a8a; open pull requests #255, #253, #229 by title.
-
-Status: Ready. Proposed 2026-11-17.
-
-Why: a card opens inside its lane, which is too narrow to read. Its run lives in the Coding agents
-pane, which replaces the board. An owner who runs cards goes back and forth between the two: the
-board says a card runs, and the pane holds the question, the plan and the words that redirect it.
-
-Scope, four pull requests in a row:
-
-- The peek: a click on a card opens it in a large dialog over the board, and a full page at phone
-  width. The lanes keep faces only. Editing, history, reviews and asks move into the peek, and the
-  one-editor lock follows it. Arrows step to the next card in the lane. The address names the open
-  card, so a reload keeps it.
-- The run column: for a card with a run of the user's own, the peek shows the run beside the card's
-  text: its progress, a waiting question with its answers, the plan gate, pause and redirect. It is
-  the same view the Coding agents pane shows, which still lists the conversation. A notification
-  for a card's run opens the board on that card.
-- Needs you: a row above the lanes lists the cards that wait for the user, and each such card's
-  face says so.
-- Proposals: a draft from a proposal file shows as a dashed card in the Open drawer, with a button
-  that adds it.
-
-Constraints: nothing new reaches the server. Run messages stay in the owner's direct chat with
-their agent, so a teammate sees the peek with the card only. The peek is built with Astryx.
-
-Done when: an owner answers a run's question, redirects it and pauses it without leaving the
-board; a teammate sees the same card with no run; a reload reopens the same card; at 375 pixels the
-peek fills the page; tests cover the address and the list of cards that wait.
-
 ## Known issues
 
 ### K-69: An agent's board messages buzz the owner's phone and count as unread
@@ -325,15 +258,6 @@ Status: Open.
 WebChat stays at 0.y.z while it is in early development (D-055). Version 1.0.0 would promise that
 no upgrade within 1.x needs a step from the person who runs it. Decide what must hold first, for
 example an upgrade path that people who self-host can trust.
-
-### Q-5: Does a resumed Claude Code session hear the plugin's doorbell?
-
-Status: Answered in #117. The doorbell and the monitor are gone. A resumed session starts the plugin's server again, which takes runs as any session does.
-
-The plugin's monitor tails the doorbell for as long as the session runs (R-030). Claude Code's docs
-say a resumed session does not restore background tasks, and do not say whether a plugin's monitor
-starts again. Try `claude --resume` on a session with the plugin, and hand it a card. If the monitor
-is gone, a run fails after 30 minutes (D-094), so the README should say to start a new session.
 
 ## Dropped
 
@@ -416,6 +340,7 @@ Status: Dropped on 2026-11-13. The owner no longer wants a teammate to run a car
 | R-035: A Coding agents pane where the owner talks with their agents (D-097, D-101 to D-105) | #114, #117, #119, #120, #121, #122 |
 | K-51: A second request for a running card is refused (D-099) | #115 |
 | K-52: A card shows its latest run, and Run waits while it goes (D-100) | #116 |
+| Q-5: Does a resumed Claude Code session hear the plugin's doorbell? | #117 |
 | K-53: The plugin refuses runs until the sandbox denies the keychain and session-env and fails if unavailable; the guard resolves links as the kernel does | #118 |
 | K-58: The plugin unwatches a draft from before D-105 that the pane cannot show | #127 |
 | R-037: An agent runs several cards at once (D-085, D-086, D-099) | #130 |
@@ -446,4 +371,14 @@ Status: Dropped on 2026-11-13. The owner no longer wants a teammate to run a car
 | R-045: R-045: The Coding agents row's name says nothing of board work | #227 |
 | K-1: The iOS 16.4 banner stays after Bark is linked | #228 |
 | K-73: The owner is asked about shell commands the sandbox already holds | #233 |
+| R-046: A run checks its work in a browser that reaches only its own dev server | #235, #240 |
+| R-054: Support Antigravity as a harness | #244 |
+| R-052: Try the Astryx design system on the sign-in screen | #247 |
+| R-053: Move every screen to Astryx | #248, #252 |
+| R-047: A card opens as a peek that holds its run | #257, #259, #272, #274 |
+| R-051: CI fails a pull request that overlaps an earlier open one | #260 |
+| R-050: Split the files that every card edits | #261, #263, #270 |
+| K-75: Two claims seconds apart both get the item | #271 |
+| R-049: A run waits when its files overlap a running card's | #276 |
+| R-048: A card waits for the cards it names | #277 |
 | K-74: An agent's card draft loses everything past 4,000 characters | Fixed |

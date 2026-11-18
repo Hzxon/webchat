@@ -33,7 +33,7 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - History paging goes from the oldest row fetched, not the oldest message shown, and continues while pages hold only reactions (D-030).
 - Alerts on iPhones without Web Push go through the Bark app; `client/src/ios.ts` spots iOS before 16.4 (D-054).
 - Bark link state is not in the sync fingerprint: the page fetches it once at load on iOS before 16.4 only, the bell dialog writes each answer to the store, and `notificationWarning` in `client/src/banner.ts` hides the warning once a phone registered (D-054, D-004).
-- The user's direct chats with their own agents show only in the Coding agents pane, as conversations; a new list of chats leaves them out, and a notification for one opens the pane (D-103).
+- The user's direct chats with their own agents show in the Coding agents pane, as conversations, and a card's run also beside its card in the board's peek, through the one `AgentThread`; a new list of chats leaves them out, and a notification for a card's run opens the board on that card, for any other the pane (D-103, the card-run-in-peek decision, proposed in #259).
 - While a conversation's turn runs, the pane offers Stop instead of Send, so each answer follows what it answers (D-103).
 - The pane lists the user's projects; a question signs its project into the prompt, and one of the project's repositories unless it links none (D-103, D-104).
 - A photo shows only from bytes the page decrypted and checked with `fileTypeOf`; any other file is only downloaded, never opened in the page; uploads skip `request`, whose timer would cut them (D-123, D-077).
@@ -41,3 +41,4 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - `styles.css` loads through `layers.css` in the `app` layer, above Astryx's reset and under its components; a stylesheet imported any other way stays unlayered and restyles every Astryx component (the astryx-migration decision, proposed in #248).
 - An Astryx field has no `maxLength` or native `required`: cut the value in `onChange` and check empty fields before a request (the astryx-migration decision, proposed in #248).
 - A class on an Astryx component wins only from `overrides.css`, the layer above Astryx's; keep it to states no prop covers (the astryx-migration decision, proposed in #248).
+- No regex lookbehind in client code: the build cannot rewrite it, and Safari before 16.4 throws when the module loads, so the page stays white; `test/chatText.test.ts` checks it (D-052).

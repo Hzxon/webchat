@@ -262,8 +262,8 @@ WebChat accepts these limits and lists them in the README. An operator who chang
 runs could read messages. The server sees metadata: who talks to whom and when, group, project and
 channel names, who is in which project or group, who added them, who owns each, who left, when a
 chat got a new key, display names, whether a message is urgent, that someone reacted, which messages
-are an agent's board traffic with its owner's page (K-69), and its size
-band (D-059). It sees pull request titles and repository names (D-033), which docs a project has,
+are an agent's board traffic with its owner's page (K-69), which chats each person muted (the mute
+decision, proposed), and a message's size band (D-059). It sees pull request titles and repository names (D-033), which docs a project has,
 their section counts, editors, times and size bands, and who is editing now; it could show an older
 section revision as the newest (D-081). It sees the repositories a project links, whose cards it
 writes in plain text and could fake (D-050), the ones an agent's laptop has folders for, and when
@@ -709,17 +709,19 @@ chat's first page, until a retry brings back the stored copy (D-061).
 
 ### D-052: The build supports iOS 15.4 and later
 
-Status: Accepted 2026-11-01 in #20.
+Status: Accepted 2026-11-01 in #20. Safari before 17 loads a popover polyfill since the fix for Astryx's tooltips and menus on old iPhones.
 
 `browserTargets` in `vite.config.ts` names the browsers the page and the service worker must run
 in: Chrome and Edge 111, Firefox 114, and Safari and iOS 15.4. Vite's default starts at Safari 16.4.
 With it, Lightning CSS wrote `max-width` media queries as `width<=` ranges. Safari before 16.4 drops
 a query it cannot parse, so iPhones on older iOS got the desktop layout. iOS 15.4 is the floor
-because the page needs `<dialog>` and `Array.prototype.at`.
+because the page needs `<dialog>` and `Array.prototype.at`. Astryx needs the Popover API, which
+Safari gained in 17, so `main.tsx` loads `@oddbird/popover-polyfill` (11 kB) where it is missing.
 
 Cost: the code cannot use CSS or JavaScript that iOS 15.4 lacks without a fallback. Push on iPhone
 still needs iOS 16.4. Raising the floor is a deliberate change to `browserTargets`, and the README's
-line moves with it.
+line moves with it. On Safari before 17, CSS that names `:popover-open` is dropped, and a layer
+opens centered on the screen instead of beside its trigger.
 
 ### D-053: The chat fits the part of a touch screen still visible
 
@@ -1039,7 +1041,7 @@ two tabs that send to one chat at once still race.
 
 ### D-076: Fix pull requests edit the roadmap in place, and CI runs the checks
 
-Status: Accepted 2026-11-03. Reservation by tag added in #149. Changed in #167 (R-040).
+Status: Accepted 2026-11-03. Reservation by tag added in #149. Changed in #167 (R-040), #221 and #262.
 
 Once the project's board is linked to this repository, its docs are copies and D-117 holds instead:
 a pull request proposes its change as a file, the board gives every number, and the reservations
@@ -1051,7 +1053,8 @@ decision number as a third argument, refuses one that an open pull request alrea
 pushes the tag `reserve/D-xxx`. The remote creates a tag only once, so of two claims seconds apart,
 which both passed the check, only one gets the number: #144 and #145 both took D-109 that way.
 `ci.yml` runs typecheck, the tests and the build, and `doc-ids.yml` the id check (D-063), on every
-pull request and on main.
+pull request and on main. A change to `docs/` or Markdown alone skips the first three, which read
+none of those files, so it holds no runner; `doc-ids` still checks it.
 
 Why: a status line changed in place touches different lines for different items, so parallel merges
 go through clean. The union driver is safe for `decisions.md` because entries are never deleted. It
@@ -1059,10 +1062,10 @@ is not used for the roadmap, where entries move: union would restore what one si
 
 Cost: the Done section and its table lag behind until the next housekeeping pull request, so the
 status lines are the current index. The union driver can interleave two entries added at the same
-place in an odd order, which the next edit tidies. Main has no branch protection, and a merge queue
-needs a repository an organization owns, so a pull request is checked only against the main it
-started from: two that clash each pass and both merge, and the check on main shows it after. A
-number whose claim is closed stays taken.
+place in an odd order, which the next edit tidies. A merge queue needs a repository an organization
+owns, so main's ruleset requires the checks to pass on a branch that holds the newest main: every
+merge puts the other open pull requests behind, and each merges main and runs the checks again
+before it lands. A number whose claim is closed stays taken.
 
 ### D-077: A request gives up when its answer has not started after a minute
 
@@ -1173,22 +1176,25 @@ wording, not a field, so an unknown status sorts with the open items.
 
 ### D-083: A work tool's palette and type
 
-Status: Accepted 2026-11-04 in #77 (R-022), the first step of the rebrand.
+Status: Accepted 2026-11-04 in #77 (R-022), the first step of the rebrand. Changed in #252 for Astryx (docs/decisions/new-astryx-migration.md). Changed in #254 to warm neutrals.
 
-The page uses neutral grays with one indigo accent (`#4f46e5` light, `#818cf8` dark). Success has
-its own green, `--ok`, so passed checks, added lines and the online dot do not borrow the accent.
-The sidebar is tinted and sets `--panel`, `--panel-2` and `--hover` to its own shades, so every row
-and field inside it follows without its own rule. The content area is white, or near black in dark
-mode. Panels are flat: a 1px line, no shadow. Only dialogs, toasts and the reaction tray cast one.
-Type is 14px with a 1.35 line height, code uses the `--mono` stack, and every corner, avatars
-included, has the 6px `--radius`. Small status dots stay round. The fonts are the system's, so the
-page loads nothing from a font host.
+The page uses warm neutrals, in the manner of an editor such as Cursor, with one orange accent
+(`#c2410c` light, `#f97a3d` dark). Light mode is an off-white with a hint of yellow, and dark mode
+a warm near black. Success has its own green, `--ok`, so passed checks, added lines and the online
+dot do not borrow the accent. The sidebar is tinted and sets `--panel`, `--panel-2` and `--hover`
+to its own shades, and points Astryx's surface tokens at them, so every row and field inside it
+follows. Panels are flat: a 1px line, no shadow. Only dialogs, toasts and the reaction tray cast
+one. Every corner, avatars included, has the 6px `--radius`. Small status dots stay round. Avatar
+colors are muted and warm, so they sit with the palette. On a wide screen the messages and the
+composer keep an 860px reading column. The fonts are the system's, so the page loads nothing from
+a font host. These variables live in `styles.css`, and `astryxTheme.ts` points Astryx's tokens at
+them, so a color or corner still changes in `styles.css` alone. Astryx sets the type scale.
 
-Why: the features are for project work, but the look said consumer messenger. Colors, type and
-shapes live in `styles.css` alone, so this step changes no behavior.
+Why: the features are for project work, but the look said consumer messenger. The cool gray and
+indigo still read as a generic dashboard; warm neutrals read as a tool for writing and code.
 
-Cost: people and projects now share one avatar shape. The favicon, the installed app's icon, the
-`theme-color` meta tag and one avatar color are still teal. Bubbles stay until R-023.
+Cost: people and projects share one avatar shape. The favicon, the installed app's icon and the
+`theme-color` meta tag are still teal.
 
 ### D-084: Messages are one feed, not bubbles
 
@@ -1880,6 +1886,94 @@ screenshots at device scale 1. A model in a loop must not spend the account's 45
 Cost: the server sees one upload per screenshot, its size and its chat (D-020, D-123). An older
 page drops a `note` report, so it shows no screenshot. A screenshot over 1600 pixels is refused,
 not shrunk.
+
+### D-126: A person mutes a chat on the server, and urgent messages ignore it
+
+Status: Proposed.
+
+Each member can mute a direct chat, group or channel for themselves, from the chat's header. The
+flag is `muted` on their `webchat.members` row, set only through `PUT /conversations/:id/mute` by
+that member, and in the sync fingerprint so their other devices follow (D-021). A muted chat's
+message goes out as a `sync` push: it wakes a tab the person looks at and alerts nobody, with no
+Bark alert. The page plays no sound and shows no toast for it, and leaves it out of the tab title,
+the app badge and the Chats and Projects counts; the row keeps its own count, subdued. Urgent
+messages ignore mute (D-023, D-049, D-078). Why: a push must show a notification, so only the
+server can keep one quiet. Cost: the server sees which chats each person muted (D-020's list).
+
+### D-127: A card's run also shows on its card, to the user who started it
+
+Status: Proposed 2026-11-17 in #259 (R-047).
+
+The peek of a card with a run of the user's own shows that run beside the card's text: its
+messages, a waiting question with its answers, the plan gate, pause, and the box for the words that
+redirect it. It is the view the Coding agents pane shows for that conversation, one component in
+both places, built from the same messages in the user's direct chat with their agent. The pane
+still lists the conversation. A notification for a card's run opens the board on that card; one for
+a conversation with no card still opens the pane. This changes D-103, where such a chat showed only
+in the pane. Start stays in the pane's brief (D-105). Why: the owner of a running card went back
+and forth between the board, which says a card runs, and the pane, which holds what the run asks.
+
+Cost: a run can be answered from two places, so both must show the same state. A teammate sees the
+same card with no run column, since run messages reach only their owner (D-100).
+
+### D-128: Two runs never hold the same file at once
+
+Status: Proposed 2026-11-17 by the owner (docs/roadmap/new-overlap-gate.md).
+
+A run declares the files it will change, and an overlap with a running card's files blocks it: the
+run waits, and the two card owners choose to wait, stack or fold the cards. The draft with the
+lower number keeps the file. A check in CI holds a session outside WebChat to the same rule
+(docs/roadmap/new-overlap-ci.md). A change to a shared contract, such as a type, a migration or a
+signed field, is its own card that lands first, and the cards that use it wait for it
+(docs/roadmap/new-after-edge.md). No agent manages the other agents: the rule is in the board and
+in CI, so it holds when every laptop is off. It changes D-116, where a conflict is a warning that
+blocks nothing; that stays so for every conflict but this one. Why: a clash found after a merge
+costs a person's review, and a run that waits costs only time.
+
+Cost: two cards in one area run in a row, not at once. A footprint guessed too wide blocks others.
+
+### D-129: The app runs on Astryx, under one theme and its reset
+
+Status: Proposed 2026-11-15 in #248 (docs/roadmap/new-astryx-migration.md).
+
+Every screen builds its controls from Astryx components under `webchatTheme`, whose tokens point at
+D-083's variables. `layers.css` orders the cascade: Astryx's reset, `styles.css`, Astryx's
+components, then `overrides.css`, the few states no prop covers. Astryx fields have no `maxLength`
+or native `required`, so the page cuts values and checks empty fields itself. Message bubbles, the
+reaction tray, board cards and doc sections keep their own markup: their scroll, paging, quote and
+reaction rules (D-029, D-030, D-109) have no Astryx match. Why: one reference for people and agents
+building UI, and 1,250 fewer lines of CSS. Cost: every page loads Astryx's runtime, about 210 kB
+more JavaScript and 41 kB more CSS, gzipped.
+
+### D-130: The sign-in screen tries Astryx; every other screen keeps styles.css
+
+Status: Proposed 2026-11-15 in #247 (docs/roadmap/new-astryx-pilot.md).
+
+`AuthScreen` is built from Astryx components (`@astryxdesign/core` 0.7.16) under a runtime
+theme, `client/src/astryxTheme.ts`, whose tokens point at D-083's variables, so the palette
+still changes only in `styles.css`. `layers.css` puts `styles.css` in a cascade layer, `app`,
+under Astryx's `astryx-base`: unlayered rules such as `button { color: inherit }` would beat
+every Astryx component. Astryx's reset is left out, since it would change the screens that rely
+on browser defaults. `App` loads the screen lazily, so only signed-out pages fetch Astryx.
+Why: to judge Astryx's look, its accessibility and its cost on one real screen before moving any
+other. Cost: the sign-in page loads 109 kB more JavaScript and 43 kB more CSS, gzipped; the
+signed-in bundle is unchanged. `astryx init` adds a block to AGENTS.md whose rules hold only for
+Astryx screens. Undo: revert #247.
+
+### D-131: Antigravity runs sandboxed in a folder of its own, and never beside a repository's MCP config
+
+Status: Proposed 2026-11-14 (docs/roadmap/new-antigravity-harness.md).
+
+Antigravity joins `agent/acp-agents.ts` as `agy acp --sandbox --gemini-dir <folder>`. The folder
+is the agent's own in the runner's folder, so `agy` reads none of the owner's settings, rules, MCP
+servers or plugins, and still signs in from the keyring. `agy` loads the working folder's
+`.agents/mcp_config.json` and runs it outside its sandbox, even one written mid-session, so the
+adapter refuses a turn while that file exists, checked before every turn. The rulebook takes its
+`mcp_webchat_` prefix for WebChat's own tools. Why: the sandbox and the isolation hold, and a
+planted config would run a teammate's command as the owner.
+
+Cost: `--gemini-dir` is undocumented. The sandbox covers only the shell, not file, web or MCP
+tools. A config the model writes during a turn can load before that turn ends; the warning says so.
 
 ## Superseded
 

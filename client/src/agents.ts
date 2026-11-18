@@ -245,9 +245,21 @@ export function threadProject(thread: Thread, docs: State['docs'], conversations
   return run?.kind === 'request' ? conversations[docs[run.docId]?.conversationId ?? 0]?.projectId : undefined;
 }
 
-/** The proposals for a board and its linked repository whose draft the owner has not added yet, newest first (D-117, K-72). */
+/** A card's run, as the board names the card, which shows the run in its peek (the card-run-in-peek decision, proposed in #259). */
+export function threadCard(thread: Thread, docs: State['docs'], conversations: State['conversations']) {
+  const run = thread.messages[0]!.run;
+  const projectId = threadProject(thread, docs, conversations);
+  return run?.kind === 'request' && projectId ? { projectId, section: run.section } : undefined;
+}
+
+/** The proposals for a board and its linked repository whose draft the owner has not added yet, each with its message and draft, newest first (D-117, R-047). */
 export const waitingProposals = (threads: Thread[], projectId: number, repo: string) =>
-  threads.filter((t) => t.kind === 'proposal' && t.state === 'draft' && t.project === projectId && t.repo.toLowerCase() === repo.toLowerCase());
+  threads.flatMap((thread) => {
+    const message = thread.messages[0]!;
+    return message.board?.kind === 'proposal' && thread.state === 'draft' && thread.project === projectId && thread.repo.toLowerCase() === repo.toLowerCase()
+      ? [{ thread, message, draft: message.board.card }]
+      : [];
+  });
 
 /** The user's chats with their agents. */
 /** The user's direct chat with one of their agents, where its sealed setup answers come (R-039). */

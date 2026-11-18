@@ -41,7 +41,7 @@ keeps its number and says why.
 | `npm start` | Runs the built app in one Node process. |
 | `npm run build:agent` | Builds the agent as one file for this laptop, `dist/agent/webchat-agent`, with Node inside. Needs Node from nodejs.org. |
 | `npm run agent -- keyholder\|runner\|dev …` | The agent's command line: the keyholder and the runner, which setup installs as services, and `dev`, both in one process for working on WebChat (R-027, docs/decisions/locked-room.md). |
-| `scripts/claim.sh -c "<checked>" K-12 "<title>" [D-077]` | Claims a roadmap item after the check that it still holds and, until the board is linked, reserves the decision number given as the third argument. |
+| `scripts/claim.sh -c "<checked>" [-t "<files>"] K-12 "<title>" [D-077]` | Claims a roadmap item after the check that it still holds and, until the board is linked, reserves the decision number given as the third argument. `-t` lists the files you expect to change, which the `overlap` check reads. |
 
 The server log prints the invite code. Set `INVITE_CODE` to choose one. To test with two accounts in
 one browser, open the app on two hosts, such as `alice.localhost` and `bob.localhost`. Each host
@@ -94,9 +94,11 @@ its own roadmap item. Nothing coordinates them except what is on GitHub (D-062).
    the board is linked, WebChat's agent reads that to mark the card Running on the board. If it
    refuses, pick another item or number. Work that is not a roadmap item, such as a process change,
    claims the same way by hand: a draft first, with a title and body that say what it covers.
-2. **Work on that branch** and push to the same pull request. Do not merge or rebase on main to stay
-   ahead of other pull requests. Resolve conflicts once, when GitHub reports them: merge main, fix,
-   push. A branch stacked on another one is the exception: when the branch under it lands, run
+2. **Work on that branch** and push to the same pull request. Do not merge or rebase on main while
+   you work. Merge main when the work is done, before you mark the pull request ready, and again
+   when GitHub says the branch is behind: main's ruleset lets a pull request merge only when it
+   holds the newest main and its checks passed there (D-076). Resolve conflicts then: merge main,
+   fix, push. A branch stacked on another one is the exception: when the branch under it lands, run
    `scripts/restack.sh <parent-branch>` instead of merging main, because the squash makes the
    parent's own lines conflict (D-106).
 3. **Change the roadmap and the decisions.** The way depends on whether the project's board is

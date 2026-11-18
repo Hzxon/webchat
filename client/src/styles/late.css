@@ -1,0 +1,53 @@
+/* Board and doc editor: Delete on the left, the status and Cancel and Done on the right. */
+.doc-editor-actions .doc-editor-status {
+  margin-left: auto;
+}
+
+/* Chat messages: code in a message, the reaction tray's any-emoji field, and a tray that wraps on a phone. */
+
+.chat-code,
+.chat-code-block {
+  border-radius: var(--radius);
+  background: var(--quote-bg);
+  font: 0.9em var(--mono);
+}
+
+.chat-code {
+  padding: 1px 5px;
+}
+
+.chat-code-block {
+  display: block;
+  margin: 2px 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.tray-any {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 20px;
+  text-align: center;
+}
+
+.tray-any::placeholder {
+  color: var(--muted);
+}
+
+.tray-any:focus {
+  border-style: solid;
+  border-color: var(--accent);
+  outline: none;
+}
+
+.reaction-tray {
+  flex-wrap: wrap;
+  /* The phone's list pads 10px on each side; the tray stays inside it. */
+  max-width: calc(100vw - 20px);
+}
