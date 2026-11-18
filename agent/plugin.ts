@@ -1043,8 +1043,19 @@ export class Plugin {
   private async claim({ taken, request, session, harness, repo, body, at, ...place }: Planned, brief: (pull: { repo: string; number: number }) => string, signal: AbortSignal) {
     await this.bench.commit({ worktree: place.worktree, message: `chore: Claim ${request.card}`, allowEmpty: true });
     // A plan kept from before the bundles has no tip: the default branch as it is now stands in.
-    const head = (await this.publish(repo, place, place.tip ?? (await this.keep.fetch(repo)).tip))!;
-    const pull = await this.openDraft(place.branch, place.base, `${request.card}: ${request.title}`, body, repo);
+    const tip = place.tip ?? (await this.keep.fetch(repo)).tip;
+    // The tag first: the check above cannot see a claim made seconds ago, but the remote refuses a second tag.
+    const card = cardKey(request.card);
+    await this.keep.claim(repo, card, place.branch, tip);
+    let head: string;
+    let pull: { repo: string; number: number };
+    try {
+      head = (await this.publish(repo, place, tip))!;
+      pull = await this.openDraft(place.branch, place.base, `${request.card}: ${request.title}`, body, repo);
+    } catch (error) {
+      await this.keep.release(repo, card).catch(log);
+      throw error;
+    }
     // By name, so every round resumes with the harness that started the session.
     const watched: Watched = { ...place, taken, request, pull, head, session, harness, fixes: 0, seenHead: '', seenNote: new Date().toISOString(), unfinished: {} };
     this.watched.push(watched);

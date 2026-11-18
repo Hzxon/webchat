@@ -113,11 +113,13 @@ export function serveTests(w: World) {
         // The hash of the brief Alice saw: the card, and no decisions on this board (D-105).
         const brief = await textHash(briefText('### K-7: Sums are off by one\n\nStatus: Open.', []));
         const today = new Date().toISOString().slice(0, 10);
-        const ask = (from: AgentClient, extra: Partial<RunRequest> = {}) =>
-          from.send(general, {
+        // The claim-tag workflow deletes a claim's tag when its pull request merges or closes; here nothing does, so each request starts with the card free.
+        const freeClaims = (bare = origin) => sh('git', ['--git-dir', bare, 'for-each-ref', '--format=%(refname)', 'refs/tags/claim']).then(({ stdout }) => Promise.all(stdout.split('\n').filter(Boolean).map((ref) => sh('git', ['--git-dir', bare, 'update-ref', '-d', ref]))));
+        const ask = async (from: AgentClient, extra: Partial<RunRequest> = {}) =>
+          freeClaims().then(() => from.send(general, {
             text: 'Run K-7 with Claude Code',
             run: { kind: 'request', card: 'K-7', title: 'Sums are off by one', docId: board.id, section, runtime: agent.id, sentAt: Date.now(), repo: 'acme/app', hash: brief, ...extra },
-          });
+          }));
         // A check-in of the plugin's, which hands each message on as its loop does.
         const checkIn = async () => {
           const heard: OpenedMessage[] = await plugin.client!.sync();
@@ -185,6 +187,7 @@ export function serveTests(w: World) {
         // It pushed its own branch only, the claim before the work, and opened the draft with the
         // check in its body, which the work's title and body then replaced (R-042).
         assert.deepEqual((await sh('git', ['--git-dir', origin, 'branch', '--format=%(refname:short)'])).stdout.trim().split('\n').sort(), [branch, 'main']);
+        assert.equal((await sh('git', ['--git-dir', origin, 'tag', '-l', 'claim/*'])).stdout.trim(), 'claim/K-7', 'the claim tag is pushed with the branch, before the draft');
         const log = async (head: string) => (await sh('git', ['--git-dir', origin, 'log', '--format=%s', `main..${head}`])).stdout.trim().split('\n');
         assert.deepEqual(await log(branch), ['Change sum.test.js', 'chore: Claim K-7']);
         const gh = JSON.parse(await fs.readFile(ghState, 'utf8'));
@@ -488,6 +491,7 @@ export function serveTests(w: World) {
         const old = (await ask(w.alice)).id;
         await (await checkIn()).handled;
         const request: RunRequest = { kind: 'request', card: 'K-7', title: 'Sums are off by one', docId: board.id, section, runtime: agent.id, sentAt: Date.now(), repo: 'acme/app', hash: brief };
+        await freeClaims();
         const current = (await w.alice.send(direct, { text: 'Run K-7 with Claude Code', run: request })).id;
         await (await checkIn()).handled;
         const watching = async () => (JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'pulls.json'), 'utf8')) as Array<{ pull: { number: number } }>).map((w) => w.pull.number);
@@ -551,6 +555,7 @@ export function serveTests(w: World) {
         // The folder now takes runs like any other.
         await unthrottle();
         const askWeb = async () => {
+          await freeClaims(webOrigin);
           const id = (await ask(w.alice, { repo: 'acme/web' })).id;
           await (await checkIn()).handled;
           return reportsOn(id);
@@ -568,6 +573,7 @@ export function serveTests(w: World) {
         assert.ok(existsSync(path.join(cloneDir, 'README.md')));
         // A folder connected in another window lets a run that waits for it go on, with no clone (R-036).
         const connectWaits = async () => {
+          await freeClaims(webOrigin);
           const id = (await ask(w.alice, { repo: 'acme/web' })).id;
           const handled = (await checkIn()).handled;
           await offered(id, 'acme/web');
