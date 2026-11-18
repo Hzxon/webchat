@@ -21,6 +21,11 @@
 # body names both. Later commits go to the same branch. See D-062, D-076 and
 # D-107.
 #
+# Before the draft it also takes the tag claim/K-12, with the number unpadded, which the remote
+# creates only once, so two claims seconds apart cannot both get the item: the second fails and
+# names the first. The claim-tag workflow deletes the tag when the pull request merges or closes.
+# The script deletes it itself if the claim fails after taking it.
+#
 # The entry is read from docs/roadmap.md, which is a copy of the project's board
 # once the board is linked, or from docs/roadmap/<id>.md, which comes first
 # (R-040).
@@ -107,6 +112,18 @@ if [ -n "$taken" ]; then
   echo "Pick another item, or ask its owner." >&2
   exit 1
 fi
+# The check above races a claim made seconds earlier, whose pull request it cannot see yet. The remote
+# refuses to create a tag that exists. The tag names a commit of this claim's own, since pushing the
+# commit that a tag already names succeeds, and its subject names the branch, for the second claim.
+key=$(printf '%s' "$item" | sed 's/-0*\([0-9]\)/-\1/')
+mark=$(git commit-tree "HEAD^{tree}" -p HEAD -m "Claim $key for $branch")
+if ! git push -q origin "$mark:refs/tags/claim/$key"; then
+  first=$(git fetch -q origin "refs/tags/claim/$key" && git log -1 --format=%s FETCH_HEAD || true)
+  echo "$item is already claimed: ${first:-the tag claim/$key exists}. Pick another item, or ask its owner." >&2
+  exit 1
+fi
+# From here a claim that fails frees the item again.
+trap 'git push -q origin ":refs/tags/claim/$key" || true' EXIT
 if [ -n "$decision" ]; then
   if grep -q "^### $decision:" docs/decisions.md; then
     echo "$decision is already in docs/decisions.md on this branch. Take the next free number." >&2
@@ -146,3 +163,4 @@ Touches: $touches"
 git commit -q --allow-empty -m "chore: Claim $item"
 git push -q -u origin "$branch"
 gh pr create --draft --title "$title" --body "$body"
+trap - EXIT

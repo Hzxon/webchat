@@ -164,6 +164,31 @@ export class Keep {
     return this.locked(repo, () => this.git(repo, ['push', '-q', 'origin', `refs/heads/${branch}:refs/heads/${branch}`]));
   }
 
+  /**
+   * Takes the claim on a card before its draft opens, as `scripts/claim.sh` does: pushes
+   * `refs/tags/claim/<card>`, which the remote creates only once, so a second claim seconds later
+   * fails naming the first. The tag names a commit of its own, since pushing the commit that a tag
+   * already names succeeds; its subject names the branch. The `claim-tag` workflow deletes it when
+   * the pull request merges or closes, and `release` when the claim fails before the draft.
+   */
+  claim(repo: string, card: string, branch: string, tip: string) {
+    return this.locked(repo, async () => {
+      if (!/^[RKQ]-\d+$/.test(card)) throw new Error(`${card} is no card an agent may claim.`);
+      const ref = `refs/tags/claim/${card}`;
+      const who = { GIT_AUTHOR_NAME: 'WebChat agent', GIT_AUTHOR_EMAIL: 'agent@webchat.invalid', GIT_COMMITTER_NAME: 'WebChat agent', GIT_COMMITTER_EMAIL: 'agent@webchat.invalid' };
+      const mark = await this.git(repo, ['commit-tree', `${tip}^{tree}`, '-p', tip, '-m', `Claim ${card} for ${branch}`], { env: who });
+      await this.git(repo, ['push', '-q', 'origin', `${mark}:${ref}`]).catch(async (error: unknown) => {
+        const first = await this.git(repo, ['fetch', '-q', 'origin', ref]).then(() => this.git(repo, ['log', '-1', '--format=%s', 'FETCH_HEAD']), () => '');
+        throw first ? new Error(`${card} is already claimed: ${first}. Pick another card, or ask whoever opened it.`) : error;
+      });
+    });
+  }
+
+  /** Gives a claim up, when it fails after `claim` and before its draft opens. */
+  release(repo: string, card: string) {
+    return this.locked(repo, () => this.git(repo, ['push', '-q', 'origin', `:refs/tags/claim/${card}`]));
+  }
+
   /** The files under `docs/` that a board's copy and its proposals use, on a commit, with their blobs (R-040). */
   docFiles(repo: string, commit: string) {
     return this.locked(repo, async () => {
