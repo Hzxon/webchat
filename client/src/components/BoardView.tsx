@@ -27,7 +27,9 @@ import {
   GOING,
   cardTemplate,
   COLUMN_TITLES,
+  columnOf,
   COLUMNS,
+  draftGroup,
   duplicates,
   KIND_NAMES,
   MOVE_FROM,
@@ -46,7 +48,7 @@ import {
   type CardRun,
   type Move,
 } from '../board';
-import { inOrder, ownAgents, ready, seatFor, useAgentChats, useAgentThreads, waitingProposals } from '../agents';
+import { inOrder, ownAgents, ready, seatFor, short, useAgentChats, useAgentThreads, waitingProposals } from '../agents';
 import { askAgent, askFix, askLink, cancelRun, sendCardNote, startDirectChat, syncNow } from '../chat';
 import {
   addCard,
@@ -78,6 +80,7 @@ import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Avatar } from './Avatar';
+import { AgentDraft } from './AgentDraft';
 import { AgentThread } from './AgentThread';
 import { CardPeek } from './CardPeek';
 import { SectionEditor, SectionHistory } from './DocView';
@@ -95,6 +98,8 @@ import {
 import { Markdown } from './Markdown';
 import { REVIEWS, RUN_TAGS, Tag, type Tone } from './PullTags';
 import { confirmAction } from './ConfirmHost';
+
+type Proposal = ReturnType<typeof waitingProposals>[number];
 
 export function BoardView({ project }: { project: ProjectDTO }) {
   const docs = useAppState((s) => s.docs);
@@ -135,7 +140,7 @@ export function BoardView({ project }: { project: ProjectDTO }) {
     boards.roadmap?.repo && boards.roadmap.title?.authorId === project.ownerId ? boards.roadmap.repo : undefined;
   const free = repos.filter((r) => !copied.has(r.toLowerCase()));
   const canLink = !linkedTo && project.ownerId === meId && !!linked && !!seat && ready(seat) && free.length > 0;
-  // Proposals on main reach only the owner, as drafts in the Coding agents pane, so their board says they wait (D-117, K-72).
+  // Proposals on main reach only the owner, as drafts in their chat with their agent, so only their board shows them (D-117, R-047).
   const { threads } = useAgentThreads();
   const proposals = linkedTo && project.ownerId === meId ? waitingProposals(threads, project.id, linkedTo) : [];
 
@@ -167,17 +172,6 @@ export function BoardView({ project }: { project: ProjectDTO }) {
           </TabList>
         </Stack>
       </header>
-      {proposals.length > 0 && (
-        <div className="board-link">
-          <Text as="p" color="secondary">
-            Drafts from proposal files on main wait in Coding agents until you add them.
-          </Text>
-          <Button
-            label={proposals.length === 1 ? '1 proposal waits' : `${proposals.length} proposals wait`}
-            onClick={() => actions.setAgentsOpen(true, proposals[0]!.root)}
-          />
-        </div>
-      )}
       {canLink && <BoardLink project={project} agentId={agent!.id} repos={free} />}
       <div className={`board-columns shows-${shown}`}>
         {COLUMNS.map((column) => (
@@ -186,6 +180,7 @@ export function BoardView({ project }: { project: ProjectDTO }) {
             column={column}
             projectId={project.id}
             doc={boards[column]}
+            proposals={proposals.filter((p) => columnOf(p.draft.kind) === column)}
             check={check}
             elsewhere={editingIn && editingIn !== column ? COLUMN_TITLES[editingIn] : undefined}
             onEditing={(on) => setEditingIn(on ? column : null)}
@@ -300,6 +295,7 @@ function BoardColumnView({
   column,
   projectId,
   doc,
+  proposals,
   check,
   elsewhere,
   onEditing,
@@ -308,6 +304,8 @@ function BoardColumnView({
   column: BoardColumn;
   projectId: number;
   doc: ChatDoc | undefined;
+  /** The drafts from proposal files that wait for the user to add them to this column. */
+  proposals: Proposal[];
   check?: (id: string) => Promise<void>;
   /** The other column's title while it holds the open editor. */
   elsewhere?: string;
@@ -359,6 +357,8 @@ function BoardColumnView({
   // In the open card: the member picked to ask for a review, and the note of a requested change being written.
   const [asking, setAsking] = useState('');
   const [changes, setChanges] = useState<string | null>(null);
+  // The proposal open in the peek, in place of a card.
+  const [proposal, setProposal] = useState<Proposal | null>(null);
   const pending = useAppState((s) => s.pending);
   const messages = useAppState((s) => s.messages);
   // A card's runs are messages in the user's chats with their agents, which load at start (D-105).
@@ -393,6 +393,7 @@ function BoardColumnView({
   const groups = GROUPS[column].map((group, i) => ({
     ...group,
     cards: listed.filter((c) => groupOf(column, c.status) === i).sort((a, b) => (b.number ?? -1) - (a.number ?? -1)),
+    drafts: proposals.filter((p) => draftGroup(p.draft, cards) === i && (filter === 'all' || p.draft.kind === filter)),
   }));
   // The Roadmap's lanes sit side by side; Open and Done are drawers under them.
   const lanes = groups.filter((group) => group.lane);
@@ -410,6 +411,12 @@ function BoardColumnView({
   useEffect(() => {
     if (peek || editsPeek) onPeek();
   }, [!!peek || editsPeek]);
+  // Once the owner adds the open proposal, the peek shows the card it became, as soon as it loads.
+  const addedAs = Object.values(threads.find((t) => t.root === proposal?.thread.root)?.added ?? {})[0];
+  useEffect(() => {
+    const card = addedAs && cards.find((c) => c.cardId === addedAs);
+    if (card) openCard(card.id);
+  }, [addedAs, cards]);
   // Open while the lanes are empty, so a new board's first card does not hide in it; then it stays as it was, so it never shuts on a reader.
   useEffect(() => {
     if (sections.length) setDrawer((d) => d ?? !lanesHold);
@@ -430,6 +437,7 @@ function BoardColumnView({
       onEditing(false);
     }
     actions.setBoardCard(id);
+    setProposal(null);
     setChanges(null);
     setAsking('');
     setHistory(false);
@@ -552,6 +560,23 @@ function BoardColumnView({
     setNote('Copied');
     setTimeout(() => setNote(''), 2000);
   }
+
+  /** Opens a proposal's draft in the peek, where its owner reads it and adds it. */
+  function openProposal(p: Proposal) {
+    openCard(null);
+    setProposal(p);
+  }
+
+  /** A proposal's dashed face: a draft that is not a card until its owner adds it (R-047). */
+  const draftView = (p: Proposal) => (
+    <article key={p.thread.root} className="board-card is-proposal">
+      <button className="board-card-head" onClick={() => openProposal(p)} aria-haspopup="dialog">
+        <Tag tone="info">{p.draft.replaces ? `Proposed change to ${p.draft.replaces.card}` : 'Proposal'}</Tag>
+        <strong>{p.draft.title}</strong>
+        <span className="board-card-status">{short(p.thread.repo)}</span>
+      </button>
+    </article>
+  );
 
   const kinds: CardKind[] = column === 'decisions' ? ['D'] : ['R', 'K'];
   const edited = editing && cards.find((c) => c.id === editing.section.id);
@@ -942,9 +967,11 @@ function BoardColumnView({
         {!doc && !editorOpen && (
           <p className="doc-note">No {column === 'decisions' ? 'decisions' : 'ideas or issues'} yet.</p>
         )}
-        {needs.length > 0 && (
+        {needs.length + proposals.length > 0 && (
           <Stack className="board-needs" direction="horizontal" wrap="wrap" align="center" gap={1} padding={1} isScrollable>
-            <Text weight="semibold">{needs.length === 1 ? '1 card needs you' : `${needs.length} cards need you`}</Text>
+            <Text weight="semibold">
+              {needs.length + proposals.length === 1 ? '1 card needs you' : `${needs.length + proposals.length} cards need you`}
+            </Text>
             {needs.map(({ card, need }) => (
               <Button
                 key={card.id}
@@ -954,6 +981,15 @@ function BoardColumnView({
                 onClick={() => openCard(card.id)}
               />
             ))}
+            {proposals.map((p) => (
+              <Button
+                key={p.thread.root}
+                size="sm"
+                label={p.draft.replaces ? `${p.draft.replaces.card} ${p.draft.title}` : p.draft.title}
+                endContent={<Tag tone="warn">{NEEDS.proposal}</Tag>}
+                onClick={() => openProposal(p)}
+              />
+            ))}
           </Stack>
         )}
         {lanes.length > 0 && (
@@ -961,15 +997,16 @@ function BoardColumnView({
             {lanes.map((lane) => (
               <section key={lane.name} className="board-lane">
                 <h3>
-                  {lane.name} <small>{lane.cards.length}</small>
+                  {lane.name} <small>{lane.cards.length + lane.drafts.length}</small>
                 </h3>
+                {lane.drafts.map(draftView)}
                 {lane.cards.map((card) => cardView(card))}
               </section>
             ))}
           </div>
         )}
         {drawers
-          .filter((group) => group.cards.length > 0)
+          .filter((group) => group.cards.length + group.drafts.length > 0)
           .map((group) => (
             <details
               key={group.name}
@@ -981,8 +1018,9 @@ function BoardColumnView({
               }
             >
               <summary>
-                {group.name} <small>{group.cards.length}</small>
+                {group.name} <small>{group.cards.length + group.drafts.length}</small>
               </summary>
+              {group.drafts.map(draftView)}
               {group.cards.map((card) => cardView(card))}
             </details>
           ))}
@@ -990,6 +1028,17 @@ function BoardColumnView({
       {adding && (
         <CardPeek title={`New ${KIND_NAMES[adding]}`} onOpen={openCard} onClose={closeForm}>
           <NewCardForm kind={adding} onDone={(title, body) => add(adding, title, body)} onCancel={closeForm} />
+        </CardPeek>
+      )}
+      {proposal && (
+        <CardPeek title={proposal.draft.title} onOpen={openCard} onClose={() => setProposal(null)}>
+          <AgentDraft
+            message={proposal.message}
+            draft={proposal.draft}
+            // The live thread, which says once the draft is added.
+            thread={threads.find((t) => t.root === proposal.thread.root) ?? proposal.thread}
+            agentId={proposal.message.senderId!}
+          />
         </CardPeek>
       )}
       {(peek || editsPeek) && (

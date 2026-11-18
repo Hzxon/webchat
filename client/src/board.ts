@@ -2,9 +2,9 @@
 // the format of this repository's docs/decisions.md and docs/roadmap.md. A card is Markdown that
 // starts with "### D-3: Title" and a "Status:" line. This module only reads and writes that text,
 // so the tests run it without a browser.
-import { cardText, CHECKED, laneOf, WAITING, WAITS, withReviews, type Card, type CardKind, type Lane, type Review } from '../../shared/board';
+import { cardText, CHECKED, groupOf, laneOf, WAITING, WAITS, withReviews, type Card, type CardKind, type Lane, type Review } from '../../shared/board';
 import type { DocContent } from '../../shared/e2ee';
-import { RUN_PICKUP_MS, type RunReport, type UserDTO } from '../../shared/types';
+import { RUN_PICKUP_MS, type CardDraftDTO, type RunReport, type UserDTO } from '../../shared/types';
 import type { Thread } from './agents';
 import type { ChatConversation, ChatDoc, ChatMessage } from './e2ee/keyring';
 import type { PendingStatus } from './store';
@@ -164,6 +164,13 @@ export function duplicates(cards: Card[]): Set<string> {
 /** The status a new card of each kind starts with. */
 export const NEW_STATUS: Record<CardKind, string> = { D: 'Proposed', R: 'Idea', K: 'Open', Q: 'Open' };
 
+/** The column a card of this kind goes in: a decision in Decisions, an idea, issue or question in the Roadmap. */
+export const columnOf = (kind: CardKind): BoardColumn => (kind === 'D' ? 'decisions' : 'roadmap');
+
+/** The group of its column a draft shows in (R-047): beside the card it changes, or else where the card it adds lands. */
+export const draftGroup = (draft: CardDraftDTO, cards: Card[]) =>
+  groupOf(columnOf(draft.kind), cards.find((c) => c.id === draft.replaces?.section)?.status ?? NEW_STATUS[draft.kind]);
+
 /** What a new card starts with: the heading with its id, the status, and the fields of its kind. */
 export function cardTemplate(kind: CardKind, id: string): string {
   const body = {
@@ -299,6 +306,8 @@ export const NEEDS = {
   paused: 'Stopped',
   review: 'Asks for your review',
   ready: 'Asks you to mark it ready',
+  // A proposal's draft, which only its owner adds; BoardView lists those after the cards.
+  proposal: 'Proposal to add',
 } as const;
 export type Need = keyof typeof NEEDS;
 const ORDER = Object.keys(NEEDS);
