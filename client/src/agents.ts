@@ -250,6 +250,8 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     else if (prompt.kind === 'failed') thread.state = 'failed';
     // The laptop has no copy of the repository, and the turn waits for the owner (R-036).
     else if (prompt.kind === 'nocopy') thread.state = 'waiting';
+    // A summary waits for its owner to hand the session over, or to go on as it is (D-156).
+    else if (prompt.kind === 'summary') thread.state = 'answered';
   }
   // A card's conversation lasts as long as its draft is watched, so only a question ends, and one that asks waits as long as the agent does.
   for (const t of threads.values()) if (t.state !== 'asking') delete t.ask;

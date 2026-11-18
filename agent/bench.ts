@@ -10,7 +10,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { isRepoName, LIMITS, SKILL_NAME, type SessionAboutDTO, type SessionEventDTO, type SetupChoice } from '../shared/types.ts';
+import { isRepoName, LIMITS, SKILL_NAME, type PermissionMode, type SessionAboutDTO, type SessionEventDTO, type SetupChoice } from '../shared/types.ts';
 import { Lab } from './browser.ts';
 import { secretDirs, type Ask, type Harness, type Reply } from './harness.ts';
 import { sha256 } from './keep.ts';
@@ -115,6 +115,9 @@ export interface TurnJob {
   setup: SetupChoice;
   /** Runs in the owner's own setup (D-157); the plugin sets it only for a conversation its owner started in their words. */
   own?: boolean;
+  /** The session's controls (R-072): a model the harness offers, and a permission mode, which counts only with `own`. */
+  model?: string;
+  mode?: PermissionMode;
 }
 
 /**
@@ -331,8 +334,10 @@ export class LocalBench implements Bench {
     return { instructions, skills: skills.length ? folder : undefined, applied: { claudeMd: !!instructions, skills, noAttribution: choice.noAttribution } };
   }
 
-  async turn({ harness: name, cwd, session, resume, message, schema, schemas, setup: choice, own }: TurnJob, { signal, progress, events, about, permit }: Parameters<Bench['turn']>[1]) {
+  async turn({ harness: name, cwd, session, resume, message, schema, schemas, setup: choice, own, model: picked, mode }: TurnJob, { signal, progress, events, about, permit }: Parameters<Bench['turn']>[1]) {
     const harness = this.harness(name);
+    // Only a model the harness offers, as data from the keyholder (R-072).
+    const model = picked && harness.offers().models?.includes(picked) ? picked : undefined;
     // A restricted run loads none of the owner's hooks (D-097).
     if (!own) about?.({ hooks: 0 });
     if (own) {
@@ -341,7 +346,7 @@ export class LocalBench implements Bench {
       about?.({ hooks: await hookCount(cwd) });
       const asked = permit?.();
       try {
-        const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: {}, own, signal, progress, events, about, ...(asked && { ask: asked.ask, quiet: asked.quiet }) });
+        const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: {}, own, model, ...(mode && { mode }), signal, progress, events, about, ...(asked && { ask: asked.ask, quiet: asked.quiet }) });
         return { answer, applied: { claudeMd: false, skills: [], noAttribution: false, own: [name] } };
       } finally {
         asked?.done();
@@ -375,7 +380,7 @@ export class LocalBench implements Bench {
       }
     });
     try {
-      const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: { instructions, skills }, signal, progress, events, about, ask, quiet: asked?.quiet, ...(lab && { lab }), ...(shot && { shot }) });
+      const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: { instructions, skills }, model, signal, progress, events, about, ask, quiet: asked?.quiet, ...(lab && { lab }), ...(shot && { shot }) });
       return { answer, applied };
     } finally {
       asked?.done();

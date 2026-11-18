@@ -7,7 +7,7 @@
 // (D-086).
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { LIMITS, type CardAskDTO, type CardDraftDTO } from '../shared/types.ts';
+import { LIMITS, type CardAskDTO, type CardDraftDTO, type PermissionMode } from '../shared/types.ts';
 import type { AgentClient, OpenedMessage } from './client.ts';
 import { messageOf, REQUEST_TTL_MS } from './runs.ts';
 
@@ -43,6 +43,9 @@ export interface Conversation {
   own?: true;
   /** Its owner's page shows the session's steps, so the turns send them (R-072). */
   events?: true;
+  /** The model and permission mode its owner's controls picked last (R-072). */
+  model?: string;
+  mode?: PermissionMode;
   /** Whether its turns ran in the owner's own setup, which every reply keeps. */
   ownSetup?: boolean;
   /** The board its owner's page picked for the prompt, the only one its briefs hold (D-104). */
@@ -55,6 +58,13 @@ export interface Conversation {
 
 /** One turn: the owner's words in, the answer out, with drafts when they asked for them. Where the background Claude runs. */
 export type Answerer = (job: { conversation: Conversation; input: string; resume: boolean; signal: AbortSignal; card?: CardAskDTO }) => Promise<{ reply: string; drafts?: CardDraftDTO[] }>;
+
+/** What the harness that ran a session writes before another takes it over (D-156). */
+const summaryAsk = (harness: string) =>
+  `Your owner hands this session over to ${harness}, which knows only what you write now and the files. In reply, write the summary it starts from: the goal, what is done, what is next, and anything it must not redo. Plain words, no drafts.`;
+
+/** How the next harness's session starts: the summary, which its owner read and may have edited, as their words (D-156). */
+const handoverBrief = (summary: string) => `Your owner handed this session over to you from another coding agent, with this summary of it. Go on from it.\n\n${summary.trim()}`;
 
 export class Conversations {
   private list: Conversation[] = [];
@@ -108,7 +118,7 @@ export class Conversations {
     const conversation =
       prompt.kind === 'prompt'
         ? message.clientId
-          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, harness: prompt.harness, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project, asks: prompt.asks, ...(prompt.own && { own: prompt.own }), ...(prompt.events && { events: prompt.events }) }
+          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, harness: prompt.harness, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project, asks: prompt.asks, ...(prompt.own && { own: prompt.own }), ...(prompt.events && { events: prompt.events }), ...(prompt.model && { model: prompt.model }), ...(prompt.mode && { mode: prompt.mode }) }
           : undefined
         : this.list.find((c) => c.root === prompt.to && c.chat === message.conversationId);
     // A copy the server posted again under a new id does nothing (K-47).
@@ -135,11 +145,24 @@ export class Conversations {
     }
     // Queued before anything waits, so a reply or cancel in the same check-in comes after it.
     if (prompt.kind === 'prompt') this.list.push(conversation);
-    return this.turn(conversation, text, prompt.card);
+    // A reply's controls hold for the turns after it (R-072).
+    if (prompt.model) conversation.model = prompt.model;
+    if (prompt.mode) conversation.mode = prompt.mode;
+    const handover = prompt.kind === 'reply' ? prompt.handover : undefined;
+    // The summary as its owner saw and edited it starts the other harness's own session, in the same
+    // folder and thread; the harness that ran it ends (D-156).
+    if (handover?.summary !== undefined) {
+      this.onEnd(conversation);
+      Object.assign(conversation, { harness: handover.harness, session: randomUUID(), answered: false, ownSetup: undefined });
+      conversation.prompt = handoverBrief(handover.summary);
+      return this.turn(conversation, conversation.prompt);
+    }
+    return this.turn(conversation, text, prompt.card, handover?.harness);
   }
 
   /** Takes a turn after the conversation's last one, and posts its answer, or why there is none. */
-  private turn(conversation: Conversation, input: string, card?: CardAskDTO) {
+  /** With `handover`, the turn writes the summary for that harness, which goes to the owner to read and edit first (D-156). */
+  private turn(conversation: Conversation, input: string, card?: CardAskDTO, handover?: string) {
     const turns = this.turns.get(conversation.root) ?? { chain: Promise.resolve(), stops: new Set<AbortController>() };
     this.turns.set(conversation.root, turns);
     const stop = new AbortController();
@@ -151,9 +174,13 @@ export class Conversations {
         await this.save();
         // Until a turn has answered, each turn starts afresh with the prompt and what came since.
         const words = conversation.answered || input === conversation.prompt ? input : `${conversation.prompt}\n\n${input}`;
-        const { reply, drafts = [] } = await this.answer({ conversation, input: words, resume: conversation.answered, signal: stop.signal, card });
+        const { reply, drafts = [] } = await this.answer({ conversation, input: handover ? summaryAsk(handover) : words, resume: conversation.answered, signal: stop.signal, card });
         conversation.answered = true;
         delete conversation.prompt;
+        if (handover) {
+          await this.client.send(conversation.chat, { text: reply.slice(0, LIMITS.messageLength), prompt: { kind: 'summary', to: conversation.root, harness: handover } });
+          return;
+        }
         for (const part of parts(reply)) await this.say(conversation, 'answer', part);
         // Each a message of its own, so the answer's parts and every draft fit in one (D-104).
         for (const card of drafts) {

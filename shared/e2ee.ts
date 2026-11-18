@@ -34,6 +34,8 @@ import {
   type PromptDTO,
   type SessionEventDTO,
   type SessionAboutDTO,
+  type PermissionMode,
+  PERMISSION_MODES,
   type CardAskDTO,
   type PullReview,
   type RunDTO,
@@ -578,11 +580,20 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
     const repo = typeof raw.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
     if ((raw.repo !== undefined && !repo) || (!repo && !isId(raw.project)) || !isId(raw.sentAt)) return;
     const harness = short(raw.harness, LIMITS.harnessFieldLength);
-    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }), ...(raw.own === true && { own: true as const }), ...(raw.events === true && { events: true as const }), ...readCardAsk(raw.card) };
+    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }), ...(raw.own === true && { own: true as const }), ...(raw.events === true && { events: true as const }), ...readCardAsk(raw.card), ...readControls(raw) };
   }
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
-  if (raw.kind === 'reply') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt, ...readCardAsk(raw.card) } : undefined;
+  if (raw.kind === 'reply') {
+    const handover = raw.handover as { harness?: unknown; summary?: unknown } | undefined;
+    const harness = short(handover?.harness, LIMITS.harnessFieldLength);
+    const summary = short(handover?.summary, LIMITS.messageLength);
+    return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt, ...readCardAsk(raw.card), ...readControls(raw), ...(harness && { handover: { harness, ...(summary !== undefined && { summary }) } }) } : undefined;
+  }
+  if (raw.kind === 'summary') {
+    const harness = short(raw.harness, LIMITS.harnessFieldLength);
+    return harness ? { kind: 'summary', to, harness } : undefined;
+  }
   if (raw.kind === 'cancel') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt } : undefined;
   if (raw.kind === 'failed' || raw.kind === 'nocopy' || raw.kind === 'note') return { kind: raw.kind, to };
   if (raw.kind === 'events') {
@@ -593,6 +604,13 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
   if (raw.kind !== 'answer') return;
   const card = readDraft(raw.card as Record<string, unknown> | undefined);
   return card ? { kind: 'answer', to, card } : { kind: 'answer', to };
+}
+
+/** A session's model and permission mode, of the right shape, as the fields that carry them (R-072). */
+function readControls(raw: Record<string, unknown>): { model?: string; mode?: PermissionMode } {
+  const model = typeof raw.model === 'string' && /^[\w.:\[\]-]{1,64}$/.test(raw.model) ? raw.model : undefined;
+  const mode = PERMISSION_MODES.find((m) => m === raw.mode);
+  return { ...(model && { model }), ...(mode && { mode }) };
 }
 
 /** A card mark of the right shape, as the field that carries it, or nothing (R-071). */
@@ -612,7 +630,8 @@ export function readAbout(raw: unknown): SessionAboutDTO | undefined {
   const count = (v: unknown) => (Number.isInteger(v) && (v as number) >= 0 && (v as number) < 1e7 ? (v as number) : undefined);
   const text = (v: unknown) => short(v, LIMITS.harnessFieldLength);
   const mcp = Array.isArray(a.mcp) ? a.mcp.filter((n): n is string => !!text(n)).slice(0, 50) : undefined;
-  const about: SessionAboutDTO = { model: text(a.model), branch: text(a.branch), own: typeof a.own === 'boolean' ? a.own : undefined, plugins: count(a.plugins), skills: count(a.skills), hooks: count(a.hooks), mcp, context: count(a.context) };
+  const commands = Array.isArray(a.commands) ? a.commands.filter((n): n is string => typeof n === 'string' && /^[\w:.-]{1,64}$/.test(n)).slice(0, 200) : undefined;
+  const about: SessionAboutDTO = { model: text(a.model), branch: text(a.branch), own: typeof a.own === 'boolean' ? a.own : undefined, plugins: count(a.plugins), skills: count(a.skills), hooks: count(a.hooks), mcp, context: count(a.context), commands };
   return Object.fromEntries(Object.entries(about).filter(([, v]) => v !== undefined)) as SessionAboutDTO;
 }
 
@@ -677,9 +696,10 @@ function readHarnesses(raw: unknown): HarnessState[] | undefined {
     const name = field(h?.name);
     if (!h || !name) return [];
     const knobs = Array.isArray(h.knobs) ? h.knobs.filter((k): k is string => typeof k === 'string' && /^\w{1,32}$/.test(k)) : [];
+    const models = Array.isArray(h.models) ? h.models.filter((m): m is string => typeof m === 'string' && /^[\w.:\[\]-]{1,64}$/.test(m)).slice(0, 20) : undefined;
     const signedIn = typeof h.signedIn === 'boolean' ? h.signedIn : undefined;
     const linked = typeof h.linked === 'boolean' ? h.linked : undefined;
-    return [{ name, path: field(h.path), linked, attention: field(h.attention), answers: field(h.answers), version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs }];
+    return [{ name, path: field(h.path), linked, attention: field(h.attention), answers: field(h.answers), version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs, ...(models?.length && { models }) }];
   });
 }
 

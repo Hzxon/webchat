@@ -1,4 +1,4 @@
-import { type RunRequest } from '../shared/types.ts';
+import { type PermissionMode, type RunRequest } from '../shared/types.ts';
 import { type TakenRequest } from './client.ts';
 import { type Bench } from './bench.ts';
 import type { Harness } from './harness.ts';
@@ -164,4 +164,4 @@ export interface Asked {
 }
 
 /** Who a turn is for: a card's run, or a conversation. `asks` says the owner's page can show a question. */
-export type Who = { taken: TakenRequest; asks?: true } | { chat: number; to: string; asks?: true; own?: boolean; events?: true; branch?: string };
+export type Who = { taken: TakenRequest; asks?: true } | { chat: number; to: string; asks?: true; own?: boolean; events?: true; branch?: string; model?: string; mode?: PermissionMode };

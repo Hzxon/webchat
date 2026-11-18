@@ -18,6 +18,8 @@ export interface HarnessChoice {
   name: string;
   /** Why it cannot do what is asked, or nothing when it can. */
   reason?: string;
+  /** The models a session can pick for it (R-072). */
+  models?: string[];
 }
 
 /**
@@ -42,6 +44,7 @@ export function useHarnessPick(agent: UserDTO | undefined, questions = false) {
   }, [agent?.id, !!state]);
   const list = state?.harnesses?.map((h): HarnessChoice => ({
     name: h.name,
+    models: h.models,
     reason:
       questions && h.linked !== undefined
         ? h.answers

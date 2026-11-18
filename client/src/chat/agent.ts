@@ -107,11 +107,15 @@ export async function forgetFolder(agentId: number, repo: string) {
 }
 
 /** Replies in a conversation with an agent, or stops its turn. Both name the prompt's client id (D-102). */
-export function tellAgent(conversationId: number, to: string, kind: 'reply' | 'cancel', text: string, card?: CardAskDTO) {
-  // A reply from the new card form carries its fields as they stand, so the draft builds on the user's edits (R-071).
-  const prompt: PromptDTO = kind === 'reply' ? { kind, to, sentAt: Date.now(), ...(card && { card }) } : { kind, to, sentAt: Date.now() };
+export function tellAgent(conversationId: number, to: string, kind: 'reply' | 'cancel', text: string, extra: ReplyExtra = {}) {
+  // A reply from the new card form carries its fields as they stand, so the draft builds on the user's edits (R-071);
+  // one from the session's controls, a model, a mode or a hand over (R-072, D-156).
+  const prompt: PromptDTO = kind === 'reply' ? { kind, to, sentAt: Date.now(), ...extra } : { kind, to, sentAt: Date.now() };
   return sendContent(conversationId, { text: text.trim(), prompt }, false);
 }
+
+/** What a reply may carry besides the words (R-071, R-072, D-156). */
+export type ReplyExtra = Partial<Pick<Extract<PromptDTO, { kind: 'reply' }>, 'card' | 'model' | 'mode' | 'handover'>>;
 
 /** Tells the user's other devices that their page put an agent's card draft on the board (D-104). The agent ignores it. */
 export function noteAdded(conversationId: number, to: string, draft: string, card: string) {

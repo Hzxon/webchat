@@ -377,7 +377,7 @@ export class SocketBench implements Bench {
       const h = record(value);
       const offers = record(h.offers);
       if (!SUPPORTED.some((s) => s.name === h.name)) return [];
-      return [{ name: h.name as string, path: text(h.path, 1000), version: text(h.version, 100), signedIn: typeof h.signedIn === 'boolean' ? h.signedIn : undefined, offers: { instructions: text(offers.instructions, 1000), skills: text(offers.skills, 1000), knobs: strings(offers.knobs, 20) }, asks: h.asks === true, commits: h.commits !== false, ...(typeof h.warning === 'string' && { warning: h.warning.slice(0, 1000) }) }];
+      return [{ name: h.name as string, path: text(h.path, 1000), version: text(h.version, 100), signedIn: typeof h.signedIn === 'boolean' ? h.signedIn : undefined, offers: { instructions: text(offers.instructions, 1000), skills: text(offers.skills, 1000), knobs: strings(offers.knobs, 20), ...(Array.isArray(offers.models) && { models: strings(offers.models, 20).filter((m) => /^[\w.:\[\]-]{1,64}$/.test(m)) }) }, asks: h.asks === true, commits: h.commits !== false, ...(typeof h.warning === 'string' && { warning: h.warning.slice(0, 1000) }) }];
     });
   }
 

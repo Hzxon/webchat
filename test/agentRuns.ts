@@ -372,7 +372,7 @@ export function runTests(w: World) {
 
   test('reads what a Claude Code session runs with: its start line, and the context of each answer (R-072)', () => {
     const init = JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', plugins: [{ name: 'a' }, { name: 'b' }], skills: ['s'], mcp_servers: [{ name: 'github', status: 'connected' }] });
-    assert.deepEqual(claudeAbout(init), { model: 'claude-x', plugins: 2, skills: 1, mcp: ['github'] });
+    assert.deepEqual(claudeAbout(init), { model: 'claude-x', plugins: 2, skills: 1, mcp: ['github'], commands: ['s'] }, 'its skills are commands the box offers too');
     const answer = JSON.stringify({ type: 'assistant', message: { content: [], usage: { input_tokens: 10, cache_creation_input_tokens: 1000, cache_read_input_tokens: 20000, output_tokens: 5 } } });
     assert.deepEqual(claudeAbout(answer), { context: 21010 });
     assert.equal(claudeAbout('{"type":"user"}'), undefined);

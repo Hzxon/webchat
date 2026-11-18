@@ -279,7 +279,7 @@ export function serveTests(w: World) {
         // The runs before loaded nothing of it, as nothing was chosen.
         const { harnesses, ...shown } = (await setup(w.alice, direct))[0]!;
         assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false, linked: ['Claude Code', 'Codex'], noPlan: true }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
-        const claudeCode = { name: 'Claude Code', path: path.join(bin, 'claude'), linked: true, attention: undefined, version: '2.1.300', signedIn: true, answers: undefined, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution', 'noPlan', 'own'] };
+        const claudeCode = { name: 'Claude Code', path: path.join(bin, 'claude'), linked: true, attention: undefined, version: '2.1.300', signedIn: true, answers: undefined, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution', 'noPlan', 'own'], models: ['opus', 'sonnet', 'haiku'] };
         const codexState = { name: 'Codex', path: path.join(bin, 'codex'), linked: true, attention: undefined, version: '0.58.0', signedIn: true, answers: undefined, refusal: undefined, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: [] };
         assert.deepEqual(harnesses, [claudeCode, codexState], 'the pane learns each harness the laptop has, the knobs it honors');
         // Turned off, Claude Code leaves the linked harnesses, and only Codex is left; a page from before the list keeps it off.
@@ -316,18 +316,18 @@ export function serveTests(w: World) {
         const lkNotLinked = (name: string) => [`I could not answer. You have not linked ${name}, so I start nothing with it. Link it in my settings under Coding agents.`];
         const [lkOnlyClaude] = await lkLink('Claude Code');
         assert.deepEqual(lkOnlyClaude!.harnesses!.map((h) => [h.name, harnessRow(h)]), [['Claude Code', 'linked'], ['Codex', 'found']]);
-        assert.equal(plugin.client!.protocol, 63, 'Claude Code linked, and gh signed in: cards, it asks, it runs own setups, and it sends steps');
+        assert.equal(plugin.client!.protocol, 127, 'Claude Code linked, and gh signed in: cards, it asks, it runs own setups, sends steps and takes controls');
         await lkCodexPrompt();
         assert.deepEqual(await lkFailures(), lkNotLinked('Codex'));
         assert.equal(await lkHarnessOf(await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, lkPlain)), 'Claude Code', 'Claude Code still runs');
         await lkLink('Codex', 'Claude Code');
-        assert.equal(plugin.client!.protocol, 63);
+        assert.equal(plugin.client!.protocol, 127);
         assert.equal(await lkHarnessOf(await lkPlain()), 'Codex', 'a prompt that names none runs on the first she linked');
         const [lkOnlyCodex] = await lkLink('Codex');
-        assert.equal(plugin.client!.protocol, 47, 'Codex takes cards now, and it asks, but runs no own setup');
+        assert.equal(plugin.client!.protocol, 111, 'Codex takes cards now, and it asks, but runs no own setup');
         assert.deepEqual(lkOnlyCodex!.harnesses!.map((h) => harnessRow(h)), ['found', 'linked']);
         await lkLink();
-        assert.equal(plugin.client!.protocol, 37, 'with none linked the agent still answers settings');
+        assert.equal(plugin.client!.protocol, 101, 'with none linked the agent still answers settings');
         assert.match((await plugin.status()).text, /Every card fails at once: You have linked no coding agent[\s\S]*Linked: none\./);
         await lkPlain();
         assert.deepEqual(await lkFailures(), ['I could not answer. You have linked no coding agent on this laptop, so I start nothing. Link one in my settings under Coding agents.']);
@@ -367,7 +367,7 @@ export function serveTests(w: World) {
         // Her approve links the harness the laptop recorded, whatever name the message adds, and says so.
         const lkHeard = await lkAnswer(w.alice, direct, 'approve', lkAsked!, { harness: 'Claude Code' });
         assert.deepEqual(await lkLinked(), ['Claude Code', 'Codex']);
-        assert.equal(plugin.client!.protocol, 63);
+        assert.equal(plugin.client!.protocol, 127);
         assert.ok((await lkAsks()).some((c) => c.ask?.step === 'done'), 'the laptop says it linked it');
         // The same message again, or another that names the same request, changes nothing.
         await lkLink('Claude Code');
@@ -492,7 +492,7 @@ export function serveTests(w: World) {
         const unrestricted = ['--restricted', '--settings', '--tools', '--strict-mcp-config', '--plugin-dir', '--append-system-prompt-file', '--permission-mode'];
         await ownPrompt(true);
         assert.ok((await lastTurn()).args.includes('--restricted'), 'the switch is off at first');
-        assert.deepEqual(harnesses.find((h) => h.name === 'Claude Code')?.knobs.includes('own'), true, 'Claude Code offers it');
+        assert.deepEqual((harnesses.find((h) => h.name === 'Claude Code')?.knobs as string[] | undefined)?.includes('own'), true, 'Claude Code offers it');
         assert.equal(plugin.client!.protocol & 16, 16, 'the check-in says the agent runs own setups');
         await setup(w.alice, direct, { ...chosen, linked: ['Claude Code', 'Codex'], off: [], own: ['Claude Code'] });
         // Turned on, a question she typed runs in her folder, with her own setup and nothing of WebChat's but the question endpoint.
@@ -540,6 +540,30 @@ export function serveTests(w: World) {
         // A reply carries the fields as they stand, so the next draft builds on the edits.
         await withEnv({ FAKE_CLAUDE_ANSWER: two, FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'reply', to: carded, sentAt: Date.now(), card: { ...form, body: 'Edited again.' } }, 'Shorter, please.'));
         assert.ok((await lastTurn()).input.includes('Edited again.'), 'the reply carries the edited fields');
+        await w.alice.sync();
+
+        // The session's controls (R-072): a model the harness offers, and a permission mode only in her own setup.
+        await w.instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+        const controlled = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Sure."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, own: true, model: 'sonnet', mode: 'plan' }, 'Plan it.'));
+        const flagOf = (args: string[], name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+        let args = (await lastTurn()).args;
+        assert.deepEqual([flagOf(args, '--model'), flagOf(args, '--permission-mode')], ['sonnet', 'plan'], 'her own setup takes the model and the mode');
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Sure."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, model: 'gpt-9', mode: 'default' }, 'Plan it.'));
+        args = (await lastTurn()).args;
+        assert.deepEqual([flagOf(args, '--model'), flagOf(args, '--permission-mode')], [undefined, 'acceptEdits'], 'a restricted run keeps its mode, and a model the harness does not offer is dropped');
+        // Hand over (D-156): the harness that ran it writes a summary, which she reads and edits; the other starts from it, in the same thread.
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Goal: plan sums. Done: read sum.js. Next: fix."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'reply', to: controlled, sentAt: Date.now(), handover: { harness: 'Codex' } }, 'Hand over to Codex'));
+        assert.ok((await lastTurn()).input.includes('hands this session over to Codex'), 'the old harness is asked for the summary');
+        const summary = (await w.alice.sync()).find((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'summary');
+        assert.deepEqual([summary?.content?.prompt, summary?.content?.text], [{ kind: 'summary', to: controlled, harness: 'Codex' }, 'Goal: plan sums. Done: read sum.js. Next: fix.']);
+        const codexTurns = async () => (await fs.readFile(path.join(w.home, 'codex.log'), 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l) as { method?: string; input?: string }).filter((l) => l.method === 'turn/start');
+        const codexBefore = (await codexTurns()).length;
+        await tell({ kind: 'reply', to: controlled, sentAt: Date.now(), handover: { harness: 'Codex', summary: 'Goal: plan sums. Edited by Alice.' } }, 'Hand over to Codex');
+        const handed = (await codexTurns()).slice(codexBefore);
+        assert.equal(handed.length, 1, 'Codex starts a session of its own');
+        assert.ok(handed[0]!.input!.includes('Edited by Alice.'), 'from the summary as she edited it');
+        const keptAfter = JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'conversations.json'), 'utf8')) as Array<{ root: string; harness?: string }>;
+        assert.equal(keptAfter.find((c) => c.root === controlled)?.harness, 'Codex', 'replies go to Codex now');
         await w.alice.sync();
 
         // A draft whose request is not in Alice's direct chat with the agent, as every one from before

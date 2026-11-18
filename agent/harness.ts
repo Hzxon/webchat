@@ -3,7 +3,7 @@
 // it offers; plugin.ts calls only this and never names a harness.
 import os from 'node:os';
 import path from 'node:path';
-import type { SessionAboutDTO, SessionEventDTO, SetupChoice } from '../shared/types.ts';
+import type { PermissionMode, SessionAboutDTO, SessionEventDTO, SetupChoice } from '../shared/types.ts';
 import type { Lab } from './browser.ts';
 import type { Quiet } from './runner.ts';
 import type { Action } from './rulebook.ts';
@@ -36,6 +36,10 @@ export interface Turn {
    * never a card run (D-157). Only an adapter whose `offers` has the `own` knob gets it.
    */
   own?: boolean;
+  /** The model the session's controls picked, by a name `offers().models` lists (R-072). */
+  model?: string;
+  /** The permission mode the session's controls picked, set only with `own`: a restricted run keeps its own (D-115). */
+  mode?: PermissionMode;
   signal: AbortSignal;
   /** Takes what the model does now, in a sentence, each time the adapter can tell (docs/decisions/stop-pauses-run.md). */
   progress?: (sentence: string) => void;
@@ -81,7 +85,7 @@ export interface Harness {
    * only when it honors it without running code outside the sandbox and without changing
    * permission or sandbox mode (D-115), except `own`, which says it can run `Turn.own` (D-157).
    */
-  offers(): { instructions?: string; skills?: string; knobs: string[] };
+  offers(): { instructions?: string; skills?: string; knobs: string[]; models?: string[] };
   /** What the laptop has of it: where it is, its version, and whether it is signed in, each left out when it cannot tell. */
   found(): Promise<{ path?: string; version?: string; signedIn?: boolean }>;
   /** Takes the owner's choice for its knobs: before any proof or turn, and again whenever it changes. */
