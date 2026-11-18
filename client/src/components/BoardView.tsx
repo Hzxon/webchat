@@ -32,10 +32,13 @@ import {
   KIND_NAMES,
   MOVE_FROM,
   moved,
+  NEEDS,
+  needsYou,
   NEW_STATUS,
   openChange,
   runnerOf,
   takeable,
+  threadOf,
   unchecked,
   workingStatus,
   type BoardColumn,
@@ -364,6 +367,8 @@ function BoardColumnView({
   const agentMessages = useMemo(() => inOrder(chats.flatMap((c) => messages[c.id] ?? [])), [chats, messages]);
   // Read on every render, so a request nobody answered stops blocking once its time is up.
   const runs = doc && meId && column === 'roadmap' ? cardRuns(agentMessages, meId, doc.id, pending, Date.now()) : null;
+  // From every card, whatever the filter, so a card in the Open drawer or the Done fold still opens from the row.
+  const needs = runs ? needsYou(cards, meId!, runs, threads) : [];
   const canRun = column === 'roadmap' && !!doc && choices.length > 0;
 
   // Every save grows the version, so the cards load again whenever anyone saves.
@@ -401,7 +406,7 @@ function BoardColumnView({
   const at = siblings.findIndex((c) => c.id === boardCard);
   // The user's own run of the open card shows beside it; run messages reach only their owner, so a teammate sees the card alone (D-100).
   const peekRun = peek && runs?.get(peek.id);
-  const runThread = peekRun && threads.find((t) => t.request === peekRun.request);
+  const runThread = threadOf(peekRun, threads);
   useEffect(() => {
     if (peek || editsPeek) onPeek();
   }, [!!peek || editsPeek]);
@@ -555,6 +560,7 @@ function BoardColumnView({
   const cardView = (card: Card, inPeek = false) => {
     const lock = lockOf(card.id);
     const cardRun = runs?.get(card.id);
+    const need = needs.find((n) => n.card === card)?.need;
     const [runTone, runLabel] = RUN_STATES[cardRun?.state ?? 'waiting'];
     const request = cardRun && agentMessages.find((m) => m.id === cardRun.request);
     // A request still being sent has no id that a cancel could name.
@@ -631,14 +637,14 @@ function BoardColumnView({
         ) : (
           right && <span className="board-card-status">{right}</span>
         )}
-        {face && cardRun && <Tag tone={runTone}>{runLabel}</Tag>}
+        {face && need ? <Tag tone="warn">{NEEDS[need]}</Tag> : face && cardRun && <Tag tone={runTone}>{runLabel}</Tag>}
       </button>
     );
     if (!inPeek)
       return (
         <article
           key={card.id}
-          className={`board-card ${lock ? 'is-locked' : ''} ${face && card.status.startsWith(WAITING) ? 'is-waiting' : ''}`}
+          className={`board-card ${lock ? 'is-locked' : ''} ${face && (need || card.status.startsWith(WAITING)) ? 'is-waiting' : ''}`}
         >
           {pick ? (
             <div className="board-face-row">
@@ -935,6 +941,20 @@ function BoardColumnView({
         {error && <Banner status="error" title={error} />}
         {!doc && !editorOpen && (
           <p className="doc-note">No {column === 'decisions' ? 'decisions' : 'ideas or issues'} yet.</p>
+        )}
+        {needs.length > 0 && (
+          <Stack className="board-needs" direction="horizontal" wrap="wrap" align="center" gap={1} padding={1} isScrollable>
+            <Text weight="semibold">{needs.length === 1 ? '1 card needs you' : `${needs.length} cards need you`}</Text>
+            {needs.map(({ card, need }) => (
+              <Button
+                key={card.id}
+                size="sm"
+                label={`${card.cardId} ${titleOf(card)}`}
+                endContent={<Tag tone="warn">{NEEDS[need]}</Tag>}
+                onClick={() => openCard(card.id)}
+              />
+            ))}
+          </Stack>
         )}
         {lanes.length > 0 && (
           <div className="board-lanes">

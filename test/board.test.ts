@@ -6,7 +6,7 @@ import { describe, test } from 'node:test';
 const clientBoard = '../client/src/board.ts';
 const sharedBoard = '../shared/board.ts';
 
-const { cardRuns, cardTemplate, statusMove, GOING, duplicates, idOf, moved, otherRun, runnerOf, startable, takeable, unchecked, withChecked, workingStatus } = await import(clientBoard);
+const { cardRuns, cardTemplate, statusMove, GOING, duplicates, idOf, moved, needsYou, otherRun, runnerOf, startable, takeable, unchecked, withChecked, workingStatus } = await import(clientBoard);
 const { cardOf, cardsOf, cardSections, cardText, groupOf, keepReviews, parseCard, standing, usernamesOf, withReviews, withStatus } = await import(sharedBoard);
 
 const section = (id: string, text: string) => ({ id, text, pos: 1, failed: false });
@@ -202,6 +202,56 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     assert.deepEqual(state([ask(1, 'a'), report(1, 'planned'), fix(500)]), ['planned', true], 'a plan’s go is as before');
     assert.deepEqual(state([ask(1, 'a'), report(1, 'decision'), fix(500)]), ['decision', true], 'and a decision’s');
     assert.deepEqual(state([ask(1, 'a'), report(1, 'done'), fix(500), { ...report(1, 'fixing'), id: 600 }, { ...report(1, 'done'), id: 700 }]), ['done', false], 'the agent’s reports land as before');
+  });
+
+  test('the cards that wait for the user, questions first, then plans, decisions, stops and requests (R-047)', () => {
+    const now = 1_000_000_000;
+    // Ann (1) runs cards with her agent (9); Bo (2) is a teammate.
+    const ask = (id: number, section: string, senderId = 1) => ({ id, senderId, clientId: `c${id}`, run: { kind: 'request', docId: 'doc', section, runtime: 9, sentAt: now } });
+    const report = (request: number, kind: string) => ({ id: request + 100, senderId: 9, run: { kind, request } });
+    const card = (id: string, status: string, extra = {}) => ({ id, cardId: id, status, owner: 2, body: '', reviews: [], ...extra });
+    const cards = [
+      card('ready', 'Open', { owner: 1, body: 'Asked: 2026-11-12. @bo asks its owner to mark it ready.' }),
+      card('review', 'In review', { reviews: [{ who: 1, verdict: 'review_required' }] }),
+      card('paused', 'Running: Ann’s agent'),
+      card('decision', 'Waiting for a decision'),
+      card('planned', 'Running: Ann’s agent'),
+      card('asking', 'Running: Ann’s agent'),
+      card('done', 'In review: o/r#3'),
+      card('theirs', 'Running: Bo’s agent'),
+    ];
+    const messages = [
+      ask(1, 'paused'), report(1, 'paused'),
+      ask(2, 'decision'), report(2, 'decision'),
+      ask(3, 'planned'), report(3, 'planned'),
+      ask(4, 'asking'), report(4, 'claimed'),
+      ask(5, 'done'), report(5, 'done'),
+      ask(6, 'theirs', 2), { ...report(6, 'paused'), id: 106 },
+    ];
+    const threads = [
+      { request: 1, state: 'paused' },
+      { request: 2, state: 'waiting' },
+      { request: 3, state: 'planned' },
+      { request: 4, state: 'asking', ask: { answered: false } },
+      { request: 5, state: 'draft' },
+    ];
+    const needs = (list = cards, t = threads, me = 1): string[][] => needsYou(list, me, cardRuns(messages, me, 'doc', {}, now), t).map((n: { card: { id: string }; need: string }) => [n.card.id, n.need]);
+    assert.deepEqual(needs(), [
+      ['asking', 'asking'],
+      ['planned', 'planned'],
+      ['decision', 'decision'],
+      ['paused', 'paused'],
+      ['review', 'review'],
+      ['ready', 'ready'],
+    ], 'a finished run and a teammate’s run do not count');
+    // The thread turns to working as the user answers, gives the go or redirects, before the agent reports.
+    const answered = threads.map((t) => (t.request === 4 ? { ...t, ask: { answered: true } } : t.request === 3 ? { ...t, state: 'working' } : t));
+    assert.deepEqual(needs(cards, answered).map(([id]) => id), ['decision', 'paused', 'review', 'ready']);
+    assert.deepEqual(needs(cards, [{ request: 2, state: 'working' }]).map(([id]) => id), ['review', 'ready'], 'a decision added and gone on with, and runs with no thread, count for nothing');
+    const stopped = cardRuns([...messages, { id: 200, senderId: 1, run: { kind: 'cancel', request: 1 } }], 1, 'doc', {}, now);
+    assert.equal(needsYou(cards, 1, stopped, threads).some((n: { need: string }) => n.need === 'paused'), false, 'a stop the agent has not reported yet');
+    assert.deepEqual(needs(cards, [{ request: 6, state: 'paused' }], 2), [['theirs', 'paused']], 'Bo sees his own run, and none of Ann’s runs or requests');
+    assert.deepEqual(needs([card('r', 'In review', { reviews: [{ who: 1, verdict: 'approved' }] }), card('o', 'Ready', { owner: 1, body: cards[0]!.body })]), [], 'an answered review and an ask on a card marked ready do not count');
   });
 
   test('a status that shows another run of the card refuses a second one (K-59)', () => {
