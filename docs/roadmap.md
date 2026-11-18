@@ -179,48 +179,25 @@ D-043). The other members see it only in the member count and the member list. W
 list would tell everyone who can read along. The server already knows when each member joined, so
 the notes would show it nothing new. They should not count as unread.
 
-### R-043: Run cards through a harness adapter, picked per session
-
-Status: Idea.
-
-Checked: 2026-11-09. Read docs/roadmap/new-harness-adapter.md, agent/harness.ts, agent/claude.ts, agent/codex.ts and CHANGELOG 0.9.0 (#176, #179) on main at 6a95ad6, and the board's cards and decisions. No open pull requests.
-
-Shipped in #174 (the seam), #176 (the sealed per-harness state and the Settings rows) and #179 (the harness named in each signed request). Proposed 2026-11-09 from the harness audit.
-
-Why: the agent's turn, its isolation proof and the setup it loads were Claude Code's command line, settings files and hook format, in `agent/claude.ts` and `agent/plugin.ts`. The sealed protocol, `Runs`, `Conversations` and the workflow in the plugin know no harness. A student whose team uses Codex or OpenCode could not run an agent at all.
-
-Scope:
-
-- One `Harness` interface in `agent/harness.ts`. `turn` runs one turn in a folder with the brief on stdin and a JSON answer for a schema. `refusal` says why this laptop cannot run cards with it. `offers` names the instructions file, the skills folder and the few knobs it can honor. The Claude adapter is the old code moved behind it, so a Claude Code owner sees no change.
-- Each harness the laptop found goes to the owner sealed in `SetupState`, with its state and knobs. Settings shows one row per harness with an enable toggle.
-- The owner names the harness, signed, in each card run and each conversation, as the repository is named (D-093). A session keeps the harness that started it. Turns nobody picked for run on the host harness.
-- The seam's pull request rewrote the "background Claude" lines of `.claude/rules/projects.md` to "the harness's turn": an adapter owns the turn, the isolation proof and the setup it offers, and `plugin.ts` never names a harness.
-
-Constraints: a knob is offered only when the adapter honors it without running code outside the sandbox and without changing permission or sandbox mode. Model, caps, the instructions file, skills and attribution pass. Permission mode, plugins, hooks and MCP servers never do, for any harness (D-097, D-115). The server learns nothing new: per-harness state is sealed to the owner, and `claudeMd` keeps its wire name. A request from an old page names no harness and runs on the host harness. A request naming a harness that is not enabled fails with the reason. No switching mid-session. `test/agent.test.ts` has a fixture per adapter.
-
-Done when: a Claude Code agent behaves as before and the tests pass; Settings lists the harnesses the laptop has, each with its state and knobs; a card run and a conversation each show the harness the owner picked; a request from an old page runs on the host harness; a request naming a harness that is not enabled fails with the reason.
-
 ## Known issues
 
-### K-69: An agent's board messages buzz the owner's phone and count as unread
+### K-77: picomatch has a ReDoS advisory with no patched release
 
-Status: Open. Found on 2026-11-07 in the review of #167 (R-040).
+Status: Blocked. Found 2026-11-18 by `npm audit` while fixing the zod advisory in #281. Waits for a picomatch release after 4.0.7.
 
-Checked: 2026-11-14. Read K-69, the other cards, D-016, D-020, D-030 and D-117; shared/types.ts, server/notify.ts, server/api.ts, agent/client.ts, migration 23 and docs/decisions/quiet-sync-messages.md on main at 7305298; open pull requests #237, #236 and #229 by title only; tests not run.
+Why: `npm audit` reports GHSA-fc5q-39xc-vjpf (high): picomatch can take very long on a glob with
+repeated single-branch extglobs. Every version up to 4.0.7, the newest, is affected, so no update
+or override fixes it. A red audit hides new advisories that do matter.
 
-Status: Fixed in Hzxon/webchat#198. Found on 2026-11-07 in the review of #167 (R-040).
+Scope: picomatch comes in only through devDependencies: `vite` (directly and through
+`tinyglobby` and `fdir`) and `@astryxdesign/cli` (through `jscodeshift`). `npm ls picomatch
+--omit=dev` is empty, so neither the server nor the client bundle holds it. The patterns come from
+our own build config, not from users, so nobody outside can reach it. Dependabot opened no alert.
 
+Fix: when picomatch publishes a patched version, update the lockfile so every path resolves to it.
+Do not run `npm audit fix --force`: it downgrades vite to 6.2.7, a breaking change.
 
-
-Seen: when the owner links a board, their agent sends the repository's entries in several messages. It also sends one each time the cards that open pull requests claim change. Each was an ordinary message in the owner's direct chat with the agent. The server pushed it and counted it as unread, so the Coding agents row showed a badge, and a phone whose tabs were closed buzzed. The page only kept them from raising a toast (`shouldAlert` in `client/src/chat.ts`).
-
-Cause: the server knew the message kinds message, reaction and github, and only a reaction stayed quiet (`server/notify.ts`, and the unread counts in `server/db.ts`).
-
-Fix, on main in #198: a quiet message kind, `sync` (`MessageKind` in `shared/types.ts`, migration 23). The server pushes and counts it as it does a reaction (D-030): no push unless the owner looks at a tab, no Bark alert, never unread, and no new chat preview (`server/notify.ts`, `server/bark.ts`, `server/db.ts`, `client/src/sw.ts`). It refuses an urgent one (`server/api.ts`). The agent sends its entries, claims and failed links with it, and a proposal stays an ordinary message, since it is news to the owner (`send` in `agent/client.ts`). Against a server that answers `Unknown message kind.`, the agent sends the message as before. The kind is signed into the envelope (D-016), so rule 2 of AGENTS.md holds.
-
-Decision: the quiet-sync decision is Proposed in `docs/decisions/quiet-sync-messages.md` and has no number on the board yet. The server now sees which messages are board traffic; `docs/decisions/D-020.md` adds that to D-020, and the board's D-020 does not have the line yet. The owner adds the decision from its proposal file.
-
-Tests: `test/chat.test.ts` (no push, never unread, no new preview, never urgent) and `test/agent.test.ts` (entries and claims go as `sync`).
+Done when: `npm audit` reports no picomatch advisory.
 
 ## Open questions
 
@@ -364,6 +341,8 @@ Status: Dropped on 2026-11-13. The owner no longer wants a teammate to run a car
 | R-041: The agent checks a new card, and the board numbers it | #166 |
 | R-040: The board is the source of truth, and the repository follows it | #167, #159 |
 | R-042: A card run follows the repository's workflow | #168 |
+| R-043: Run cards through a harness adapter, picked per session | #174, #176, #179 |
+| K-69: An agent's board messages buzz the owner's phone and count as unread | #198, #167 |
 | K-72: The board does not show the proposals that wait for it | #222 |
 | K-70: The pane says "No copy yet" for a repository the agent works in | #223 |
 | K-71: A backlog of proposal files hits the send limit, and a new install sends them all again | #224 |
