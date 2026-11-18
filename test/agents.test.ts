@@ -47,6 +47,10 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.deepEqual(thread.steps, [{ id: steps.id, at: 50, events: [step] }]);
     assert.equal(thread.last, 1, 'a step does not move the thread up the list');
     assert.equal(thread.state, 'working');
+    // What the session runs with: the newest of each part, from its own agent's batches.
+    const about = say(AGENT, { kind: 'events', to: 'p2', events: [], about: { model: 'm', context: 5 } }, 'e3', 70);
+    const later = say(AGENT, { kind: 'events', to: 'p2', events: [], about: { context: 9 } }, 'e4', 80);
+    assert.deepEqual(threadsOf([prompt, about, later], ME, AGENT, {}, 100)[0].about, { model: 'm', context: 9 });
   });
 
   test("a long answer's parts show as one message, which keeps the first part's id", () => {

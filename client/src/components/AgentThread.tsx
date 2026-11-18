@@ -16,6 +16,7 @@ import { formatAgo, formatTime } from './format';
 import { AlertIcon, SendIcon } from './icons';
 import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
+import { SessionDetails } from './SessionDetails';
 import { SessionSteps } from './SessionSteps';
 
 /**
@@ -73,7 +74,20 @@ export function Box(props: {
 
 const isCancel = (m: ChatMessage) => m.prompt?.kind === 'cancel' || m.run?.kind === 'cancel';
 
-export function AgentThread({ thread, seat, agentId, inForm }: { thread: Thread; seat: Seat | undefined; agentId: number; inForm?: boolean }) {
+export function AgentThread({
+  thread,
+  seat,
+  agentId,
+  inForm,
+  details,
+}: {
+  thread: Thread;
+  seat: Seat | undefined;
+  agentId: number;
+  inForm?: boolean;
+  /** Shows what the session runs with beside it, as the pane does (R-072). */
+  details?: boolean;
+}) {
   const pending = useAppState((s) => s.pending);
   const meId = useAppState((s) => s.me?.id);
   const docs = useAppState((s) => s.docs);
@@ -138,6 +152,9 @@ export function AgentThread({ thread, seat, agentId, inForm }: { thread: Thread;
     return events.length > 0 && <SessionSteps events={events} />;
   };
   const newest = steps.at(-1);
+  // What the session runs with, once it said anything, beside the timeline (R-072).
+  const rail = !!details && (steps.length > 0 || !!thread.about);
+  const [showDetails, setShowDetails] = useState(false);
 
   const blocked = blockedBy(seat);
   let waiting: string;
@@ -156,6 +173,17 @@ export function AgentThread({ thread, seat, agentId, inForm }: { thread: Thread;
 
   return (
     <>
+      <div className="agents-session">
+      {/* On a phone the details hide behind a button, which shows only there. */}
+      {rail && (
+        <Button
+          className="agents-details-toggle"
+          size="sm"
+          variant="ghost"
+          label={showDetails ? 'Hide details' : 'Details'}
+          onClick={() => setShowDetails(!showDetails)}
+        />
+      )}
       <div className="messages" ref={list}>
         {thread.messages.map((message, i) => {
           const status = message.clientId ? pending[message.clientId] : undefined;
@@ -309,6 +337,12 @@ export function AgentThread({ thread, seat, agentId, inForm }: { thread: Thread;
             {waiting}
           </Text>
         )}
+      </div>
+      {rail && (
+        <aside className={`agents-rail${showDetails ? ' is-open' : ''}`}>
+          <SessionDetails thread={thread} />
+        </aside>
+      )}
       </div>
       <footer className="composer">
         {/* A proposal is the repository's: it waits for Add or Update, and takes no reply (R-040). */}

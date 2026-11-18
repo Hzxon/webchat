@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { promisify } from 'node:util';
-import { LIMITS, type SessionEventDTO } from '../shared/types.ts';
+import { LIMITS, type SessionAboutDTO, type SessionEventDTO } from '../shared/types.ts';
 import { fits } from './answer.ts';
 import { APPROVE_TOOL, openApprover, TOOL_TIMEOUT_MS, type Call } from './approve.ts';
 import { isCredential, olderThan, secretDirs, type Ask, type Harness, type Turn } from './harness.ts';
@@ -183,6 +183,11 @@ function toolStep(name: string, input: Record<string, unknown>, cwd: string, at:
       return { kind: 'edit', title: file, detail: field('content'), at };
     case 'Edit':
       return { kind: 'edit', title: file, detail: `- ${field('old_string')}\n+ ${field('new_string')}`, at };
+    case 'TodoWrite': {
+      const todos = Array.isArray(input.todos) ? (input.todos as Array<{ content?: unknown; status?: unknown }>) : [];
+      const mark = (status: unknown) => (status === 'completed' ? '[x]' : status === 'in_progress' ? '[~]' : '[ ]');
+      return { kind: 'plan', title: 'Plan', detail: todos.map((t) => `${mark(t.status)} ${String(t.content ?? '')}`).join('\n'), at };
+    }
     default:
       return { kind: 'tool', title: `${name} ${JSON.stringify(input)}`, at };
   }
@@ -223,6 +228,30 @@ export function claudeEvents(output: string, cwd: string, open: Map<string, Sess
     }
   }
   return steps.map((s) => ({ ...s, title: s.title.slice(0, LIMITS.eventTitleLength), ...(s.detail && { detail: s.detail.slice(-LIMITS.eventDetailLength) }) }));
+}
+
+/**
+ * What one line of Claude Code's output says the session runs with (R-072): its model, plugins,
+ * skills and MCP servers from the line that starts it, and the context the newest turn sent from
+ * each answer's usage. Undefined for every other line.
+ */
+export function claudeAbout(output: string): SessionAboutDTO | undefined {
+  if (!output.includes('"subtype":"init"') && !(output.includes('"type":"assistant"') && output.includes('"usage"'))) return undefined;
+  let event: { type?: string; subtype?: string; model?: unknown; plugins?: unknown; skills?: unknown; mcp_servers?: unknown; message?: { usage?: Record<string, unknown> } } | null;
+  try {
+    event = JSON.parse(output) as typeof event;
+  } catch {
+    return undefined;
+  }
+  const list = (v: unknown) => (Array.isArray(v) ? v : undefined);
+  if (event?.type === 'system' && event.subtype === 'init') {
+    const mcp = list(event.mcp_servers)?.map((s: { name?: unknown }) => String(s?.name ?? '')).filter(Boolean);
+    return { ...(typeof event.model === 'string' && { model: event.model }), ...(list(event.plugins) && { plugins: list(event.plugins)!.length }), ...(list(event.skills) && { skills: list(event.skills)!.length }), ...(mcp && { mcp }) };
+  }
+  const usage = event?.type === 'assistant' ? event.message?.usage : undefined;
+  if (!usage) return undefined;
+  const tokens = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'].reduce((sum, key) => sum + (Number.isInteger(usage[key]) ? (usage[key] as number) : 0), 0);
+  return tokens ? { context: tokens } : undefined;
 }
 
 const ASK_KINDS: Record<string, Ask['kind']> = { Bash: 'execute', Edit: 'edit', MultiEdit: 'edit', Write: 'edit', NotebookEdit: 'edit', Read: 'read', Glob: 'read', Grep: 'read', WebFetch: 'fetch', WebSearch: 'fetch' };
@@ -391,6 +420,8 @@ export function claudeHarness(program: string, dataDir: string): Harness {
         line(output) {
           dog.arm();
           if (t.events) for (const step of claudeEvents(output, real, open)) t.events(step);
+          const about = t.about && claudeAbout(output);
+          if (about) t.about!(about);
           const result = claudeResult(output);
           if (!result) {
             const said = t.progress && claudeProgress(output, t.cwd);
