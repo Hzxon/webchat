@@ -212,7 +212,8 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>, si
  * card from GitHub alerts like a message.
  */
 function shouldAlert(message: ChatMessage, conversation: ChatConversation): boolean {
-  if (message.senderId === meId || message.kind === 'reaction' || message.security === 'plain') return false;
+  // A session's steps never alert: only its question and its answer do (R-072).
+  if (message.senderId === meId || message.kind === 'reaction' || message.kind === 'events' || message.security === 'plain') return false;
   // An agent's entries for a link and its claims are its traffic with the owner's page; a proposal is news (R-040).
   if (message.board && message.board.kind !== 'proposal') return false;
   const readUpTo = conversation.members.find((m) => m.userId === meId)?.lastReadId ?? 0;
