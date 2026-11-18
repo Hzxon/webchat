@@ -5,6 +5,7 @@
 import { cardText, CHECKED, laneOf, WAITING, withReviews, type Card, type CardKind, type Lane, type Review } from '../../shared/board';
 import type { DocContent } from '../../shared/e2ee';
 import { RUN_PICKUP_MS, type RunReport, type UserDTO } from '../../shared/types';
+import type { Thread } from './agents';
 import type { ChatConversation, ChatDoc, ChatMessage } from './e2ee/keyring';
 import type { PendingStatus } from './store';
 
@@ -272,4 +273,46 @@ export function cardRuns(messages: ChatMessage[], meId: number, docId: string, p
     }
   }
   return runs;
+}
+
+/** The thread of the user's run of a card, which holds what the run's reports alone cannot say, such as a waiting question. */
+export const threadOf = (run: CardRun | undefined, threads: Thread[]) => run && threads.find((t) => t.request === run.request);
+
+/** Why a card waits for the user, in the order the board lists them, with the words its face and the Needs you row show (R-047). */
+export const NEEDS = {
+  asking: 'Asking you',
+  planned: 'Plan ready',
+  decision: 'Waiting for a decision',
+  paused: 'Stopped',
+  review: 'Asks for your review',
+  ready: 'Asks you to mark it ready',
+} as const;
+export type Need = keyof typeof NEEDS;
+const ORDER = Object.keys(NEEDS);
+
+/**
+ * The Roadmap's cards that wait for the user, and why, questions first (R-047). A run counts from its
+ * thread, which turns to working the moment the user answers, gives the go or redirects it, while
+ * the run's state waits for the agent's next report. A request counts while the card holds it: a
+ * review line of theirs with no verdict, on a card in review, or an ask on their own open card,
+ * which marking it ready drops.
+ */
+export function needsYou(cards: Card[], meId: number, runs: Map<string, CardRun>, threads: Thread[]) {
+  const needOf = (card: Card): Need | undefined => {
+    const run = runs.get(card.id);
+    const thread = run && !run.stopping ? threadOf(run, threads) : undefined;
+    if (thread?.state === 'asking' && !thread.ask?.answered) return 'asking';
+    if (thread?.state === 'planned' || thread?.state === 'paused') return thread.state;
+    // A waiting thread can wait for a review or a clone too, which the run's state tells apart.
+    if (thread?.state === 'waiting' && run!.state === 'decision') return 'decision';
+    const lane = laneOf(card.status);
+    if (lane === 'review' && card.reviews.some((r) => r.who === meId && r.verdict === 'review_required')) return 'review';
+    if (lane === 'open' && card.owner === meId && card.body.match(ASKED)) return 'ready';
+  };
+  return cards
+    .flatMap((card) => {
+      const need = needOf(card);
+      return need ? [{ card, need }] : [];
+    })
+    .sort((a, b) => ORDER.indexOf(a.need) - ORDER.indexOf(b.need));
 }
