@@ -61,8 +61,10 @@ export interface RunReport {
    * (docs/decisions/stop-pauses-run.md). "planned" holds in the note the plan of a card that holds,
    * which waits for the owner's go or words before the claim commit (docs/decisions/redirect-plan-gate.md).
    * "note" puts a message in the run's thread and changes nothing, such as a screenshot (R-046).
+   * "overlap" says the run waits because its files overlap those of an earlier draft, named in
+   * `waits`, until the two card owners choose (docs/roadmap/new-overlap-gate.md).
    */
-  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended' | 'nocopy' | 'stale' | 'decision' | 'merged' | 'closed' | 'draft' | 'progress' | 'paused' | 'planned' | 'note';
+  kind: 'claimed' | 'done' | 'failed' | 'fixing' | 'review' | 'ended' | 'nocopy' | 'stale' | 'decision' | 'merged' | 'closed' | 'draft' | 'progress' | 'paused' | 'planned' | 'note' | 'overlap';
   request: number;
   /** What happened, in a line. */
   note?: string;
@@ -73,6 +75,8 @@ export interface RunReport {
   card?: CardDraftDTO;
   /** For a "merged": the Proposed decisions the work made true, which the owner's page marks Accepted (R-042). */
   decisions?: string[];
+  /** For an "overlap": the card the earlier draft claims, such as K-12, or the draft itself, such as #12. */
+  waits?: string;
 }
 
 /** The owner stops a run, or the watching of its pull request (R-030). The agent heeds only its owner. */

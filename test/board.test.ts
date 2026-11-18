@@ -6,7 +6,7 @@ import { describe, test } from 'node:test';
 const clientBoard = '../client/src/board.ts';
 const sharedBoard = '../shared/board.ts';
 
-const { cardRuns, cardTemplate, statusMove, GOING, duplicates, idOf, moved, needsYou, otherRun, runnerOf, startable, takeable, unchecked, withChecked, workingStatus } = await import(clientBoard);
+const { cardRuns, cardTemplate, statusMove, standsAt, waitsFor, GOING, duplicates, idOf, moved, needsYou, otherRun, runnerOf, startable, takeable, unchecked, withChecked, workingStatus } = await import(clientBoard);
 const { cardOf, cardsOf, cardSections, cardText, groupOf, keepReviews, parseCard, standing, usernamesOf, withReviews, withStatus } = await import(sharedBoard);
 
 const section = (id: string, text: string) => ({ id, text, pos: 1, failed: false });
@@ -107,6 +107,19 @@ describe('Board cards in client/src/board.ts (R-021, D-082)', () => {
     const old = parseCard(section('a', '### K-1: Bug\n\nStatus: In progress: Ann’s agent.')).status;
     for (const state of ['decision', 'done', 'failed', 'stale', 'merged']) assert.ok(move(state)[0].includes(old), state);
     assert.ok(!move('done')[0].includes(parseCard(section('a', '### K-1: Bug\n\nStatus: In progress: Bob’s agent.')).status), 'not a teammate’s run');
+  });
+
+  test('a run that waits for another card shows it in the Running lane, names who chooses, and goes on from there (docs/roadmap/new-overlap-gate.md)', () => {
+    const [from, to] = statusMove({ request: 1, runtime: 9, state: 'overlap', waits: 'K-12' }, 'K-7', 'Ready', workingStatus('Ann'));
+    assert.deepEqual([from, to], [['Ready', 'Running: Ann’s agent', 'Waiting for a decision'], 'Waiting for K-12']);
+    const waiting = waitsFor(to, ['Ann', 'Bo']);
+    assert.equal(waiting, 'Waiting for K-12: Ann and Bo choose');
+    assert.equal(waitsFor(to, ['Ann']), 'Waiting for K-12: Ann chooses', 'one person owns both cards');
+    assert.equal(groupOf('roadmap', waiting), groupOf('roadmap', 'Running: Ann’s agent'));
+    assert.ok(otherRun(waiting, 'Bo'), 'nobody else starts it meanwhile');
+    // Each choice goes on through a report the run already has: fixing when it goes on, failed for a fold.
+    for (const state of ['fixing', 'failed', 'done']) assert.ok(standsAt(statusMove({ request: 1, runtime: 9, state }, 'K-7', 'Ready', workingStatus('Ann'))[0], waiting), state);
+    assert.ok(!standsAt(['Ready'], waiting), 'a move that does not start from a wait leaves it');
   });
 
   test('a card reads its Checked line, and has an empty check without one (R-041)', () => {

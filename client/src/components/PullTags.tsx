@@ -27,6 +27,7 @@ export const RUN_TAGS: Record<RunReport['kind'], [Tone, string]> = {
   paused: ['warn', 'Stopped'],
   planned: ['warn', 'Plan ready'],
   note: ['info', 'Working…'],
+  overlap: ['warn', 'Waiting for another card'],
 };
 
 const CHECKS: Record<NonNullable<PullChecks>, [Tone, string]> = {

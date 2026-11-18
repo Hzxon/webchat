@@ -418,8 +418,8 @@ export class SocketBench implements Bench {
     });
   }
 
-  take(dir: string, file: string, base: string) {
-    return this.sent(file, (transfer) => this.call('take', { dir, transfer, base }));
+  take(dir: string, file: string, base: string, other?: boolean) {
+    return this.sent(file, (transfer) => this.call('take', { dir, transfer, base, other }));
   }
 
   clone(dir: string, repo: string, file: string, base: string) {
@@ -540,7 +540,7 @@ export async function connectRunner({ file, bench, version }: { file: string; be
         case 'clone':
           return fetched(String(params.transfer), async (bundle) => {
             try {
-              if (method === 'take') await bench.take(String(params.dir), bundle, String(params.base));
+              if (method === 'take') await bench.take(String(params.dir), bundle, String(params.base), params.other === true);
               else await bench.clone(String(params.dir), String(params.repo), bundle, String(params.base));
             } catch (error) {
               throw error instanceof PrerequisitesMissing ? new RpcError(PREREQUISITES, error.message) : error;

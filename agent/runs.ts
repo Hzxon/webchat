@@ -5,6 +5,7 @@
 // that names the request, and pages fold them into one card. The owner can cancel a request the
 // same way (R-030).
 import { textHash } from '../shared/e2ee.ts';
+import { choiceLine } from '../shared/overlap.ts';
 import { briefText, heldDecisions, type CardDraftDTO, type RunReport, type RunRequest } from '../shared/types.ts';
 import type { AgentClient, OpenedMessage, TakenRequest } from './client.ts';
 
@@ -13,9 +14,10 @@ export interface RunResult {
    * How the run ended: done, stale when its check found the card no longer holds and nothing was
    * pushed, paused for a decision nobody foresaw, which waits for its owner's go (R-042), or paused
    * because its owner stopped it before its work was done (docs/decisions/stop-pauses-run.md), or
-   * planned, when its card holds and its plan waits for its owner's go (docs/decisions/redirect-plan-gate.md).
+   * planned, when its card holds and its plan waits for its owner's go (docs/decisions/redirect-plan-gate.md),
+   * or overlap, when an earlier draft holds files it needs (docs/roadmap/new-overlap-gate.md).
    */
-  kind?: 'done' | 'stale' | 'decision' | 'paused' | 'planned';
+  kind?: 'done' | 'stale' | 'decision' | 'paused' | 'planned' | 'overlap';
   branch: string;
   pull?: { repo: string; number: number };
   /** A line for the report, such as what the agent said last, why the card no longer holds, or the plan. */
@@ -24,6 +26,8 @@ export interface RunResult {
   card?: CardDraftDTO;
   /** What finished work asks of the board: changes to decisions, and new cards (R-042). */
   drafts?: CardDraftDTO[];
+  /** For overlap: the card of the draft it waits for, or the draft. */
+  waits?: string;
 }
 
 /**
@@ -156,15 +160,16 @@ export class Runs {
   }
 
   /** Reports how a run ended, then each draft its finished work asks of the board (R-042). */
-  private async done(taken: TakenRequest, { kind = 'done', branch, pull, note, card, drafts = [] }: RunResult) {
+  async done(taken: TakenRequest, { kind = 'done', branch, pull, note, card, drafts = [], waits }: RunResult) {
     const text = {
       done: `I finished ${taken.card} on ${branch}${pull ? ` (${pull.repo}#${pull.number})` : ''}.${note ? ` ${note}` : ''}`,
       stale: `${taken.card} no longer holds: ${note}.`,
       decision: `${taken.card} needs a decision first: ${card?.title}. Add it on the board, then tell me to go on.`,
       paused: `I stopped ${taken.card} as you asked. What I committed is on ${branch}${pull ? ` (${pull.repo}#${pull.number})` : ''}, and I keep where I was. Tell me what to change, or start the card over.`,
       planned: `${taken.card} holds. My plan:\n\n${note ?? 'I made none.'}\n\nSay go, or tell me what to change.`,
+      overlap: `${taken.card} waits for ${waits}, which changes ${note} too. Its owner and the owner of ${taken.card} choose on ${taken.card} with a line "${choiceLine(waits!, 'wait')}", or stack or fold in place of wait.`,
     }[kind];
-    await this.report(taken, { kind, branch, pull, card, ...(note && { note }) }, text);
+    await this.report(taken, { kind, branch, pull, card, waits, ...(note && { note }) }, text);
     for (const draft of drafts) await this.report(taken, { kind: 'draft', card: draft }, `${draft.kind === 'D' ? 'Decision' : 'Card'} draft: ${draft.title}`);
   }
 

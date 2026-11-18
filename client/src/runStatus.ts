@@ -1,15 +1,17 @@
 // Keeps a card's status line in step with its run, from whichever page of its owner is open
 // (D-105, D-100). Teammates see no run messages, so the status line is how they learn that a card
 // runs: "Running: Ann's agent" once the agent took it, after it checked the brief, "Waiting for
-// a decision" while it waits for one, "In review: repo#N" once its work is in its draft, "Done in
+// a decision" while it waits for one, "Waiting for K-12: Ann and Bob choose" while its files overlap
+// an earlier draft's, "In review: repo#N" once its work is in its draft, "Done in
 // repo#N" once that is merged, and the status it had before when the run fails, the card no
 // longer holds (R-042) or the draft is closed unmerged. Each move is made only from the status it
 // expects, so a status a teammate set since stays, and only under the card's lock, read there,
 // never while anyone, another tab included, holds it.
 import { newStatus, WAITING, withStatus, type Card } from '../../shared/board';
+import { choiceLine, choosers } from '../../shared/overlap';
 import type { BoardSyncDTO, RunRequest } from '../../shared/types';
 import { agentChats, inOrder } from './agents';
-import { boardDocs, cardRuns, dateOf, startable, statusMove, workingStatus } from './board';
+import { boardDocs, cardRuns, dateOf, standsAt, startable, statusMove, waitsFor, workingStatus } from './board';
 import { sendCardNote, startDirectChat } from './chat';
 import { boardCards, rewriteCard } from './docs';
 import type { ChatDoc, ChatMessage } from './e2ee/keyring';
@@ -39,12 +41,20 @@ export async function followRuns() {
       const was = newStatus(request.was ?? '');
       const key = `${run.request}:${run.at}`;
       if (run.state === 'merged' && run.pull) await accept(doc, run.decisions ?? [], `Accepted ${dateOf(new Date())} in ${run.pull.repo}#${run.pull.number} (${request.card})`, key, cardsOf);
-      const [from, to] = statusMove(run, request.card, was, working);
-      if (!to || tried.has(key) || doc.locks.some((l) => l.section === section)) continue;
+      const [from, target] = statusMove(run, request.card, was, working);
+      if (!target || tried.has(key) || doc.locks.some((l) => l.section === section)) continue;
       tried.add(key);
       // Most reports moved their card already, so only a card that stands where the move starts takes its lock.
       const card = (await cardsOf(doc)).find((c) => c.id === section);
-      if (!card || !from.includes(card.status) || !(await move(doc, section, (status) => from.includes(status), to))) continue;
+      if (!card || !standsAt(from, card.status)) continue;
+      // Both card owners choose for a card that waits for another, and each but the user gets a push (docs/roadmap/new-overlap-gate.md).
+      const owners = run.state === 'overlap' ? choosers(card.owner, (await cardsOf(doc)).find((c) => c.cardId === run.waits)?.owner, me.id) : [];
+      const to = owners.length ? waitsFor(target, owners.map((id) => (id === me.id ? me.displayName : (state.users[id]?.displayName ?? 'someone')))) : target;
+      if (!(await move(doc, section, (status) => standsAt(from, status), to))) continue;
+      for (const owner of owners.filter((id) => id !== me.id))
+        await startDirectChat(owner)
+          .then((chat) => sendCardNote(chat, { kind: 'waiting', card: card.cardId, docId, section }, `${card.cardId} waits for ${run.waits}: both change the same files. Choose on ${card.cardId} with the line "${choiceLine(run.waits!, 'wait')}", or stack or fold in place of wait.`))
+          .catch(() => undefined);
       // The owner decides for the card, so they get a push; only the requester's go resumes the run (D-118). A second tab finds it moved and sends none.
       // With a verdict on the card, a WAITING of anyone but its owner would not stand.
       if (to === WAITING && card.owner !== undefined && card.owner !== me.id && card.reviews.every((r) => r.verdict === 'review_required'))

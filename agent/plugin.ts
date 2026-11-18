@@ -24,9 +24,10 @@ import { LocalBench, NO_RUNNER, PrerequisitesMissing, type Bench, type Folder, t
 import { Keep } from './keep.ts';
 import { Permits, SEND_GAP_MS } from './permits.ts';
 import { messageOf, REQUEST_TTL_MS, Runs, type Runner, type RunResult } from './runs.ts';
-import { type AgentStatus, type Answer, type Asked, type BoardCopy, type Filed, type Place, type Planned, type PluginOptions, type Pull, type PullView, type Watched, type Who } from './pluginTypes.ts';
+import { type AgentStatus, type Answer, type Asked, type BoardCopy, type Filed, type Overlap, type Place, type Planned, type PluginOptions, type Pull, type PullView, type Watched, type Who } from './pluginTypes.ts';
+import { choiceOf, choosers, overlaps, type Pull as Footprint } from '../shared/overlap.ts';
 import { ANSWER, CHECK, REPLY } from './pluginSchemas.ts';
-import { OWNER, checkBrief, fence, fixBrief, goBrief, inParts, planBrief, promptBrief, pullList, seenOf, steerBrief, workBrief } from './briefs.ts';
+import { OWNER, checkBrief, fence, fixBrief, goBrief, inParts, overlapBrief, planBrief, promptBrief, pullList, seenOf, steerBrief, workBrief } from './briefs.ts';
 import { draftsOf, line } from './drafts.ts';
 import { freeLock, markOf, noCopy, shown, takeLock } from './pluginFiles.ts';
 export { line } from './drafts.ts';
@@ -63,16 +64,14 @@ const slugOf = (text: string) =>
 /** A card's id with its number unpadded, such as K-5 for K-005, as ids from the page and from GitHub compare. */
 const cardKey = (id: string) => id.replace(/-0+(?=\d)/, '-');
 
-/**
- * The card an open pull request claims, as its key: its body opens with "Claims K-12", as
- * `scripts/claim.sh` writes it, or its title names the card. The agent's own drafts show In
- * review already, so they claim nothing here (R-040, R-042).
- */
-function claimOf(pull: Pull) {
-  if (pull.headRefName?.startsWith('agent/')) return;
+/** The card a pull request names, as its key: its body opens with "Claims K-12", as `scripts/claim.sh` and the agent write it, or its title names the card. */
+function cardOfPull(pull: Pull) {
   const named = /^Claims ([RKQ]-\d+)\b/.exec(pull.body ?? '') ?? /\b([RKQ]-\d+)\b/.exec(pull.title);
   return named ? cardKey(named[1]!) : undefined;
 }
+
+/** The card an open pull request claims. The agent's own drafts show In review already, so they claim nothing here (R-040, R-042). */
+const claimOf = (pull: Pull) => (pull.headRefName?.startsWith('agent/') ? undefined : cardOfPull(pull));
 
 /** A repository's open pull requests, with the fields asked for, as `gh` lists them, or undefined when it cannot (R-041). */
 const openPulls = (repo: string, fields = 'number,title') =>
@@ -1028,7 +1027,10 @@ export class Plugin {
       const replaces = { card: now.id, doc: request.docId, section: request.section, seen: await textHash(card.trim()) };
       return { kind: 'stale', branch, note: why, card: { kind: now.kind, title: now.title, body: now.body, status, checked: line(check.checked, 500), replaces } };
     }
-    const held: Planned = { ...place, taken, request, session, harness: harness.name, repo: folder.repo, body: `Claims ${request.card}. Checked ${date}: ${line(check.checked, 500)}`, at: Date.now() };
+    // The files it expects to change, on a line of its own as `scripts/claim.sh -t` writes it, which the overlap rule reads (docs/roadmap/new-overlap-gate.md).
+    const touches = (Array.isArray(check.touches) ? check.touches : []).filter((t): t is string => typeof t === 'string' && /^[^\s,`]{1,200}$/.test(t)).slice(0, 100);
+    const body = `Claims ${request.card}. Checked ${date}: ${line(check.checked, 500)}${touches.length ? `\n\nTouches: ${touches.join(', ')}` : ''}`;
+    const held: Planned = { ...place, taken, request, session, harness: harness.name, repo: folder.repo, body, at: Date.now() };
     // The plan gate, on unless the owner turned off the knob its harness declares (docs/decisions/redirect-plan-gate.md).
     if (!(this.setup.choice.noPlan && harness.offers.knobs.includes('noPlan'))) {
       this.plans.push(held);
@@ -1060,6 +1062,9 @@ export class Plugin {
     const watched: Watched = { ...place, taken, request, pull, head, session, harness, fixes: 0, seenHead: '', seenNote: new Date().toISOString(), unfinished: {} };
     this.watched.push(watched);
     await this.saveWatched();
+    // Compared once the draft is published, so of two drafts published seconds apart, the later one waits.
+    const holder = await this.heldBy(watched);
+    if (holder) return this.wait(watched, holder, { start: brief(pull) });
     return this.finish(watched, brief(pull), true, signal);
   }
 
@@ -1092,13 +1097,20 @@ export class Plugin {
       await this.saveWatched();
       return { kind: 'decision', branch: pull.branch, pull: pull.pull, note: answer.note || undefined, card: decision };
     }
-    pull.head = (await this.publish(pull.pull.repo, pull, pull.head))!;
+    // Before each push, the files the branch really changes, against what earlier drafts hold (docs/roadmap/new-overlap-gate.md).
+    const head = (await this.accept(pull.pull.repo, pull, pull.head))!;
+    const files = await this.keep.changed(pull.pull.repo, pull.base, head);
+    const holder = await this.heldBy(pull, files);
+    if (holder) return this.wait(pull, holder, { files });
+    await this.keep.push(pull.pull.repo, pull.branch);
+    pull.head = head;
     delete pull.unfinished;
     const made = (Array.isArray(answer.decisions) ? answer.decisions : []).filter((d): d is string => typeof d === 'string' && d.startsWith('D-') && d in seen);
     if (made.length) pull.decisions = [...new Set([...(pull.decisions ?? []), ...made])];
     await this.saveWatched();
     const title = answer.title?.trim();
-    const body = answer.body?.trim();
+    // A stacked draft keeps naming the draft under it, which the overlap rule and CI read.
+    const body = answer.body?.trim() && `${answer.body.trim()}${pull.stacked ? `\n\nStacked on #${pull.stacked}` : ''}`;
     if (title || body) await gh(['pr', 'edit', String(pull.pull.number), '--repo', pull.pull.repo, ...(title ? ['--title', title] : []), ...(body ? ['--body', body] : [])]);
     return { branch: pull.branch, pull: pull.pull, note: answer.note || undefined, drafts };
   }
@@ -1269,16 +1281,19 @@ export class Plugin {
    * Returns the commit pushed, or undefined for no new commits when `required` is false.
    */
   private async publish(repo: string, place: Place, since: string, required = true) {
+    const head = await this.accept(repo, place, since, required);
+    if (head) await this.keep.push(repo, place.branch);
+    return head;
+  }
+
+  /** Takes what the worktree committed since `since` into the agent's clone, unpushed, and returns the branch's new head. */
+  private async accept(repo: string, place: Place, since: string, required = true) {
     const head = await this.bundled(async (file) => {
       const made = await this.bench.bundle({ worktree: place.worktree, branch: place.branch, since, file });
       return made && this.keep.acceptBundle(repo, file, { branch: place.branch, since, reported: made });
     });
-    if (!head) {
-      if (required) throw new Error('I left no new commits.');
-      return;
-    }
-    await this.keep.push(repo, place.branch);
-    return head;
+    if (!head && required) throw new Error('I left no new commits.');
+    return head || undefined;
   }
 
   /** Commits what a harness that cannot commit left in its worktree, titled with the work's own title. */
@@ -1405,7 +1420,7 @@ export class Plugin {
         const { harness, refused } = await this.pick(pull.harness);
         if (!harness || refused || this.folderRefusal(folder)) continue;
         // A run that waits for a decision needs only whether its draft ended.
-        const fields = pull.unfinished?.paused ? 'state,headRefOid' : PULL_FIELDS;
+        const fields = pull.unfinished?.paused || pull.unfinished?.overlap ? 'state,headRefOid' : PULL_FIELDS;
         const view = JSON.parse(await gh(['pr', 'view', String(pull.pull.number), '--repo', pull.pull.repo, '--json', fields])) as PullView;
         const ended = this.endOf(pull, view, now);
         if (ended && pull.unfinished && view.state !== 'MERGED') {
@@ -1415,6 +1430,10 @@ export class Plugin {
         }
         if (ended) {
           await this.end(pull, ended, view.state);
+          continue;
+        }
+        if (pull.unfinished?.overlap) {
+          await this.overlapLook(pull, pull.unfinished.overlap);
           continue;
         }
         // It goes on only on its owner's go, and reminds them once after a day (R-042).
@@ -1568,6 +1587,81 @@ export class Plugin {
     const resume = pull.session !== undefined;
     pull.session ??= randomUUID();
     return this.finish(pull, (pull.unfinished?.stopped ? steerBrief : pull.unfinished ? goBrief : fixBrief)(pull, why), resume, signal);
+  }
+
+  /**
+   * The earliest open draft that holds a file this run's draft needs: by its `Touches:` line before
+   * any work, or by `files`, what its branch changes, before a push. The rule of the `overlap` check,
+   * where the lower number keeps a file; none when GitHub does not answer, so a repository with no
+   * GitHub link has no gate (docs/roadmap/new-overlap-gate.md).
+   */
+  private async heldBy(pull: Watched, files?: string[]) {
+    const open = (await openPulls(pull.pull.repo, 'number,title,headRefName,body,files')) as Array<Pull & Footprint> | undefined;
+    const mine = open?.find((p) => p.number === pull.pull.number);
+    const [first] = mine ? overlaps(files ? { ...mine, files: files.map((path) => ({ path })) } : mine, open!) : [];
+    const other = first && open!.find((p) => p.number === first.number)!;
+    return other && { number: other.number, waits: cardOfPull(other) ?? `#${other.number}`, branch: other.headRefName, files: first.files };
+  }
+
+  /** Holds a run whose files an earlier draft holds: it does no more until that draft lets them go or the two card owners choose. */
+  private async wait(pull: Watched, holder: NonNullable<Awaited<ReturnType<Plugin['heldBy']>>>, more: Pick<Overlap, 'start' | 'files'>): Promise<RunResult> {
+    const words = (await this.overlapCards(pull, holder.waits))?.card.words ?? [];
+    pull.unfinished = { overlap: { number: holder.number, waits: holder.waits, branch: holder.branch, since: Math.max(0, ...words.map((w) => w.id)), ...more } };
+    await this.saveWatched();
+    return { kind: 'overlap', branch: pull.branch, pull: pull.pull, waits: holder.waits, note: holder.files.join(', ') };
+  }
+
+  /** The waiting card with each member's word on it, and who chooses for it: its owner and the owner of the card it waits for. */
+  private async overlapCards(pull: Watched, waits: string) {
+    const client = this.client!;
+    const doc = client.docs.find((d) => d.id === pull.request.docId);
+    const project = client.projects.find((p) => p.id === this.projectOf(pull.request));
+    if (!doc || !project) return;
+    const cards = cardsOf(await client.cardSections(doc), project.memberIds, usernamesOf(project.memberIds, Object.fromEntries(client.users), null));
+    const card = cards.find((c) => c.id === pull.request.section);
+    return card && { card, owners: choosers(card.owner, cards.find((c) => cardKey(c.cardId) === waits)?.owner, client.owner!) };
+  }
+
+  /**
+   * Looks again at a run that waits for an earlier draft. A fold its card owners chose ends it; a
+   * stack names that draft in its body, so neither this rule nor CI counts it, and the run goes on
+   * on its branch; and the run goes on once no earlier draft holds its files. Only a line an owner
+   * signed counts, and the agent never chooses (docs/roadmap/new-overlap-gate.md, D-081).
+   */
+  private async overlapLook(pull: Watched, wait: Overlap) {
+    const found = await this.overlapCards(pull, wait.waits);
+    const choice = found && choiceOf(found.card.words ?? [], found.owners, wait.waits, wait.since);
+    if (choice === 'fold') return this.runs!.fail(pull.taken, `Its owners folded ${pull.request.card} into ${wait.waits}.`);
+    const where = ['--repo', pull.pull.repo];
+    if (choice === 'stack' && pull.stacked !== wait.number) {
+      const body = await gh(['pr', 'view', String(pull.pull.number), ...where, '--json', 'body', '--jq', '.body']);
+      await gh(['pr', 'edit', String(pull.pull.number), ...where, '--body', `${body}\n\nStacked on #${wait.number}`]);
+      pull.stacked = wait.number;
+      await this.saveWatched();
+    }
+    const holder = await this.heldBy(pull, wait.files);
+    // Another earlier draft holds its files now, and its owners choose for that one.
+    if (holder && holder.number !== wait.number) return this.runs!.done(pull.taken, await this.wait(pull, holder, { start: wait.start, files: wait.files }));
+    if (holder) return;
+    const why = pull.stacked === wait.number ? `its owners stacked it on ${wait.waits}` : `${wait.waits} no longer holds its files`;
+    await this.runs!.follow(pull.taken, pull.request, why, { branch: pull.branch, pull: pull.pull }, (signal) => this.goOn(pull, wait, signal));
+  }
+
+  /** The turn of a run that waited for an earlier draft: on that draft's branch when stacked, with the work's own brief when it had not started. */
+  private async goOn(pull: Watched, wait: Overlap, signal: AbortSignal): Promise<RunResult> {
+    const folder = this.folderOf(pull.pull.repo);
+    if (!folder) throw new Error(noCopy(pull.pull.repo));
+    await this.fetchBase(folder);
+    const stacked = pull.stacked === wait.number ? wait.branch : undefined;
+    if (stacked)
+      await this.bundled(async (file) => {
+        await this.keep.baseBundle(folder.repo, file, `origin/${stacked}`);
+        await this.bench.take(folder.dir, file, `origin/${stacked}`, true);
+      });
+    await this.bench.reopen({ dir: folder.dir, worktree: pull.worktree, branch: pull.branch });
+    pull.unfinished = {};
+    await this.saveWatched();
+    return this.finish(pull, overlapBrief(pull, wait.waits, stacked, wait.start), true, signal);
   }
 
   /** Ends what a harness keeps running for a session that is over: its process. */
