@@ -63,7 +63,7 @@ describe('claiming an item that another claim takes at the same time', () => {
       await git(dir, 'switch', '-q', '-c', `claude/k12-${name}`);
       const child = spawn('sh', [SCRIPT, '-c', 'Read K-12 on main.', '-t', 'a.ts', 'K-12', `fix: Claim ${name}`], {
         cwd: dir,
-        env: { ...process.env, PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, FAKE_GH_DIR: path.join(root, 'listed') },
+        env: { ...process.env, GIT_AUTHOR_NAME: 'Alice', GIT_AUTHOR_EMAIL: 'alice@example.com', GIT_COMMITTER_NAME: 'Alice', GIT_COMMITTER_EMAIL: 'alice@example.com', PATH: `${path.join(root, 'bin')}:${process.env.PATH}`, FAKE_GH_DIR: path.join(root, 'listed') },
       });
       let stderr = '';
       child.stderr.on('data', (chunk) => (stderr += chunk));
