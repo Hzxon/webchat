@@ -43,8 +43,11 @@ function parts(text: string) {
   if (first < 0) return null;
   let rest = lines.slice(first + 1);
   const next = rest.findIndex((l) => l.trim());
-  const status = STATUS.exec(rest[next] ?? '');
-  if (status) rest = rest.slice(next + 1);
+  // A status wraps over lines in a file, so it is the whole first paragraph, as `entryText` reads it.
+  let end = rest.findIndex((l, i) => i > next && !l.trim());
+  if (end < 0) end = rest.length;
+  const status = STATUS.exec(next < 0 ? '' : rest.slice(next, end).map((l) => l.trim()).join(' '));
+  if (status) rest = rest.slice(end);
   return { heading: lines[first], status: status?.[1] ?? '', body: rest.join('\n').trim() };
 }
 
