@@ -1,6 +1,6 @@
 ### R: A card waits for the cards it names
 
-Status: Idea. Proposed 2026-11-17 by the owner, from the parallel work design. Needs the decision
+Status: Done in #277. Proposed 2026-11-17 by the owner, from the parallel work design. Needs the decision
 in docs/decisions/new-overlap-blocks.md.
 
 Order: beside the overlap gate (docs/roadmap/new-overlap-gate.md): this card touches the board, and

@@ -162,6 +162,11 @@ export interface CardDraftDTO {
   related?: Array<{ id: string; kind: 'duplicate' | 'conflict'; why: string }>;
   /** A proposal's new status line for the card it changes, as its file in the repository says (R-040). */
   status?: string;
+  /**
+   * For the second card of a split, the title of the contract card drafted before it, which must be
+   * on the board first: the page writes its number on the new card's After line (docs/roadmap/new-after-edge.md).
+   */
+  after?: string;
 }
 
 /**

@@ -2,7 +2,7 @@
 // the format of this repository's docs/decisions.md and docs/roadmap.md. A card is Markdown that
 // starts with "### D-3: Title" and a "Status:" line. This module only reads and writes that text,
 // so the tests run it without a browser.
-import { cardText, CHECKED, groupOf, laneOf, WAITING, WAITS, withReviews, type Card, type CardKind, type Lane, type Review } from '../../shared/board';
+import { cardText, CHECKED, groupOf, laneOf, WAITING, WAITS, withReviews, type Card, type CardKind, type Lane, type Review, type Waits } from '../../shared/board';
 import type { DocContent } from '../../shared/e2ee';
 import { RUN_PICKUP_MS, type CardDraftDTO, type RunReport, type UserDTO } from '../../shared/types';
 import type { Thread } from './agents';
@@ -61,6 +61,8 @@ const pickedBy = (status: string) => (status.startsWith('Running:') && !/['’]s
 export function moved(card: Card, move: Move, me: Pick<UserDTO, 'id' | 'username' | 'displayName'>, today = new Date()): string | null {
   // A card that does not open has no kind.
   if (!card.kind || !(typeof move === 'string' ? MOVE_FROM[move] : ['review']).includes(laneOf(card.status))) return null;
+  // A card waits for the cards its After line names (docs/roadmap/new-after-edge.md).
+  if (move === 'pick' && card.waits) return null;
   const mine = card.owner === me.id;
   const asks = `@${me.username} asks its owner to mark it ready.`;
   const write = (status: string, body = card.body) => cardText(card.cardId, card.title, status, body);
@@ -109,11 +111,24 @@ export function moved(card: Card, move: Move, me: Pick<UserDTO, 'id' | 'username
 /**
  * Whether a run may start from the card as it stands, as the user's agent, a claim or a take starts
  * one (the card-owner decision): a Ready card, an Open one with no owner, or one the user picked by
- * hand (`Running: <name>`), which their agent then runs and a failure puts back.
+ * hand (`Running: <name>`), which their agent then runs and a failure puts back. Never a card that
+ * waits for the cards its After line names (docs/roadmap/new-after-edge.md).
  */
 export function startable(card: Card, name: string) {
   const lane = laneOf(card.status);
-  return !!card.kind && (lane === 'ready' || (lane === 'open' && card.owner === undefined) || card.status === `Running: ${name}`);
+  return !!card.kind && !card.waits && (lane === 'ready' || (lane === 'open' && card.owner === undefined) || card.status === `Running: ${name}`);
+}
+
+/** What a waiting card's face says: the cards its After line names that are not Done or Fixed (docs/roadmap/new-after-edge.md). */
+export const waitingFace = (waits: Waits) => `${WAITS}${waits.on.join(', ')}`;
+
+/** The warnings on a waiting card: a loop of After lines, which no card in it leaves alone, and each dropped card it names. */
+export function afterWarnings({ loop, dropped }: Waits) {
+  const [first, ...rest] = loop;
+  return [
+    ...(first ? [`${first}${rest.map((id, i) => `${i ? ', which waits for' : ' waits for'} ${id}`).join('')}. None of them can run until one After line goes.`] : []),
+    ...dropped.map((id) => `${id} was dropped. Remove it from the After line, or drop this card.`),
+  ];
 }
 
 /** Whether the user may take the card, which has no owner: only where a run may start, since a run names its section (D-100). */

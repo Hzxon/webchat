@@ -1,10 +1,11 @@
 // The text of a board card and of the repository files that copy the board (R-040, D-117). A card
 // is Markdown in the form of this repository's docs: a "### K-12: Title" heading, a "Status:" line,
 // then the body (D-082). It also holds how every page reads a card's owner, status and reviews from
-// each member's word, so the agent's copy shows what the page shows. The module imports only types,
-// so the page, the agent and the tests load it.
+// each member's word, so the agent's copy shows what the page shows. The module imports only types
+// and shared/overlap.ts, which imports only types, so the page, the agent and the tests load it.
 import type { DocContent } from './e2ee.js';
 import type { DocRevisionDTO, UserDTO } from './types.js';
+import { cardKey } from './overlap.js';
 
 export type CardKind = 'D' | 'R' | 'K' | 'Q';
 
@@ -91,6 +92,10 @@ export interface Card extends DocSection {
   body: string;
   /** The line after "Checked:" that an agent's check left, or '' for a card never checked (R-041). */
   checked: string;
+  /** The cards its "After:" line names, which must be Done or Fixed before it runs (docs/roadmap/new-after-edge.md). */
+  after: string[];
+  /** From `cardsOf`, for a card whose `after` names one that is not Done or Fixed: those cards, the dropped ones among them, and a loop of After lines through it. */
+  waits?: Waits;
   /** The member who opened it, while they are still in the project (the board-lanes decision). */
   owner?: number;
   /**
@@ -141,12 +146,55 @@ export function parseCard(section: DocSection): Card {
     status: card?.status ?? '',
     body,
     checked: CHECKED.exec(body)?.[1]?.trim() ?? '',
+    after: AFTER.exec(body)?.[1]?.match(/\b[RKQ]-\d+\b/g) ?? [],
     written: section.text,
     reviews: [],
   };
 }
 
 export const CHECKED = /^Checked:(.*)$/m;
+export const AFTER = /^After:(.*)$/m;
+
+export interface Waits {
+  on: string[];
+  dropped: string[];
+  /** The cards of the loop from this one back to it, such as [K-1, K-2, K-1], or none. */
+  loop: string[];
+}
+
+const finished = (card?: Card) => !!card && /^(Done|Fixed)\b/.test(card.status);
+
+/**
+ * Each card with the cards it waits for (docs/roadmap/new-after-edge.md). The server cannot read a
+ * card, so every page and the agent hold this gate from the board as it stands. A card named that
+ * the board lacks waits too, so a typo shows on the face rather than letting the card run.
+ */
+function withWaits(cards: Card[]): Card[] {
+  const byKey = new Map(cards.filter((c) => c.cardId).map((c) => [cardKey(c.cardId), c]));
+  const open = (card: Card) => card.after.filter((id) => !finished(byKey.get(cardKey(id))));
+  return cards.map((card) => {
+    const on = card.cardId ? open(card) : [];
+    if (!on.length) return card;
+    const dropped = on.filter((id) => byKey.get(cardKey(id))?.status.startsWith('Dropped'));
+    // A breadth-first walk over the open After edges, from each card to the one that reached it, which finds the shortest way back.
+    const self = cardKey(card.cardId);
+    const from = new Map<string, string>();
+    const queue: string[] = [];
+    const reach = (keys: string[], at: string) => keys.forEach((k) => from.has(k) || (from.set(k, at), queue.push(k)));
+    reach(on.map(cardKey), self);
+    for (let i = 0; i < queue.length && !from.has(self); i++) {
+      const next = byKey.get(queue[i]!);
+      if (next) reach(open(next).map(cardKey), queue[i]!);
+    }
+    const loop: string[] = [];
+    if (from.has(self)) {
+      loop.push(self);
+      for (let at = from.get(self)!; at !== self; at = from.get(at)!) loop.unshift(at);
+      loop.unshift(self);
+    }
+    return { ...card, waits: { on, dropped, loop: loop.map((k) => byKey.get(k)?.cardId ?? k) } };
+  });
+}
 
 /** A revision with what it holds, or null when it does not open. */
 export interface Opened {
@@ -217,7 +265,7 @@ export function cardOf(section: DocSection, members: number[], usernames: Record
 }
 
 /** A board doc's cards from its sections, without the ones whose removal stands. */
-export const cardsOf = (sections: DocSection[], members: number[], usernames: Record<number, string>) => sections.flatMap((s) => cardOf(s, members, usernames) ?? []);
+export const cardsOf = (sections: DocSection[], members: number[], usernames: Record<number, string>) => withWaits(sections.flatMap((s) => cardOf(s, members, usernames) ?? []));
 
 /** The usernames of a project's members who are people, by id: an agent reviews nothing. The store's `users` leave out `me`. */
 export function usernamesOf(members: number[], users: Record<number, Pick<UserDTO, 'username' | 'agentOwner'>>, me: Pick<UserDTO, 'id' | 'username' | 'agentOwner'> | null) {

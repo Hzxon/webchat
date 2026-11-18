@@ -11,6 +11,7 @@ export const DRAFTS = {
       body: { type: 'string', description: 'What goes under the title and the status line, in Markdown, shaped like the cards on the board.' },
       replaces: { type: 'string', description: 'The card or decision your draft changes, such as K-12 or D-3. Leave it out for a new one.' },
       checked: { type: 'string', description: 'One line on what your check read: the cards, the decisions, the code at which commit, and the open pull requests.' },
+      after: { type: 'string', description: 'For the second card of a split: the title of the contract card you drafted before it.' },
       related: {
         type: 'array',
         description: 'Each card, decision or open pull request that the draft repeats or goes against.',
@@ -64,7 +65,7 @@ export const REPLY = {
   type: 'object',
   properties: {
     reply: { type: 'string', description: 'Your answer to your owner, in Markdown.' },
-    drafts: { ...DRAFTS, description: 'Only when your owner asks you to draft a board card or decision, or a change to one: at most a card and the decision it needs.' },
+    drafts: { ...DRAFTS, description: 'Only when your owner asks you to draft a board card or decision, or a change to one: at most a card and the decision it needs, or a contract card and the card after it.' },
   },
   required: ['reply'],
 };

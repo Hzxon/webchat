@@ -11,7 +11,7 @@ import type { Card, DocSection } from '../../../shared/board';
 import { textHash } from '../../../shared/e2ee';
 import { briefText, isHeld, runsCards } from '../../../shared/types';
 import { asleep, ownAgents, seatFor, seatKey, short, WAKE, type Seat } from '../agents';
-import { boardDocs, otherRun, startable, workingStatus } from '../board';
+import { afterWarnings, boardDocs, otherRun, startable, waitingFace, workingStatus } from '../board';
 import { requestRun } from '../chat';
 import { useLinkedRepos } from '../linkedRepos';
 import { boardCards, loadSections } from '../docs';
@@ -77,6 +77,9 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
   // The brief's hash covers the status line, so a run that starts after this check makes the agent refuse (D-105).
   if (loaded?.card && otherRun(loaded.card.status, meName))
     blocked = `The card says “${loaded.card.status}”, so another run of it goes or waits for review. Start once its status changes.`;
+  // Not before the cards its After line names are Done or Fixed (docs/roadmap/new-after-edge.md).
+  else if (loaded?.card?.waits)
+    blocked = `${waitingFace(loaded.card.waits)}, which must be Done or Fixed first. ${afterWarnings(loaded.card.waits).join(' ')}`.trim();
   // Not while it holds what only its owner may write, and only from where a run may start (the card-owner decision).
   else if (loaded?.card?.refused)
     blocked = 'Someone changed this card in a way only its owner can. Move or edit it first.';

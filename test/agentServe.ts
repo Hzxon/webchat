@@ -691,6 +691,20 @@ export function serveTests(w: World) {
         await assert.rejects(plugin.requestCard('acme/app', 'docs/roadmap/K-3.md', '### K-3: Totals lag\n\nStatus: Open.'), /has its number/);
         await assert.rejects(plugin.requestCard('acme/web', 'docs/roadmap/new-x.md', typed), /no copy|Connect it/i);
         assert.equal((await fromAgent()).filter((m) => m.kind === 'proposal').length, 0, 'nothing refused reaches the owner');
+        // A check that finds the card changes a contract and uses it proposes the split: the contract card, then the card after it (docs/roadmap/new-after-edge.md).
+        const contractDraft = { kind: 'idea', title: 'Totals type', body: 'Why: the terminal card needs it.', checked: 'Read shared/types.ts.' };
+        const afterDraft = { ...checkedDraft, after: 'Totals type' };
+        const split = await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ reply: 'It changes a shared type and uses it.', drafts: [contractDraft, afterDraft] }) }, () => fromTerminal(10));
+        assert.ok((await turns()).at(-1)!.input.includes('split it: a shared type, a migration'), "the check's brief asks for the split");
+        assert.match(split.text, /split it: “From the terminal” waits on the board until it is done/);
+        assert.deepEqual(
+          (await fromAgent()).flatMap((m) => (m.kind === 'proposal' ? [m.card] : [])),
+          [{ ...contractDraft, kind: 'R' }, { ...afterDraft, kind: 'R' }],
+          'both drafts reach the owner, who adds both or neither, and the second names the first',
+        );
+        // An after that names no card drafted before it is dropped.
+        await withEnv({ FAKE_CLAUDE_ANSWER: JSON.stringify({ reply: 'Fine.', drafts: [{ ...checkedDraft, after: 'Nothing' }] }) }, () => fromTerminal(10));
+        assert.deepEqual((await fromAgent()).flatMap((m) => (m.kind === 'proposal' ? [m.card] : [])), [{ ...checkedDraft, kind: 'R' }]);
         // On cards Alice opened, Carol's Ready and Carol's removal do not stand, so the copy shows neither, as the board does (the card-owner decision).
         const [owned, unremoved] = [newKeyId().slice(0, 11), newKeyId().slice(0, 11)];
         await w.alice.editSection(roadmapDoc, owned, () => ({ text: '### K-10: Owned\n\nStatus: Open.', pos: 10, opened: true }));
@@ -747,7 +761,27 @@ export function serveTests(w: World) {
         // A card the code already does ends at its check, pushes nothing, and offers its new status
         // as a change Alice adds (D-104).
         await fs.writeFile(ghState, JSON.stringify({ ...JSON.parse(await fs.readFile(ghState, 'utf8')), open: [] }));
+        // A card whose After line names a card that is not Done or Fixed is refused before the agent
+        // takes it, as a claimed one is; once that card is Done, it runs (docs/roadmap/new-after-edge.md).
+        await w.alice.sync();
+        const boardDoc = w.alice.docs.find((d) => d.id === board.id)!;
+        const [k7Text, contract] = ['### K-7: Sums are off by one\n\nStatus: Open.', newKeyId().slice(0, 11)];
+        const afterK12 = (status: string, removed = false) => w.alice.editSection(boardDoc, contract, () => ({ text: `### K-12: Totals type\n\nStatus: ${status}.`, pos: 2, removed }));
+        await afterK12('Ready');
+        await w.alice.editSection(boardDoc, section, () => ({ text: `${k7Text}\n\nAfter: K-12`, pos: 1 }));
+        await plugin.client!.sync();
+        const turnsBeforeAfter = (await turns()).length;
+        assert.deepEqual((await runK7()).said.map((r) => r.text), ['I could not run K-7: K-7 waits for K-12, which must be Done or Fixed first. Start it once they are.']);
+        assert.equal((await turns()).length, turnsBeforeAfter, 'no Claude ran for it');
+        await afterK12('Done on 2026-11-18');
+        await plugin.client!.sync();
+        const afterDone = await runK7({ FAKE_CLAUDE_CHECK: JSON.stringify({ outcome: 'stale', status: 'Done', note: 'sum.js adds exactly already.', checked: 'Read K-7.' }) });
+        assert.equal(afterDone.said[0]?.text, 'I am on K-7: Sums are off by one', 'K-12 is Done, so K-7 runs');
+        await w.alice.editSection(boardDoc, section, () => ({ text: k7Text, pos: 1 }));
+        await afterK12('Done on 2026-11-18', true);
+        await plugin.client!.sync();
         const [pullsBeforeRuns, branchesBeforeRuns] = [(await pullsNow()).length, await branches()];
+        const turnsBeforeStale = (await turns()).length;
         const check = { outcome: 'stale', status: 'Done', note: 'sum.js adds exactly already.', checked: 'Read K-7 and sum.js on main.' };
         const stale = await runK7({ FAKE_CLAUDE_CHECK: JSON.stringify(check) });
         assert.deepEqual(stale.said.map((r) => r.text), ['I am on K-7: Sums are off by one', 'K-7 no longer holds: sum.js adds exactly already.']);
@@ -759,7 +793,7 @@ export function serveTests(w: World) {
           checked: 'Read K-7 and sum.js on main.',
           replaces: { card: 'K-7', doc: board.id, section, seen: await textHash((await k7Now()).trim()) },
         });
-        assert.equal((await turns()).length, turnsBefore + 1, 'only the check ran');
+        assert.equal((await turns()).length, turnsBeforeStale + 1, 'only the check ran');
         assert.deepEqual([(await pullsNow()).length, await branches()], [pullsBeforeRuns, branchesBeforeRuns], 'nothing was pushed or opened');
 
         // A run that finds a decision nobody foresaw stops for it, with its claim and its work so far
