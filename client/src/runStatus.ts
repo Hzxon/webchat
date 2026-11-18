@@ -45,10 +45,11 @@ export async function followRuns() {
       if (!target || tried.has(key) || doc.locks.some((l) => l.section === section)) continue;
       tried.add(key);
       // Most reports moved their card already, so only a card that stands where the move starts takes its lock.
-      const card = (await cardsOf(doc)).find((c) => c.id === section);
+      const cards = await cardsOf(doc);
+      const card = cards.find((c) => c.id === section);
       if (!card || !standsAt(from, card.status)) continue;
       // Both card owners choose for a card that waits for another, and each but the user gets a push (docs/roadmap/new-overlap-gate.md).
-      const owners = run.state === 'overlap' ? choosers(card.owner, (await cardsOf(doc)).find((c) => c.cardId === run.waits)?.owner, me.id) : [];
+      const owners = run.state === 'overlap' ? choosers(card.owner, cards.find((c) => c.cardId.replace(/-0+(?=\d)/, '-') === run.waits)?.owner, me.id) : [];
       const to = owners.length ? waitsFor(target, owners.map((id) => (id === me.id ? me.displayName : (state.users[id]?.displayName ?? 'someone')))) : target;
       if (!(await move(doc, section, (status) => standsAt(from, status), to))) continue;
       for (const owner of owners.filter((id) => id !== me.id))

@@ -1043,7 +1043,8 @@ export function serveTests(w: World) {
         const runTouching = async (...touches: string[]) => {
           await unthrottle();
           const run = await runK7({ FAKE_CLAUDE_CHECK: JSON.stringify({ outcome: 'holds', note: '', checked: 'Read K-7 and sum.js on main.', touches }) });
-          return { ...run, pull: (await pullsNow()).at(-1)!, number: (await pullsNow()).length };
+          const pulls = await pullsNow();
+          return { ...run, pull: pulls.at(-1)!, number: pulls.length };
         };
         const choose = async (who: AgentClient, choice: string) => {
           await who.sync();

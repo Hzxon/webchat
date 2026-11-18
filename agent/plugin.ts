@@ -15,7 +15,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
-import { cardsOf, copyOf, entriesOf, proposalOf, readCard, usernamesOf } from '../shared/board.ts';
+import { cardsOf, copyOf, entriesOf, proposalOf, readCard, usernamesOf, type DocSection } from '../shared/board.ts';
 import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type AskDTO, type PairingPick, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
 import { ApiError } from './api.ts';
 import { AgentClient, checkInEvery, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
@@ -25,7 +25,7 @@ import { Keep } from './keep.ts';
 import { Permits, SEND_GAP_MS } from './permits.ts';
 import { messageOf, REQUEST_TTL_MS, Runs, type Runner, type RunResult } from './runs.ts';
 import { type AgentStatus, type Answer, type Asked, type BoardCopy, type Filed, type Overlap, type Place, type Planned, type PluginOptions, type Pull, type PullView, type Watched, type Who } from './pluginTypes.ts';
-import { choiceOf, choosers, overlaps, type Pull as Footprint } from '../shared/overlap.ts';
+import { choiceOf, choosers, overlaps, stackedLine, type Pull as Footprint } from '../shared/overlap.ts';
 import { ANSWER, CHECK, REPLY } from './pluginSchemas.ts';
 import { OWNER, checkBrief, fence, fixBrief, goBrief, inParts, overlapBrief, planBrief, promptBrief, pullList, seenOf, steerBrief, workBrief } from './briefs.ts';
 import { draftsOf, line } from './drafts.ts';
@@ -726,10 +726,14 @@ export class Plugin {
    * that stands, which the copy writes.
    */
   private async roadmapOf(project: ProjectDTO, doc?: DocDTO) {
-    const client = this.client!;
     if (!doc) return [];
-    const sections = await client.cardSections(doc).catch(() => []);
-    return cardsOf(sections, project.memberIds, usernamesOf(project.memberIds, Object.fromEntries(client.users), null)).map((c) => ({ doc: doc.id, section: c.id, text: c.written.trim(), stands: c.text.trim() }));
+    return (await this.roadmapCards(project, await this.client!.cardSections(doc).catch(() => []))).map((c) => ({ doc: doc.id, section: c.id, text: c.written.trim(), stands: c.text.trim() }));
+  }
+
+  /** The Roadmap's cards from their sections, with each card's owner and every member's word on it, as every page reads them. */
+  private roadmapCards(project: ProjectDTO, sections: DocSection[]) {
+    const client = this.client!;
+    return cardsOf(sections, project.memberIds, usernamesOf(project.memberIds, Object.fromEntries(client.users), null));
   }
 
   /** A column's cards, each with its place, or none for a column that does not open. */
@@ -1110,7 +1114,7 @@ export class Plugin {
     await this.saveWatched();
     const title = answer.title?.trim();
     // A stacked draft keeps naming the draft under it, which the overlap rule and CI read.
-    const body = answer.body?.trim() && `${answer.body.trim()}${pull.stacked ? `\n\nStacked on #${pull.stacked}` : ''}`;
+    const body = answer.body?.trim() && `${answer.body.trim()}${pull.stacked ? `\n\n${stackedLine(pull.stacked)}` : ''}`;
     if (title || body) await gh(['pr', 'edit', String(pull.pull.number), '--repo', pull.pull.repo, ...(title ? ['--title', title] : []), ...(body ? ['--body', body] : [])]);
     return { branch: pull.branch, pull: pull.pull, note: answer.note || undefined, drafts };
   }
@@ -1604,9 +1608,9 @@ export class Plugin {
   }
 
   /** Holds a run whose files an earlier draft holds: it does no more until that draft lets them go or the two card owners choose. */
-  private async wait(pull: Watched, holder: NonNullable<Awaited<ReturnType<Plugin['heldBy']>>>, more: Pick<Overlap, 'start' | 'files'>): Promise<RunResult> {
+  private async wait(pull: Watched, holder: NonNullable<Awaited<ReturnType<Plugin['heldBy']>>>, { start, files }: Pick<Overlap, 'start' | 'files'>): Promise<RunResult> {
     const words = (await this.overlapCards(pull, holder.waits))?.card.words ?? [];
-    pull.unfinished = { overlap: { number: holder.number, waits: holder.waits, branch: holder.branch, since: Math.max(0, ...words.map((w) => w.id)), ...more } };
+    pull.unfinished = { overlap: { number: holder.number, waits: holder.waits, branch: holder.branch, since: Math.max(0, ...words.map((w) => w.id)), start, files } };
     await this.saveWatched();
     return { kind: 'overlap', branch: pull.branch, pull: pull.pull, waits: holder.waits, note: holder.files.join(', ') };
   }
@@ -1617,7 +1621,7 @@ export class Plugin {
     const doc = client.docs.find((d) => d.id === pull.request.docId);
     const project = client.projects.find((p) => p.id === this.projectOf(pull.request));
     if (!doc || !project) return;
-    const cards = cardsOf(await client.cardSections(doc), project.memberIds, usernamesOf(project.memberIds, Object.fromEntries(client.users), null));
+    const cards = this.roadmapCards(project, await client.cardSections(doc));
     const card = cards.find((c) => c.id === pull.request.section);
     return card && { card, owners: choosers(card.owner, cards.find((c) => cardKey(c.cardId) === waits)?.owner, client.owner!) };
   }
@@ -1635,13 +1639,13 @@ export class Plugin {
     const where = ['--repo', pull.pull.repo];
     if (choice === 'stack' && pull.stacked !== wait.number) {
       const body = await gh(['pr', 'view', String(pull.pull.number), ...where, '--json', 'body', '--jq', '.body']);
-      await gh(['pr', 'edit', String(pull.pull.number), ...where, '--body', `${body}\n\nStacked on #${wait.number}`]);
+      await gh(['pr', 'edit', String(pull.pull.number), ...where, '--body', `${body}\n\n${stackedLine(wait.number)}`]);
       pull.stacked = wait.number;
       await this.saveWatched();
     }
     const holder = await this.heldBy(pull, wait.files);
     // Another earlier draft holds its files now, and its owners choose for that one.
-    if (holder && holder.number !== wait.number) return this.runs!.done(pull.taken, await this.wait(pull, holder, { start: wait.start, files: wait.files }));
+    if (holder && holder.number !== wait.number) return this.runs!.done(pull.taken, await this.wait(pull, holder, wait));
     if (holder) return;
     const why = pull.stacked === wait.number ? `its owners stacked it on ${wait.waits}` : `${wait.waits} no longer holds its files`;
     await this.runs!.follow(pull.taken, pull.request, why, { branch: pull.branch, pull: pull.pull }, (signal) => this.goOn(pull, wait, signal));

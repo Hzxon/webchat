@@ -28,6 +28,9 @@ export function footprint(pull: Pull): string[] {
   return (changed.length > 0 ? changed : touches(pull.body ?? '')).filter((file) => !exemptFile(file));
 }
 
+/** The line a stacked draft's body carries, which `named` reads. */
+export const stackedLine = (number: number) => `Stacked on #${number}`;
+
 /** The pull requests the author named with `After #12` or `Stacked on #12`. */
 export function named(body: string): number[] {
   return [...body.matchAll(/\b(?:after|stacked on) #(\d+)/gi)].map((match) => Number(match[1]));
