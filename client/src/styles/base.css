@@ -91,6 +91,12 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* A dialog takes the browser's CanvasText, not the body's color, and Astryx's Dialog sets only its
+   background. iOS 15 drew a card's text in the peek dark on the dark panel. */
+dialog {
+  color: var(--text);
+}
+
 button,
 input,
 select,
