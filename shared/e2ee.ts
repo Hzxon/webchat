@@ -33,6 +33,7 @@ import {
   type PullChecks,
   type PromptDTO,
   type SessionEventDTO,
+  type CardAskDTO,
   type PullReview,
   type RunDTO,
   type RunReport,
@@ -576,17 +577,26 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
     const repo = typeof raw.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
     if ((raw.repo !== undefined && !repo) || (!repo && !isId(raw.project)) || !isId(raw.sentAt)) return;
     const harness = short(raw.harness, LIMITS.harnessFieldLength);
-    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }), ...(raw.own === true && { own: true as const }), ...(raw.events === true && { events: true as const }) };
+    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }), ...(raw.own === true && { own: true as const }), ...(raw.events === true && { events: true as const }), ...readCardAsk(raw.card) };
   }
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
-  if (raw.kind === 'reply' || raw.kind === 'cancel') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt } : undefined;
+  if (raw.kind === 'reply') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt, ...readCardAsk(raw.card) } : undefined;
+  if (raw.kind === 'cancel') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt } : undefined;
   if (raw.kind === 'failed' || raw.kind === 'nocopy' || raw.kind === 'note') return { kind: raw.kind, to };
   if (raw.kind === 'events') return { kind: 'events', to, events: readEvents(raw.events) };
   if (raw.kind === 'clone') return typeof raw.repo === 'string' && isRepoName(raw.repo) && isId(raw.sentAt) ? { kind: 'clone', to, repo: raw.repo, sentAt: raw.sentAt } : undefined;
   if (raw.kind !== 'answer') return;
   const card = readDraft(raw.card as Record<string, unknown> | undefined);
   return card ? { kind: 'answer', to, card } : { kind: 'answer', to };
+}
+
+/** A card mark of the right shape, as the field that carries it, or nothing (R-071). */
+function readCardAsk(raw: unknown): { card?: CardAskDTO } {
+  const card = raw as { kind?: unknown; title?: unknown; body?: unknown } | null | undefined;
+  const title = short(card?.title, LIMITS.docTitleLength);
+  const body = short(card?.body, LIMITS.docSectionLength);
+  return (card?.kind === 'R' || card?.kind === 'K' || card?.kind === 'D') && title !== undefined && body !== undefined ? { card: { kind: card.kind, title, body } } : {};
 }
 
 const EVENT_KINDS: ReadonlyArray<SessionEventDTO['kind']> = ['thinking', 'read', 'search', 'command', 'edit', 'tool', 'text'];

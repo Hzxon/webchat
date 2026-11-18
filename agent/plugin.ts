@@ -27,7 +27,7 @@ import { messageOf, REQUEST_TTL_MS, Runs, type Runner, type RunResult } from './
 import { type AgentStatus, type Answer, type Asked, type BoardCopy, type Filed, type Overlap, type Place, type Planned, type PluginOptions, type Pull, type PullView, type Watched, type Who } from './pluginTypes.ts';
 import { cardKey, choiceOf, choosers, overlaps, stackedLine, type Pull as Footprint } from '../shared/overlap.ts';
 import { ANSWER, CHECK, REPLY } from './pluginSchemas.ts';
-import { OWNER, checkBrief, fence, fixBrief, goBrief, inParts, overlapBrief, planBrief, promptBrief, pullList, seenOf, steerBrief, workBrief } from './briefs.ts';
+import { OWNER, cardAsk, checkBrief, fence, fixBrief, goBrief, inParts, overlapBrief, planBrief, promptBrief, pullList, seenOf, steerBrief, workBrief } from './briefs.ts';
 import { draftsOf, line } from './drafts.ts';
 import { freeLock, markOf, noCopy, shown, takeLock } from './pluginFiles.ts';
 export { line } from './drafts.ts';
@@ -1261,7 +1261,7 @@ export class Plugin {
    * a repository of its own, in the temp folder under a random name: it shares no refs or objects
    * with the checkout, so a turn can move none of the owner's branches, and nothing there is pushed.
    */
-  private async converse({ conversation, input, resume, signal }: Parameters<Answerer>[0]) {
+  private async converse({ conversation, input, resume, signal, card }: Parameters<Answerer>[0]) {
     const refused = await this.refusal();
     if (refused) throw new Error(refused);
     // The harness the prompt named, or the host: kept by name, so each reply resumes with it.
@@ -1307,14 +1307,17 @@ export class Plugin {
           ...(listed !== (conversation.pulls ?? '') ? ['', listed] : []),
         ].join('\n')
       : promptBrief(input, board, folder?.repo, listed, own);
+    // The new card form asks for one draft, from its fields as they stand, which the owner may have edited (R-071).
+    const asked = card ? `${message}\n\n${cardAsk(card)}` : message;
     // Never the owner's folder as `scratch`, which an ended conversation removes.
     const cwd = own && folder ? folder.dir : scratch;
-    const answer = (await this.ask(cwd, conversation.session, resume, message, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks, own, events: conversation.events })) as { reply?: unknown; drafts?: unknown };
+    const answer = (await this.ask(cwd, conversation.session, resume, asked, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks, own, events: conversation.events })) as { reply?: unknown; drafts?: unknown };
     // Only once the turn read them, so a turn cut short tells the next one again.
     conversation.seen = seen;
     conversation.pulls = listed;
     const held = new Set([...Object.keys(seen), ...(pulls ?? []).map((p) => `#${p.number}`)]);
-    return { reply: String(answer.reply ?? ''), drafts: draftsOf(answer.drafts, seen, held).slice(0, 2) };
+    const drafts = draftsOf(answer.drafts, seen, held);
+    return { reply: String(answer.reply ?? ''), drafts: card ? drafts.filter((d) => !d.replaces && d.kind === card.kind).slice(0, 1) : drafts.slice(0, 2) };
   }
 
   /**

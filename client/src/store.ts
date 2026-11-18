@@ -78,6 +78,8 @@ export interface State {
   agentThread: string | null;
   /** The card whose brief that pane shows before its owner presses Start (D-105). */
   agentBrief: { projectId: number; docId: string; section: string } | null;
+  /** A new card form to open on a board, for a session that drafts it (R-071). */
+  newCard: { projectId: number; kind: 'R' | 'K' | 'D'; session: string } | null;
 }
 
 const initialState: State = {
@@ -109,6 +111,7 @@ const initialState: State = {
   agentsOpen: false,
   agentThread: null,
   agentBrief: null,
+  newCard: null,
 };
 
 let state = initialState;
@@ -423,6 +426,10 @@ export const actions = {
 
   /** Shows a card's brief in the Coding agents pane, which runs it once its owner presses Start (D-105). */
   openBrief: (agentBrief: NonNullable<State['agentBrief']>) => store.set((s) => show(s, { agentsOpen: true, agentThread: null, agentBrief })),
+
+  /** Opens a board's new card form for a session, which then drafts the card there (R-071); null once the board took it. */
+  openNewCard: (newCard: State['newCard']) =>
+    store.set((s) => (newCard ? show(s, { boardOpen: newCard.projectId, boardCard: null, tab: 'projects', newCard }) : { ...s, newCard })),
 
   /** Closes whichever pane shows, back to the landing pane. */
   closePanes: () => store.set((s) => show(s, {})),

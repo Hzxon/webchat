@@ -3,6 +3,7 @@
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
+import { Selector } from '@astryxdesign/core/Selector';
 import { Text } from '@astryxdesign/core/Text';
 import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { LIMITS, type RunRequest } from '../../../shared/types';
@@ -98,6 +99,14 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
   const decision =
     thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'decision' && m.run.card) : undefined;
   const decided = decision && thread.added[decision.clientId ?? ''];
+  // Make a card: the session drafts one of the kind picked, into the board's new card form (R-071).
+  const [cardKind, setCardKind] = useState<'R' | 'K' | 'D'>('R');
+  const makeCard = () => {
+    const projectId = thread.project;
+    if (projectId === undefined) return;
+    actions.openNewCard({ projectId, kind: cardKind, session: thread.root });
+    void tellAgent(thread.conversationId, thread.root, 'reply', 'Make a card of this.', { kind: cardKind, title: '', body: '' });
+  };
   const stop = () =>
     void (request ? cancelRun(request) : tellAgent(thread.conversationId, thread.root, 'cancel', 'Stop'));
   const again = () => {
@@ -358,6 +367,22 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
           (request && (thread.state === 'unsent' || nocopy)) ? null : (
           <>
             {!working && blocked && <Banner status="warning" title={blocked} />}
+            {thread.kind === 'question' && thread.project !== undefined && !working && !asking && !blocked && (
+              <div className="agents-draft-actions">
+                <Selector
+                  label="Kind of card"
+                  isLabelHidden
+                  value={cardKind}
+                  onChange={(v) => setCardKind(v as 'R' | 'K' | 'D')}
+                  options={[
+                    { value: 'R', label: 'Idea' },
+                    { value: 'K', label: 'Issue' },
+                    { value: 'D', label: 'Decision' },
+                  ]}
+                />
+                <Button label="Make a card" onClick={makeCard} />
+              </div>
+            )}
             <Box
               name={`agents:${thread.root}`}
               placeholder={request ? 'Ask for changes to the draft' : 'Reply'}

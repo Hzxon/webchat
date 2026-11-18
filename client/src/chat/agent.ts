@@ -1,5 +1,5 @@
 import { keyFingerprint, openPicks, pairingId, pairingProof, permitHash } from '../../../shared/e2ee';
-import { LIMITS, type CardNoteDTO, type PullCardDTO, type PullRequestDTO, type AskDTO, type PermitDTO, type PairingPick, type PublicKeysDTO, type RunDTO, type RunRequest, type SetupChoice, type UserDTO } from '../../../shared/types';
+import { LIMITS, type CardNoteDTO, type PullCardDTO, type PullRequestDTO, type AskDTO, type CardAskDTO, type PromptDTO, type PermitDTO, type PairingPick, type PublicKeysDTO, type RunDTO, type RunRequest, type SetupChoice, type UserDTO } from '../../../shared/types';
 import { api } from '../api';
 import { keyring, type ChatMessage } from '../e2ee/keyring';
 import type { Card } from '../../../shared/board';
@@ -51,11 +51,11 @@ export function askClone(conversationId: number, repo: string, waiting: { reques
  * for the laptop's host harness. `own` says the user typed it, so it may run in their own setup
  * (D-157). The agent's laptop answers. Returns the conversation, by the prompt's client id.
  */
-export async function askAgent(agentId: number, project: number, repo: string | undefined, question: string, harness?: string, own?: true) {
+export async function askAgent(agentId: number, project: number, repo: string | undefined, question: string, harness?: string, own?: true, card?: CardAskDTO) {
   const conversationId = await startDirectChat(agentId);
   const clientId = newClientId();
   // The message shows as sending at once, so the pane can open its conversation.
-  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, asks: true, events: true, ...(repo && { repo }), ...(harness && { harness }), ...(own && { own }) } }, false, clientId);
+  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, asks: true, events: true, ...(repo && { repo }), ...(harness && { harness }), ...(own && { own }), ...(card && { card }) } }, false, clientId);
   return clientId;
 }
 
@@ -107,8 +107,10 @@ export async function forgetFolder(agentId: number, repo: string) {
 }
 
 /** Replies in a conversation with an agent, or stops its turn. Both name the prompt's client id (D-102). */
-export function tellAgent(conversationId: number, to: string, kind: 'reply' | 'cancel', text: string) {
-  return sendContent(conversationId, { text: text.trim(), prompt: { kind, to, sentAt: Date.now() } }, false);
+export function tellAgent(conversationId: number, to: string, kind: 'reply' | 'cancel', text: string, card?: CardAskDTO) {
+  // A reply from the new card form carries its fields as they stand, so the draft builds on the user's edits (R-071).
+  const prompt: PromptDTO = kind === 'reply' ? { kind, to, sentAt: Date.now(), ...(card && { card }) } : { kind, to, sentAt: Date.now() };
+  return sendContent(conversationId, { text: text.trim(), prompt }, false);
 }
 
 /** Tells the user's other devices that their page put an agent's card draft on the board (D-104). The agent ignores it. */

@@ -1,5 +1,6 @@
 import { textHash } from '../shared/e2ee.ts';
 import { readCard } from '../shared/board.ts';
+import type { CardAskDTO } from '../shared/types.ts';
 import { type Conversation } from './conversations.ts';
 import { type Place, type Pull, type Watched } from './pluginTypes.ts';
 
@@ -129,6 +130,19 @@ export function promptBrief(input: string, board: Board | undefined, repo: strin
     ...(decisions.length ? ['', fence(`The decisions of ${board!.project}`, decisions)] : []),
     ...(board?.cards.length ? ['', fence(`The roadmap cards of ${board.project}`, board.cards.map((c) => c.text))] : []),
     ...(pulls ? ['', pulls] : []),
+  ].join('\n');
+}
+
+/** What the new card form asks of a session: one new checked draft of its kind, from its fields as they stand (R-071). */
+export function cardAsk(card: CardAskDTO) {
+  const kind = { R: 'idea', K: 'issue', D: 'decision' }[card.kind];
+  return [
+    `Your owner has the board's new card form open and wants one new ${kind} from this session. Check it first, as for any`,
+    `draft: against the board, the code and the open pull requests. Put exactly one draft in drafts, of kind ${kind}, with no`,
+    'replaces. Build on the title and details below, which your owner may have edited: keep them, and change them only where',
+    'your check or this session finds something wrong or missing. Say in reply what you changed and why.',
+    '',
+    fence('The form as it stands', [`Title: ${card.title.trim() || '(empty)'}`, '', card.body.trim() || '(empty)'], [OWNER, "OWNER'S WORDS"]),
   ].join('\n');
 }
 
