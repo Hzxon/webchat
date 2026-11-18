@@ -3,7 +3,8 @@
 // number of its kind, taken under its column's lock when they press the button (D-116), or the
 // change to the card it replaces, but only while that card says what the agent saw. Above the
 // button stand the cards, decisions and pull requests the agent's check found it repeats or goes
-// against, and the card it writes carries the check's line (R-041).
+// against, and the card it writes carries the check's line (R-041). A proposal's draft can be
+// dismissed instead, by a note in the same chat, so it waits on none of the owner's devices.
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { Selector } from '@astryxdesign/core/Selector';
@@ -13,7 +14,7 @@ import { textHash } from '../../../shared/e2ee';
 import { cardStatus, type CardDraftDTO } from '../../../shared/types';
 import { threadProject, type Thread } from '../agents';
 import { boardDocs, columnOf, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, withChecked } from '../board';
-import { noteAdded, syncNow, tellAgent } from '../chat';
+import { noteAdded, noteDismissed, syncNow, tellAgent } from '../chat';
 import { addCard, boardCards, createBoard, newSectionId, rewriteCard, sectionHistory } from '../docs';
 import type { ChatMessage } from '../e2ee/keyring';
 import { actions, senderName, useAppState } from '../store';
@@ -171,7 +172,23 @@ export function AgentDraft({
     }
   }
 
+  async function dismiss() {
+    setBusy(true);
+    setError('');
+    try {
+      await noteDismissed(thread.conversationId, thread.root, draft.title);
+      void syncNow();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const kind = KIND_NAMES[draft.kind];
+  const dismissButton = thread.kind === 'proposal' && (
+    <Button variant="ghost" label="Dismiss" isDisabled={busy} onClick={() => void dismiss()} />
+  );
   // What the change adds or rewrites, marked so a small edit shows.
   const now = new Set(paragraphsOf(current?.body ?? ''));
   const marked = (changed: boolean) => (change && changed ? 'agents-changed' : undefined);
@@ -230,6 +247,8 @@ export function AgentDraft({
             <Button variant="ghost" size="sm" label="Open the board" onClick={() => actions.setBoardOpen(projectId)} />
           )}
         </p>
+      ) : thread.kind === 'proposal' && thread.state === 'ended' ? (
+        <p className="agents-draft-done">Dismissed.</p>
       ) : change && stale ? (
         <>
           <Banner
@@ -255,6 +274,7 @@ export function AgentDraft({
               }}
             />
           )}
+          {dismissButton && <div className="agents-draft-actions">{dismissButton}</div>}
         </>
       ) : (
         <div className="agents-draft-actions">
@@ -288,6 +308,7 @@ export function AgentDraft({
             isLoading={busy}
             onClick={() => void add()}
           />
+          {dismissButton}
         </div>
       )}
       {error && <Banner status="error" title={error} />}

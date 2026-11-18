@@ -196,6 +196,11 @@ describe('end-to-end encryption', () => {
     assert.deepEqual(await decryptContent(key, alice.identity.publicKeys.sign, meta, envelope), content);
     await assert.rejects(decryptContent(key, alice.identity.publicKeys.sign, { ...meta, kind: 'message' }, envelope), /bad signature/);
 
+    // The owner's dismissal of a proposal draft is sealed content too (R-047).
+    const dismissal = { text: 'Dismissed the proposal Bug.', dismissed: { to: 'p1' } };
+    const plainMeta = { ...meta, kind: undefined };
+    assert.deepEqual(await decryptContent(key, alice.identity.publicKeys.sign, plainMeta, await encryptMessage(key, keyId, alice.identity.signPrivate, plainMeta, dismissal)), dismissal);
+
     const reply = { text: 'Yes', replyTo: { id: 12, senderId: bob.id, text: 'x'.repeat(500) } };
     const plain = { ...meta, kind: undefined };
     const opened = await decryptContent(key, alice.identity.publicKeys.sign, plain, await encryptMessage(key, keyId, alice.identity.signPrivate, plain, reply));

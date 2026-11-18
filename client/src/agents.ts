@@ -171,6 +171,11 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
       if (thread?.kind === 'proposal') thread.state = 'done';
       continue;
     }
+    if (message.dismissed && message.senderId === meId) {
+      const thread = threads.get(message.dismissed.to);
+      if (thread?.kind === 'proposal' && thread.state === 'draft') thread.state = 'ended';
+      continue;
+    }
     // A proposal file the default branch of a linked repository gained, which the agent hands its owner as a draft (R-040).
     if (message.board?.kind === 'proposal') {
       const { project, repo } = message.board;
@@ -252,14 +257,30 @@ export function threadCard(thread: Thread, docs: State['docs'], conversations: S
   return run?.kind === 'request' && projectId ? { projectId, section: run.section } : undefined;
 }
 
-/** The proposals for a board and its linked repository whose draft the owner has not added yet, each with its message and draft, newest first (D-117, R-047). */
+/**
+ * The proposals whose draft the owner has neither added nor dismissed, each with its message and
+ * draft, newest first (D-117, R-047). Only the newest copy of a change to a card, or of a new card
+ * by kind and title, counts: the agent sends a file again when it changes, and may send one twice
+ * (K-71), so an older copy waits no longer once a newer one came, whatever became of it.
+ */
+function openProposals(threads: Thread[]) {
+  const seen = new Set<string>();
+  return [...threads]
+    .sort((a, b) => b.last - a.last)
+    .flatMap((thread) => {
+      const message = thread.messages[0]!;
+      if (thread.kind !== 'proposal' || message.board?.kind !== 'proposal') return [];
+      const draft = message.board.card;
+      const key = `${thread.project}:${thread.repo.toLowerCase()}:${draft.replaces?.card ?? `${draft.kind}:${draft.title.trim().toLowerCase()}`}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return thread.state === 'draft' ? [{ thread, message, draft }] : [];
+    });
+}
+
+/** The waiting proposals for a board and its linked repository. */
 export const waitingProposals = (threads: Thread[], projectId: number, repo: string) =>
-  threads.flatMap((thread) => {
-    const message = thread.messages[0]!;
-    return message.board?.kind === 'proposal' && thread.state === 'draft' && thread.project === projectId && thread.repo.toLowerCase() === repo.toLowerCase()
-      ? [{ thread, message, draft: message.board.card }]
-      : [];
-  });
+  openProposals(threads).filter(({ thread }) => thread.project === projectId && thread.repo.toLowerCase() === repo.toLowerCase());
 
 /** The user's chats with their agents. */
 /** The user's direct chat with one of their agents, where its sealed setup answers come (R-039). */
@@ -274,8 +295,8 @@ export function useAgentChats() {
   return useMemo(() => agentChats({ users, me, conversations }), [users, me, conversations]);
 }
 
-/** The proposals whose draft the owner has not added yet, in every project, for the Coding agents row (D-117, R-045). */
-export const proposalsWaiting = (threads: Thread[]) => threads.filter((t) => t.kind === 'proposal' && t.state === 'draft').length;
+/** The waiting proposals in every project, for the Coding agents row (D-117, R-045). */
+export const proposalsWaiting = (threads: Thread[]) => openProposals(threads).length;
 
 /** The user's chats with their agents, and every conversation in them, newest first. */
 export function useAgentThreads() {

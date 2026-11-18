@@ -67,7 +67,7 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
   });
 
   test('the Coding agents row counts the proposals in every project whose draft the owner has not added (R-045)', () => {
-    const proposal = (clientId: string, project: number) => ({ ...say(AGENT, {}, clientId), prompt: null, board: { kind: 'proposal', project, repo: 'team/app' } });
+    const proposal = (clientId: string, project: number) => ({ ...say(AGENT, {}, clientId), prompt: null, board: { kind: 'proposal', project, repo: 'team/app', card: { kind: 'K', title: clientId, body: '' } } });
     const added = { ...say(ME, {}), prompt: null, added: { to: 'x1', draft: 'x1', card: 'K-4' } };
     const theirs = { ...say(AGENT, {}), prompt: null, added: { to: 'x2', draft: 'x2', card: 'K-5' } };
     const prompt = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'p1');
@@ -149,6 +149,23 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.deepEqual([first.message.clientId, first.draft], [first.thread.root, { kind: 'K', title: first.thread.root, body: '' }], 'with the message and the draft the board shows');
     assert.deepEqual(waiting({ ...say(ME, {}), prompt: null, added: { to: 'a', draft: 'a', card: 'K-9' } }), ['b'], 'an added draft no longer waits');
     assert.deepEqual(waiting({ ...say(AGENT, {}), prompt: null, added: { to: 'b', draft: 'b', card: 'K-9' } }), ['a', 'b'], 'only the owner adds');
+  });
+
+  test('the owner dismisses a proposal, and a newer copy of the same card or change replaces an older one', () => {
+    const propose = (clientId: string, card: object) => ({ ...say(AGENT, {}, clientId, ++id), prompt: null, board: { kind: 'proposal', project: 4, repo: 'team/app', card: { body: '', ...card } } });
+    const note = (senderId: number, to: string) => ({ ...say(senderId, {}), prompt: null, dismissed: { to } });
+    const waiting = (...messages: object[]) => waitingProposals(threadsOf(messages, ME, AGENT, {}, 100), 4, 'team/app').map((p: { thread: { root: string } }) => p.thread.root);
+    const one = propose('a', { kind: 'K', title: 'Bug' });
+    assert.deepEqual(waiting(one, note(ME, 'a')), [], "the owner's note ends the wait");
+    assert.deepEqual(waiting(one, note(AGENT, 'a')), ['a'], 'only the owner dismisses');
+    assert.equal(threadsOf([one, note(ME, 'a')], ME, AGENT, {}, 100)[0].state, 'ended');
+    assert.equal(proposalsWaiting(threadsOf([one, note(ME, 'a')], ME, AGENT, {}, 100)), 0);
+    // The agent sends a file again when it changes, and may send one twice (K-71).
+    const change = (clientId: string, title: string) => propose(clientId, { kind: 'R', title, replaces: { card: 'R-47', doc: 'd', section: 's', seen: 'h' } });
+    const added = { ...say(ME, {}), prompt: null, added: { to: 'c3', draft: 'c3', card: 'R-47' } };
+    assert.deepEqual(waiting(change('c1', 'Old'), change('c2', 'Older'), change('c3', 'New'), added), [], 'older changes to a card wait no longer once a newer one is added');
+    assert.deepEqual(waiting(change('c4', 'Old'), change('c5', 'New')), ['c5'], 'only the newest change waits');
+    assert.deepEqual(waiting(propose('d1', { kind: 'K', title: 'Bug' }), propose('d2', { kind: 'K', title: ' bug ' }), propose('d3', { kind: 'R', title: 'Bug' })).sort(), ['d2', 'd3'], 'a copy with the same kind and title');
   });
 
   test('a laptop that serves every folder takes a repository it has no folder of, and offers to clone it (R-036)', () => {
