@@ -233,7 +233,8 @@ function SetupForm({ agent }: { agent: UserDTO }) {
             {h.knobs.includes('own') && takesOwn(agent.protocol) && (
               <PickItem
                 label="Use my own setup in sessions I start"
-                description={OWN_WARNING}
+                // A Text, not a string, so the warning wraps instead of being cut to one line.
+                description={<Text color="secondary">{OWN_WARNING}</Text>}
                 checked={!!choice.own?.includes(h.name)}
                 onChange={() => setEdit({ ...choice, own: flip(choice.own ?? [], h.name) })}
               />
