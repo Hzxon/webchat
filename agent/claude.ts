@@ -7,12 +7,13 @@
 // question, it asks before an action through its permission prompt tool (approve.ts). This is the
 // plugin's harness adapter for Claude Code (harness.ts).
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { constants } from 'node:fs';
+import { constants, realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { promisify } from 'node:util';
+import { LIMITS, type SessionEventDTO } from '../shared/types.ts';
 import { fits } from './answer.ts';
 import { APPROVE_TOOL, openApprover, TOOL_TIMEOUT_MS, type Call } from './approve.ts';
 import { isCredential, olderThan, secretDirs, type Ask, type Harness, type Turn } from './harness.ts';
@@ -160,6 +161,70 @@ export function claudeProgress(output: string, cwd: string): string | undefined 
   return line(said, 200) || undefined;
 }
 
+/** A step for a tool call: what it reads, searches, edits or runs, with the file as the folder knows it. */
+function toolStep(name: string, input: Record<string, unknown>, cwd: string, at: number): SessionEventDTO {
+  const field = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '');
+  // A file outside the folder shows as given, not as a climb out of it.
+  const relative = field('file_path') && path.relative(cwd, field('file_path'));
+  const file = relative.startsWith('..') ? field('file_path') : relative;
+  switch (name) {
+    case 'Bash':
+      return { kind: 'command', title: field('command'), at };
+    case 'Read':
+      return { kind: 'read', title: file, at };
+    case 'WebFetch':
+      return { kind: 'read', title: field('url'), at };
+    case 'Glob':
+    case 'Grep':
+      return { kind: 'search', title: field('pattern'), at };
+    case 'WebSearch':
+      return { kind: 'search', title: field('query'), at };
+    case 'Write':
+      return { kind: 'edit', title: file, detail: field('content'), at };
+    case 'Edit':
+      return { kind: 'edit', title: file, detail: `- ${field('old_string')}\n+ ${field('new_string')}`, at };
+    default:
+      return { kind: 'tool', title: `${name} ${JSON.stringify(input)}`, at };
+  }
+}
+
+/** A tool result's text, from a string or its text blocks. */
+const resultText = (content: unknown) =>
+  typeof content === 'string' ? content : Array.isArray(content) ? content.map((c: { text?: unknown }) => (typeof c?.text === 'string' ? c.text : '')).join('\n') : '';
+
+/**
+ * The steps one line of Claude Code's stream-json output holds, for the owner's timeline (R-072):
+ * its reasoning, its words and each tool call. A command waits in `open`, by its call's id, until
+ * its output comes. Every field is cut to its limits, a long output to its end.
+ */
+export function claudeEvents(output: string, cwd: string, open: Map<string, SessionEventDTO>, at = Date.now()): SessionEventDTO[] {
+  const assistant = output.includes('"type":"assistant"');
+  // A tool's result can run to hundreds of kilobytes; it is parsed only while a command waits for one.
+  if (!assistant && !(open.size && output.includes('"type":"user"'))) return [];
+  let event: { type?: string; message?: { content?: unknown } } | null;
+  try {
+    event = JSON.parse(output) as typeof event;
+  } catch {
+    return [];
+  }
+  const blocks = Array.isArray(event?.message?.content) ? (event.message.content as Array<Record<string, unknown>>) : [];
+  const steps: SessionEventDTO[] = [];
+  for (const block of blocks) {
+    const words = typeof block.thinking === 'string' ? block.thinking : typeof block.text === 'string' ? block.text : '';
+    if (event!.type === 'assistant' && (block.type === 'thinking' || block.type === 'text') && words.trim()) {
+      steps.push({ kind: block.type, title: words.trim().split('\n')[0]!, detail: words, at });
+    } else if (event!.type === 'assistant' && block.type === 'tool_use' && typeof block.id === 'string') {
+      const step = toolStep(String(block.name), (block.input ?? {}) as Record<string, unknown>, cwd, at);
+      if (step.kind === 'command') open.set(block.id, step);
+      else steps.push(step);
+    } else if (event!.type === 'user' && block.type === 'tool_result' && open.has(String(block.tool_use_id))) {
+      steps.push({ ...open.get(String(block.tool_use_id))!, detail: resultText(block.content) });
+      open.delete(String(block.tool_use_id));
+    }
+  }
+  return steps.map((s) => ({ ...s, title: s.title.slice(0, LIMITS.eventTitleLength), ...(s.detail && { detail: s.detail.slice(-LIMITS.eventDetailLength) }) }));
+}
+
 const ASK_KINDS: Record<string, Ask['kind']> = { Bash: 'execute', Edit: 'edit', MultiEdit: 'edit', Write: 'edit', NotebookEdit: 'edit', Read: 'read', Glob: 'read', Grep: 'read', WebFetch: 'fetch', WebSearch: 'fetch' };
 
 /**
@@ -297,6 +362,9 @@ export function claudeHarness(program: string, dataDir: string): Harness {
   function converse(live: Live, t: Turn) {
     return new Promise<unknown>((resolve, reject) => {
       let done = false;
+      // The commands of this turn that wait for their output, and the folder as the harness names it, past any link (R-072).
+      const open = new Map<string, SessionEventDTO>();
+      const real = realpathSync(t.cwd);
       const dog = watchdog(IDLE_MS, t.quiet ?? new Quiet(), () => finish(new Error(`the agent printed nothing for ${IDLE_MS / 60_000} minutes.`)));
       const onAbort = () => finish(new Error(CANCELLED));
       function finish(error?: Error, answer?: unknown) {
@@ -322,6 +390,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
         fail: finish,
         line(output) {
           dog.arm();
+          if (t.events) for (const step of claudeEvents(output, real, open)) t.events(step);
           const result = claudeResult(output);
           if (!result) {
             const said = t.progress && claudeProgress(output, t.cwd);

@@ -44,3 +44,4 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - An Astryx field has no `maxLength` or native `required`: cut the value in `onChange` and check empty fields before a request (the astryx-migration decision, proposed in #248).
 - A class on an Astryx component wins only from `overrides.css`, the layer above Astryx's; keep it to states no prop covers (the astryx-migration decision, proposed in #248).
 - No regex lookbehind in client code: the build cannot rewrite it, and Safari before 16.4 throws when the module loads, so the page stays white; `test/chatText.test.ts` checks it (D-052).
+- A session's steps are no message of a thread: `threadsOf` keeps them in `steps`, the pane pages them apart from the history with `loadSteps` back to the prompt, and shows them only through `SessionSteps`, as plain text, never Markdown (R-072).

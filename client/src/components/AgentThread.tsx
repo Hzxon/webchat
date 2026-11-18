@@ -4,17 +4,18 @@ import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Text } from '@astryxdesign/core/Text';
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { LIMITS, type RunRequest } from '../../../shared/types';
 import { blockedBy, threadProject, WAKE, type Seat, type Thread } from '../agents';
-import { answerPermit, askClone, askFix, cancelRun, discardMessage, retryMessage, saveDraft, tellAgent } from '../chat';
+import { answerPermit, askClone, askFix, cancelRun, discardMessage, loadSteps, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatMessage } from '../e2ee/keyring';
 import { actions, useAppState } from '../store';
 import { FileBubble, useAutoGrow, useDraft } from './ChatView';
-import { formatTime } from './format';
+import { formatAgo, formatTime } from './format';
 import { AlertIcon, SendIcon } from './icons';
 import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
+import { SessionSteps } from './SessionSteps';
 
 /**
  * A message box that sends on Enter, as the chat's does, and grows with its text. While the agent
@@ -110,11 +111,24 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
     return () => clearInterval(timer);
   }, []);
 
-  // The newest message stays in view as answers come in.
+  // The newest message stays in view as answers and steps come in.
+  const steps = thread.steps ?? [];
   useEffect(() => {
     const el = list.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [thread.messages.length]);
+  }, [thread.messages.length, steps.length]);
+  // A question's steps page apart from the chat's history, back to its prompt (R-072).
+  const since = thread.kind === 'question' ? thread.messages[0]!.id : 0;
+  useEffect(() => {
+    if (since > 0) void loadSteps(thread.conversationId, since).catch(() => undefined);
+  }, [thread.conversationId, since]);
+  // The steps after the message before the i-th one and before it; a message still sending has no id yet.
+  const order = (i: number) => (thread.messages[i]?.id ?? 0) > 0 ? thread.messages[i]!.id : Infinity;
+  const stepsBefore = (i: number) => {
+    const events = steps.filter((s) => s.id < order(i) && (i === 0 || s.id > order(i - 1))).flatMap((s) => s.events);
+    return events.length > 0 && <SessionSteps events={events} />;
+  };
+  const newest = steps.at(-1);
 
   const blocked = blockedBy(seat);
   let waiting: string;
@@ -125,7 +139,10 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
     const minutes = Math.floor(
       (now - (thread.messages.findLast((m) => m.senderId === meId && !isCancel(m))?.createdAt ?? thread.last)) / 60_000,
     );
-    waiting = `${minutes > 0 ? `Working… ${minutes} min` : 'Working…'}${thread.progress ? ` · ${thread.progress}` : ''}`;
+    // What it does now, from its newest step, and how old that is: steps come only with a check-in (R-072).
+    const step = newest?.events.at(-1);
+    const doing = step ? `${step.title} · ${formatAgo(newest!.at)}` : thread.progress;
+    waiting = `${minutes > 0 ? `Working… ${minutes} min` : 'Working…'}${doing ? ` · ${doing}` : ''}`;
   }
 
   return (
@@ -146,6 +163,7 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
           if (isCancel(message)) {
             return (
               <div key={message.clientId ?? message.id}>
+                {stepsBefore(i)}
                 <Text as="p" color="secondary">
                   You asked it to stop.
                 </Text>
@@ -161,10 +179,9 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
               ? message.run.card
               : undefined;
           return (
-            <div
-              key={message.clientId ?? message.id}
-              className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}
-            >
+            <Fragment key={message.clientId ?? message.id}>
+            {stepsBefore(i)}
+            <div className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}>
               <div className="bubble-line">
                 <div
                   className={`bubble ${message.prompt?.kind === 'failed' || message.run?.kind === 'failed' ? 'agents-failed' : ''}`}
@@ -274,8 +291,10 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
               )}
               {unsent}
             </div>
+            </Fragment>
           );
         })}
+        {stepsBefore(thread.messages.length)}
         {working && (
           <Text as="p" color="secondary">
             {waiting}

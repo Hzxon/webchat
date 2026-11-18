@@ -55,7 +55,7 @@ export async function askAgent(agentId: number, project: number, repo: string | 
   const conversationId = await startDirectChat(agentId);
   const clientId = newClientId();
   // The message shows as sending at once, so the pane can open its conversation.
-  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, asks: true, ...(repo && { repo }), ...(harness && { harness }), ...(own && { own }) } }, false, clientId);
+  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, asks: true, events: true, ...(repo && { repo }), ...(harness && { harness }), ...(own && { own }) } }, false, clientId);
   return clientId;
 }
 

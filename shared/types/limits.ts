@@ -57,6 +57,12 @@ export const LIMITS = {
   /** Harnesses an agent's answer lists, and the length of a name, a version, a path or a refusal (D-115). */
   harnesses: 8,
   harnessFieldLength: 500,
+  /** A session's step (R-072): its line, and its detail, such as a command's output, cut to its end. */
+  eventTitleLength: 300,
+  eventDetailLength: 4000,
+  /** The steps one events message carries, at most, and their JSON's length, which keeps it under docCiphertextLength. */
+  eventsPerMessage: 40,
+  eventsJsonLength: 40_000,
   /** A pairing's sealed picks, in base64url characters. */
   pairingPicks: 4096,
   /** A file's plain bytes (R-005, D-123); its ciphertext adds FILE_OVERHEAD in shared/e2ee.ts. */

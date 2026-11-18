@@ -16,7 +16,8 @@ import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { isRepoName, LIMITS, SKILL_NAME, type SetupChoice } from '../shared/types.ts';
+import { isRepoName, LIMITS, SKILL_NAME, type SessionEventDTO, type SetupChoice } from '../shared/types.ts';
+import { readEvents } from '../shared/e2ee.ts';
 import { fits } from './answer.ts';
 import { NO_RUNNER, PrerequisitesMissing, type Bench, type Folder, type HarnessInfo, type LocalBench, type Permit, type TurnJob } from './bench.ts';
 import type { Ask, Reply } from './harness.ts';
@@ -154,6 +155,7 @@ export async function askUpdater(file: string) {
 
 interface Turn {
   progress?: (sentence: string) => void;
+  events?: (event: SessionEventDTO) => void;
   permit?: Permit;
   /** The screenshots the runner was let put, by transfer id: the file each lands in (R-046). */
   uploads: Map<string, string>;
@@ -269,6 +271,8 @@ export class Room {
       notified: (method, params) => {
         const { id, sentence } = record(params);
         if (role === 'runner' && method === 'progress') this.turns.get(String(id))?.progress?.(text(sentence, 500) ?? '');
+        // Checked as data: each step of the right shape, cut to its limits (R-072).
+        if (role === 'runner' && method === 'events') for (const event of readEvents(record(params).events)) this.turns.get(String(id))?.events?.(event);
       },
     });
     socket.once('close', () => {
@@ -464,11 +468,11 @@ export class SocketBench implements Bench {
     await this.call('drop', { scratch });
   }
 
-  async turn(job: TurnJob, { signal, progress, permit }: Parameters<Bench['turn']>[1]) {
+  async turn(job: TurnJob, { signal, progress, events, permit }: Parameters<Bench['turn']>[1]) {
     const id = randomUUID();
     const asked = permit?.();
     // Before the request goes, so no line the runner sends for it comes first.
-    this.room.turns.set(id, { progress, permit: asked, uploads: new Map() });
+    this.room.turns.set(id, { progress, events, permit: asked, uploads: new Map() });
     const cancel = () => this.room.runner?.peer.notify('cancel', { id });
     signal.aborted ? cancel() : signal.addEventListener('abort', cancel, { once: true });
     try {
@@ -586,7 +590,7 @@ export async function connectRunner({ file, bench, version }: { file: string; be
               }
             : undefined;
           try {
-            return await bench.turn(params as unknown as TurnJob, { signal: controller.signal, progress: (sentence) => peer.notify('progress', { id, sentence }), permit });
+            return await bench.turn(params as unknown as TurnJob, { signal: controller.signal, progress: (sentence) => peer.notify('progress', { id, sentence }), events: (event) => peer.notify('events', { id, events: [event] }), permit });
           } finally {
             turns.delete(id);
           }

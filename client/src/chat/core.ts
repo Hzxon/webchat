@@ -615,6 +615,23 @@ export async function loadOlder(conversationId: number) {
   }
 }
 
+/** How far back each chat's session steps are loaded, by the oldest row fetched (R-072). */
+const stepsPagedTo = new Map<number, number>();
+
+/**
+ * Loads the steps of an agent's sessions in a chat back to `since`, a thread's first message id,
+ * page by page. They page apart from the history, which therefore does not grow with them (R-072).
+ */
+export async function loadSteps(conversationId: number, since: number) {
+  const conversation = store.get().conversations[conversationId];
+  while (conversation && (stepsPagedTo.get(conversationId) ?? Infinity) > since) {
+    const raw: MessageDTO[] = await api.messages(conversationId, stepsPagedTo.get(conversationId), true);
+    const keysOf = currentLookup();
+    actions.addMessages(conversationId, await Promise.all(raw.map((m) => keyring.open(m, conversation, keysOf))));
+    stepsPagedTo.set(conversationId, raw.length < LIMITS.pageSize ? 0 : raw[0]!.id);
+  }
+}
+
 /** Adds a chat the server just returned, keeping the key this device created for it. */
 export async function adoptConversation(dto: ConversationDTO, created?: { keyId: string; key: CryptoKey }) {
   if (created && dto.keyId === created.keyId) await keyring.remember(dto.id, created.keyId, created.key);

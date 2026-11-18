@@ -37,6 +37,18 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.equal(threadsOf([prompt, answer, reply, cancel, stopped], ME, AGENT, {}, 100)[0].state, 'failed');
   });
 
+  test("a session's steps are no message of the thread and move nothing, and only its agent's count (R-072)", () => {
+    const prompt = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'p2', 1);
+    const step = { kind: 'command', title: 'npm test', at: 5 };
+    const steps = say(AGENT, { kind: 'events', to: 'p2', events: [step] }, 'e1', 50);
+    const forged = say(ME, { kind: 'events', to: 'p2', events: [step] }, 'e2', 60);
+    const [thread] = threadsOf([prompt, steps, forged], ME, AGENT, {}, 100);
+    assert.deepEqual(thread.messages, [prompt]);
+    assert.deepEqual(thread.steps, [{ id: steps.id, at: 50, events: [step] }]);
+    assert.equal(thread.last, 1, 'a step does not move the thread up the list');
+    assert.equal(thread.state, 'working');
+  });
+
   test("a long answer's parts show as one message, which keeps the first part's id", () => {
     const prompt = say(ME, { kind: 'prompt', repo: 'team/app', sentAt: 1 }, 'p1');
     const one = { ...say(AGENT, { kind: 'answer', to: 'p1' }), text: 'Line one\n' };

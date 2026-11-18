@@ -56,6 +56,14 @@ for await (const text of readline.createInterface({ input: process.stdin })) {
     execFileSync('git', ['add', file]);
     execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-q', '-m', 'Change ' + file]);
   }
+  // A turn that shows its steps (R-072): it thinks, reads a file, and runs a command with its output.
+  if (env('FAKE_CLAUDE_STEPS') && !check) {
+    const say = (type, content) => console.log(JSON.stringify({ type, message: { content } }));
+    say('assistant', [{ type: 'thinking', thinking: 'Where is the sum?\\nIn sum.js.' }]);
+    say('assistant', [{ type: 'tool_use', id: 'read1', name: 'Read', input: { file_path: process.cwd() + '/sum.js' } }]);
+    say('assistant', [{ type: 'tool_use', id: 'bash1', name: 'Bash', input: { command: 'npm test' } }]);
+    say('user', [{ type: 'tool_result', tool_use_id: 'bash1', content: 'x'.repeat(5000) + '\\n1 passing' }]);
+  }
   // A work turn its owner will stop: it says what it does, twice within a second, then holds.
   if (env('FAKE_CLAUDE_HOLD') && !check) {
     const use = (name, input) => console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name, input }] } }));

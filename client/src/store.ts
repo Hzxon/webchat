@@ -374,6 +374,10 @@ export const actions = {
       };
     }),
 
+  /** Adds messages that are no page of the chat's history, such as a session's steps (R-072). */
+  addMessages: (conversationId: number, older: ChatMessage[]) =>
+    store.set((s) => ({ ...s, ...withEvents({ ...s, messages: { ...s.messages, [conversationId]: s.messages[conversationId] ?? [] } }, older) })),
+
   clearHistory: () => store.set((s) => ({ ...s, messages: {}, reactions: {}, historyComplete: {} })),
 
   /** Moves one member's delivered and read pointers in a chat. */

@@ -32,6 +32,7 @@ import {
   type PullCardDTO,
   type PullChecks,
   type PromptDTO,
+  type SessionEventDTO,
   type PullReview,
   type RunDTO,
   type RunReport,
@@ -575,16 +576,31 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
     const repo = typeof raw.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
     if ((raw.repo !== undefined && !repo) || (!repo && !isId(raw.project)) || !isId(raw.sentAt)) return;
     const harness = short(raw.harness, LIMITS.harnessFieldLength);
-    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }), ...(raw.own === true && { own: true as const }) };
+    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }), ...(raw.own === true && { own: true as const }), ...(raw.events === true && { events: true as const }) };
   }
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
   if (raw.kind === 'reply' || raw.kind === 'cancel') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt } : undefined;
   if (raw.kind === 'failed' || raw.kind === 'nocopy' || raw.kind === 'note') return { kind: raw.kind, to };
+  if (raw.kind === 'events') return { kind: 'events', to, events: readEvents(raw.events) };
   if (raw.kind === 'clone') return typeof raw.repo === 'string' && isRepoName(raw.repo) && isId(raw.sentAt) ? { kind: 'clone', to, repo: raw.repo, sentAt: raw.sentAt } : undefined;
   if (raw.kind !== 'answer') return;
   const card = readDraft(raw.card as Record<string, unknown> | undefined);
   return card ? { kind: 'answer', to, card } : { kind: 'answer', to };
+}
+
+const EVENT_KINDS: ReadonlyArray<SessionEventDTO['kind']> = ['thinking', 'read', 'search', 'command', 'edit', 'tool', 'text'];
+
+/** A session's steps of the right shape, each cut to its limits (R-072). */
+export function readEvents(raw: unknown): SessionEventDTO[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Array<Record<string, unknown> | null>).slice(0, LIMITS.eventsPerMessage).flatMap((e) => {
+    const kind = EVENT_KINDS.find((k) => k === e?.kind);
+    const title = typeof e?.title === 'string' ? e.title.slice(0, LIMITS.eventTitleLength) : undefined;
+    if (!kind || title === undefined || !isId(e!.at)) return [];
+    const detail = typeof e!.detail === 'string' && e!.detail ? e!.detail.slice(-LIMITS.eventDetailLength) : undefined;
+    return [{ kind, title, at: e!.at, ...(detail && { detail }) }];
+  });
 }
 
 /** A card draft in an agent's answer, if it has the right shape (D-104, D-116). */
