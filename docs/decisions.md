@@ -2364,6 +2364,49 @@ password and two approvals in the browser.
 Cost: a build per OS and processor in every release, two for now (docs/decisions/self-hosted-ci.md).
 A tampered server could show a different line, as it could change the page (README). Going back to an older release takes running the line again.
 
+### D-156: A session may be handed over to another harness, with a summary its owner sees
+
+Status: Proposed.
+
+Checked: 2026-11-18. Read the board's cards and decisions (D-089, D-102, D-115, D-119, D-144, R-043, R-057), docs/decisions/new-harness-pick.md, agent/conversations.ts, agent/plugin.ts and shared/types/agent.ts on main at 7ae616d; open pull requests #253 and #229 by title; docs/roadmap/new-harness-interface.md is not on main.
+
+An owner may pick another linked harness in a session they started. The harness that ran it
+writes a summary: the goal, what is done and what is next. The owner reads it, may edit it, and
+the new harness starts a session of its own from that summary, in the same folder and the same
+thread. The thread marks where the hand over happened. Replies after it go to the new harness,
+which `Conversation` records. A card run and its fix rounds still stay on the harness that
+started them. The model changes within a harness without a hand over, where its adapter can.
+It comes from docs/roadmap/new-harness-interface.md, and changes D-119, where another harness is
+a new conversation and never a switch, and D-102, where a conversation is one session.
+Why: WebChat supports several harnesses, and an owner should not lose a thread to try another.
+
+Cost: the new harness knows only the summary and the files, not the first one's context. A hand
+over costs one more turn of the old harness. The summary is model-written, so it can be wrong.
+
+### D-157: A session a member starts may run in their own harness setup, and shows every step
+
+Status: Proposed.
+
+Checked: 2026-11-18. Read the board's decisions and cards, docs/decisions/harness-rulebook.md and locked-room.md, agent/bench.ts, agent/plugin.ts (converse), shared/board.ts (cardText) and BoardView.tsx (NewCardForm) on main at 7ae616d; open pull requests #253 and #229 by title only.
+
+Proposed 2026-11-18 (docs/roadmap/new-harness-interface.md). It changes D-020, D-097, D-102, D-115 and D-121.
+
+A session a member starts from the Coding agents pane or the new card form runs as they run that
+harness in a terminal, once they turned on "Use my own setup" for it: in their connected folder,
+with their own settings, hooks, plugins, MCP servers and permission rules, and no sandbox or
+rulebook from WebChat. The switch is off at first and is part of the owner's signed `setup`. The
+agent sends the session's reasoning, tool calls, commands and output to its owner as sealed
+events, shown as plain text. A card run stays restricted. The locked room still keeps the agent's
+keys and `gh` login from every session. Why: members brainstorm in their own harness because
+WebChat's agent hides its steps and lacks their setup, and then the board never gets the result.
+Leaving the board out of a session's brief was considered: a linked board's copy is in the
+checkout anyway.
+
+Cost: a teammate's card or a file in the repository can steer a harness that reads the member's
+files, uses their own `gh` login and changes their working tree. The server sees how busy a
+session is, which D-020's list gains. Every step is a message in the owner's chat with the agent,
+and D-133 loads that chat's whole history at each page load.
+
 ## Superseded
 
 ### D-028: No leaving or removal before key rotation

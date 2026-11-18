@@ -249,6 +249,157 @@ off on the board. This changes D-117, so the owner decides it first.
 Done when: a board change reaches main with no click from the owner, and a pull request that
 touches anything else on `agent/board` waits for them.
 
+### R-071: A card from a harness session, and a prompt box in the new card form
+
+Status: Idea.
+
+Checked: 2026-11-18. 2026-11-18: cards and decisions above (D-100, D-103, D-104, D-116, D-117, D-119, D-127, R-044, R-047); NewCardForm and peek in BoardView.tsx, AgentDraft.tsx, openProposals in agents.ts and docs/decisions/card-run-in-peek.md at 7ae616d; docs/roadmap/new-harness-interface.md not on main; open pull requests #229 and #253 by title.
+
+Status: Idea. Proposed 2026-11-18 by the owner.
+
+Order: after docs/roadmap/new-harness-interface.md, at least its phases 1 and 2. That file is not on main at 7ae616d.
+
+
+
+Why: a session in the member's own harness ends with a clear idea and no card. Today they retype
+it into an empty form (`NewCardForm`), or write a proposal file and wait for a merge. A session in
+the Coding agents pane can draft a card when asked (D-104), but the pane adds it as written, with no
+field to edit first. These are chores, so the board never hears of the work. R-044 brings a
+terminal's card to the board. This makes the card inside WebChat, from the session that thought it
+through.
+
+Scope:
+
+- A session in the Coding agents pane gets **Make a card**. It asks the same session for one
+  draft (D-104), checked first (D-116), of the kind the member picks.
+- The new card form gets a prompt box above Title, for a member whose own agent is connected and
+  has a harness linked. Send starts a session in the board's repository, and the form shows it
+  beside the fields, as a card's peek shows its run (docs/decisions/card-run-in-peek.md). Anyone
+  else sees one line that points to the Coding agents pane.
+- Either way the draft fills Title and Details, and the form lists its `checked` line and its
+  `related` ids, conflicts as warnings. Nothing reaches the board until Done, which numbers the
+  card through `addCard` and writes its `Checked:` line, as adding a draft does today.
+- A second prompt is a reply that carries the fields as they stand, so the agent builds on the
+  member's edits.
+- The card keeps a line that names its session, and its owner opens the session from the card.
+- A form closed during a turn loses nothing: the draft waits in the pane and in its lane on the
+  board, as a proposal's draft does (R-047). Today only proposal drafts show on the board
+  (`openProposals` in client/src/agents.ts).
+
+Constraints:
+
+- The prompt, the fields a reply carries and the draft are sealed messages in the direct chat. The
+  server learns nothing new (rule 1).
+- The mark that asks for a draft is inside the signed prompt field, and older prompts still
+  verify (rule 2).
+- The draft arrives by sync and push. The form shows that it waits (rule 4).
+- The session's line on a card names it by the prompt's client id, which only its owner can
+  open. A teammate sees the card and no session (D-100).
+
+Not in scope: the box on an existing card's editor.
+
+Done when:
+
+- A member types an idea in New idea, watches the session, and the form fills with a checked
+  draft. Done adds a numbered card with its `Checked:` line.
+- Make a card on a session that already ran fills the same form.
+- A reply after a hand edit keeps the edit.
+- A member with no agent sees the line that points to the pane.
+- It is tried with two accounts, at desktop width and at 375 pixels, in light and dark mode.
+
+### R-072: The member's own harness, with its whole session shown, in WebChat
+
+Status: Idea.
+
+Checked: 2026-11-18. Read the cards, the decisions (D-004, D-009, D-020, D-047, D-097, D-102 to D-104, D-115, D-116, D-119 to D-121, D-127, D-133, D-134, D-136, D-139, D-151), .claude/rules/agent-harness.md and agent-chat.md, progress in agent/harness.ts, claude.ts, acp.ts and plugin.ts, client/src/sw.ts, AgentThread.tsx and board.ts, and the file lists of docs/decisions and docs/roadmap at 7ae616d; open pull requests #229 and #253 by title only; tests not run.
+
+Proposed 2026-11-18 by the owner, for the next version.
+
+Needs: the decision drafted with this card, on own setup, which changes D-097, D-102, D-115 and D-121 for a session its owner starts. Phase 2 changes D-136, where progress is one sentence every 30 seconds. Phase 4 changes D-119, where another harness is a new conversation and never a switch, and D-115, where permission mode is never a knob. Not on main at 7ae616d: docs/decisions/new-own-harness-sessions.md, docs/decisions/new-harness-handover.md and docs/roadmap/new-card-prompt-box.md.
+
+Why: members brainstorm in their own harness, in a terminal, and not with WebChat's agent. There
+they see the request, the reasoning, each tool call and command, and the plugins and skills in
+use. WebChat shows one sentence of its own per step (`progress`) and then the answer, and its turn
+runs restricted, without their setup (D-097). So the thinking happens outside WebChat, and moving
+its result onto the board by hand is a chore. The board goes unused. Bringing the harness's own
+interface into WebChat, as desktop interfaces such as T3 Code do for a laptop, keeps the session
+where the board is.
+
+Scope, in phases, each its own pull request:
+
+1. **Own setup.** A session a member starts in the Coding agents pane runs their harness as a
+   terminal would, once they turned that on for the harness
+   (docs/decisions/new-own-harness-sessions.md): in the folder they connected, with their
+   settings, instructions, skills, plugins, hooks, MCP servers and permission rules.
+2. **The session, shown.** `Turn.progress` in `agent/harness.ts` becomes typed events: reasoning, a tool call with
+   its arguments, a command with its output, a file change with its diff, a question, the answer.
+   Each adapter maps what its harness emits: Claude Code's stream-json, Codex's app-server items,
+   ACP's session updates. The keyholder seals them into the owner's direct chat, and the pane
+   shows them as a timeline, in the order they happened. A run of thinking, reads and searches
+   folds to one line; a command, an edit and the answer stay open. A line above the box says
+   what the agent does or waits for, and how old the view is.
+3. **What it runs with.** The session's head names the repository, the branch and whether it
+   runs in the member's own setup. A rail beside the timeline, behind a Details button on a
+   phone, keeps the agent's plan, the changed files, the harness with counts of its plugins,
+   skills, hooks and MCP servers, and how much context is used. The session list says which
+   session asks for its member.
+4. **Controls.** One button that sends, or stops a running turn while the box is empty. The
+   model, the permission mode, and the harness's own commands and skills from the box. A
+   question docks above the box until it is answered (docs/decisions/harness-approvals.md). The box's picker names the harness and the model
+   together. Picking another harness hands the session over with a summary the member sees
+   (docs/decisions/new-harness-handover.md).
+5. **A terminal's session, continued.** The pane lists the harness's recent sessions in a
+   connected folder, and the member goes on with one in WebChat, where the harness can resume.
+
+Turning a session into a card is docs/roadmap/new-card-prompt-box.md.
+
+Constraints:
+
+- Every event is sealed and signed like any message of the agent. The server sees only that an
+  agent chat got messages, how many, how large and when, and which of them are events, as the
+  push line below says (rule 1). The README and D-020 say so.
+- No connection to the server stays open (rule 4, D-004). Events arrive by sync, so the view
+  trails the harness by a check-in. The keyholder batches them: at most one message every few
+  seconds, a command's output cut to its end.
+- No push for an event. Only a question and the final answer notify, with no plain text (rule 7).
+  A `progress` report is an ordinary message today: the server pushes it and counts it unread, and
+  Safari shows it (D-047, D-136). So events go as a quiet kind, as board traffic does (D-139).
+- Reasoning, commands and output render as plain text, never Markdown, as questions do: a
+  command can hide in it.
+- Text a teammate wrote reaches a turn only on stdin (D-097).
+- Only a session the member starts with their own words runs in own setup. A card run, whose
+  brief a teammate may have written, stays restricted.
+- The runner sees the events and the keyholder seals them. The agent's keys and `gh` login stay
+  with `_webchat` (docs/decisions/locked-room.md).
+- A new `AGENT_LEVEL` bit says the agent sends events. An older page shows the answer alone.
+
+Cost: a session writes many more rows than a conversation does today, on the free database plan.
+The page loads the whole history of an agent chat at every load (D-133), so those rows make each
+load slower. The server learns how busy a session is. A view that trails by seconds is not a
+terminal. Three adapters each map a different event stream, and each changes with its harness's
+versions. An own-setup turn works in the owner's checkout, not a scratch copy (D-102). Its brief
+still holds the board and the decisions, which teammates wrote (D-104, D-116), and the folder's
+hooks and `.mcp.json` load, so a teammate's text can reach the owner's files and tools.
+
+Open:
+
+- How live is live enough? A page on the laptop could also read events from the runner on
+  127.0.0.1, which needs `connect-src` in the CSP and browsers that allow it. It would carry the
+  same sealed messages and no authority. A spike decides.
+- How long are a session's events kept, and are they deleted when its conversation ends (D-102)?
+- Do card runs move to own setup later, or stay restricted for good?
+
+Done when:
+
+- A member starts a session, and the pane shows its reasoning, a file read, a command with its
+  output and the answer, in order, on the laptop and on a phone.
+- The head names the plugins and MCP servers the harness loaded.
+- Stop ends a turn, and a question is answered from the timeline.
+- A test with a fake harness shows each event kind sealed and shown, batched, and an older page
+  still reading the answer.
+- A card run requested in the same minute still runs restricted.
+- It is tried with two accounts, at desktop width and at 375 pixels, in light and dark mode.
+
 ## Known issues
 
 ### K-77: picomatch has a ReDoS advisory with no patched release
