@@ -23,6 +23,7 @@ import {
 import { cardKey, lineChoice, waitsOn, withChoice, type Choice } from '../../../shared/overlap';
 import { LIMITS, type CardNoteDTO, type ProjectDTO, type RunRequest, type UserDTO } from '../../../shared/types';
 import {
+  afterWarnings,
   boardDocs,
   cardRuns,
   GOING,
@@ -43,6 +44,7 @@ import {
   takeable,
   threadOf,
   unchecked,
+  waitingFace,
   workingStatus,
   type BoardColumn,
   type CardKind,
@@ -452,6 +454,7 @@ function BoardColumnView({
 
   /** What a Roadmap card's face shows at its right: who runs it, or the pull request it waits in. */
   function moveOf(card: Card) {
+    if (card.waits) return waitingFace(card.waits);
     if (!card.status.startsWith(WAITING)) return runnerOf(card.status);
     return card.owner === undefined ? card.status : `Waiting for ${whom(card.owner)}`;
   }
@@ -701,7 +704,7 @@ function BoardColumnView({
       return (
         <article
           key={card.id}
-          className={`board-card ${lock ? 'is-locked' : ''} ${face && (need || card.status.startsWith(WAITING)) ? 'is-waiting' : ''}`}
+          className={`board-card ${lock ? 'is-locked' : ''} ${face && (need || card.status.startsWith(WAITING) || card.waits) ? 'is-waiting' : ''}`}
         >
           {pick ? (
             <div className="board-face-row">
@@ -712,6 +715,7 @@ function BoardColumnView({
             head
           )}
           {same.has(card.id) && <Banner status="warning" title="Another card has this number. Renumber one of them." />}
+          {face && card.waits && afterWarnings(card.waits).map((w) => <Banner key={w} status="warning" title={w} />)}
         </article>
       );
     // Its review lines show above the rest, as who said what.

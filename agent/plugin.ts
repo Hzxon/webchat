@@ -329,8 +329,12 @@ export class Plugin {
       ((await signedIn()) ? undefined : 'Cards need the agent’s GitHub sign-in. Run `webchat-agent setup` and answer yes to its GitHub question.');
     if (refused || !run) return refused;
     // A card that an open pull request claims is taken, as `scripts/claim.sh` refuses it (R-042).
-    const claim = (await openPulls(run.repo!, 'number,title,body,headRefName'))?.find((p) => claimOf(p) === cardKey(run.card));
-    return claim && `${run.repo}#${claim.number} claims ${run.card} already. Pick another card, or ask whoever opened it.`;
+    // A card also waits for the cards its After line names, as its owner's page shows (docs/roadmap/new-after-edge.md).
+    const [open, found] = await Promise.all([openPulls(run.repo!, 'number,title,body,headRefName'), this.boardCard(run)]);
+    const claim = open?.find((p) => claimOf(p) === cardKey(run.card));
+    if (claim) return `${run.repo}#${claim.number} claims ${run.card} already. Pick another card, or ask whoever opened it.`;
+    const waits = found?.card.waits;
+    return waits && `${run.card} waits for ${waits.on.join(', ')}, which must be Done or Fixed first. Start it once they are.`;
   }
 
   /**
@@ -638,6 +642,7 @@ export class Plugin {
       `Your owner wrote this card in a terminal session and wants it on the board. Check it, then put it in drafts as one new ${kind},`,
       'with its title and body as written: change them only where the check finds something wrong, and say what in reply. When it should',
       'not go on the board, as it repeats an open card, goes against a decision or asks for what the code does, draft nothing and say why in reply.',
+      'When the check splits it, as for a change to a contract, draft the contract card first and the card after it second.',
       '',
       fence('The card', [text.trim()], [OWNER, "OWNER'S WORDS"]),
     ].join('\n');
@@ -645,16 +650,19 @@ export class Plugin {
       this.endSession(conversation.session);
       if (conversation.scratch) void this.bench.drop(conversation.scratch).catch(log);
     });
-    const draft = answer.drafts?.find((d) => !d.replaces);
+    // A split is two drafts: the contract card, whose number the command waits for, then the card after it (docs/roadmap/new-after-edge.md).
+    const [draft, then] = answer.drafts?.filter((d) => !d.replaces) ?? [];
     if (!draft) throw new Error(`Your agent drafted no card: ${answer.reply.trim() || 'it gave no reason.'}`);
     const sent = await client.send(chat, { text: `Proposed in ${repo}: ${file}`, board: { kind: 'proposal', project, repo, card: draft } });
+    const split = then?.after === draft.title ? ` Your agent split it: “${then.title}” waits on the board until it is done.` : '';
+    if (split) await client.send(chat, { text: `Proposed in ${repo}: ${file}, after ${draft.title}`, board: { kind: 'proposal', project, repo, card: then! } });
     const card = await new Promise<string | undefined>((resolve) => {
       this.adding.set(sent.clientId!, resolve);
       setTimeout(() => resolve(undefined), waitMs).unref();
     }).finally(() => this.adding.delete(sent.clientId!));
     const said = answer.reply.trim() ? `\n\nYour agent's check: ${answer.reply.trim()}` : '';
-    if (!card) return { text: `The draft waits in WebChat under Coding agents; once your owner adds it, the board shows its number.${said}` };
-    return { text: `Your owner added ${card}. Claim it with scripts/claim.sh, and leave ${file} out of the pull request.${said}`, card };
+    if (!card) return { text: `The draft waits in WebChat under Coding agents; once your owner adds it, the board shows its number.${split}${said}` };
+    return { text: `Your owner added ${card}. Claim it with scripts/claim.sh, and leave ${file} out of the pull request.${split}${said}`, card };
   }
 
   /**
@@ -1614,13 +1622,19 @@ export class Plugin {
 
   /** The waiting card with each member's word on it, and who chooses for it: its owner and the owner of the card it waits for. */
   private async overlapCards(pull: Watched, waits: string) {
+    const found = await this.boardCard(pull.request);
+    return found && { card: found.card, owners: choosers(found.card.owner, found.cards.find((c) => cardKey(c.cardId) === waits)?.owner, this.client!.owner!) };
+  }
+
+  /** A request's card as every page reads it, with the other cards of its board, or none when the board or the card is gone. */
+  private async boardCard(request: RunRequest) {
     const client = this.client!;
-    const doc = client.docs.find((d) => d.id === pull.request.docId);
-    const project = client.projects.find((p) => p.id === this.projectOf(pull.request));
+    const doc = client.docs.find((d) => d.id === request.docId);
+    const project = client.projects.find((p) => p.id === this.projectOf(request));
     if (!doc || !project) return;
     const cards = this.roadmapCards(project, await client.cardSections(doc));
-    const card = cards.find((c) => c.id === pull.request.section);
-    return card && { card, owners: choosers(card.owner, cards.find((c) => cardKey(c.cardId) === waits)?.owner, client.owner!) };
+    const card = cards.find((c) => c.id === request.section);
+    return card && { card, cards };
   }
 
   /**

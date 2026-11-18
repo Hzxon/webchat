@@ -594,6 +594,7 @@ function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | und
   // A line break in the check would end the card's Checked line, and one in a status would write a line of its own.
   const checked = short(raw.checked, LIMITS.checkedLength);
   const status = short(raw.status, LIMITS.checkedLength);
+  const after = short(raw.after, LIMITS.docTitleLength);
   const related = (Array.isArray(raw.related) ? (raw.related as Array<Record<string, unknown> | null>) : []).flatMap((r) => {
     const why = short(r?.why, LIMITS.relatedWhyLength);
     const kind = r?.kind === 'duplicate' || r?.kind === 'conflict' ? (r.kind as 'duplicate' | 'conflict') : undefined;
@@ -606,6 +607,7 @@ function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | und
     ...(checked && !/[\r\n]/.test(checked) && { checked }),
     ...(related.length && { related: related.slice(0, LIMITS.relatedPerDraft) }),
     ...(status && !/[\r\n]/.test(status) && { status }),
+    ...(after && !/[\r\n]/.test(after) && { after }),
   };
   const replaces = raw.replaces as Record<string, unknown> | undefined;
   if (!replaces) return draft;

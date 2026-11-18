@@ -6,8 +6,17 @@ import { type Conversation } from './conversations.ts';
 export const line = (value: unknown, max: number) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
 
 /** The drafts in a turn's answer that have the right shape, as `draftOf` reads each. */
-export const draftsOf = (raw: unknown, seen: NonNullable<Conversation['seen']>, held: Set<string>) =>
-  (Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : []).flatMap((d) => draftOf(d, seen, held) ?? []);
+export function draftsOf(raw: unknown, seen: NonNullable<Conversation['seen']>, held: Set<string>) {
+  const drafts: CardDraftDTO[] = [];
+  for (const r of Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : []) {
+    const draft = draftOf(r, seen, held);
+    if (!draft) continue;
+    // A split's second card names a new card drafted before it, whose number it waits for (docs/roadmap/new-after-edge.md).
+    const after = line(r?.after, LIMITS.docTitleLength);
+    drafts.push(!draft.replaces && after && drafts.some((d) => !d.replaces && d.kind !== 'D' && d.title === after) ? { ...draft, after } : draft);
+  }
+  return drafts;
+}
 
 /**
  * A draft in a turn's answer, if it has the right shape (D-104). A change names a card or decision
