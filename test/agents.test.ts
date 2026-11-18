@@ -140,11 +140,13 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     assert.deepEqual([thread.project, thread.repo], [4, '']);
   });
 
-  test("a board counts the proposals for it and its repository that wait for the owner's go (K-72)", () => {
+  test("a board shows the proposals for it and its repository that wait for the owner's go (K-72, R-047)", () => {
     const propose = (clientId: string, project: number, repo: string) => ({ ...say(AGENT, {}, clientId), prompt: null, board: { kind: 'proposal', project, repo, card: { kind: 'K', title: clientId, body: '' } } });
     const proposals = [propose('a', 4, 'team/app'), propose('b', 4, 'Team/App'), propose('c', 5, 'team/app'), propose('d', 4, 'team/web')];
-    const waiting = (...rest: object[]) => waitingProposals(threadsOf([...proposals, ...rest], ME, AGENT, {}, 100), 4, 'team/app').map((t: { root: string }) => t.root).sort();
+    const waiting = (...rest: object[]) => waitingProposals(threadsOf([...proposals, ...rest], ME, AGENT, {}, 100), 4, 'team/app').map((p: { thread: { root: string } }) => p.thread.root).sort();
     assert.deepEqual(waiting(), ['a', 'b'], 'its project and repository, whatever the case');
+    const [first] = waitingProposals(threadsOf(proposals, ME, AGENT, {}, 100), 4, 'team/app');
+    assert.deepEqual([first.message.clientId, first.draft], [first.thread.root, { kind: 'K', title: first.thread.root, body: '' }], 'with the message and the draft the board shows');
     assert.deepEqual(waiting({ ...say(ME, {}), prompt: null, added: { to: 'a', draft: 'a', card: 'K-9' } }), ['b'], 'an added draft no longer waits');
     assert.deepEqual(waiting({ ...say(AGENT, {}), prompt: null, added: { to: 'b', draft: 'b', card: 'K-9' } }), ['a', 'b'], 'only the owner adds');
   });

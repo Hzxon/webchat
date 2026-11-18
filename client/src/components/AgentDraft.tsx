@@ -12,7 +12,7 @@ import { cardText, withReviews, type Card } from '../../../shared/board';
 import { textHash } from '../../../shared/e2ee';
 import { cardStatus, type CardDraftDTO } from '../../../shared/types';
 import { threadProject, type Thread } from '../agents';
-import { boardDocs, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, withChecked } from '../board';
+import { boardDocs, columnOf, COLUMNS, idOf, KIND_NAMES, NEW_STATUS, withChecked } from '../board';
 import { noteAdded, syncNow, tellAgent } from '../chat';
 import { addCard, boardCards, createBoard, newSectionId, rewriteCard, sectionHistory } from '../docs';
 import type { ChatMessage } from '../e2ee/keyring';
@@ -55,6 +55,8 @@ export function AgentDraft({
   const conversations = useAppState((s) => s.conversations);
   const users = useAppState((s) => s.users);
   const meId = useAppState((s) => s.me?.id);
+  // On the board's peek the board is open already (R-047).
+  const boardOpen = useAppState((s) => s.boardOpen);
   const change = draft.replaces;
   const added = thread.added[message.clientId ?? ''];
   // A new card goes to the board the question was about, else one the agent shares with the user;
@@ -74,8 +76,7 @@ export function AgentDraft({
     ? (conversations[docs[change.doc]?.conversationId ?? 0]?.projectId ?? null)
     : (picked ?? board);
   const [redone, setRedone] = useState(false);
-  // A decision goes in the Decisions column, an idea or issue in the Roadmap.
-  const column = draft.kind === 'D' ? 'decisions' : 'roadmap';
+  const column = columnOf(draft.kind);
   const columns = projectId === null ? {} : boardDocs(docs, conversations, projectId);
   const target = columns[column];
   const [cards, setCards] = useState<Card[] | null>(null);
@@ -220,7 +221,7 @@ export function AgentDraft({
       {added ? (
         <p className="agents-draft-done">
           {change ? `Updated ${added}` : `Added as ${kind} ${added}`}.{' '}
-          {projectId !== null && (
+          {projectId !== null && projectId !== boardOpen && (
             <Button variant="ghost" size="sm" label="Open the board" onClick={() => actions.setBoardOpen(projectId)} />
           )}
         </p>
