@@ -3,7 +3,7 @@
 // it offers; plugin.ts calls only this and never names a harness.
 import os from 'node:os';
 import path from 'node:path';
-import type { PermissionMode, SessionAboutDTO, SessionEventDTO, SetupChoice } from '../shared/types.ts';
+import type { PermissionMode, SessionAboutDTO, SessionEventDTO, SetupChoice, TerminalSessionDTO } from '../shared/types.ts';
 import type { Lab } from './browser.ts';
 import type { Quiet } from './runner.ts';
 import type { Action } from './rulebook.ts';
@@ -92,6 +92,8 @@ export interface Harness {
   apply(choice: SetupChoice): Promise<void>;
   /** Runs one turn, and resolves to its answer for the schema. */
   turn(turn: Turn): Promise<unknown>;
+  /** The newest sessions the owner's terminal started in `cwd`, for a harness that can resume one there (R-072). */
+  sessions?(cwd: string): Promise<TerminalSessionDTO[]>;
   /** Ends what an adapter keeps running for a session, once the session is over, or for every session when the agent shuts down. An adapter that starts a process for each turn has nothing to end. */
   end?(session?: string): Promise<void>;
 }

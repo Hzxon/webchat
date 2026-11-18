@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { promisify } from 'node:util';
-import { LIMITS, type PermissionMode, type SessionAboutDTO, type SessionEventDTO } from '../shared/types.ts';
+import { LIMITS, type PermissionMode, type SessionAboutDTO, type SessionEventDTO, type TerminalSessionDTO } from '../shared/types.ts';
 import { fits } from './answer.ts';
 import { APPROVE_TOOL, openApprover, TOOL_TIMEOUT_MS, type Call } from './approve.ts';
 import { isCredential, olderThan, secretDirs, type Ask, type Harness, type Turn } from './harness.ts';
@@ -495,10 +495,44 @@ export function claudeHarness(program: string, dataDir: string): Harness {
       }
       return converse(live, t);
     },
+    async sessions(cwd) {
+      return claudeSessions(path.join(claudeHome(), 'projects', (await fs.realpath(cwd)).replace(/[^a-zA-Z0-9]/g, '-')));
+    },
     async end(session) {
       await Promise.all([...[...lives].filter(([id]) => !session || id === session).map(([, live]) => close(live)), ...closing]);
     },
   };
+}
+
+/**
+ * The newest sessions in a folder of Claude Code's own session files, one `<id>.jsonl` each: its id,
+ * the first line of its first prompt and when it last changed (R-072). Only the start of each file
+ * is read, and a file without a prompt there is left out.
+ */
+export async function claudeSessions(dir: string, max = 10) {
+  const names = (await fs.readdir(dir).catch(() => [] as string[])).filter((n) => /^[0-9a-f-]{36}\.jsonl$/i.test(n));
+  const dated = await Promise.all(names.map(async (name) => ({ name, at: (await fs.stat(path.join(dir, name))).mtimeMs })));
+  const sessions: TerminalSessionDTO[] = [];
+  for (const { name, at } of dated.sort((a, b) => b.at - a.at).slice(0, max)) {
+    const file = await fs.open(path.join(dir, name));
+    const { buffer, bytesRead } = await file.read({ buffer: Buffer.alloc(64 * 1024) }).finally(() => file.close());
+    const said = buffer
+      .subarray(0, bytesRead)
+      .toString('utf8')
+      .split('\n')
+      .map((l) => {
+        try {
+          const e = JSON.parse(l) as { type?: string; isMeta?: boolean; message?: { content?: unknown } };
+          const c = e.type === 'user' && !e.isMeta ? e.message?.content : undefined;
+          return typeof c === 'string' ? c : Array.isArray(c) ? (c.find((b: { type?: string }) => b?.type === 'text') as { text?: string } | undefined)?.text : undefined;
+        } catch {
+          return undefined;
+        }
+      })
+      .find((t) => t?.trim() && !t.startsWith('<'));
+    if (said) sessions.push({ id: name.slice(0, -6), title: said.trim().split('\n')[0]!.slice(0, LIMITS.eventTitleLength), at: Math.round(at) });
+  }
+  return sessions;
 }
 
 /** The absolute folders of the PATH only, since the background Claude starts in a worktree whose files the model writes. */

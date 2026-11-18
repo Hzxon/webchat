@@ -139,7 +139,8 @@ export type PromptDTO =
   // `events` says the page shows the session's steps, which an older page would show as messages (R-072).
   // `card` asks for one checked draft of that kind, from the new card form's fields as they stand (R-071).
   // `model` and `mode` are the session's controls (R-072); a mode counts only in the user's own setup.
-  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true; own?: true; events?: true; card?: CardAskDTO; model?: string; mode?: PermissionMode }
+  // `resume` goes on with a session a terminal started in the folder, by its id (R-072).
+  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true; own?: true; events?: true; card?: CardAskDTO; model?: string; mode?: PermissionMode; resume?: string }
   // A batch of the session's steps, in a message of kind `events` (R-072).
   | { kind: 'events'; to: string; events: SessionEventDTO[]; about?: SessionAboutDTO }
   // `handover` asks for a summary to hand the session to another harness, or, with the summary as

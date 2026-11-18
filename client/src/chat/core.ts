@@ -822,6 +822,7 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     added: entry.content.added ?? null,
     dismissed: entry.content.dismissed ?? null,
     setupState: null,
+    sessionList: null,
     board: entry.content.board ?? null,
     ask: entry.content.ask ?? null,
     permit: entry.content.permit ?? null,

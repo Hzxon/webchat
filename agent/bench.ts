@@ -10,7 +10,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { isRepoName, LIMITS, SKILL_NAME, type PermissionMode, type SessionAboutDTO, type SessionEventDTO, type SetupChoice } from '../shared/types.ts';
+import { isRepoName, LIMITS, SKILL_NAME, type PermissionMode, type SessionAboutDTO, type SessionEventDTO, type SetupChoice, type TerminalSessionDTO } from '../shared/types.ts';
 import { Lab } from './browser.ts';
 import { secretDirs, type Ask, type Harness, type Reply } from './harness.ts';
 import { sha256 } from './keep.ts';
@@ -102,6 +102,8 @@ export interface Bench {
   turn(turn: TurnJob, options: { signal: AbortSignal; progress?: (sentence: string) => void; events?: (event: SessionEventDTO) => void; about?: (about: SessionAboutDTO) => void; permit?: () => Permit | undefined }): Promise<{ answer: unknown; applied: { claudeMd: boolean; skills: string[]; noAttribution: boolean; own?: string[] } }>;
   /** Ends what a harness keeps running for a session, or for all. */
   end(session?: string): Promise<void>;
+  /** The newest sessions the owner's terminal started with a harness in a folder (R-072). */
+  sessions(harness: string, dir: string): Promise<TerminalSessionDTO[]>;
 }
 
 export interface TurnJob {
@@ -387,6 +389,10 @@ export class LocalBench implements Bench {
       if (lab) lab.stop();
       if (skills) await fs.rm(path.join(os.tmpdir(), 'webchat-skills', session), { recursive: true, force: true });
     }
+  }
+
+  async sessions(harness: string, dir: string) {
+    return (await this.harness(harness).sessions?.(dir)) ?? [];
   }
 
   async end(session?: string) {

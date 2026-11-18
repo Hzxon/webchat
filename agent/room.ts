@@ -17,7 +17,7 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { isRepoName, LIMITS, SKILL_NAME, type SessionAboutDTO, type SessionEventDTO, type SetupChoice } from '../shared/types.ts';
-import { readAbout, readEvents } from '../shared/e2ee.ts';
+import { readAbout, readEvents, readTerminalSessions } from '../shared/e2ee.ts';
 import { fits } from './answer.ts';
 import { NO_RUNNER, PrerequisitesMissing, type Bench, type Folder, type HarnessInfo, type LocalBench, type Permit, type TurnJob } from './bench.ts';
 import type { Ask, Reply } from './harness.ts';
@@ -493,6 +493,11 @@ export class SocketBench implements Bench {
     }
   }
 
+  async sessions(harness: string, dir: string) {
+    // Checked as data: each of the right shape, ten at most (R-072).
+    return readTerminalSessions(await this.call('sessions', { harness, dir }));
+  }
+
   async end(session?: string) {
     // Nothing runs when no runner does.
     if (this.room.runner) await this.call('end', { session });
@@ -542,6 +547,8 @@ export async function connectRunner({ file, bench, version }: { file: string; be
           return bench.ownerSetup();
         case 'folders':
           return bench.folders(params.marks as Array<{ repo: string; dir: string }>);
+        case 'sessions':
+          return bench.sessions(String(params.harness), String(params.dir));
         case 'checkout':
           return bench.checkout(String(params.dir));
         case 'take':

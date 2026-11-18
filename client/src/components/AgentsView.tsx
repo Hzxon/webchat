@@ -10,7 +10,7 @@ import { Selector } from '@astryxdesign/core/Selector';
 import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { useEffect, useMemo, useState } from 'react';
-import { AGENT_LEVEL } from '../../../shared/types';
+import { AGENT_LEVEL, listsSessions } from '../../../shared/types';
 import {
   asleep,
   blockedBy,
@@ -34,6 +34,7 @@ import { AgentDialog } from './AgentDialog';
 import { AgentAsks } from './AgentAsks';
 import { AgentSetup } from './AgentSetup';
 import { AgentThread, Box } from './AgentThread';
+import { TerminalSessions } from './TerminalSessions';
 import { HarnessPicker, useHarnessPick } from './HarnessPicker';
 import { Tag, type Tone } from './PullTags';
 
@@ -299,6 +300,10 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
             ? 'It reads your team’s code as it is on GitHub, and catches up on each reply.'
             : 'Your agent answers from the project’s board alone: its decisions and cards.'}
         </p>
+        {/* A terminal's session, continued here, in the user's own setup (R-072). */}
+        {agent && project && repo && listsSessions(seatFor(agent, repo)?.protocol ?? 0) && (
+          <TerminalSessions key={`${project.id}:${repo}`} agent={agent} project={project} repo={repo} />
+        )}
       </div>
       {mine.map((p) => {
         const inIt = agentIn(p.id);
