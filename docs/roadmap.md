@@ -179,6 +179,76 @@ D-043). The other members see it only in the member count and the member list. W
 list would tell everyone who can read along. The server already knows when each member joined, so
 the notes would show it nothing new. They should not count as unread.
 
+### R-056: A session cites a proposed decision before the board numbers it
+
+Status: Idea. Found on 2026-11-09 in the review of the board as the source of truth (R-040).
+
+Why: a session that makes a decision waits for the owner, who adds it on the board, which numbers it
+(D-117). Several sessions run at once and all wait on one person. Before the board, a session
+reserved a number and went on (D-076).
+
+Scope: code comments, rules lines and the pull request name a proposed decision by its file, such
+as `docs/decisions/agent-board-auto-merge.md`. When the board numbers it, the agent's next copy
+replaces that path with the number everywhere on `agent/board`. This changes D-117, so the owner
+decides it first.
+
+Done when: a session finishes a change that makes a decision without waiting for a number, and
+main never shows a file path where a number should be.
+
+### R-064: A Codex adapter, and a sandbox WebChat owns
+
+Status: Idea. Proposed 2026-11-09 from the harness audit. Needs the harness adapter card.
+
+Order: the spike first and at any time, since it needs no code and its result decides the
+second half. The adapter fourth, after the harness card is done, since the picker is how an
+owner reaches Codex and the Settings row is where it says why it takes no cards; it may run
+beside the pause card, which touches other files. Codex takes cards last, only once the spike
+held and the gh token question is answered.
+
+Why: with the seam in place no second harness exists. Codex is the likely first, and it cannot
+prove that its shell is kept from the secret folders: its sandbox allows reads everywhere, as
+far as its documentation shows. D-097 requires that proof before a run pushes with the owner's
+login.
+
+Scope: `agent/codex.ts` runs `codex exec --json --output-schema` with the brief on stdin and
+resumes by thread id, with a fixture that prints Codex's JSONL as `FAKE_CLAUDE` prints Claude
+Code's. Its `refusal` names the isolation gap, so Codex answers questions in a scratch copy and
+takes no cards, and Settings says why. Then a spike, with no code to merge: run `codex exec`
+under `@anthropic-ai/sandbox-runtime` (`srt`, the engine behind Claude Code's sandbox) with the
+API domain allowed and the token in the environment; check that the shell cannot read
+`~/.config/gh` or the keychain; check what Claude Code's own sandbox does when started inside
+it. The result goes in a decision either way. If it holds, `refusal` clears when `srt` is
+installed and Codex takes cards.
+
+Constraints: answers only is the floor for a harness without an isolation proof, decided
+2026-11-09: the accepted risk is that the model reads the GitHub token and puts it in a sealed
+answer only the owner reads. `srt` wraps the whole process, so the harness and its shell share
+one policy: the shell reaches the model's API domain, which the Claude adapter's shell does
+not. Whether `--output-schema` works with `codex exec resume` is to be checked against the
+installed version. ACP agents have their own adapter (docs/roadmap/new-acp-adapter.md), which
+needs no third harness.
+
+Done when: a Codex agent answers a question about a repository; Settings says why it takes no
+cards; the spike's decision is on the board; and, if the spike held, a Codex run opens a draft
+pull request.
+
+### R-070: The board's copy merges without the owner
+
+Status: Idea. Found on 2026-11-09 in the review of the board as the source of truth (R-040).
+
+Why: main lags the board until the owner merges the `agent/board` pull request (D-117). Each sync
+is one more chore for the owner. Sessions read the repository's copy, so a late merge sends them to
+stale cards. The first copy (#170) changed 2,300 lines of `docs/decisions.md`, too much to review
+by eye, so a review adds little.
+
+Scope: the agent asks GitHub to merge `agent/board` once its checks pass, with
+`gh pr merge --auto --squash`. CI already fails a pull request whose copy anyone else edits, and the
+branch changes only the two copies and the proposal files the owner added. The owner can switch it
+off on the board. This changes D-117, so the owner decides it first.
+
+Done when: a board change reaches main with no click from the owner, and a pull request that
+touches anything else on `agent/board` waits for them.
+
 ## Known issues
 
 ### K-77: picomatch has a ReDoS advisory with no patched release
@@ -198,6 +268,37 @@ Fix: when picomatch publishes a patched version, update the lockfile so every pa
 Do not run `npm audit fix --force`: it downgrades vite to 6.2.7, a breaking change.
 
 Done when: `npm audit` reports no picomatch advisory.
+
+### K-80: A reverted run's card stays Done
+
+Status: Open. Found on 2026-11-09 in the review of the board as the source of truth (R-040).
+
+Seen: #159 fixed K-1 and #169 reverted it. Nothing tells the board. Once a run's draft merges, the
+card says `Done in repo#N` or `Fixed in repo#N`, and the plugin stops watching (D-118). A revert
+then leaves a finished card for work that main no longer has. The team only learns of it by hand.
+
+Fix: the owner's agent already lists open pull requests for a linked board (`sendClaims` in
+`agent/plugin.ts`). It also looks at merged ones whose body says `Reverts` or `This reverts commit`
+of a pull request a finished card names. The owner's page then sets that card back to `Open` with a
+line that names the revert, under its lock, as it does for other moves.
+
+Done when: a merged revert of a card's pull request reopens the card, and a test proves it.
+
+### K-81: A conversation's scratch copy keeps its git folder where the model writes
+
+Status: Open. Raised 2026-11-10 by the security audit in #185.
+
+A conversation's turn runs in a scratch repository in the temp folder (D-102). Its `.git` folder
+sits inside the folder the harness's shell may write. Between turns the plugin runs `git fetch`
+there with hooks on, and `git checkout -f` with hooks off, outside the sandbox. Both read that
+repository's config, so a `core.fsmonitor` or a hook the model wrote there would run as the owner.
+Claude Code's sandbox appears to protect `.git/config` and `.git/hooks`, which the audit did not
+confirm, so this is defense in depth.
+
+Done when the scratch copy's git folder lives outside the shell's writable area, such as in the
+plugin's data folder, and the plugin runs git there with `--git-dir` and `--work-tree`, as
+`worktreeGit` does for a card's worktree. A test plants a config in the scratch folder and shows
+that nothing runs.
 
 ## Open questions
 
@@ -252,6 +353,51 @@ project-first navigation, new wording or a new name. The numbers stay taken.
 ### R-029: Hand a card to a teammate's agent
 
 Status: Dropped on 2026-11-13. The owner no longer wants a teammate to run a card on someone else's agent. Since D-089 an agent runs only the cards its owner hands it, and that stays. The number stays taken.
+
+### R-061: Run cards through a harness adapter, picked per session
+
+Status: Dropped 2026-11-18: a duplicate of R-043, added from an old draft of docs/roadmap/new-harness-adapter.md.
+
+Order: first. Three pull requests in a row, each merged before the next is claimed: the seam
+alone, as a `refactor` with no change in behavior; then the sealed per-harness state and the
+Settings rows; then the harness named in each signed request, with the pickers and the host
+harness for unprompted turns. The seam's pull request also rewrites the "background Claude"
+lines of `.claude/rules/projects.md` to "the harness's turn" and adds one line: an adapter owns
+the turn, the isolation proof and the setup it offers, and `plugin.ts` never names a harness.
+Every other card waits for the seam. The daemon host may start beside the second pull request.
+
+Why: the agent's turn, its isolation proof and the setup it loads are Claude Code's command
+line, settings files and hook format, in `agent/claude.ts` and `agent/plugin.ts`. The sealed
+protocol, `Runs`, `Conversations` and the workflow in the plugin know no harness. A student
+whose team uses Codex or OpenCode cannot run an agent at all.
+
+Scope: one `Harness` interface in `agent/harness.ts` with three methods: `turn` runs one turn in
+a folder with the brief on stdin and a JSON answer for a schema, `refusal` says why this laptop
+cannot run cards with it, and `offers` names the instructions file, the skills folder and the
+few knobs it can honor. The Claude adapter is today's code moved behind it, so a Claude Code
+owner sees no change. Each harness the laptop found goes to the owner sealed in `SetupState`,
+with its state and knobs, and Settings shows one row per harness with an enable toggle instead
+of three hard-coded checkboxes. The owner names the harness, signed, in each card run and each
+conversation, as the repository is named today (D-093): a second line in the card's play menu
+and a picker beside the repository in the composer. No stored default; the page remembers the
+last pick in the browser only. A session keeps the harness that started it, so fix rounds and
+replies resume with the right one. Turns nobody picked for, "Check again" (D-116) and proposal
+drafts (D-117), run on the host harness: Claude Code when the plugin hosts, the first enabled
+harness when the daemon does. The check-in's level becomes the union over enabled harnesses.
+
+Constraints: a knob is offered only when the adapter honors it without running code outside
+the sandbox and without changing permission or sandbox mode; model, caps, the instructions
+file, skills and attribution pass, and permission mode, plugins, hooks and MCP servers never do,
+for any harness (D-097, D-115). The server learns nothing new: per-harness state is sealed to
+the owner, and `claudeMd` keeps its wire name so old pages and plugins agree. A request from an
+old page names no harness and runs on the host harness. A request naming a harness the laptop
+has not enabled fails with the reason. No switching mid-session: another harness is a new
+conversation. `test/agent.test.ts` gets a fixture per adapter, as `FAKE_CLAUDE` is one today.
+
+Done when: a Claude Code agent behaves as before and the tests pass; Settings lists the
+harnesses the laptop has, each with its state and knobs; a card run and a conversation each
+show the harness the owner picked; a request from an old page runs on the host harness; a
+request naming a harness that is not enabled fails with the reason.
 
 ## Done
 
@@ -341,8 +487,26 @@ Status: Dropped on 2026-11-13. The owner no longer wants a teammate to run a car
 | R-041: The agent checks a new card, and the board numbers it | #166 |
 | R-040: The board is the source of truth, and the repository follows it | #167, #159 |
 | R-042: A card run follows the repository's workflow | #168 |
+| K-79: An agent's draft can give a card two status lines | #171 |
+| K-84: A card stays In review after its run's draft is closed unmerged | #171 |
 | R-043: Run cards through a harness adapter, picked per session | #174, #176, #179 |
+| R-062: Serve the agent from a daemon as well as from the plugin | #177 |
+| R-057: Pause a run and redirect it | #178, #181, #182, #174 |
+| R-065: The roadmap as lanes, with a card owner who holds its gates | #188, #189, #190 |
+| Q-7: Should a card run stop needing the owner's gh token? | #193 |
+| K-82: The flipped-ciphertext test fails about once in 4,000 runs | #194 |
+| K-83: A linked repository's copy shows a status that does not stand | #195 |
+| K-86: An editor in the board's hidden tab loses its lock unseen | #196 |
+| K-85: A hand edit of a card can drop or revive a review line | #197 |
 | K-69: An agent's board messages buzz the owner's phone and count as unread | #198, #167 |
+| R-068: Ship the agent as one file per OS from GitHub releases | #199 |
+| R-066: Set up the agent with one command | #200 |
+| R-059: Link harnesses from the list WebChat supports | #201 |
+| R-063: Connect a folder only on the owner's approval in WebChat | #202 |
+| R-069: Run ACP agents from a shipped list through one adapter | #203 |
+| R-060: Approve a harness's actions from WebChat | #204 |
+| R-058: Keep the agent's secrets in a locked room | #206, #207, #208, #209 |
+| R-067: The agent updates itself to its server's release | #210 |
 | K-72: The board does not show the proposals that wait for it | #222 |
 | K-70: The pane says "No copy yet" for a repository the agent works in | #223 |
 | K-71: A backlog of proposal files hits the send limit, and a new install sends them all again | #224 |
@@ -351,6 +515,7 @@ Status: Dropped on 2026-11-13. The owner no longer wants a teammate to run a car
 | K-1: The iOS 16.4 banner stays after Bark is linked | #228 |
 | K-73: The owner is asked about shell commands the sandbox already holds | #233 |
 | R-046: A run checks its work in a browser that reaches only its own dev server | #235, #240 |
+| R-055: Support Hermes as a harness | #243 |
 | R-054: Support Antigravity as a harness | #244 |
 | R-052: Try the Astryx design system on the sign-in screen | #247 |
 | R-053: Move every screen to Astryx | #248, #252 |
@@ -361,4 +526,5 @@ Status: Dropped on 2026-11-13. The owner no longer wants a teammate to run a car
 | R-049: A run waits when its files overlap a running card's | #276 |
 | R-048: A card waits for the cards it names | #277 |
 | K-76: Older copies of a proposal wait on the board for good | #280 |
+| K-78: A proposal draft older than the newest 50 messages never reaches the board | #283 |
 | K-74: An agent's card draft loses everything past 4,000 characters | Fixed |

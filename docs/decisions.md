@@ -825,22 +825,19 @@ polls, at most one per account per minute. A paused Supabase project stops the c
 
 ### D-058: Vercel skips builds that ship the same app
 
-Status: Accepted 2026-11-02 in #30. `agent/` and `plugin/` joined the skipped paths in #103.
+Status: Accepted 2026-11-02 in #30. `agent/` and `plugin/` joined the skipped paths in #103. Release commits build since #199.
 
 Vercel builds every push to main (D-041). `scripts/ignore-build.sh`, the Ignored Build Step in
-`vercel.json`, skips a commit whose message starts with `chore(main): Release `. It also skips a
-commit when nothing outside `docs/`, `test/`, `.github/`, `scripts/`, `agent/`, `plugin/` and
-Markdown files changed since the last deployment, whose commit Vercel names in
-`VERCEL_GIT_PREVIOUS_SHA`, so those deploys do not make every open tab check a new build (K-36).
-When that commit is unknown or not in Vercel's shallow clone, the build runs. The release pull
-request waits for the owner: it collects every `feat` and `fix` since the last release, so the owner
-merges it when a set of changes is worth a version. Merging it automatically would bump the minor at
-every `feat`, ship a wrong title type before `BEGIN_COMMIT_OVERRIDE` could fix it, and need a second
-Release Please run to tag.
-
-Cost: Vercel still clones the repository and records a canceled deployment for each release commit.
-Only Release Please may use a title that starts like a release commit. A file in a skipped path that
-the app starts to read at runtime must move out of those paths first.
+`vercel.json`, skips a commit when nothing outside `docs/`, `test/`, `.github/`, `scripts/`,
+`agent/`, `plugin/` and Markdown files changed since the last deployment, whose commit Vercel names
+in `VERCEL_GIT_PREVIOUS_SHA`, so those deploys do not make every open tab check a new build (K-36).
+When that commit is unknown or not in Vercel's shallow clone, the build runs. A Release Please
+commit builds: it changes package.json's version, which `GET /api/config` names, so the Connect
+dialog and the agents follow the server's release (docs/decisions/agent-install.md). The release
+pull request waits for the owner: it collects every `feat` and `fix` since the last release, so the
+owner merges it when a set of changes is worth a version. Merging it automatically would bump the
+minor at every `feat`, ship a wrong title type before `BEGIN_COMMIT_OVERRIDE` could fix it, and need
+a second Release Please run to tag.
 
 ### D-059: Message content is padded to a few fixed sizes
 
@@ -1158,21 +1155,20 @@ newest (D-020). Docs are Markdown only, exported only as PDF through print.
 
 ### D-082: The project board is two docs whose sections are cards
 
-Status: Accepted 2026-11-04 in #75, changed in #166 (R-041) and #167 (R-040).
+Status: Accepted 2026-11-04 in #75, changed in #166 (R-041), #167 (R-040) and #188.
 
-A project's board (R-021) is a view over two docs: Decisions, and Roadmap for ideas and issues. A
-card is a section of that doc, with its lock and history (D-081). A `board` field inside the sealed
-content of the doc's title marks them, so the server does not know a board from a doc, and the
-sidebar leaves them out of Docs. The browser makes them when someone first adds a card. A card's
-number, title and status come from its first two lines, `### D-3: Title` and `Status: Accepted
-2026-11-04.`, the format of `docs/decisions.md` and `docs/roadmap.md`. "Copy as Markdown" gives a
-column as a linked repository's copy of it (D-117). Why: needs no migration, route, key code or fingerprint change, and
-a team pastes a column into its repository for its agents to read.
+A project's board (R-021) is two docs, Decisions and Roadmap, whose sections are cards, each with
+its lock and history (D-081). A `board` field in the sealed title marks them, so the server cannot
+tell a board from a doc, and the sidebar leaves them out of Docs. The first card added makes them.
+A card's number, title and status come from its first two lines, `### D-3: Title` and `Status:
+Accepted 2026-11-04.`, as in `docs/decisions.md`. The Roadmap shows lanes, Ready, Running and In
+review, and still reads `Next`, `Planned` and `In progress` in them. `addCard` marks a card's first
+revision `opened`, so its author owns it (the board-lanes decision). "Copy as Markdown" gives a
+column as a linked repository's copy (D-117). Why: no migration or key code.
 
-Cost: the browser numbers a new card under its column's title lock (D-116); a page from before
-that could still take a number twice, which the board warns about. Two tabs making the board doc at
-once make two; the board shows the oldest and the other appears in Docs for deletion. Status is
-wording, not a field, so an unknown status sorts with the open items.
+Cost: a page from before the title lock (D-116) could take a number twice, which the board warns
+about. Two tabs making a board doc at once make two: the board shows the oldest, the other is in
+Docs. Status is wording, not a field, so an unknown status sorts with the open items.
 
 ### D-083: A work tool's palette and type
 
@@ -1325,22 +1321,22 @@ Cost: the hash covers the SQL without its comments and spacing, so a comment fix
 would a change hidden in a comment that the SQL later reads; none does. An alias such as `const r = req; r.query` passes the text check. The token
 check sees only the routes the GitHub tests call.
 
-### D-092: An agent can run as a Claude Code plugin
+### D-092: The agent's keyholder pushes each run's branch and opens its draft
 
-Status: Accepted 2026-11-05 in #100, proposed in #99. Its runs moved to a background Claude in #117, and one window serves every folder since #131 (D-094). Changed in #168 (R-042).
+Status: Accepted 2026-11-05 in #100, proposed in #99, as an agent that runs inside Claude Code. Its runs moved to a background harness in #117, one process serves every folder since #131 (D-094), and the plugin stopped hosting in #209. Changed in #168 (R-042), #177 and #209 (docs/roadmap/new-locked-room.md).
 
-An agent can run inside Claude Code as the plugin in `plugin/` (R-030). Its MCP server,
-`agent/plugin.ts`, is the trusted part: it keeps the agent's keys in the plugin's data folder, uses
-the owner's `gh` login, checks requests as D-089 says, adds a worktree under `.claude/worktrees`
-and pushes only that `agent/*` branch, never forced and with git hooks off. Its draft opens on an
-empty claim commit before any code, and closes, keeping the branch, when the run fails (D-118). The
-model works in a background Claude with no credentials (D-097), and the owner's own sessions keep
-their settings. A guard hook keeps every session's file tools from the secrets. A draft gets three
-rounds of fixes for failed CI, conflicts and reviews by writers, each a turn of the run's Claude
-session. Why: one install, and channels need a flag on every start.
+The keyholder, `agent/plugin.ts` run as the role account (docs/decisions/locked-room.md), is the trusted
+part: it keeps the agent's keys and its own `gh` login, checks requests as D-089 says, has the runner
+add a worktree under `.claude/worktrees` in the owner's folder, and pushes only that run's `agent/*`
+branch, from a bundle it accepted, never forced and with git hooks off. Its draft opens on an empty
+claim commit before any code, and closes, keeping the branch, when the run fails (D-118). The model
+works in a harness the runner starts, as the owner, with no credentials of the agent's (D-097). A draft
+gets three rounds of fixes for failed CI, conflicts and reviews by writers, each a turn of the run's
+session. Why: one program for every laptop, and the agent's keys where no harness can read them.
 
-Cost: one Claude Code window must stay open on the laptop. A teammate's card runs with the
-owner's credentials; the owner reviews the draft.
+Cost: a teammate's card runs with the agent's GitHub login, whatever that login reaches, and the owner
+reviews the draft. A Claude Code plugin no longer hosts the agent: its last release only runs
+`webchat-agent`, and a plugin user without administrator rights has no agent.
 
 ### D-093: An agent pairs through a one-time code, and runs only in the repository its owner signed
 
@@ -1361,23 +1357,24 @@ Cost: the server sees which repositories an agent's laptop has folders for, for 
 connected or had cloned (D-101). Deleting an account deletes its agents. A new code makes a new
 account, and the old one stays, asleep.
 
-### D-094: One Claude Code window serves every folder on its laptop
+### D-094: One agent process serves every folder on its laptop
 
-Status: Accepted 2026-11-05 in #104, rewritten in #131 (R-036), changed in #132. The doorbell went in #117 (D-097).
+Status: Accepted 2026-11-05 in #104, rewritten in #131 (R-036), changed in #132 and #209 (docs/roadmap/new-locked-room.md). The doorbell went in #117 (D-097).
 
-The plugin's server starts in any folder, and the window that takes the laptop's lock serves every
-folder the owner connected or had cloned (D-101, D-108); another window waits, and takes over when
-it closes. It keeps one copy of the account, its Claude's settings, the watched pull requests and
+The keyholder starts with no folder, and serves every folder the owner connected or had cloned
+(D-101, D-108); a second process on the same data folder waits for the lock and takes over when the first
+ends. It keeps one copy of the account, the harnesses' settings it sends, the watched pull requests and
 the conversations in `laptop/` of its data folder, and a mark per repository under `repos/`. One
-check-in names every repository with a folder, which `agent_repos` keeps with its last check-in, and
-the level of what the laptop can do, which the agent's own row keeps (migration 20); a folder it no
-longer names leaves at once (#132). A request for a repository with no folder waits for its owner to
-have it cloned. Why: a student with three projects kept three windows open, and could not work on a
-repository never cloned on the laptop.
+check-in names every repository with a folder, which `agent_repos` keeps with its last check-in, and the
+level of what the laptop can do, which the agent's own row keeps (migration 20); a folder it no longer
+names leaves at once (#132). A request for a repository with no folder waits for its owner to have it
+cloned. Why: a student with three projects should need one agent, and be able to work on a repository
+never cloned on the laptop.
 
-Cost: the server learns that the agent is online whenever any window is open, and the names of its
-folders, never a path. The `agent_repo` column of migration 17 and the copies of the account per
-repository from before are unused. A repository unseen for 30 days leaves the menu.
+Cost: the server learns that the agent is online while the keyholder runs and the runner, which works in
+the owner's folders, is connected, and the names of its folders, never a path. The `agent_repo` column of
+migration 17 and the copies of the account per repository from before are unused. A repository unseen for
+30 days leaves the menu.
 
 ### D-096: The owner deletes a channel, but never #general
 
@@ -1435,36 +1432,34 @@ request in the same check-in as a cancel is refused, since the cancelled run has
 
 ### D-100: A card shows its latest run, and its status line follows the run
 
-Status: Accepted 2026-11-05 in #116 (K-52), changed in #122, #143 (K-59) and #168 (R-042).
+Status: Accepted 2026-11-05 in #116 (K-52), changed in #122, #143, #168, #188 and #190.
 
 The board folds the user's run messages, in their chats with their agents, into each roadmap card.
-While a run may still go, the play button is disabled, so a second click asks nothing. A request no
-agent answers in 30 minutes stops blocking, on the board and in the chat. Teammates see no run
-messages, so the status line tells them: any open page of the requester's sets it to `In progress:
-Ann's agent` once the agent claims, `Waiting for a decision` while it waits for one, `In review:
-repo#PR` when it is done, `Done in repo#PR` or `Fixed in repo#PR` once that is merged, and back to
-what it was when the run fails or the card no longer holds, once per report, under the card's lock.
-The brief refuses a card whose status shows another run: someone else's agent `In progress`, `In
-review` or `Waiting for a decision`; its hash covers the status line, so a run that starts later
-makes the agent refuse. Why: the server cannot drop copies of an encrypted request, and done means
-a draft. Cost: the status changes only while a page of the requester's is open. Two tabs can still
-each send one request before they sync; the agent refuses the second (D-099).
+While a run may still go, the play button is disabled. A request no agent answers in 30 minutes
+stops blocking. Teammates see no run messages, so any open page of the requester's sets the status
+line: `Running: Ann's agent` once the agent claims, `Waiting for a decision` while it waits, `In
+review: repo#PR` when done, `Done in repo#PR` or `Fixed in repo#PR` once merged, and back to what it
+was when the run fails or the card no longer holds, once per report, under the card's lock. A move
+also starts from `In progress: Ann's agent`, which older pages wrote. A waiting card shows in the
+warning color and names its owner, whom the page that moved it messages in their direct chat. The
+brief refuses a card whose status shows another run: someone else's `Running:`, `In review` or
+`Waiting for a decision`; its hash covers the status line. Why: the server cannot drop copies of an
+encrypted request, and done means a draft. Cost: the status changes only while a page of the
+requester's is open. Two tabs can still each send one request before they sync (D-099).
 
 ### D-101: A folder takes part once its owner connects it or has it cloned
 
-Status: Accepted 2026-11-06 in #117 (R-035), changed in #120, #131 (R-036) and #132. It replaces D-098, and with D-097 it replaces D-095.
+Status: Accepted 2026-11-06 in #117 (R-035), changed in #120, #131 (R-036), #132 and #209 (docs/roadmap/new-locked-room.md). It replaces D-098, and with D-097 it replaces D-095.
 
-The plugin works in a folder only while `repos/<owner>__<name>/connected` in its data folder names
-it and it is a checkout of that repository. The owner's click on **Clone it** writes the mark for a
-clone (D-108). `/webchat:connect` writes it for a checkout the owner has: the skill only the user
-can start calls the `connect` tool, which carries `requiresUserInteraction`, so Claude Code asks the
-owner on every call. Either way a repository's files cannot connect themselves. Its answer says when
-cards need GitHub on the laptop. `disconnect`, or Forget in the pane, removes the mark, never the
-files (R-038). A mark from before #131 names no folder, and a window open in that checkout fills it
-in. Why: the server should learn only the repositories the owner chose, and a student should not
-need a terminal to start.
+The agent works in a folder only while `repos/<owner>__<name>/connected` in the keyholder's data folder
+names it and it is a checkout of that repository, which the runner confirms. The owner's click on **Clone
+it** writes the mark for a clone (D-108). Their signed approval of `webchat-agent connect` writes it for a
+checkout they have (docs/decisions/connect-approval.md). The mark lives where no harness can write, and
+the command only files a request, so a repository's files and a model cannot connect themselves. Forget in
+the pane removes the mark, never the files (R-038). Why: the server should learn only the repositories the
+owner chose, and a student should not need more than a click and one command.
 
-Cost: a connected checkout that moves needs connecting again. The plugin reads the marks every 15
+Cost: a connected checkout that moves needs connecting again. The keyholder reads the marks every 15
 seconds. A repository whose folder is gone stays in the play menu, asleep, for 30 days (D-094).
 
 ### D-102: A conversation is a prompt and the messages that name it
@@ -1590,20 +1585,20 @@ claim takes one more line and one more read of the decisions.
 
 ### D-108: The agent clones only on its owner's click, and only a linked repository
 
-Status: Accepted 2026-11-06 in #131 (R-036).
+Status: Accepted 2026-11-06 in #131 (R-036). Changed in #209 (docs/roadmap/new-locked-room.md).
 
 A run or a question that names a repository with no folder on the laptop gets "I have no copy of
-owner/repo on this laptop.", and the pane shows **Clone it**. The click sends a message whose sealed
-`run` or `prompt` field asks for the clone and names the repository, signed like a prompt (D-102).
-The plugin's server, never the background Claude, clones it with the owner's `gh` login into
-`~/WebChat/<owner>/<name>`, blobless, marks the folder (D-101), says where, and lets the run or turn
-that waits go on, for 30 minutes at most. It clones only for its owner, in their direct chat,
-signed within 10 minutes, once (D-089), only a repository that a project of the owner and the agent
-links (D-050), and only into that root; a folder there already counts only as a checkout of it.
-Why: a student should start from WebChat, with no terminal.
+owner/repo on this laptop.", and the pane shows **Clone it**. The click sends a message whose sealed `run`
+or `prompt` field asks for the clone and names the repository, signed like a prompt (D-102). The keyholder,
+never a harness, fetches it with the agent's own `gh` login into its own full clone, has the runner make
+the folder from a bundle of it in `~/WebChat/<owner>/<name>`, marks the folder (D-101), says where, and
+lets the run or turn that waits go on, for 30 minutes at most. It clones only for its owner, in their
+direct chat, signed within 10 minutes, once (D-089), only a repository that a project of the owner and the
+agent links (D-050), and only into that root; a folder there already counts only as a checkout of it. Why:
+a student should start from WebChat, with no terminal, and the owner's account never fetches from GitHub.
 
-Cost: a clone takes the laptop's disk, and minutes. The server answers which repositories a project
-links, so a changed server could offer a clone of another repository the owner reaches.
+Cost: a clone takes the laptop's disk twice, and minutes. The server answers which repositories a project
+links, so a changed server could offer a clone of another repository the agent's login reaches.
 
 ### D-109: Replies and reactions check the message at their id
 
@@ -1665,18 +1660,19 @@ chat's key at will. A stored key whose copy no longer opens, because its wrapper
 longer seals (D-018). A key the server moved in from another chat lands in this chat's
 links, so this chat's members hold it.
 
-### D-113: The owner puts the agent to sleep, and only the laptop wakes it
+### D-113: The owner puts the agent to sleep, and only a command on the laptop wakes it
 
-Status: Accepted 2026-11-07 in #153 (K-66).
+Status: Accepted 2026-11-07 in #153 (K-66). Changed in #209 (docs/roadmap/new-locked-room.md).
 
-A file `asleep` in the plugin's data folder is the one switch. The pane's **Put to sleep** sends a
-sealed `sleep` message, which counts only from the owner, in their direct chat, signed within 10
-minutes, once (D-089). `/webchat:sleep` writes the file too. The serving window then starts nothing
-new, finishes what runs, stops checking in and frees `watch.lock`. No window takes the lock while
-the file exists, new ones included. Only `/webchat:wake` removes it. A background job of Claude Code
-never serves. Why: closing every session was the only off switch, and a hidden job took over.
+A file `asleep` in the keyholder's data folder is the one switch. The pane's **Put to sleep** sends a
+sealed `sleep` message, which counts only from the owner, in their direct chat, signed within 10 minutes,
+once (D-089). `webchat-agent sleep` writes the file too, over the keyholder's socket. The keyholder then
+starts nothing new, finishes what runs, stops checking in and frees `watch.lock`. Only `webchat-agent
+wake` removes it. Both commands carry no authority: any process that runs as the owner can send them,
+and the worst it does is stop or start the agent. Why: closing every session was the only off switch.
 
-Cost: a sleeping agent hears nothing, so the page cannot wake it. Waking needs the laptop.
+Cost: a sleeping agent hears nothing, so the page cannot wake it. Waking needs the laptop, and a program
+of the owner's can wake it too.
 
 ### D-114: Only a person owns a project or group
 
@@ -1691,22 +1687,23 @@ account deletion (D-093).
 Cost: a project whose only other member is an agent can never be handed over, so its owner
 deletes it instead of leaving.
 
-### D-115: The owner chooses what their agent's runs load from their Claude setup
+### D-115: The owner chooses each harness, and what its runs load of their setup
 
-Status: Accepted 2026-11-07 in #165 (R-039).
+Status: Accepted 2026-11-07 in #165 (R-039), changed in #176.
 
-**Settings** under **Coding agents** asks the agent, in the owner's direct chat, what the laptop
-offers: `~/.claude/CLAUDE.md`, and each skill in `~/.claude/skills` with its description. The page
-sends the owner's pick as a sealed `setup`, heeded only from the owner, there, within 10 minutes,
-once (D-089). Every run and turn then gets CLAUDE.md through `--append-system-prompt-file`, and
-copies of the chosen skills, without their links, in a plugin folder made for it that holds only
-`skills/`: `--plugin-dir` and `--add-dir`, since a skill reads its own files, plus the `Skill` tool.
-"No AI attribution" empties `attribution.commit` and `.pr` in the plugin's settings file. The agent
-answers, naming the ask, with what its last run loaded. The level is now bits: 4 heeds `setup`, so
-5, or 7 with cards. Why: runs ignored the owner's conventions, as #159's title and attribution showed.
+**Settings** under **Coding agents** asks the agent, sealed in the owner's direct chat, for one row
+per harness on its laptop: version, signed in, cards or why not, the files it reads and the knobs
+its adapter declares. A knob is declared only when the adapter honors it with no code outside the
+sandbox and no change of permission or sandbox mode: model, caps, instructions, skills and
+attribution pass; permission mode, plugins, hooks and MCP servers never do. The owner's `setup`,
+heeded only from them, there, within 10 minutes, once (D-089), names the harnesses turned off,
+which start nothing, and one choice of knobs; `claudeMd` keeps its wire name. Claude Code takes
+CLAUDE.md by `--append-system-prompt-file`, skill copies in a plugin folder of only `skills/`, and
+empty `attribution` lines. Level bit 4 heeds `setup`. Why: runs ignored the owner's conventions
+(#159), and other harnesses are coming.
 
-Cost: a teammate's card can steer a run through the owner's skills, whose scripts run in the same
-sandbox. Skills and CLAUDE.md go to Anthropic with each turn. Opening Settings waits for a check-in.
+Cost: a teammate's card can steer a run through the owner's skills. Skills and instructions go to
+the harness's vendor each turn. One choice of knobs serves every harness until one needs its own.
 
 ### D-116: The agent checks a new card, and the board numbers it under a lock
 
@@ -1726,23 +1723,25 @@ keeps its mark until checked again. Two pages adding a card wait for each other.
 
 ### D-117: The board is the source, and a linked repository keeps a copy
 
-Status: Accepted 2026-11-07 in #167 (R-040).
+Status: Accepted 2026-11-07 in #167 (R-040), changed in #188 and #189.
 
 The project's owner links its board to one of its repositories, sealed in the Roadmap's title. Their
 page first imports the repository's entries from their agent, with their own numbers; a board card
 whose number one takes moves to the next free one. From then on the agent keeps `docs/roadmap.md`
-and `docs/decisions.md` as copies, rendered by `copyOf` in `shared/board.ts`, as Copy as Markdown is:
-decisions in number order, Done and Fixed items as a table. After 10 quiet minutes it commits them to
-`agent/board`, in one draft, never forced. A proposal file on main reaches the owner as a draft, and
-`Claims K-12` in an open pull request sets K-12 In progress. CI fails a hand edit of a copy. Why: the
-board and the repository drifted apart, and their numbers clashed (#159).
+and `docs/decisions.md` as copies, rendered by `copyOf` in `shared/board.ts`, as Copy as Markdown
+is: decisions in number order, the roadmap under Running, Ready, Ideas, Known issues, Open
+questions, Dropped and Done, with Done and Fixed items as a table. After 10 quiet minutes it commits
+them to `agent/board`, in one draft, never forced. A proposal file on main reaches the owner as a
+draft, and `Claims K-12` in an open pull request sets K-12 `Running: repo#N`. A claim waits for an
+owner's Ready; a proposal closes another's card only as `Done in #N`. CI fails a hand edit of a
+copy. Why: the board and the repository drifted apart, and their numbers clashed (#159).
 
 Cost: card text is plain text in the repository; main lags the board until the owner merges; nothing
 syncs while the laptop sleeps; a session that needs a decision number waits for the owner.
 
 ### D-118: A card run follows the repository's workflow
 
-Status: Accepted 2026-11-07 in #168 (R-042).
+Status: Accepted 2026-11-07 in #168 (R-042), changed in #171 and #178.
 
 The plugin refuses a card that an open pull request claims, as `scripts/claim.sh` does. The run's
 first turn checks, changing nothing, that the card still holds (D-107). If not, it ends `stale`
@@ -1753,11 +1752,13 @@ ends a turn as `decision` with its draft: the card shows `Waiting for a decision
 after a day, and the owner's go, once they added it, resumes the session; after 7 days the run
 fails. A run that fails before its work is done closes its draft and keeps the branch. The answer
 names the Proposed decisions the work makes true, and its new cards wait in the pane. On merge the
-owner's page sets the card Done or Fixed and those decisions Accepted. Why: runs skipped the
-workflow every session follows (#159).
+owner's page sets the card Done or Fixed and those decisions Accepted; on a close without a merge,
+the agent reports `closed` and the page gives the card back the status it had before. Why: runs
+skipped the workflow every session follows (#159), and a closed draft left its card In review.
 
-Cost: a failed run leaves a closed draft. A paused run holds its card and worktree for up to 7
-days. Server tests fail only in CI, since the sandbox cannot listen on localhost.
+Cost: a failed run leaves a closed draft. A run paused for a decision, or stopped by its owner
+(docs/decisions/stop-pauses-run.md), holds its card and worktree for up to 7 days. Server tests
+fail only in CI, since the sandbox cannot listen on localhost.
 
 ### D-119: The owner names the harness in each request
 
@@ -1988,6 +1989,381 @@ it. Why: older copies waited for good, as nothing but an add ended them.
 
 Cost: a dismissal has no undo, and the agent never sends that version of the file again.
 
+### D-133: The page loads the whole history of each chat with the user's own agent
+
+Status: Proposed 2026-11-18 in #283.
+
+A chat with one of the user's own agents loads its first page as before, and once the page's
+other first loads are done, the rest of its history, page by page, until the server has no
+older rows. A proposal draft waits on the board until its owner adds or dismisses it, however
+many runs and reports came after it (R-047), and the agent never sends a file again once sent.
+Other chats keep loading one page at a time, on the user's scroll.
+
+Cost: each page load makes one request per 50 messages of an agent chat, and decrypts them all.
+An agent chat that grows for months makes the first minute of each load slower. A request that
+fails stops the paging until the next load.
+
+### D-134: Hermes runs unconfined, and the owner is told before linking it
+
+Status: Proposed 2026-11-14 (docs/roadmap/new-hermes-harness.md). It changes docs/decisions/acp-adapter.md.
+
+Hermes joins `agent/acp-agents.ts` with no isolation and no sandbox. Hermes 0.23.1 runs a session
+started with `--safe-mode` or `--ignore-user-config` in a managed worker, which cannot reach the
+MCP servers a client passes, so `submit_answer` never loads (upstream main on 2026-11-14 is the
+same). An entry may leave out `isolation` only when `HARNESS_WARNING` in `shared/types.ts` names
+it; the list-shape test holds that. The warning shows in setup's pick list, on the pane's link
+approval and in its Settings row, linked or not. Why: the owner chose Hermes as it is over no
+Hermes, and the locked room still keeps the agent's keys and `gh` login from it.
+
+Cost: Hermes loads the owner's config, memory, plugins, hooks and MCP servers, and its shell asks
+only about commands it judges dangerous, so a teammate's text can reach the owner's files and tools.
+
+### D-135: ACP agents run from a shipped list, one process for each session
+
+Status: Proposed 2026-11-13 in #203 (docs/roadmap/new-acp-adapter.md).
+
+One adapter runs any agent on `agent/acp-agents.ts`, the only source of an ACP command, so one not
+on it is never linked or run. An entry must name the args or environment that make the agent skip
+the owner's settings and MCP servers, with a dated check; the list-shape test refuses one without,
+unless the owner is warned instead (docs/decisions/new-hermes-unconfined.md). The list holds Hermes,
+with no isolation; a real agent joins in its own pull request, after someone runs it. The agent
+starts at a session's first turn and keeps running for its later turns, each a `session/prompt`,
+never in arguments. It ends 10 minutes after a turn, with its session and with the daemon; a later
+turn resumes it. It ends a turn through `submit_answer`, a tool of this program's `answer`
+subcommand, and WebChat checks the answer against that turn's schema. Its permission requests get
+the rulebook's answer once (`agent/rulebook.ts`), never `*_always`, and a question is a no. ACP
+agents answer questions only, as Codex does.
+
+Cost: an idle agent lives up to 10 minutes for each session. Its sandbox, shell and network are its
+own, and the rulebook reaches only what it asks about. Nothing here was run against a real agent.
+
+### D-136: A stopped run pauses and keeps its session
+
+Status: Proposed 2026-11-09 in #178 and #181.
+
+Stop on a run whose work is unfinished pauses it. The plugin kills the harness's process, pushes
+what is committed, and keeps the worktree, the branch, the draft and the session in its watched
+record, as `unfinished.paused` with `stopped`. It reports `paused`, and the card says "Stopped.
+Tell it what to change, or start over." The owner's next words, a `fix` message with a note,
+resume the session with a brief that fences them, orders a look at `git status` first, and asks
+for a decision or card draft when they are a rule for the team (D-104). A second stop closes the draft and keeps the branch, as a failure
+does, and a pause with no words fails after 7 days, as a decision pause does (D-118). While a
+turn runs, the adapter turns the harness's output into one sentence on what the model does, and
+the plugin sends it as a sealed `progress` report at most every 30 seconds and only when it
+changed, to the owner's direct chat, where the pane shows it under "Working…" and the service
+worker shows no notification for it. Why: a run was a black box for up to two hours, and Stop
+threw its work away. The data path forbids a live connection (D-004), so one look and one
+correction per run is what fits.
+
+Cost: a run makes up to 240 sealed messages in the owner's chat with the agent, which Safari
+shows as notifications (D-047). A paused run holds its card and worktree for up to 7 days.
+
+### D-137: CI runs on the owner's own machines
+
+Status: Proposed 2026-11-13 in #211, changed in #213, #215 and #216.
+
+The checks and the id checks run on either of two self-hosted GitHub Actions runners: a Linux server
+of the owner's (`self-hosted`, `linux`) and the owner's Mac (`self-hosted`, `macOS`). Release Please
+runs on the Linux server only. A newer push to a pull request cancels its older CI and id-check
+runs, so they free their runner. A newer push to main cancels main's older CI run the same way, so
+a burst of merges tests only the newest commit, and finding the merge that broke main takes a
+bisect. A self-hosted runner uses none of the account's Actions minutes, which ran out on the
+private repository. The agent's release builds run there too: macOS on Apple silicon on the Mac,
+Linux x64 on the server. The locked room's real-room job runs on Linux only, on that server, with
+passwordless sudo; its macOS leg is dropped.
+
+Cost: each runner takes one job at a time, and CI waits while both are down. A runner runs whatever
+a pull request's branch holds. The server holds nothing else of value, but the Mac runs jobs as the
+owner, with their files and keys in reach. macOS's room is checked only by unit tests and by hand.
+Intel Macs and ARM Linux get no agent. The release file that runs as root on users' laptops is
+built on the Mac that runs pull requests' branches.
+
+### D-138: A run shows its plan first, and the owner's go or words redirect it
+
+Status: Proposed 2026-11-09 in #182. Extends the redirect of docs/decisions/stop-pauses-run.md (#181).
+
+The check turn of a card run also answers with a plan: a few lines on how it will do the work.
+When the card holds, the run reports `planned` with the plan and waits, before the claim commit and
+the draft, in `plans.json` beside the watched drafts. The owner's go, or their words, through the
+same `fix` message a redirect takes, resume the check's session: the claim commit and the draft,
+then the work with their words. A stop ends it, and with no go it fails after 7 days, as a paused
+run does. The gate is on by default. `noPlan` in the setup choice turns it off, and only a harness
+whose adapter declares the knob honors it. Why: one round trip per run fits WebChat's cadence while
+dozens do not (decided 2026-11-09), and a wrong plan costs a minute instead of a draft.
+
+Cost: every run waits for its owner once. No draft claims the card while it waits, so another pull
+request can claim it first; the card shows In progress meanwhile.
+
+### D-139: An agent's board traffic is a quiet sync message
+
+Status: Proposed 2026-11-12 in #198.
+
+An agent sends its board traffic with its owner's page, the entries of a linked repository, the
+claims of open pull requests and a failed link, as messages of kind `sync`. The server pushes and
+counts them as it does a reaction (D-030): no push unless the owner looks at a tab, never unread,
+and they neither reorder the chat nor replace its preview. The kind is signed into the envelope
+(D-016). A proposal stays an ordinary message, since it is news to the owner. Against a server
+that answers `Unknown message kind.`, the agent sends the message as before. Why: these messages
+buzzed the owner's phone and showed an unread badge for traffic nobody reads (K-69).
+
+Cost: the server sees which messages are board traffic, which D-020's list now names.
+
+### D-140: A push endpoint moves to another account only with its keys
+
+Status: Proposed 2026-11-10 in #185.
+
+`POST /api/push/subscribe` stores an endpoint for the account that sends it. An endpoint that
+another account holds moves only when the request carries the stored `p256dh` and `auth`, which
+the same browser signed in to the other account sends. Otherwise the server answers
+`409 endpoint_taken`, and the page drops its subscription and subscribes again, with a new
+endpoint. The same account may still change the keys of its own endpoint. Why: the endpoint URL
+alone let anyone who learned it take another person's pushes.
+
+Cost: a browser whose push service changed the keys but kept the endpoint, while another account
+held it, gets one extra subscribe round.
+
+### D-141: One daemon per laptop is the agent's only host
+
+Status: Proposed 2026-11-12 in #193 (docs/roadmap/new-agent-setup.md). Changed in #209.
+
+The agent runs as `webchat-agent`, one per laptop, installed with one line and kept running by the
+system's service managers: a keyholder service and a runner service (docs/decisions/locked-room.md). It
+runs the harnesses the owner links. The Claude Code plugin retired as a host in #209: its last release
+only has skills that run `webchat-agent connect`, `sleep` and `wake`, and setup moves its account. It
+replaces docs/decisions/new-daemon-host.md, where the plugin stayed the first install. Why: one way to
+start the agent, online with no window open, and no harness needed only to host it.
+
+Cost: a service runs around the clock. It checks in every 15 seconds, and every 60 seconds after an idle
+hour, about 1,440 requests a day for an idle agent, so a card on an idle agent waits up to a minute to
+start. A plugin user without administrator rights has no agent.
+
+### D-142: The server never holds a user's GitHub access
+
+Status: Proposed 2026-11-12 in #193 (docs/roadmap/new-gh-token.md).
+
+A card run pushes and opens drafts with a GitHub login on the owner's laptop, never with a token
+the server issues. The GitHub App keeps reading pull requests only, and the server keeps none of
+its tokens (D-050). This answers docs/roadmap/new-gh-token.md: no. Why: an installation token
+would let WebChat's server push to every repository the App is on, and make it answer for users'
+GitHub accounts.
+
+Cost: a GitHub login stays on every laptop that runs cards: the agent's own, in the locked room.
+
+### D-143: A harness without a deny-read list runs under a sandbox WebChat owns
+
+Status: Dropped 2026-11-12 in #193, for docs/decisions/harness-rulebook.md. Proposed 2026-11-09 in #175, the spike of "A Codex adapter, and a sandbox WebChat owns".
+
+A harness whose sandbox has no deny-read list runs under `@anthropic-ai/sandbox-runtime` with the
+plugin's policy: `denyRead` on the gh config, keychains and plugin data, `allowWrite` on the
+worktree, the API domain alone, and the token as a `mask` credential. On srt 0.0.81 the denied
+folders read as empty, the home is read-only, the namespace has only `lo`, other hosts get a 403,
+the API gets the real token and the shell a sentinel. Claude Code keeps its own sandbox: nested
+bubblewrap fails inside srt and `failIfUnavailable` refuses to start. Why: D-097 wants this proof
+before a run pushes with the owner's login.
+
+Cost: the shell can spend the token toward the API domain, and a credential file such as
+`~/.codex/auth.json` must be masked too. srt needs bubblewrap, socat, ripgrep and, on Ubuntu 24.04,
+`kernel.apparmor_restrict_unprivileged_userns=0`. Open: that setting made the spike run as root
+with `allowAllUnixSockets`, and `codex exec` is not installed here, so the seccomp layer and Codex
+are untested.
+
+### D-144: The owner names the harness in each request
+
+Status: Dropped 2026-11-18: a duplicate of D-119, added from an old draft of docs/decisions/new-harness-pick.md. Its text is that file as of #201, newer than D-119's.
+
+An agent runs every harness its owner linked, and each must refuse nothing on its laptop
+(docs/decisions/harness-linking.md). The owner names one, signed, in each card run and each prompt, as
+the repository is named (D-093): a line under the repository in the card's play menu, and a picker
+beside it in the composer, from the harnesses the sealed setup answer lists (D-115), those not linked
+or that take no cards greyed with the reason. There is no stored default and no per-project default;
+the page remembers the last pick in the browser only. A session keeps the harness that started it, so
+replies and fix rounds resume with it; another harness is a new conversation, never a switch. A request
+from before the pick names none and runs on the first linked harness, in the order the owner linked
+them. So do the turns nobody picks for: Check again (D-116) and a proposal's draft (D-117). A request
+naming a harness the owner has not linked fails with the reason. The server learns nothing: the name
+travels sealed, and the check-in's level is the union over the linked harnesses, with no name in it.
+
+Cost: a page that never opened Settings asks the agent for its setup once per harness picker, a
+sealed message in the direct chat. A reply after the owner unlinks the session's harness fails with
+that reason instead of moving to another harness. With none linked, every request fails with the
+reason to link one.
+
+### D-146: An agent serves from a daemon or from the Claude Code plugin
+
+Status: Proposed 2026-11-09 in #177 (the daemon-host card).
+
+The plugin class that D-092 runs as an MCP server has a second host: `npm run agent -- serve`
+builds the same `ClaudePlugin` in `~/.webchat/laptop`, with `connect`, `sleep` and `wake` as
+subcommands in place of the `/webchat:` skills. The plugin stays the first install in the README,
+and the daemon is for a laptop with no Claude Code window to keep open. The guard hook stays in
+the Claude adapter, and the daemon runs it through `agent/mcp.ts`. A laptop has one host per
+account: the daemon's folder is its own, so two hosts never share an account file (D-085).
+Why: the trusted half of the agent ran only inside a Claude Code session, whatever harness a
+laptop had.
+
+Cost: the daemon must be kept running, in a terminal or as a launchd or systemd service. Until
+another harness has an adapter, it still needs the `claude` command. Its run needs `tsx`, since
+nothing bundles it. Messages the plugin shares with the pane still name `/webchat:wake`.
+
+### D-147: A review counts from its reviewer's own revision, and an answer from the owner's
+
+Status: Proposed 2026-11-12 in #190 (docs/roadmap/new-board-lanes.md).
+
+Any member asks a person in the project to review a card in review: a line under its status,
+`Review: @dan Review required. Asked by @bo 2026-11-12.`, and a direct message. The reviewer
+rewrites their line to `Approved`, or `Changes requested` with a one-line note. A verdict counts
+only while the reviewer's newest revision holds the line and is newer than the owner's, or the
+owner's repeats it; `Accepted` or `Declined` only from the owner's. While a verdict stands, nobody
+else moves the card off the status its reviewers saw, but to Open or by a merge. The owner closes
+after an approval with no change open, runs it again once every change is answered and one
+accepted, which asks those reviewers again and drops other verdicts, or marks it ready, which drops
+all. Why: pages hold the gates (D-081). Cost: requests are not checked. A reviewer who left or whose
+keys are unchecked counts for nothing, nor does any verdict while the owner's revision does not
+open. A hand edit keeps the review lines that stand; only the buttons change one. Run again restarts
+only the owner's draft the card names, else sets `Running: <owner>`; a waiting push resumes nothing.
+
+### D-148: A card's owner holds its gates, read from each member's newest revision
+
+Status: Proposed 2026-11-12 in #189 (docs/roadmap/new-board-lanes.md).
+
+A card with an owner shows the status of the newest word, each member's newest revision, whose
+author may set it: Open from anyone; Ready, Running and In review once the owner's own word left
+Open; Done from the owner, or `Done in repo#N` as a merge once it left Open. Only the owner's
+removal stands. The opened card names who tried what does not stand; pages write from the text that
+stands. Only the owner marks it ready or closes it; any member asks, picks it or sends a pick to
+review. Any member takes a card with no owner into a new section they open, the only way a card
+changes owner. Why: the server cannot read a card, so pages hold the gates (D-081).
+
+Cost: gates bind the status line and removal, so anyone can change a card's title and body. A page
+cannot verify a merge; the card says who wrote it. Words are not history: anyone puts a card back in
+Open, and the owner's Ready stands until they take it back. Old cards have no owner until taken,
+which loses their history. A claim leaves an owned Open card in Open (D-117). The agent's copy
+reads every member's word, as a page does (#195).
+
+### D-149: A request on a card reaches the person asked in their direct chat
+
+Status: Proposed 2026-11-12 in #189 (docs/roadmap/new-board-lanes.md).
+
+A member who asks a card's owner to mark it ready writes `Asked: 2026-11-12. @bo asks its owner to
+mark it ready.` under its status line, where the team sees it, then sends the owner a message in
+their direct chat. A sealed `card` field names the card's id, doc and section; the header is
+unchanged and the text says the same in words, so old messages verify and an older page shows the
+text. Its push is an ordinary message's, so only the owner gets one, and a click opens the card.
+The page opens the direct chat first, so nothing is written when it cannot key a new chat for the
+person (D-018). Marking the card ready drops the lines. Why: a line on the card alone reaches
+nobody, and the server must learn nothing new (rules 1, 2 and 7).
+
+Cost: the server can guess that a direct message sent right after a card save is about that card.
+These messages sit in a chat between people, so a member asks at most once while their line stays.
+Usernames go into card text, which a linked repository holds in plain text (D-117).
+
+### D-150: The roadmap shows lanes, and Ready and Running are its words
+
+Status: Proposed 2026-11-12 in #188 (docs/roadmap/new-board-lanes.md).
+
+The Roadmap shows Ready, Running and In review side by side, Open cards in a drawer under them and
+Done folded. Decisions are a tab beside it. Pages write `Ready`, `Running: Ann's agent` and
+`Running: repo#N`, and still read `Next` and `Planned` as Ready and `In progress` as Running. A
+card's owner is the author of its oldest revision, when its sealed content says `opened`, which only
+`addCard` writes, and while they are a member. `GET /api/docs/:id/words` returns each section's
+oldest revision and each author's newest, so the page reads owners without the history. Why: nobody
+saw who opened a card or who works on it.
+
+Cost: a server can withhold the marked first revision, so a card looks ownerless, and with a member
+who signs a revision marked `opened`, present that member as owner. Cards from before, imported
+ones and those whose opener left have none. Until it reloads (D-040), an older page sorts `Ready`
+and `Running:` cards under Open, and its brief does not refuse a card that says `Running: Ann's
+agent`. An older plugin's copy keeps the old headings until it updates.
+
+### D-151: The agent's secrets live under a separate OS user
+
+Status: Proposed 2026-11-12 in #193 (docs/roadmap/new-locked-room.md), built in #206, #207, #208 and #209.
+
+Setup creates a hidden account, `_webchat`, with the owner's password once. Its keyholder holds the
+agent's keys, its own `gh` login and a full clone of each repository, in a folder only it can read, and
+does every fetch, push and draft; its program, `git` and `gh` are root-owned, which it checks at start. A
+runner, as the owner, starts the harnesses. They share one local socket that carries no secret and no
+authority. Git crosses only as bundles, both ways: the keyholder sends the base as a bundle, and accepts
+a run's bundle only when it holds the run's one `agent/*` branch. It writes the board's copy with git
+plumbing, never a checkout. For a harness that cannot commit, such as Codex, the runner commits what it
+left. Nothing the owner's account does carries authority, only the owner's signed messages, so connecting
+a folder or linking a harness from the laptop is a request the owner approves. With no runner connected
+the agent shows offline and requests fail at once. Why: the operating system keeps every harness's model
+from WebChat's secrets, so no harness has to prove it.
+
+Cost: a laptop without admin rights cannot run the agent, and the Claude Code plugin no longer hosts it.
+A copy of each repository on disk, and runs need the owner logged in. An administrator's password reads
+the agent's files. The model still reads the owner's own files, as their harness allows
+(docs/decisions/harness-rulebook.md).
+
+### D-152: The owner links each harness, from the list WebChat supports
+
+Status: Proposed 2026-11-12 in #193 (docs/roadmap/new-harness-linking.md). Built in #201.
+
+Supported harnesses are Claude Code and Codex, through built-in adapters. Setup lists those it found
+and the owner picks which to link, signed-in ones ticked; the picks ride the pairing sealed under the
+code, and the approval dialog shows them, so the server reads nothing. Later, Settings links or
+unlinks one as a signed setup choice (`linked`, in the order the owner linked them), and `webchat-agent
+link <name>` sends a sealed request the owner approves in the pane. Nothing links on its own, and an
+unsupported harness cannot be linked. A request with no pick runs on the first linked harness. An
+agent paired before it links what it found at its first start, minus what its owner turned off. The
+plugin's own pairing asks to link Claude Code only. An adapter may declare a minimum version, which
+refuses a harness below it. Claude Code and Codex keep native adapters and move to their long-running
+protocols for approvals. It changes docs/decisions/new-harness-pick.md: enabled becomes linked. Why:
+the owner chooses every harness, and WebChat runs only harnesses it can hand its rulebook to.
+
+Cost: support for a new harness waits for a release, and Hermes waits for its own card. A harness
+installed later stays unlinked until the owner links it. With none linked the agent still answers
+settings, so the owner can link one, and fails every request with that reason. Pairing needs a column
+for the sealed picks (migration 22).
+
+### D-153: The agent connects a folder only on the owner's approval in WebChat
+
+Status: Proposed 2026-11-13 in #202 (docs/roadmap/new-connect-approval.md). Changed in #209.
+
+`webchat-agent connect` files a request over the keyholder's socket and returns; the keyholder sends it as
+a sealed `ask` of kind `connect`, naming the repository and the folder, and the pane shows both with
+Approve and Decline. The agent writes the `connected` mark only on the owner's signed approval, which
+repeats the repository and folder, within 10 minutes of its signed time and counted once. The request also
+lapses 10 minutes after the agent sent it. An unpaired agent refuses, and one request waits per repository
+(D-101). Why: a model running as the owner could type the command and mark any folder.
+
+Cost: the approval waits for the serving agent's next check-in, up to a minute. A model running as the
+owner can still type the command, which files a request the owner must approve; it cannot write the mark,
+which lives in the keyholder's folder (docs/decisions/locked-room.md). Adding an agent in the page opens its
+direct chat, so the agent has a keyed chat to send into.
+
+### D-154: A root-owned updater moves the agent to its server's release
+
+Status: Proposed 2026-11-13 in #210 (docs/roadmap/new-agent-self-update.md).
+
+Setup installs a job that runs `webchat-agent update` as root every 15 minutes, from the root-owned
+program: a LaunchDaemon, or a systemd timer. It reads the server from a root-owned `update.json`, asks
+`GET /api/config` for the release, and only for a newer `x.y.z` downloads that release's file and its
+`.sha256` from the address built into the agent, with no login. A file that fails the checksum or its
+`--version` is dropped. The swap is a rename and waits until the keyholder reports nothing running, or 24
+hours; root restarts the keyholder, the runner restarts itself, and a keyholder that does not answer as the
+new release in 2 minutes is rolled back and that release skipped. Why: no one reruns the line.
+
+Cost: a changed release runs as root on every laptop within 15 minutes, and its checksum comes from the
+same place. While the repository is private nobody updates: the download is refused and `doctor` warns.
+
+### D-155: The agent installs with one line from GitHub releases
+
+Status: Proposed 2026-11-12 in #193 (docs/roadmap/new-agent-build.md).
+
+The Connect dialog shows one line for the server's own release. The script and a single file per
+OS and processor, with Node inside, come from that GitHub release and are checked against its
+checksums, never served by WebChat. Setup checks read-only first, then asks once: a summary, the
+harnesses to link, the password. It adds only what the agent needs: git through the package
+manager, and on Linux the `bubblewrap` and `socat` that Claude Code's sandbox needs, a checked `gh`
+for `_webchat`, and a missing harness's own installer. It never changes a security setting. A laptop without admin rights is not supported. A root-owned updater
+follows the server's release, forward only. `doctor` reruns the checks. Why: one line, one
+password and two approvals in the browser.
+
+Cost: a build per OS and processor in every release, two for now (docs/decisions/self-hosted-ci.md).
+A tampered server could show a different line, as it could change the page (README). Going back to an older release takes running the line again.
+
 ## Superseded
 
 ### D-028: No leaving or removal before key rotation
@@ -2053,3 +2429,23 @@ the plugin on, every session in every repository checked in, and the play menu l
 
 Cost: the owner types the variable, or keeps an alias. macOS hides the environment of its own
 system programs, so this needs a `claude` that is not one. Old `doorbell` files stay unused.
+
+### D-145: A harness runs cards only when its adapter proves the shell cannot read the secrets
+
+Status: Superseded 2026-11-13 in #209 by docs/decisions/locked-room.md and docs/decisions/harness-rulebook.md: the keyholder's account keeps the secrets from every harness, so no adapter proves it, and `CODEX_GAP`, `acpGap` and `refusal(dir)` are gone. What it says of Codex's turns still holds. Proposed 2026-11-09 in #180, from "A Codex adapter, and a sandbox WebChat owns".
+
+A harness takes cards only when its adapter's `refusal(dir)` proves that its shell cannot read the
+secret folders: the plugin's data, gh's config and the macOS keychain. Without that proof it
+answers questions only, in a conversation's scratch copy, which pushes nothing: `refusal` takes
+the turn's purpose, `cards` or `answers`, and an adapter whose only gap is the owner's login
+refuses the first and allows the second. Settings shows the gap on its row, and a card request
+naming the harness fails with it before the claim check. Codex is the first such harness: its sandbox lets the shell read every folder, as
+far as its documentation shows. Its turns run in one `codex app-server` per session with the owner's MCP servers turned off one by
+name, hooks off, only the core environment variables, no network and writes only in the copy. The
+owner's config.toml and `.rules` still load, since app-server has no flag to skip them
+(docs/decisions/harness-approvals.md). Why:
+D-097 wants the proof before a run pushes with the owner's login.
+
+Cost: the accepted risk, decided 2026-11-09, is that the model reads the GitHub token and puts it
+in a sealed answer that only the owner reads. Codex reads its own `AGENTS.md` and skills on every
+turn, whatever the owner chose. Briefs go to OpenAI as well as Anthropic.

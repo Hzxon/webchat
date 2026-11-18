@@ -371,8 +371,15 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
   // After the chat above, so the two never load the same history at once. The Coding agents row
   // shows the newest conversation, so the chats with agents load too (D-103).
   void opening.catch(() => undefined).then(async () => {
-    await Promise.all(agentChats(store.get()).map((chat) => (store.get().messages[chat.id] ? undefined : loadOlder(chat.id).catch(() => undefined))));
-    return restoreUnsent(run);
+    const chats = agentChats(store.get());
+    await Promise.all(chats.map((chat) => (store.get().messages[chat.id] ? undefined : loadOlder(chat.id).catch(() => undefined))));
+    await restoreUnsent(run);
+    // A proposal draft waits on the board however many messages came after it, so the rest of each
+    // agent chat loads too, last; a failed page stops it until the next load (R-047).
+    const rest = async (id: number) => {
+      while (store.get().conversations[id] && !store.get().historyComplete[id]) await loadOlder(id);
+    };
+    await Promise.all(chats.map((chat) => rest(chat.id).catch(() => undefined)));
   });
   return { status: 'ready' };
 }
