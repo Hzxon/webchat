@@ -402,7 +402,7 @@ export function AgentThread({
             {thread.ask && (
               <div className="agents-dock">
                 <Text as="p" weight="semibold">
-                  Your agent asks before: {thread.ask.message.text}
+                  {thread.ask.message.text}
                 </Text>
                 <div className="agents-draft-actions">
                   <Button

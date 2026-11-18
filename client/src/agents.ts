@@ -244,6 +244,11 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     if (part(message) && part(previous)) thread.messages[thread.messages.length - 1] = { ...previous, text: previous.text + message.text };
     else thread.messages.push(message);
     thread.last = Math.max(thread.last, message.createdAt);
+    // A hand over moves the session to the other harness, which says anew what it runs with (D-156).
+    if (prompt.kind === 'reply' && prompt.handover?.summary !== undefined) {
+      thread.harness = prompt.handover.harness;
+      delete thread.about;
+    }
     // A cancel changes nothing until the agent says it stopped.
     if (prompt.kind === 'reply' || prompt.kind === 'clone') thread.state = pending[message.clientId ?? ''] === 'failed' ? 'unsent' : 'working';
     else if (prompt.kind === 'answer') thread.state = 'answered';

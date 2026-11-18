@@ -51,6 +51,10 @@ describe('Conversations with an agent in client/src/agents.ts (D-102, D-103)', (
     const about = say(AGENT, { kind: 'events', to: 'p2', events: [], about: { model: 'm', context: 5 } }, 'e3', 70);
     const later = say(AGENT, { kind: 'events', to: 'p2', events: [], about: { context: 9 } }, 'e4', 80);
     assert.deepEqual(threadsOf([prompt, about, later], ME, AGENT, {}, 100)[0].about, { model: 'm', context: 9 });
+    // A hand over moves the thread to the other harness, which says anew what it runs with (D-156).
+    const handed = say(ME, { kind: 'reply', to: 'p2', sentAt: 90, handover: { harness: 'Codex', summary: 'Go on.' } }, 'h1', 90);
+    const [after] = threadsOf([prompt, about, later, handed], ME, AGENT, {}, 100);
+    assert.deepEqual([after.harness, after.about], ['Codex', undefined]);
   });
 
   test("a long answer's parts show as one message, which keeps the first part's id", () => {

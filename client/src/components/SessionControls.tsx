@@ -74,7 +74,9 @@ export function Controls({
 /** The summary for a hand over, as plain text the user may edit, and the button that hands it over (D-156). */
 export function Summary({ thread, message }: { thread: Thread; message: ChatMessage }) {
   const harness = message.prompt?.kind === 'summary' ? message.prompt.harness : '';
-  const [text, setText] = useState(message.text);
+  // Once handed over, the summary as the user sent it, edits and all.
+  const sent = thread.messages.find((m) => m.id > message.id && m.prompt?.kind === 'reply' && m.prompt.handover?.summary !== undefined);
+  const [text, setText] = useState(sent?.prompt?.kind === 'reply' ? (sent.prompt.handover?.summary ?? message.text) : message.text);
   // Only the newest summary hands over, and only once.
   const open = thread.messages.at(-1) === message && thread.state !== 'working';
   return (
