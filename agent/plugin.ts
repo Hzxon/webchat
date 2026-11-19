@@ -16,7 +16,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
 import { cardsOf, copyOf, entriesOf, proposalOf, readCard, usernamesOf, type DocSection } from '../shared/board.ts';
-import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type AskDTO, type PairingPick, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SessionEventDTO, type SetupChoice } from '../shared/types.ts';
+import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type AskDTO, type PairingPick, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SessionAboutDTO, type SessionEventDTO, type SetupChoice } from '../shared/types.ts';
 import { ApiError } from './api.ts';
 import { AgentClient, checkInEvery, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
@@ -1171,29 +1171,39 @@ export class Plugin {
   /**
    * Sends a conversation's steps to its owner as sealed `events` messages, which the server never
    * pushes: what came in the last `EVENTS_MS` at once, cut to fit a message, and the rest when the
-   * turn ends (R-072). A server from before them refuses the kind, and the steps are dropped.
+   * turn ends (R-072). What the session runs with goes along whenever it changed. A server from
+   * before them refuses the kind, and the steps are dropped.
    */
-  private steps(chat: number, to: string) {
+  private steps(chat: number, to: string, about: SessionAboutDTO) {
     let queue: SessionEventDTO[] = [];
     let timer: NodeJS.Timeout | undefined;
     let sent = Promise.resolve();
+    let told = '';
     const flush = () => {
       clearTimeout(timer);
       timer = undefined;
-      while (queue.length) {
+      let fresh = JSON.stringify(about) === told ? undefined : about;
+      told = JSON.stringify(about);
+      while (queue.length || fresh) {
         // At least one step, each of which fits on its own.
         let [n, size] = [0, 0];
         while (n < queue.length && n < LIMITS.eventsPerMessage && (n === 0 || size + JSON.stringify(queue[n]).length <= LIMITS.eventsJsonLength)) size += JSON.stringify(queue[n++]).length;
         const events = queue.slice(0, n);
         queue = queue.slice(n);
-        const text = events.length === 1 ? 'One step of the session' : `${events.length} steps of the session`;
-        sent = sent.then(() => this.client!.send(chat, { text, prompt: { kind: 'events', to, events } }, { kind: 'events' }).then(() => undefined, log));
+        const text = events.length === 0 ? 'What the session runs with' : events.length === 1 ? 'One step of the session' : `${events.length} steps of the session`;
+        const extra = fresh;
+        fresh = undefined;
+        sent = sent.then(() => this.client!.send(chat, { text, prompt: { kind: 'events', to, events, ...(extra && { about: extra }) } }, { kind: 'events' }).then(() => undefined, log));
       }
       return sent;
     };
     return {
       add: (event: SessionEventDTO) => {
         queue.push(event);
+        timer ??= setTimeout(flush, EVENTS_MS);
+      },
+      about: (more: SessionAboutDTO) => {
+        about = { ...about, ...more };
         timer ??= setTimeout(flush, EVENTS_MS);
       },
       end: flush,
@@ -1232,8 +1242,8 @@ export class Plugin {
     const schemas = schema === CHECK || schema === ANSWER ? [CHECK, ANSWER] : [schema];
     const own = !taken && !!(who as { own?: boolean }).own;
     // Only a page that shows the steps asks for them; an older one would show each batch as a message (R-072).
-    const steps = !('taken' in who) && who.events ? this.steps(who.chat, who.to) : undefined;
-    const { answer, applied } = await this.bench.turn({ harness: harness.name, cwd, session, resume, message, schema, schemas, setup: this.setup.choice, ...(own && { own }) }, { signal, progress: progress?.line, events: steps?.add, permit }).finally(async () => {
+    const steps = !('taken' in who) && who.events ? this.steps(who.chat, who.to, { own, ...(who.branch && { branch: who.branch }) }) : undefined;
+    const { answer, applied } = await this.bench.turn({ harness: harness.name, cwd, session, resume, message, schema, schemas, setup: this.setup.choice, ...(own && { own }) }, { signal, progress: progress?.line, events: steps?.add, about: steps?.about, permit }).finally(async () => {
       // Before the answer, so the timeline is whole when it ends.
       await steps?.end();
       progress?.end();
@@ -1311,7 +1321,7 @@ export class Plugin {
     const asked = card ? `${message}\n\n${cardAsk(card)}` : message;
     // Never the owner's folder as `scratch`, which an ended conversation removes.
     const cwd = own && folder ? folder.dir : scratch;
-    const answer = (await this.ask(cwd, conversation.session, resume, asked, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks, own, events: conversation.events })) as { reply?: unknown; drafts?: unknown };
+    const answer = (await this.ask(cwd, conversation.session, resume, asked, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks, own, events: conversation.events, ...(base && { branch: base.ref.replace(/^origin\//, '') }) })) as { reply?: unknown; drafts?: unknown };
     // Only once the turn read them, so a turn cut short tells the next one again.
     conversation.seen = seen;
     conversation.pulls = listed;

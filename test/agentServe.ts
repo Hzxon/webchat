@@ -514,6 +514,7 @@ export function serveTests(w: World) {
         assert.deepEqual(heardSteps.map((m) => [m.kind, m.content!.prompt!.kind]), [['events', 'events'], ['message', 'answer']], 'one batch of steps, then the answer');
         const batch = heardSteps[0]!.content!.prompt as Extract<PromptDTO, { kind: 'events' }>;
         assert.deepEqual(batch.events.map((e) => [e.kind, e.title]), [['thinking', 'Where is the sum?'], ['read', 'sum.js'], ['command', 'npm test']]);
+        assert.deepEqual(batch.about, { own: false, branch: 'main', hooks: 0 }, 'what the session runs with goes along: a restricted run on main, with no hooks');
         assert.ok(batch.events[2]!.detail!.endsWith('1 passing') && batch.events[2]!.detail!.length === LIMITS.eventDetailLength, 'a command shows its output, cut to its end');
         // The history leaves the steps out, so loading an agent chat does not grow with them; they page apart.
         const page = await w.alice.request<Array<{ id: number; kind: string }>>('GET', `/conversations/${direct}/messages`);

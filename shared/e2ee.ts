@@ -33,6 +33,7 @@ import {
   type PullChecks,
   type PromptDTO,
   type SessionEventDTO,
+  type SessionAboutDTO,
   type CardAskDTO,
   type PullReview,
   type RunDTO,
@@ -584,7 +585,10 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
   if (raw.kind === 'reply') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt, ...readCardAsk(raw.card) } : undefined;
   if (raw.kind === 'cancel') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt } : undefined;
   if (raw.kind === 'failed' || raw.kind === 'nocopy' || raw.kind === 'note') return { kind: raw.kind, to };
-  if (raw.kind === 'events') return { kind: 'events', to, events: readEvents(raw.events) };
+  if (raw.kind === 'events') {
+    const about = readAbout(raw.about);
+    return { kind: 'events', to, events: readEvents(raw.events), ...(about && { about }) };
+  }
   if (raw.kind === 'clone') return typeof raw.repo === 'string' && isRepoName(raw.repo) && isId(raw.sentAt) ? { kind: 'clone', to, repo: raw.repo, sentAt: raw.sentAt } : undefined;
   if (raw.kind !== 'answer') return;
   const card = readDraft(raw.card as Record<string, unknown> | undefined);
@@ -599,7 +603,18 @@ function readCardAsk(raw: unknown): { card?: CardAskDTO } {
   return (card?.kind === 'R' || card?.kind === 'K' || card?.kind === 'D') && title !== undefined && body !== undefined ? { card: { kind: card.kind, title, body } } : {};
 }
 
-const EVENT_KINDS: ReadonlyArray<SessionEventDTO['kind']> = ['thinking', 'read', 'search', 'command', 'edit', 'tool', 'text'];
+const EVENT_KINDS: ReadonlyArray<SessionEventDTO['kind']> = ['thinking', 'read', 'search', 'command', 'edit', 'tool', 'text', 'plan'];
+
+/** What a session runs with, the fields of the right shape (R-072). */
+export function readAbout(raw: unknown): SessionAboutDTO | undefined {
+  const a = raw as Record<string, unknown> | null | undefined;
+  if (!a || typeof a !== 'object') return;
+  const count = (v: unknown) => (Number.isInteger(v) && (v as number) >= 0 && (v as number) < 1e7 ? (v as number) : undefined);
+  const text = (v: unknown) => short(v, LIMITS.harnessFieldLength);
+  const mcp = Array.isArray(a.mcp) ? a.mcp.filter((n): n is string => !!text(n)).slice(0, 50) : undefined;
+  const about: SessionAboutDTO = { model: text(a.model), branch: text(a.branch), own: typeof a.own === 'boolean' ? a.own : undefined, plugins: count(a.plugins), skills: count(a.skills), hooks: count(a.hooks), mcp, context: count(a.context) };
+  return Object.fromEntries(Object.entries(about).filter(([, v]) => v !== undefined)) as SessionAboutDTO;
+}
 
 /** A session's steps of the right shape, each cut to its limits (R-072). */
 export function readEvents(raw: unknown): SessionEventDTO[] {

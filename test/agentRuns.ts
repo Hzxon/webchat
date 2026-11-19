@@ -4,7 +4,7 @@ import path from 'node:path';
 import pkg from '../package.json' with { type: 'json' };
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { claudeEvents, claudeResult } from '../agent/claude.ts';
+import { claudeAbout, claudeEvents, claudeResult } from '../agent/claude.ts';
 import { AgentClient } from '../agent/client.ts';
 import type { Harness, Turn } from '../agent/harness.ts';
 import { LocalBench } from '../agent/bench.ts';
@@ -366,6 +366,16 @@ export function runTests(w: World) {
       { kind: 'command', title: 'npm test', detail: 'ok', at: 1 },
     ]);
     assert.equal(open.size, 0, 'the command left the open list with its output');
+    const todo = line('assistant', [{ type: 'tool_use', id: 't3', name: 'TodoWrite', input: { todos: [{ content: 'Read', status: 'completed' }, { content: 'Fix', status: 'in_progress' }, { content: 'Test', status: 'pending' }] } }]);
+    assert.deepEqual(claudeEvents(todo, '/w', open, 1), [{ kind: 'plan', title: 'Plan', detail: '[x] Read\n[~] Fix\n[ ] Test', at: 1 }]);
+  });
+
+  test('reads what a Claude Code session runs with: its start line, and the context of each answer (R-072)', () => {
+    const init = JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', plugins: [{ name: 'a' }, { name: 'b' }], skills: ['s'], mcp_servers: [{ name: 'github', status: 'connected' }] });
+    assert.deepEqual(claudeAbout(init), { model: 'claude-x', plugins: 2, skills: 1, mcp: ['github'] });
+    const answer = JSON.stringify({ type: 'assistant', message: { content: [], usage: { input_tokens: 10, cache_creation_input_tokens: 1000, cache_read_input_tokens: 20000, output_tokens: 5 } } });
+    assert.deepEqual(claudeAbout(answer), { context: 21010 });
+    assert.equal(claudeAbout('{"type":"user"}'), undefined);
   });
 
   test('starts again from its file, and signs in again when its session ends', async () => {

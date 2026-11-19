@@ -175,3 +175,45 @@
 .bubble .markdown pre {
   overflow-x: auto;
 }
+
+/* A session and what it runs with, side by side; on a phone the details take the timeline's place, on demand (R-072). */
+.agents-session {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.agents-session > .messages {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.agents-rail {
+  flex: none;
+  width: 280px;
+  overflow-y: auto;
+  border-inline-start: 1px solid var(--line);
+  background: var(--panel);
+}
+
+@media (max-width: 760px) {
+  .agents-session {
+    flex-direction: column;
+  }
+
+  .agents-rail {
+    display: none;
+  }
+
+  /* Open, the details take the timeline's place, under their button. */
+  .agents-rail.is-open {
+    display: block;
+    flex: 1 1 auto;
+    width: auto;
+    border-inline-start: 0;
+  }
+
+  .agents-session:has(.agents-rail.is-open) > .messages {
+    display: none;
+  }
+}

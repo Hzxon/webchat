@@ -3,7 +3,7 @@
 // it offers; plugin.ts calls only this and never names a harness.
 import os from 'node:os';
 import path from 'node:path';
-import type { SessionEventDTO, SetupChoice } from '../shared/types.ts';
+import type { SessionAboutDTO, SessionEventDTO, SetupChoice } from '../shared/types.ts';
 import type { Lab } from './browser.ts';
 import type { Quiet } from './runner.ts';
 import type { Action } from './rulebook.ts';
@@ -41,6 +41,8 @@ export interface Turn {
   progress?: (sentence: string) => void;
   /** Takes each step of the session as the harness reports it, for the owner's timeline (R-072). */
   events?: (event: SessionEventDTO) => void;
+  /** Takes what the session runs with, a part at a time, as the harness says it (R-072). */
+  about?: (about: SessionAboutDTO) => void;
   /**
    * Asks the owner before an action the harness would ask about, and rejects when the run cannot go
    * on. Set only when the owner's page can show the question; without it an adapter refuses such an

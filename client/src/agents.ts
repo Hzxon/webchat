@@ -2,7 +2,7 @@
 // D-102, D-103). A conversation is a prompt and the messages whose `prompt` field names the
 // prompt's client id, all in the user's direct chat with the agent.
 import { useMemo } from 'react';
-import { AGENT_LEVEL, ASK_WAIT_MS, takesSetup, type AgentRepoDTO, type PermitDTO, type RunDTO, type SessionEventDTO, type UserDTO } from '../../shared/types';
+import { AGENT_LEVEL, ASK_WAIT_MS, takesSetup, type AgentRepoDTO, type PermitDTO, type RunDTO, type SessionAboutDTO, type SessionEventDTO, type UserDTO } from '../../shared/types';
 import { formatSince } from './components/format';
 import type { Tone } from './components/PullTags';
 import type { ChatConversation, ChatMessage } from './e2ee/keyring';
@@ -38,6 +38,8 @@ export interface Thread {
   added: Record<string, string>;
   /** Its session's steps, in batches by the message that carried them, which order them among its messages (R-072). */
   steps?: Array<{ id: number; at: number; events: SessionEventDTO[] }>;
+  /** What its session runs with, the newest of each part (R-072). */
+  about?: SessionAboutDTO;
 }
 
 /** A conversation's state, in words, wherever the page names it. */
@@ -227,7 +229,10 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     // A batch of the session's steps is no message of the thread, and moves nothing (R-072).
     if (prompt.kind === 'events') {
       const thread = threads.get(prompt.to);
-      if (thread && message.senderId === agentId) (thread.steps ??= []).push({ id: message.id, at: message.createdAt, events: prompt.events });
+      if (thread && message.senderId === agentId) {
+        (thread.steps ??= []).push({ id: message.id, at: message.createdAt, events: prompt.events });
+        if (prompt.about) thread.about = { ...thread.about, ...prompt.about };
+      }
       continue;
     }
     const thread = threads.get(prompt.to);

@@ -87,7 +87,8 @@ export function AgentsView() {
   else if (thread?.kind === 'proposal')
     subtitle = `Proposed in ${short(thread.repo)} · ${THREAD_STATE[thread.state].label}`;
   else if (thread)
-    subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board'}${thread.harness ? ` with ${thread.harness}` : ''} · ${THREAD_STATE[thread.state].label}`;
+    // A session's head names its branch, and whether it runs in the user's own setup (R-072).
+    subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board'}${thread.about?.branch ? ` on ${thread.about.branch}` : ''}${thread.harness ? ` with ${thread.harness}` : ''}${thread.about?.own ? ', your own setup' : ''} · ${THREAD_STATE[thread.state].label}`;
   else if (brief) subtitle = 'Before it starts';
   // An agent runs several cards at once, so the list says how many go (R-037).
   const running = threads.filter((t) => t.kind === 'card' && t.state === 'working').length;
@@ -147,6 +148,7 @@ export function AgentsView() {
         <AgentThread
           key={thread.root}
           thread={thread}
+          details
           seat={seatOf(thread)}
           agentId={conversations[thread.conversationId]?.members.find((m) => m.userId !== meId)?.userId ?? 0}
         />

@@ -109,3 +109,16 @@
     display: none;
   }
 }
+
+/* The Details button of a session shows only on a phone, where the details rail hides (R-072). */
+.agents-details-toggle {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .agents-details-toggle {
+    display: inline-flex;
+    align-self: flex-end;
+    margin: var(--spacing-1) var(--spacing-4) 0;
+  }
+}

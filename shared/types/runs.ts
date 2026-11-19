@@ -140,7 +140,7 @@ export type PromptDTO =
   // `card` asks for one checked draft of that kind, from the new card form's fields as they stand (R-071).
   | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true; own?: true; events?: true; card?: CardAskDTO }
   // A batch of the session's steps, in a message of kind `events` (R-072).
-  | { kind: 'events'; to: string; events: SessionEventDTO[] }
+  | { kind: 'events'; to: string; events: SessionEventDTO[]; about?: SessionAboutDTO }
   | { kind: 'reply'; to: string; sentAt: number; card?: CardAskDTO }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }
@@ -159,14 +159,30 @@ export interface CardAskDTO {
 }
 
 /**
+ * What a session runs with, as its harness and the agent know it, for the pane's head and its
+ * details (R-072). Each field is left out when nobody can tell. `context` is the tokens the newest
+ * turn sent the model.
+ */
+export interface SessionAboutDTO {
+  model?: string;
+  branch?: string;
+  own?: boolean;
+  plugins?: number;
+  skills?: number;
+  hooks?: number;
+  mcp?: string[];
+  context?: number;
+}
+
+/**
  * One step of a harness session as its adapter saw it (R-072). Every field is the harness's own
  * text, which the page shows as plain text, never Markdown: a command can hide in it.
  */
 export interface SessionEventDTO {
-  kind: 'thinking' | 'read' | 'search' | 'command' | 'edit' | 'tool' | 'text';
+  kind: 'thinking' | 'read' | 'search' | 'command' | 'edit' | 'tool' | 'text' | 'plan';
   /** Its line: the command, the file, the pattern or the tool, or the text's first line. */
   title: string;
-  /** The reasoning, the text, a command's output or an edit's change, cut to its end. */
+  /** The reasoning, the text, a command's output, an edit's change, or a plan's steps as `[x] Step` lines, cut to its end. */
   detail?: string;
   at: number;
 }
