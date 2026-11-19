@@ -413,7 +413,7 @@ export class Plugin {
   private async updateLevel() {
     const asks = this.linkedHarnesses().some((h) => h.asks) ? AGENT_LEVEL.asks : 0;
     const own = this.linkedHarnesses().some((h) => h.offers.knobs.includes('own')) ? AGENT_LEVEL.own : 0;
-    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | AGENT_LEVEL.events | asks | own | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
+    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | AGENT_LEVEL.events | AGENT_LEVEL.controls | asks | own | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
   }
 
   /** The work that keeps an agent awake while it goes to sleep: its running cards and questions. */
@@ -879,11 +879,11 @@ export class Plugin {
    * so a page from before linking greys it.
    */
   private async stateOf(harness: HarnessInfo): Promise<HarnessState> {
-    const { instructions, skills, knobs } = harness.offers;
+    const { instructions, skills, knobs, models } = harness.offers;
     const linked = this.isLinked(harness);
     const [own, refused] = await Promise.all([this.bench.refusal(harness.name), this.harnessRefusal(harness)]);
     const attention = linked ? own ?? (harness.signedIn === false ? `${harness.name} is not signed in.` : harness.warning) : undefined;
-    return { name: harness.name, ...(harness.version && { version: harness.version }), ...(harness.signedIn !== undefined && { signedIn: harness.signedIn }), ...(harness.path && { path: shown(harness.path) }), linked, ...(attention && { attention }), answers: refused, refusal: refused, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
+    return { name: harness.name, ...(harness.version && { version: harness.version }), ...(harness.signedIn !== undefined && { signedIn: harness.signedIn }), ...(harness.path && { path: shown(harness.path) }), linked, ...(attention && { attention }), answers: refused, refusal: refused, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs, ...(models && { models }) };
   }
 
   /** Keeps the setup on disk, and hands each harness its choice. */
@@ -1241,9 +1241,11 @@ export class Plugin {
     // One process takes every turn of a session, so it gets every schema the session's turns use.
     const schemas = schema === CHECK || schema === ANSWER ? [CHECK, ANSWER] : [schema];
     const own = !taken && !!(who as { own?: boolean }).own;
+    // The session's controls: a model, and a permission mode only in the owner's own setup (R-072).
+    const { model, mode } = 'taken' in who ? {} : who;
     // Only a page that shows the steps asks for them; an older one would show each batch as a message (R-072).
     const steps = !('taken' in who) && who.events ? this.steps(who.chat, who.to, { own, ...(who.branch && { branch: who.branch }) }) : undefined;
-    const { answer, applied } = await this.bench.turn({ harness: harness.name, cwd, session, resume, message, schema, schemas, setup: this.setup.choice, ...(own && { own }) }, { signal, progress: progress?.line, events: steps?.add, about: steps?.about, permit }).finally(async () => {
+    const { answer, applied } = await this.bench.turn({ harness: harness.name, cwd, session, resume, message, schema, schemas, setup: this.setup.choice, ...(own && { own }), ...(model && { model }), ...(own && mode && { mode }) }, { signal, progress: progress?.line, events: steps?.add, about: steps?.about, permit }).finally(async () => {
       // Before the answer, so the timeline is whole when it ends.
       await steps?.end();
       progress?.end();
@@ -1294,7 +1296,12 @@ export class Plugin {
     const base = folder && !own ? await this.fetchBase(folder).catch(() => {
       throw new Error('The laptop could not get your team’s code from GitHub. Check that it is online, then ask again.');
     }) : undefined;
-    const { scratch, fetched } = await this.bench.scratch({ scratch: conversation.scratch, dir: own ? undefined : folder?.dir, base: base?.ref, tip: base?.tip, fetched: conversation.fetched });
+    // In their own setup the turn works in their folder, so it makes no copy: one without git would
+    // be kept for a later restricted turn, such as after a hand over (D-156).
+    const { scratch, fetched } =
+      own && folder
+        ? { scratch: conversation.scratch, fetched: conversation.fetched }
+        : await this.bench.scratch({ scratch: conversation.scratch, dir: own ? undefined : folder?.dir, base: base?.ref, tip: base?.tip, fetched: conversation.fetched });
     // A new copy starts at the tip, so nothing moved under it.
     const was = scratch === conversation.scratch ? conversation.fetched : undefined;
     conversation.scratch = scratch;
@@ -1320,8 +1327,8 @@ export class Plugin {
     // The new card form asks for one draft, from its fields as they stand, which the owner may have edited (R-071).
     const asked = card ? `${message}\n\n${cardAsk(card)}` : message;
     // Never the owner's folder as `scratch`, which an ended conversation removes.
-    const cwd = own && folder ? folder.dir : scratch;
-    const answer = (await this.ask(cwd, conversation.session, resume, asked, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks, own, events: conversation.events, ...(base && { branch: base.ref.replace(/^origin\//, '') }) })) as { reply?: unknown; drafts?: unknown };
+    const cwd = own && folder ? folder.dir : scratch!;
+    const answer = (await this.ask(cwd, conversation.session, resume, asked, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks, own, events: conversation.events, ...(base && { branch: base.ref.replace(/^origin\//, '') }), model: conversation.model, mode: conversation.mode })) as { reply?: unknown; drafts?: unknown };
     // Only once the turn read them, so a turn cut short tells the next one again.
     conversation.seen = seen;
     conversation.pulls = listed;

@@ -138,10 +138,15 @@ export type PromptDTO =
   // `own` says the owner typed it, so it may run in their own setup; Check again never sets it (D-157).
   // `events` says the page shows the session's steps, which an older page would show as messages (R-072).
   // `card` asks for one checked draft of that kind, from the new card form's fields as they stand (R-071).
-  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true; own?: true; events?: true; card?: CardAskDTO }
+  // `model` and `mode` are the session's controls (R-072); a mode counts only in the user's own setup.
+  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true; own?: true; events?: true; card?: CardAskDTO; model?: string; mode?: PermissionMode }
   // A batch of the session's steps, in a message of kind `events` (R-072).
   | { kind: 'events'; to: string; events: SessionEventDTO[]; about?: SessionAboutDTO }
-  | { kind: 'reply'; to: string; sentAt: number; card?: CardAskDTO }
+  // `handover` asks for a summary to hand the session to another harness, or, with the summary as
+  // the user saw and edited it, hands it over (D-156).
+  | { kind: 'reply'; to: string; sentAt: number; card?: CardAskDTO; model?: string; mode?: PermissionMode; handover?: { harness: string; summary?: string } }
+  // The summary a harness wrote for handing its session over, which the user reads and may edit (D-156).
+  | { kind: 'summary'; to: string; harness: string }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }
   | { kind: 'failed'; to: string }
@@ -150,6 +155,10 @@ export type PromptDTO =
   | { kind: 'nocopy'; to: string }
   | { kind: 'clone'; to: string; repo: string; sentAt: number }
   | { kind: 'note'; to: string };
+
+/** A session's permission mode in the user's own setup, as Claude Code names them (R-072). */
+export type PermissionMode = 'default' | 'acceptEdits' | 'plan';
+export const PERMISSION_MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan'];
 
 /** The new card form's fields as they stand, which ask the session for one draft of that kind (R-071). */
 export interface CardAskDTO {
@@ -172,6 +181,8 @@ export interface SessionAboutDTO {
   hooks?: number;
   mcp?: string[];
   context?: number;
+  /** The harness's own commands and skills, which the box offers after a slash. */
+  commands?: string[];
 }
 
 /**

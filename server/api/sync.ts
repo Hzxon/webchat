@@ -1,6 +1,6 @@
 import type { Router } from 'express';
 import { toUserDTO } from '../db.js';
-import { type BootstrapDTO, type SyncRequest, type SyncResponse } from '../../shared/types.js';
+import { MAX_AGENT_LEVEL, type BootstrapDTO, type SyncRequest, type SyncResponse } from '../../shared/types.js';
 import { MAX_ID, checkedInRepos, currentUser } from './helpers.js';
 import type { Context } from './context.js';
 
@@ -45,7 +45,7 @@ export function syncRoutes(router: Router, { db, requireAuth, markDeliveredFrom 
 
     const editing = input.editing;
     await Promise.all([
-      db.checkIn(me.id, input.attentive === true, tabId, endpoint, checkedInRepos(input), Number.isInteger(input.protocol) && input.protocol! > 0 && input.protocol! < 100 ? input.protocol : 0, Array.isArray(input.repos)),
+      db.checkIn(me.id, input.attentive === true, tabId, endpoint, checkedInRepos(input), Number.isInteger(input.protocol) && input.protocol! > 0 && input.protocol! < MAX_AGENT_LEVEL ? input.protocol : 0, Array.isArray(input.repos)),
       typeof editing?.docId === 'string' && typeof editing.section === 'string'
         ? db.renewSectionLock(me.id, editing.docId.slice(0, 64), editing.section.slice(0, 64))
         : undefined,

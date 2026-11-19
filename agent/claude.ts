@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { promisify } from 'node:util';
-import { LIMITS, type SessionAboutDTO, type SessionEventDTO } from '../shared/types.ts';
+import { LIMITS, type PermissionMode, type SessionAboutDTO, type SessionEventDTO } from '../shared/types.ts';
 import { fits } from './answer.ts';
 import { APPROVE_TOOL, openApprover, TOOL_TIMEOUT_MS, type Call } from './approve.ts';
 import { isCredential, olderThan, secretDirs, type Ask, type Harness, type Turn } from './harness.ts';
@@ -69,8 +69,9 @@ export function claudeSettings({ secrets, npmCache, env, noAttribution }: { secr
  * the config file of the approval endpoint, an action Claude Code would ask about is asked of the
  * owner; without it, it is refused.
  */
-export function claudeArgs({ settings, session, resume, schema, claudeMd, skills, mcp, own }: { settings: string; session: string; resume: boolean; schema: object; claudeMd?: string; skills?: string; mcp?: string; own?: boolean }) {
+export function claudeArgs({ settings, session, resume, schema, claudeMd, skills, mcp, own, model, mode }: { settings: string; session: string; resume: boolean; schema: object; claudeMd?: string; skills?: string; mcp?: string; own?: boolean; model?: string; mode?: PermissionMode }) {
   const tail = [
+    ...(model ? ['--model', model] : []),
     '--output-format',
     'stream-json',
     '--verbose',
@@ -82,7 +83,7 @@ export function claudeArgs({ settings, session, resume, schema, claudeMd, skills
   const asking = mcp ? ['--mcp-config', mcp, '--permission-prompt-tool', APPROVE_TOOL, '--disallowedTools', APPROVE_TOOL] : ['--permission-prompts', 'none'];
   // The owner's own setup, as their terminal runs it: their settings, hooks, plugins, MCP servers,
   // permission mode and rules load, and WebChat's endpoint only joins them to ask (D-157).
-  if (own) return ['-p', '--input-format', 'stream-json', ...asking, ...tail];
+  if (own) return ['-p', '--input-format', 'stream-json', ...(mode ? ['--permission-mode', mode] : []), ...asking, ...tail];
   return [
     '-p',
     '--input-format',
@@ -237,7 +238,7 @@ export function claudeEvents(output: string, cwd: string, open: Map<string, Sess
  */
 export function claudeAbout(output: string): SessionAboutDTO | undefined {
   if (!output.includes('"subtype":"init"') && !(output.includes('"type":"assistant"') && output.includes('"usage"'))) return undefined;
-  let event: { type?: string; subtype?: string; model?: unknown; plugins?: unknown; skills?: unknown; mcp_servers?: unknown; message?: { usage?: Record<string, unknown> } } | null;
+  let event: { type?: string; subtype?: string; model?: unknown; plugins?: unknown; skills?: unknown; mcp_servers?: unknown; slash_commands?: unknown; message?: { usage?: Record<string, unknown> } } | null;
   try {
     event = JSON.parse(output) as typeof event;
   } catch {
@@ -246,7 +247,9 @@ export function claudeAbout(output: string): SessionAboutDTO | undefined {
   const list = (v: unknown) => (Array.isArray(v) ? v : undefined);
   if (event?.type === 'system' && event.subtype === 'init') {
     const mcp = list(event.mcp_servers)?.map((s: { name?: unknown }) => String(s?.name ?? '')).filter(Boolean);
-    return { ...(typeof event.model === 'string' && { model: event.model }), ...(list(event.plugins) && { plugins: list(event.plugins)!.length }), ...(list(event.skills) && { skills: list(event.skills)!.length }), ...(mcp && { mcp }) };
+    // Its own commands and skills, by name, which the box offers after a slash.
+    const commands = [...(list(event.slash_commands) ?? []), ...(list(event.skills) ?? [])].filter((c): c is string => typeof c === 'string');
+    return { ...(typeof event.model === 'string' && { model: event.model }), ...(list(event.plugins) && { plugins: list(event.plugins)!.length }), ...(list(event.skills) && { skills: list(event.skills)!.length }), ...(mcp && { mcp }), ...(commands.length && { commands: [...new Set(commands)] }) };
   }
   const usage = event?.type === 'assistant' ? event.message?.usage : undefined;
   if (!usage) return undefined;
@@ -320,6 +323,9 @@ const claudeHome = () => process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir()
  */
 export const claudeSecrets = (dataDir: string) => [...secretDirs(dataDir), path.join(claudeHome(), 'session-env')];
 
+/** The models a session may pick, as aliases `claude --model` takes, so a new release's model needs no change here (R-072). */
+export const CLAUDE_MODELS = ['opus', 'sonnet', 'haiku'];
+
 /** The first release with `--permission-prompts`, which a turn with no way to ask passes (claude.ts `claudeArgs`; Claude Code's changelog, 2.1.259). */
 export const CLAUDE_MIN_VERSION = '2.1.259';
 
@@ -372,7 +378,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
         })
       : undefined;
     // The skills' copies load as a plugin, which holds only `skills/`.
-    const args = claudeArgs({ settings, session: t.session, resume: t.resume, schema, claudeMd: t.setup.instructions, skills: t.setup.skills && path.dirname(t.setup.skills), mcp: live.approver?.file, own: t.own });
+    const args = claudeArgs({ settings, session: t.session, resume: t.resume, schema, claudeMd: t.setup.instructions, skills: t.setup.skills && path.dirname(t.setup.skills), mcp: live.approver?.file, own: t.own, model: t.model, mode: t.own ? t.mode : undefined });
     const child = (live.child = spawn(program, args, { cwd: t.cwd, stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, ...(live.approver && { MCP_TOOL_TIMEOUT: String(TOOL_TIMEOUT_MS) }) } }));
     keep(child);
     // A process that exits before it reads closes the pipe; its exit says why.
@@ -454,7 +460,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
     // Nothing to check before the first `apply` writes the file.
     warning: async () => ((await fs.access(settings).then(() => true, () => false)) ? sandboxProblem(path.join(os.homedir(), 'WebChat'), secrets, restrictedSettings(settings)) : undefined),
     sandboxed: async () => !(await sandboxProblem(path.join(os.homedir(), 'WebChat'), secrets, restrictedSettings(settings))),
-    offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution', 'noPlan', 'own'] }),
+    offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution', 'noPlan', 'own'], models: CLAUDE_MODELS }),
     async found() {
       if (!program) return {};
       // `auth status` prints its JSON and exits 1 when signed out.
@@ -473,7 +479,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
     async turn(t) {
       if (t.signal.aborted) throw new Error(CANCELLED);
       const schema = mergeSchemas((t.schemas ?? [t.schema]) as Schema[]);
-      const key = JSON.stringify([t.cwd, !!t.ask, t.setup, schema, t.lab?.proxy, !!t.own]);
+      const key = JSON.stringify([t.cwd, !!t.ask, t.setup, schema, t.lab?.proxy, !!t.own, t.model, t.mode]);
       let live = lives.get(t.session);
       if (live?.turn) throw new Error('a turn of this session is running already.');
       // A session that starts over, or needs other arguments, cannot keep its process.

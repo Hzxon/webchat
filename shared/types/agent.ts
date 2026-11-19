@@ -6,11 +6,16 @@ import { type PublicKeysDTO, type UserDTO } from './account.js';
  * Since R-039 the level is a set of these bits, with 4 for a plugin that heeds its owner's `setup`:
  * 5, or 7 with cards (D-115). 8 says it asks its owner before an action its harness would ask about
  * (docs/decisions/harness-approvals.md). 16 says it runs a session its owner starts in their own
- * harness setup, once they turned that on (D-157), and 32 that it sends a session's steps (R-072).
- * Every level from 1 up answers, older ones included. The server takes any level under 100, so no
- * bit is left below it.
+ * harness setup, once they turned that on (D-157), 32 that it sends a session's steps, and 64 that
+ * it takes a model, a permission mode and a hand over from the session's controls (R-072). Every
+ * level from 1 up answers, older ones included. The server takes any level under `MAX_AGENT_LEVEL`;
+ * it took one under 100 before 64, and an agent follows its server's release, so none meets an
+ * older server.
  */
-export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4, asks: 8, own: 16, events: 32 } as const;
+export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4, asks: 8, own: 16, events: 32, controls: 64 } as const;
+
+/** The levels the server takes: one bit for each of 16 behaviours. */
+export const MAX_AGENT_LEVEL = 2 ** 16;
 
 /** Whether a session at this level runs cards, heeds `setup`, or asks (D-105, D-115). */
 export const runsCards = (level: number) => (level & AGENT_LEVEL.cards) !== 0;
@@ -18,6 +23,7 @@ export const takesSetup = (level: number) => (level & AGENT_LEVEL.setup) !== 0;
 export const takesAsks = (level: number) => (level & AGENT_LEVEL.asks) !== 0;
 export const takesOwn = (level: number) => (level & AGENT_LEVEL.own) !== 0;
 export const sendsEvents = (level: number) => (level & AGENT_LEVEL.events) !== 0;
+export const takesControls = (level: number) => (level & AGENT_LEVEL.controls) !== 0;
 
 /** How long a question of an agent waits for its owner: the plan gate's 7 days. */
 export const ASK_WAIT_MS = 7 * 24 * 60 * 60_000;
@@ -76,6 +82,8 @@ export interface HarnessState {
   skills?: string;
   /** The knobs its adapter honors, named as in `SetupChoice`, such as `noAttribution`. */
   knobs: string[];
+  /** The models a session can pick for it, by the names its command line takes (R-072). */
+  models?: string[];
 }
 
 export type HarnessRow = 'linked' | 'attention' | 'found' | 'missing';

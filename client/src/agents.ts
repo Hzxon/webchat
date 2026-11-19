@@ -244,12 +244,19 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     if (part(message) && part(previous)) thread.messages[thread.messages.length - 1] = { ...previous, text: previous.text + message.text };
     else thread.messages.push(message);
     thread.last = Math.max(thread.last, message.createdAt);
+    // A hand over moves the session to the other harness, which says anew what it runs with (D-156).
+    if (prompt.kind === 'reply' && prompt.handover?.summary !== undefined) {
+      thread.harness = prompt.handover.harness;
+      delete thread.about;
+    }
     // A cancel changes nothing until the agent says it stopped.
     if (prompt.kind === 'reply' || prompt.kind === 'clone') thread.state = pending[message.clientId ?? ''] === 'failed' ? 'unsent' : 'working';
     else if (prompt.kind === 'answer') thread.state = 'answered';
     else if (prompt.kind === 'failed') thread.state = 'failed';
     // The laptop has no copy of the repository, and the turn waits for the owner (R-036).
     else if (prompt.kind === 'nocopy') thread.state = 'waiting';
+    // A summary waits for its owner to hand the session over, or to go on as it is (D-156).
+    else if (prompt.kind === 'summary') thread.state = 'answered';
   }
   // A card's conversation lasts as long as its draft is watched, so only a question ends, and one that asks waits as long as the agent does.
   for (const t of threads.values()) if (t.state !== 'asking') delete t.ask;

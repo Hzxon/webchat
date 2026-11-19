@@ -1239,7 +1239,7 @@ function NewCardForm({
   // Each prompt carries the fields as they stand, so the agent builds on the user's edits.
   async function ask(text: string) {
     const card = { kind: kind as 'R' | 'K' | 'D', title, body };
-    if (thread) return tellAgent(thread.conversationId, thread.root, 'reply', text, card);
+    if (thread) return tellAgent(thread.conversationId, thread.root, 'reply', text, { card });
     onSession(await askAgent(asker!.seat.agent.id, projectId, asker!.repo, text, undefined, true, card));
   }
   const working = thread?.state === 'working' || thread?.state === 'asking';
