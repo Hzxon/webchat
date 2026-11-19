@@ -6,8 +6,8 @@ import { IconButton } from '@astryxdesign/core/IconButton';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { Selector } from '@astryxdesign/core/Selector';
 import { Text } from '@astryxdesign/core/Text';
-import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { LIMITS, takesControls, type PermissionMode, type RunRequest } from '../../../shared/types';
+import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { LIMITS, takesControls, type PermissionMode, type RunRequest, type SessionEventDTO } from '../../../shared/types';
 import { blockedBy, threadProject, WAKE, type Seat, type Thread } from '../agents';
 import { answerPermit, askClone, askFix, cancelRun, discardMessage, loadSteps, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatMessage } from '../e2ee/keyring';
@@ -165,12 +165,17 @@ export function AgentThread({
   useEffect(() => {
     if (since > 0) void loadSteps(thread.conversationId, since).catch(() => undefined);
   }, [thread.conversationId, since]);
-  // The steps after the message before the i-th one and before it; a message still sending has no id yet.
-  const order = (i: number) => (thread.messages[i]?.id ?? 0) > 0 ? thread.messages[i]!.id : Infinity;
-  const stepsBefore = (i: number) => {
-    const events = steps.filter((s) => s.id < order(i) && (i === 0 || s.id > order(i - 1))).flatMap((s) => s.events);
-    return events.length > 0 && <SessionSteps events={events} />;
-  };
+  // Each message's steps, those after the message before it, in one pass, as both lists go by id; a message still sending has no id yet.
+  const buckets = useMemo(() => {
+    const out: SessionEventDTO[][] = thread.messages.map(() => []).concat([[]]);
+    let i = 0;
+    for (const s of steps) {
+      while (i < thread.messages.length && (thread.messages[i]!.id <= 0 ? Infinity : thread.messages[i]!.id) < s.id) i++;
+      out[i]!.push(...s.events);
+    }
+    return out;
+  }, [thread.messages, steps]);
+  const stepsBefore = (i: number) => buckets[i]!.length > 0 && <SessionSteps events={buckets[i]!} />;
   const newest = steps.at(-1);
   // What the session runs with, once it said anything, beside the timeline (R-072).
   const rail = !!details && (steps.length > 0 || !!thread.about);

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import pkg from '../package.json' with { type: 'json' };
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { claudeAbout, claudeEvents, claudeResult } from '../agent/claude.ts';
+import { claudeAbout, claudeEvents, claudeResult, claudeSessions } from '../agent/claude.ts';
 import { AgentClient } from '../agent/client.ts';
 import type { Harness, Turn } from '../agent/harness.ts';
 import { LocalBench } from '../agent/bench.ts';
@@ -368,6 +369,18 @@ export function runTests(w: World) {
     assert.equal(open.size, 0, 'the command left the open list with its output');
     const todo = line('assistant', [{ type: 'tool_use', id: 't3', name: 'TodoWrite', input: { todos: [{ content: 'Read', status: 'completed' }, { content: 'Fix', status: 'in_progress' }, { content: 'Test', status: 'pending' }] } }]);
     assert.deepEqual(claudeEvents(todo, '/w', open, 1), [{ kind: 'plan', title: 'Plan', detail: '[x] Read\n[~] Fix\n[ ] Test', at: 1 }]);
+  });
+
+  test("lists a terminal's Claude Code sessions in a folder, newest first, by their first prompt (R-072)", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-sessions-'));
+    const [older, newer] = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
+    const lines = (...entries: object[]) => entries.map((e) => JSON.stringify(e)).join('\n');
+    await fs.writeFile(path.join(dir, `${older}.jsonl`), lines({ type: 'user', isMeta: true, message: { content: 'Caveat' } }, { type: 'user', message: { content: [{ type: 'text', text: 'Fix the sums\nin sum.js' }] } }));
+    await fs.writeFile(path.join(dir, `${newer}.jsonl`), lines({ type: 'user', message: { content: '<command-name>/clear</command-name>' } }, { type: 'user', message: { content: 'Plan the CSV export' } }));
+    await fs.writeFile(path.join(dir, 'notes.txt'), 'not a session');
+    await fs.utimes(path.join(dir, `${older}.jsonl`), new Date(1000), new Date(1000));
+    assert.deepEqual((await claudeSessions(dir)).map((s) => [s.id, s.title]), [[newer, 'Plan the CSV export'], [older, 'Fix the sums']]);
+    assert.deepEqual(await claudeSessions(path.join(dir, 'missing')), []);
   });
 
   test('reads what a Claude Code session runs with: its start line, and the context of each answer (R-072)', () => {

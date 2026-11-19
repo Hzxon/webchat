@@ -7,12 +7,13 @@ import { type PublicKeysDTO, type UserDTO } from './account.js';
  * 5, or 7 with cards (D-115). 8 says it asks its owner before an action its harness would ask about
  * (docs/decisions/harness-approvals.md). 16 says it runs a session its owner starts in their own
  * harness setup, once they turned that on (D-157), 32 that it sends a session's steps, and 64 that
- * it takes a model, a permission mode and a hand over from the session's controls (R-072). Every
+ * it takes a model, a permission mode and a hand over from the session's controls, and 128 that it
+ * lists a terminal's sessions in a connected folder and goes on with one (R-072). Every
  * level from 1 up answers, older ones included. The server takes any level under `MAX_AGENT_LEVEL`;
  * it took one under 100 before 64, and an agent follows its server's release, so none meets an
  * older server.
  */
-export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4, asks: 8, own: 16, events: 32, controls: 64 } as const;
+export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4, asks: 8, own: 16, events: 32, controls: 64, sessions: 128 } as const;
 
 /** The levels the server takes: one bit for each of 16 behaviours. */
 export const MAX_AGENT_LEVEL = 2 ** 16;
@@ -22,8 +23,16 @@ export const runsCards = (level: number) => (level & AGENT_LEVEL.cards) !== 0;
 export const takesSetup = (level: number) => (level & AGENT_LEVEL.setup) !== 0;
 export const takesAsks = (level: number) => (level & AGENT_LEVEL.asks) !== 0;
 export const takesOwn = (level: number) => (level & AGENT_LEVEL.own) !== 0;
-export const sendsEvents = (level: number) => (level & AGENT_LEVEL.events) !== 0;
 export const takesControls = (level: number) => (level & AGENT_LEVEL.controls) !== 0;
+export const listsSessions = (level: number) => (level & AGENT_LEVEL.sessions) !== 0;
+
+/** A harness's session that a terminal started in a connected folder, as the pane lists it (R-072). */
+export interface TerminalSessionDTO {
+  id: string;
+  /** Its first prompt's first line, the harness's own text, shown as plain text. */
+  title: string;
+  at: number;
+}
 
 /** How long a question of an agent waits for its owner: the plan gate's 7 days. */
 export const ASK_WAIT_MS = 7 * 24 * 60 * 60_000;

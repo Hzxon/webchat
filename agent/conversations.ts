@@ -46,6 +46,8 @@ export interface Conversation {
   /** The model and permission mode its owner's controls picked last (R-072). */
   model?: string;
   mode?: PermissionMode;
+  /** It goes on with a session a terminal started, by that session's id (R-072). */
+  resumed?: true;
   /** Whether its turns ran in the owner's own setup, which every reply keeps. */
   ownSetup?: boolean;
   /** The board its owner's page picked for the prompt, the only one its briefs hold (D-104). */
@@ -118,7 +120,7 @@ export class Conversations {
     const conversation =
       prompt.kind === 'prompt'
         ? message.clientId
-          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, harness: prompt.harness, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project, asks: prompt.asks, ...(prompt.own && { own: prompt.own }), ...(prompt.events && { events: prompt.events }), ...(prompt.model && { model: prompt.model }), ...(prompt.mode && { mode: prompt.mode }) }
+          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, harness: prompt.harness, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project, asks: prompt.asks, ...(prompt.own && { own: prompt.own }), ...(prompt.events && { events: prompt.events }), ...(prompt.model && { model: prompt.model }), ...(prompt.mode && { mode: prompt.mode }), ...(prompt.resume && { session: prompt.resume, answered: true, resumed: true as const, ownSetup: true }) }
           : undefined
         : this.list.find((c) => c.root === prompt.to && c.chat === message.conversationId);
     // A copy the server posted again under a new id does nothing (K-47).
@@ -160,8 +162,10 @@ export class Conversations {
     return this.turn(conversation, text, prompt.card, handover?.harness);
   }
 
-  /** Takes a turn after the conversation's last one, and posts its answer, or why there is none. */
-  /** With `handover`, the turn writes the summary for that harness, which goes to the owner to read and edit first (D-156). */
+  /**
+   * Takes a turn after the conversation's last one, and posts its answer, or why there is none. With
+   * `handover`, the turn writes the summary for that harness, which goes to the owner to read and edit first (D-156).
+   */
   private turn(conversation: Conversation, input: string, card?: CardAskDTO, handover?: string) {
     const turns = this.turns.get(conversation.root) ?? { chain: Promise.resolve(), stops: new Set<AbortController>() };
     this.turns.set(conversation.root, turns);

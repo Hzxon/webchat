@@ -49,13 +49,14 @@ export function askClone(conversationId: number, repo: string, waiting: { reques
  * with it, whose `prompt` field names the project, whose board alone goes in the brief (D-104), and
  * one of its repositories, or none for a project that links none, and the harness picked, or none
  * for the laptop's host harness. `own` says the user typed it, so it may run in their own setup
- * (D-157). The agent's laptop answers. Returns the conversation, by the prompt's client id.
+ * (D-157); `card` asks for one draft from the new card form (R-071); `resume` goes on with a
+ * terminal's session (R-072). The agent's laptop answers. Returns the conversation, by the prompt's client id.
  */
-export async function askAgent(agentId: number, project: number, repo: string | undefined, question: string, harness?: string, own?: true, card?: CardAskDTO) {
+export async function askAgent(agentId: number, project: number, repo: string | undefined, question: string, { harness, own, card, resume }: { harness?: string; own?: true; card?: CardAskDTO; resume?: string } = {}) {
   const conversationId = await startDirectChat(agentId);
   const clientId = newClientId();
   // The message shows as sending at once, so the pane can open its conversation.
-  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, asks: true, events: true, ...(repo && { repo }), ...(harness && { harness }), ...(own && { own }), ...(card && { card }) } }, false, clientId);
+  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, asks: true, events: true, ...(repo && { repo }), ...(harness && { harness }), ...(own && { own }), ...(card && { card }), ...(resume && { resume }) } }, false, clientId);
   return clientId;
 }
 
@@ -83,6 +84,14 @@ export async function askSetup(agentId: number, choice?: SetupChoice) {
   const clientId = newClientId();
   const text = choice ? 'Change what your runs load from my Claude setup' : 'What do your runs load from my Claude setup?';
   void sendContent(conversationId, { text, setup: { sentAt: Date.now(), ...(choice && { choice }) } }, false, clientId);
+  return clientId;
+}
+
+/** Asks the user's agent for the sessions their terminal started in a connected folder; returns the ask's client id, which the list names (R-072). */
+export async function askSessions(agentId: number, repo: string) {
+  const conversationId = await startDirectChat(agentId);
+  const clientId = newClientId();
+  void sendContent(conversationId, { text: `Sessions from my terminal in ${repo}`, sessions: { repo, sentAt: Date.now() } }, false, clientId);
   return clientId;
 }
 

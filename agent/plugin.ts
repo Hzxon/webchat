@@ -413,7 +413,9 @@ export class Plugin {
   private async updateLevel() {
     const asks = this.linkedHarnesses().some((h) => h.asks) ? AGENT_LEVEL.asks : 0;
     const own = this.linkedHarnesses().some((h) => h.offers.knobs.includes('own')) ? AGENT_LEVEL.own : 0;
-    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | AGENT_LEVEL.events | AGENT_LEVEL.controls | asks | own | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
+    // A terminal's session goes on only in the owner's own setup, so the adapters that run it list them.
+    const sessions = own ? AGENT_LEVEL.sessions : 0;
+    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | AGENT_LEVEL.events | AGENT_LEVEL.controls | asks | own | sessions | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
   }
 
   /** The work that keeps an agent awake while it goes to sleep: its running cards and questions. */
@@ -836,6 +838,7 @@ export class Plugin {
     if (message.content?.forget) return this.forget(message).catch(log);
     if (message.content?.sleep) return this.sleepOnWord(message).catch(log);
     if (message.content?.setup) return this.setupOnWord(message).catch(log);
+    if (message.content?.sessions) return this.listSessions(message).catch(log);
     if (message.content?.ask) return this.askOnWord(message).catch(log);
     if (message.content?.permit) return this.permits!.answer(message).catch(log);
     if (message.content?.board?.kind === 'link') return this.linkOnWord(message).catch(log);
@@ -859,6 +862,20 @@ export class Plugin {
       await this.updateLevel();
     }
     await this.sendSetupState(message.conversationId, message.clientId!);
+  }
+
+  /**
+   * Answers its owner's ask for the sessions their terminal started in a connected folder, with the
+   * first harness they linked that can go on with one in their own setup (R-072). The list is sealed
+   * and quiet, like the board's traffic.
+   */
+  private async listSessions(message: OpenedMessage) {
+    const { repo, sentAt } = message.content!.sessions!;
+    if (!this.fromOwner(message, sentAt)) return;
+    const folder = this.folderOf(repo);
+    const harness = this.linkedHarnesses().find((h) => h.offers.knobs.includes('own') && this.setup.choice.own?.includes(h.name));
+    const sessions = folder && this.usable(folder) && harness ? await this.bench.sessions(harness.name, folder.dir) : [];
+    await this.client!.send(message.conversationId, { text: `${sessions.length} sessions in ${repo}`, sessionList: { to: message.clientId!, repo, harness: harness?.name ?? '', sessions } }, { kind: 'sync' });
   }
 
   /** Answers a `setup` with what the laptop offers, the choice it keeps, and what its last run or turn loaded. */
@@ -1182,19 +1199,24 @@ export class Plugin {
     const flush = () => {
       clearTimeout(timer);
       timer = undefined;
-      let fresh = JSON.stringify(about) === told ? undefined : about;
-      told = JSON.stringify(about);
-      while (queue.length || fresh) {
+      const now = JSON.stringify(about);
+      // What it runs with goes with the first message, when it changed.
+      let extra = now === told ? undefined : about;
+      told = now;
+      const sizes = queue.map((e) => JSON.stringify(e).length);
+      let at = 0;
+      while (at < queue.length || extra) {
         // At least one step, each of which fits on its own.
-        let [n, size] = [0, 0];
-        while (n < queue.length && n < LIMITS.eventsPerMessage && (n === 0 || size + JSON.stringify(queue[n]).length <= LIMITS.eventsJsonLength)) size += JSON.stringify(queue[n++]).length;
-        const events = queue.slice(0, n);
-        queue = queue.slice(n);
+        let [end, size] = [at, 0];
+        while (end < queue.length && end - at < LIMITS.eventsPerMessage && (end === at || size + sizes[end]! <= LIMITS.eventsJsonLength)) size += sizes[end++]!;
+        const events = queue.slice(at, end);
+        at = end;
         const text = events.length === 0 ? 'What the session runs with' : events.length === 1 ? 'One step of the session' : `${events.length} steps of the session`;
-        const extra = fresh;
-        fresh = undefined;
-        sent = sent.then(() => this.client!.send(chat, { text, prompt: { kind: 'events', to, events, ...(extra && { about: extra }) } }, { kind: 'events' }).then(() => undefined, log));
+        const prompt = { kind: 'events' as const, to, events, ...(extra && { about: extra }) };
+        extra = undefined;
+        sent = sent.then(() => this.client!.send(chat, { text, prompt }, { kind: 'events' }).then(() => undefined, log));
       }
+      queue = [];
       return sent;
     };
     return {
@@ -1240,11 +1262,12 @@ export class Plugin {
       : undefined;
     // One process takes every turn of a session, so it gets every schema the session's turns use.
     const schemas = schema === CHECK || schema === ANSWER ? [CHECK, ANSWER] : [schema];
-    const own = !taken && !!(who as { own?: boolean }).own;
-    // The session's controls: a model, and a permission mode only in the owner's own setup (R-072).
-    const { model, mode } = 'taken' in who ? {} : who;
+    // A conversation's own setup and controls: a model, and a permission mode only in own setup (D-157, R-072).
+    const talk = 'taken' in who ? undefined : who;
+    const own = !!talk?.own;
+    const { model, mode } = talk ?? {};
     // Only a page that shows the steps asks for them; an older one would show each batch as a message (R-072).
-    const steps = !('taken' in who) && who.events ? this.steps(who.chat, who.to, { own, ...(who.branch && { branch: who.branch }) }) : undefined;
+    const steps = talk?.events ? this.steps(talk.chat, talk.to, { own, ...(talk.branch && { branch: talk.branch }) }) : undefined;
     const { answer, applied } = await this.bench.turn({ harness: harness.name, cwd, session, resume, message, schema, schemas, setup: this.setup.choice, ...(own && { own }), ...(model && { model }), ...(own && mode && { mode }) }, { signal, progress: progress?.line, events: steps?.add, about: steps?.about, permit }).finally(async () => {
       // Before the answer, so the timeline is whole when it ends.
       await steps?.end();
@@ -1281,6 +1304,8 @@ export class Plugin {
     conversation.harness = harness.name;
     // Only a prompt its owner typed, and only while their signed setup turns it on for this harness (D-157).
     const own = !!conversation.own && !!this.setup.choice.own?.includes(harness.name) && harness.offers.knobs.includes('own');
+    // A terminal's session goes on only where it started: in their own setup, in their folder (R-072).
+    if (conversation.resumed && !(own && conversation.repo)) throw new Error(`I go on with a session from your terminal only in your own setup for ${harness.name}. Turn it on in my settings under Coding agents.`);
     // A session cannot move between a scratch copy and the owner's folder, nor between setups.
     if (resume && own !== !!conversation.ownSetup) throw new Error(`You turned your own setup ${own ? 'on' : 'off'} for ${harness.name} since this conversation started. Start a new one.`);
     conversation.ownSetup = own;

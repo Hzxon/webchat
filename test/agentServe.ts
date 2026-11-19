@@ -316,12 +316,12 @@ export function serveTests(w: World) {
         const lkNotLinked = (name: string) => [`I could not answer. You have not linked ${name}, so I start nothing with it. Link it in my settings under Coding agents.`];
         const [lkOnlyClaude] = await lkLink('Claude Code');
         assert.deepEqual(lkOnlyClaude!.harnesses!.map((h) => [h.name, harnessRow(h)]), [['Claude Code', 'linked'], ['Codex', 'found']]);
-        assert.equal(plugin.client!.protocol, 127, 'Claude Code linked, and gh signed in: cards, it asks, it runs own setups, sends steps and takes controls');
+        assert.equal(plugin.client!.protocol, 255, 'Claude Code linked, and gh signed in: cards, it asks, it runs own setups, sends steps, takes controls and lists sessions');
         await lkCodexPrompt();
         assert.deepEqual(await lkFailures(), lkNotLinked('Codex'));
         assert.equal(await lkHarnessOf(await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, lkPlain)), 'Claude Code', 'Claude Code still runs');
         await lkLink('Codex', 'Claude Code');
-        assert.equal(plugin.client!.protocol, 127);
+        assert.equal(plugin.client!.protocol, 255);
         assert.equal(await lkHarnessOf(await lkPlain()), 'Codex', 'a prompt that names none runs on the first she linked');
         const [lkOnlyCodex] = await lkLink('Codex');
         assert.equal(plugin.client!.protocol, 111, 'Codex takes cards now, and it asks, but runs no own setup');
@@ -367,7 +367,7 @@ export function serveTests(w: World) {
         // Her approve links the harness the laptop recorded, whatever name the message adds, and says so.
         const lkHeard = await lkAnswer(w.alice, direct, 'approve', lkAsked!, { harness: 'Claude Code' });
         assert.deepEqual(await lkLinked(), ['Claude Code', 'Codex']);
-        assert.equal(plugin.client!.protocol, 127);
+        assert.equal(plugin.client!.protocol, 255);
         assert.ok((await lkAsks()).some((c) => c.ask?.step === 'done'), 'the laptop says it linked it');
         // The same message again, or another that names the same request, changes nothing.
         await lkLink('Claude Code');
@@ -565,6 +565,24 @@ export function serveTests(w: World) {
         const keptAfter = JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'conversations.json'), 'utf8')) as Array<{ root: string; harness?: string }>;
         assert.equal(keptAfter.find((c) => c.root === controlled)?.harness, 'Codex', 'replies go to Codex now');
         await w.alice.sync();
+
+        // A terminal's session, continued (R-072): the agent lists her Claude Code sessions in the connected folder, and goes on with one in her own setup.
+        await w.instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+        const terminal = '33333333-3333-4333-8333-333333333333';
+        const sessionsDir = path.join(claudeDir, 'projects', (await fs.realpath(project)).replace(/[^a-zA-Z0-9]/g, '-'));
+        await fs.mkdir(sessionsDir, { recursive: true });
+        await fs.writeFile(path.join(sessionsDir, `${terminal}.jsonl`), JSON.stringify({ type: 'user', message: { content: 'Why are sums off?' } }) + '\n');
+        const listAsk = await w.alice.send(direct, { text: 'Sessions', sessions: { repo: 'acme/app', sentAt: Date.now() } });
+        await Promise.all((await plugin.client!.sync()).map((m) => plugin.handle(m)));
+        const listed = (await w.alice.sync()).find((m) => m.senderId === agent.id && m.content?.sessionList)!;
+        assert.equal(listed.kind, 'sync', 'the list is quiet');
+        assert.deepEqual(listed.content!.sessionList, { to: listAsk.clientId, repo: 'acme/app', harness: 'Claude Code', sessions: [{ id: terminal, title: 'Why are sums off?', at: listed.content!.sessionList!.sessions[0]!.at }] });
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Going on."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, own: true, harness: 'Claude Code', resume: terminal }, 'Go on.'));
+        const resumedTurn = await lastTurn();
+        assert.deepEqual([flagOf(resumedTurn.args, '--resume'), resumedTurn.cwd, resumedTurn.args.includes('--restricted')], [terminal, await fs.realpath(project), false], 'it resumes the session in her folder, in her own setup');
+        // Not in a restricted run: the session is hers, with her setup.
+        await tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Claude Code', resume: terminal }, 'Go on.');
+        assert.match((await w.alice.sync()).find((m) => m.content?.prompt?.kind === 'failed')?.content?.text ?? '', /only in your own setup/);
 
         // A draft whose request is not in Alice's direct chat with the agent, as every one from before
         // D-105 is, ends when the plugin loads: the pane shows a card's thread only from that chat (K-58).

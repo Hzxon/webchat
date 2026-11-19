@@ -37,6 +37,7 @@ import {
   type PermissionMode,
   PERMISSION_MODES,
   type CardAskDTO,
+  type TerminalSessionDTO,
   type PullReview,
   type RunDTO,
   type RunReport,
@@ -408,6 +409,9 @@ export interface MessageContent {
   permit?: PermitDTO;
   /** A photo or file (R-005). The text says the same in words, for older pages, pushes and the chat list. */
   file?: FileDTO;
+  /** The owner asks for the sessions a terminal started in a connected folder, and the agent's list (R-072). */
+  sessions?: { repo: string; sentAt: number };
+  sessionList?: { to: string; repo: string; harness: string; sessions: TerminalSessionDTO[] };
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -580,7 +584,7 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
     const repo = typeof raw.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
     if ((raw.repo !== undefined && !repo) || (!repo && !isId(raw.project)) || !isId(raw.sentAt)) return;
     const harness = short(raw.harness, LIMITS.harnessFieldLength);
-    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }), ...(raw.own === true && { own: true as const }), ...(raw.events === true && { events: true as const }), ...readCardAsk(raw.card), ...readControls(raw) };
+    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }), ...(raw.own === true && { own: true as const }), ...(raw.events === true && { events: true as const }), ...readCardAsk(raw.card), ...readControls(raw), ...(typeof raw.resume === 'string' && SESSION_ID.test(raw.resume) && { resume: raw.resume }) };
   }
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
@@ -606,9 +610,22 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
   return card ? { kind: 'answer', to, card } : { kind: 'answer', to };
 }
 
+/** A model's name, as a harness's command line takes it (R-072). */
+export const MODEL_NAME = /^[\w.:[\]-]{1,64}$/;
+
+/** A harness's session id, as Claude Code names its sessions (R-072). */
+export const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A terminal's sessions of the right shape, at most `max` (R-072). */
+export function readTerminalSessions(raw: unknown, max = 10): TerminalSessionDTO[] {
+  return (Array.isArray(raw) ? (raw as Array<Record<string, unknown> | null>) : []).slice(0, max).flatMap((s) =>
+    typeof s?.id === 'string' && SESSION_ID.test(s.id) && typeof s.title === 'string' && isId(s.at) ? [{ id: s.id, title: s.title.slice(0, LIMITS.eventTitleLength), at: s.at }] : [],
+  );
+}
+
 /** A session's model and permission mode, of the right shape, as the fields that carry them (R-072). */
 function readControls(raw: Record<string, unknown>): { model?: string; mode?: PermissionMode } {
-  const model = typeof raw.model === 'string' && /^[\w.:\[\]-]{1,64}$/.test(raw.model) ? raw.model : undefined;
+  const model = typeof raw.model === 'string' && MODEL_NAME.test(raw.model) ? raw.model : undefined;
   const mode = PERMISSION_MODES.find((m) => m === raw.mode);
   return { ...(model && { model }), ...(mode && { mode }) };
 }
@@ -696,7 +713,7 @@ function readHarnesses(raw: unknown): HarnessState[] | undefined {
     const name = field(h?.name);
     if (!h || !name) return [];
     const knobs = Array.isArray(h.knobs) ? h.knobs.filter((k): k is string => typeof k === 'string' && /^\w{1,32}$/.test(k)) : [];
-    const models = Array.isArray(h.models) ? h.models.filter((m): m is string => typeof m === 'string' && /^[\w.:\[\]-]{1,64}$/.test(m)).slice(0, 20) : undefined;
+    const models = Array.isArray(h.models) ? h.models.filter((m): m is string => typeof m === 'string' && MODEL_NAME.test(m)).slice(0, 20) : undefined;
     const signedIn = typeof h.signedIn === 'boolean' ? h.signedIn : undefined;
     const linked = typeof h.linked === 'boolean' ? h.linked : undefined;
     return [{ name, path: field(h.path), linked, attention: field(h.attention), answers: field(h.answers), version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs, ...(models?.length && { models }) }];
@@ -838,6 +855,8 @@ function readContent(value: unknown): MessageContent {
     card?: Record<string, unknown>;
     permit?: Record<string, unknown>;
     file?: Record<string, unknown>;
+    sessions?: { repo?: unknown; sentAt?: unknown };
+    sessionList?: Record<string, unknown>;
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -882,6 +901,10 @@ function readContent(value: unknown): MessageContent {
   if (permit) content.permit = permit;
   const file = readFile(raw.file);
   if (file) content.file = file;
+  if (typeof raw.sessions?.repo === 'string' && isRepoName(raw.sessions.repo) && isId(raw.sessions.sentAt)) content.sessions = { repo: raw.sessions.repo, sentAt: raw.sessions.sentAt };
+  const list = raw.sessionList;
+  const [listTo, listHarness] = [short(list?.to, 64), short(list?.harness, LIMITS.harnessFieldLength)];
+  if (listTo && listHarness && typeof list!.repo === 'string' && isRepoName(list!.repo)) content.sessionList = { to: listTo, repo: list!.repo, harness: listHarness, sessions: readTerminalSessions(list!.sessions) };
   return content;
 }
 
