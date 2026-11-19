@@ -48,14 +48,14 @@ export function askClone(conversationId: number, repo: string, waiting: { reques
  * Asks one of the user's coding agents in a project (D-102, R-038): a message in their direct chat
  * with it, whose `prompt` field names the project, whose board alone goes in the brief (D-104), and
  * one of its repositories, or none for a project that links none, and the harness picked, or none
- * for the laptop's host harness. The agent's laptop answers. Returns the conversation, by the
- * prompt's client id.
+ * for the laptop's host harness. `own` says the user typed it, so it may run in their own setup
+ * (D-157). The agent's laptop answers. Returns the conversation, by the prompt's client id.
  */
-export async function askAgent(agentId: number, project: number, repo: string | undefined, question: string, harness?: string) {
+export async function askAgent(agentId: number, project: number, repo: string | undefined, question: string, harness?: string, own?: true) {
   const conversationId = await startDirectChat(agentId);
   const clientId = newClientId();
   // The message shows as sending at once, so the pane can open its conversation.
-  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, asks: true, ...(repo && { repo }), ...(harness && { harness }) } }, false, clientId);
+  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, asks: true, ...(repo && { repo }), ...(harness && { harness }), ...(own && { own }) } }, false, clientId);
   return clientId;
 }
 

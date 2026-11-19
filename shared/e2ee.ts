@@ -575,7 +575,7 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
     const repo = typeof raw.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
     if ((raw.repo !== undefined && !repo) || (!repo && !isId(raw.project)) || !isId(raw.sentAt)) return;
     const harness = short(raw.harness, LIMITS.harnessFieldLength);
-    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }) };
+    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }), ...(raw.own === true && { own: true as const }) };
   }
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
@@ -620,12 +620,12 @@ function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | und
 
 /** A setup choice, if it has the right shape: skills only by a folder name that cannot leave `~/.claude/skills` (R-039). */
 function readChoice(raw: unknown): SetupChoice | undefined {
-  const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown; linked?: unknown; off?: unknown; noPlan?: unknown } | null | undefined;
+  const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown; linked?: unknown; off?: unknown; noPlan?: unknown; own?: unknown } | null | undefined;
   if (typeof choice?.claudeMd !== 'boolean' || typeof choice.noAttribution !== 'boolean' || !Array.isArray(choice.skills)) return;
   const skills = choice.skills.filter((s): s is string => typeof s === 'string' && SKILL_NAME.test(s)).slice(0, LIMITS.setupSkills);
   const names = (list: unknown) => (Array.isArray(list) ? list.filter((n): n is string => !!short(n, LIMITS.harnessFieldLength)).slice(0, LIMITS.harnesses) : undefined);
-  const [linked, off] = [names(choice.linked), names(choice.off)];
-  return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution, ...(linked && { linked }), ...(off && { off }), ...(typeof choice.noPlan === 'boolean' && { noPlan: choice.noPlan }) };
+  const [linked, off, own] = [names(choice.linked), names(choice.off), names(choice.own)];
+  return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution, ...(linked && { linked }), ...(off && { off }), ...(typeof choice.noPlan === 'boolean' && { noPlan: choice.noPlan }), ...(own && { own }) };
 }
 
 /** The harnesses an agent's answer lists, those of the right shape, or nothing from a plugin before them (D-115). */

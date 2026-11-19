@@ -231,7 +231,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
 
   async function ask(text: string) {
     try {
-      actions.setAgentsOpen(true, await askAgent(agent!.id, project!.id, repo || undefined, text, harness));
+      actions.setAgentsOpen(true, await askAgent(agent!.id, project!.id, repo || undefined, text, harness, true));
     } catch (err) {
       actions.addToast({ conversationId: null, title: 'Question not sent', body: (err as Error).message });
       throw err;

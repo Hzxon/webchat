@@ -5,21 +5,23 @@ import { type PublicKeysDTO, type UserDTO } from './account.js';
  * questions; 2 also runs cards from the pane, which it names only while `gh` is signed in (D-105).
  * Since R-039 the level is a set of these bits, with 4 for a plugin that heeds its owner's `setup`:
  * 5, or 7 with cards (D-115). 8 says it asks its owner before an action its harness would ask about
- * (docs/decisions/harness-approvals.md). Every level from 1 up answers, older ones included. The
- * server takes any level under 100, so only 16 and 32 are left.
+ * (docs/decisions/harness-approvals.md). 16 says it runs a session its owner starts in their own
+ * harness setup, once they turned that on (D-157). Every level from 1 up answers, older ones
+ * included. The server takes any level under 100, so only 32 is left.
  */
-export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4, asks: 8 } as const;
+export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4, asks: 8, own: 16 } as const;
 
 /** Whether a session at this level runs cards, heeds `setup`, or asks (D-105, D-115). */
 export const runsCards = (level: number) => (level & AGENT_LEVEL.cards) !== 0;
 export const takesSetup = (level: number) => (level & AGENT_LEVEL.setup) !== 0;
 export const takesAsks = (level: number) => (level & AGENT_LEVEL.asks) !== 0;
+export const takesOwn = (level: number) => (level & AGENT_LEVEL.own) !== 0;
 
 /** How long a question of an agent waits for its owner: the plan gate's 7 days. */
 export const ASK_WAIT_MS = 7 * 24 * 60 * 60_000;
 
 /** What a choice loads, in words, for the agent's answer and the pane alike (R-039). */
-export const setupWords = (c: SetupChoice) => [c.claudeMd && 'your CLAUDE.md', ...c.skills, c.noAttribution && 'no AI attribution', c.noPlan && 'no plan first'].filter(Boolean).join(', ') || 'nothing of your Claude setup';
+export const setupWords = (c: SetupChoice) => [c.claudeMd && 'your CLAUDE.md', ...c.skills, c.noAttribution && 'no AI attribution', c.noPlan && 'no plan first', c.own?.length && `your own setup in your ${c.own.join(' and ')} sessions`].filter(Boolean).join(', ') || 'nothing of your Claude setup';
 
 /**
  * What the owner's agent loads from their setup on its laptop into every run and turn (R-039,
@@ -42,6 +44,12 @@ export interface SetupChoice {
   off?: string[];
   /** Whether a card run goes on without showing its plan first; a page from before the gate sends none, which keeps it on (docs/decisions/redirect-plan-gate.md). */
   noPlan?: boolean;
+  /**
+   * The harnesses whose sessions the owner starts run in their own setup, by name: their folder,
+   * settings, hooks, plugins, MCP servers and permission rules, with no sandbox of WebChat's. Off at
+   * first; a card run never does (D-157).
+   */
+  own?: string[];
 }
 
 /** A harness the owner's agent found on its laptop, as Settings shows it (D-115). */
