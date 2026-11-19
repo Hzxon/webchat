@@ -11,7 +11,7 @@ import { codexHarness } from '../agent/codex.ts';
 import { Plugin } from '../agent/plugin.ts';
 import { REQUEST_TTL_MS } from '../agent/runs.ts';
 import { newKeyId, newPairingCode, pairingId, openPicks, textHash, permitHash, type MessageContent } from '../shared/e2ee.ts';
-import { briefText, harnessRow, LIMITS, type RunReport, type CreateProjectResponse, type PermitDTO, type PromptDTO, type RunRequest, type SetupChoice } from '../shared/types.ts';
+import { briefText, harnessRow, LIMITS, type CardDraftDTO, type RunReport, type CreateProjectResponse, type PermitDTO, type PromptDTO, type RunRequest, type SetupChoice } from '../shared/types.ts';
 import { copyOf, readCard } from '../shared/board.ts';
 import { FAKE_CLAUDE, FAKE_CODEX } from './fakes.ts';
 import { sh, git, connect, disconnect, FAKE_GH, newChatKey, withEnv, setEnv, waitFor, approve } from './agentHelpers.ts';
@@ -525,6 +525,21 @@ export function serveTests(w: World) {
         // A prompt from a page that shows no steps gets none.
         await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}', FAKE_CLAUDE_COMMIT: '0', FAKE_CLAUDE_STEPS: '1' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id }, 'What does sum.js do?'));
         assert.ok(!(await w.alice.sync()).some((m) => m.kind === 'events'), 'an older page hears no steps');
+
+        // The new card form asks for one checked draft of its kind, from its fields as they stand (R-071).
+        await w.instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+        const two = JSON.stringify({ reply: 'Checked.', drafts: [{ kind: 'idea', title: 'Sums add cents', body: 'Why: totals.', checked: 'Read sum.js.' }, { kind: 'decision', title: 'Cents stay exact', body: 'Why.', checked: 'Read sum.js.' }] });
+        const form = { kind: 'R' as const, title: 'Sums add cents', body: 'My edit: keep two places.' };
+        const carded = await withEnv({ FAKE_CLAUDE_ANSWER: two, FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, card: form }, 'Turn this into an idea.'));
+        const cardTurn2 = await lastTurn();
+        assert.ok(cardTurn2.input.includes('exactly one draft in drafts, of kind idea') && cardTurn2.input.includes('My edit: keep two places.'), 'the brief asks for one idea and carries the fields');
+        assert.ok(cardTurn2.input.includes("OWNER'S WORDS START"), "the fields are fenced as the owner's words");
+        const formDrafts = (await w.alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'answer' && (m.content.prompt as { to: string }).to === carded && m.content.prompt.card);
+        assert.deepEqual(formDrafts.map((m) => (m.content!.prompt as { card: CardDraftDTO }).card.title), ['Sums add cents'], 'only the one draft of the kind it asked for');
+        // A reply carries the fields as they stand, so the next draft builds on the edits.
+        await withEnv({ FAKE_CLAUDE_ANSWER: two, FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'reply', to: carded, sentAt: Date.now(), card: { ...form, body: 'Edited again.' } }, 'Shorter, please.'));
+        assert.ok((await lastTurn()).input.includes('Edited again.'), 'the reply carries the edited fields');
+        await w.alice.sync();
 
         // A draft whose request is not in Alice's direct chat with the agent, as every one from before
         // D-105 is, ends when the plugin loads: the pane shows a card's thread only from that chat (K-58).

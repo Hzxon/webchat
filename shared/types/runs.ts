@@ -137,10 +137,11 @@ export type PromptDTO =
   // (R-038), and the harness that answers, which every reply then resumes; none for the host harness.
   // `own` says the owner typed it, so it may run in their own setup; Check again never sets it (D-157).
   // `events` says the page shows the session's steps, which an older page would show as messages (R-072).
-  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true; own?: true; events?: true }
+  // `card` asks for one checked draft of that kind, from the new card form's fields as they stand (R-071).
+  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true; own?: true; events?: true; card?: CardAskDTO }
   // A batch of the session's steps, in a message of kind `events` (R-072).
   | { kind: 'events'; to: string; events: SessionEventDTO[] }
-  | { kind: 'reply'; to: string; sentAt: number }
+  | { kind: 'reply'; to: string; sentAt: number; card?: CardAskDTO }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }
   | { kind: 'failed'; to: string }
@@ -149,6 +150,13 @@ export type PromptDTO =
   | { kind: 'nocopy'; to: string }
   | { kind: 'clone'; to: string; repo: string; sentAt: number }
   | { kind: 'note'; to: string };
+
+/** The new card form's fields as they stand, which ask the session for one draft of that kind (R-071). */
+export interface CardAskDTO {
+  kind: 'R' | 'K' | 'D';
+  title: string;
+  body: string;
+}
 
 /**
  * One step of a harness session as its adapter saw it (R-072). Every field is the harness's own

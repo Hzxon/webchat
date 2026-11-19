@@ -7,7 +7,7 @@
 // (D-086).
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { LIMITS, type CardDraftDTO } from '../shared/types.ts';
+import { LIMITS, type CardAskDTO, type CardDraftDTO } from '../shared/types.ts';
 import type { AgentClient, OpenedMessage } from './client.ts';
 import { messageOf, REQUEST_TTL_MS } from './runs.ts';
 
@@ -54,7 +54,7 @@ export interface Conversation {
 }
 
 /** One turn: the owner's words in, the answer out, with drafts when they asked for them. Where the background Claude runs. */
-export type Answerer = (job: { conversation: Conversation; input: string; resume: boolean; signal: AbortSignal }) => Promise<{ reply: string; drafts?: CardDraftDTO[] }>;
+export type Answerer = (job: { conversation: Conversation; input: string; resume: boolean; signal: AbortSignal; card?: CardAskDTO }) => Promise<{ reply: string; drafts?: CardDraftDTO[] }>;
 
 export class Conversations {
   private list: Conversation[] = [];
@@ -135,11 +135,11 @@ export class Conversations {
     }
     // Queued before anything waits, so a reply or cancel in the same check-in comes after it.
     if (prompt.kind === 'prompt') this.list.push(conversation);
-    return this.turn(conversation, text);
+    return this.turn(conversation, text, prompt.card);
   }
 
   /** Takes a turn after the conversation's last one, and posts its answer, or why there is none. */
-  private turn(conversation: Conversation, input: string) {
+  private turn(conversation: Conversation, input: string, card?: CardAskDTO) {
     const turns = this.turns.get(conversation.root) ?? { chain: Promise.resolve(), stops: new Set<AbortController>() };
     this.turns.set(conversation.root, turns);
     const stop = new AbortController();
@@ -151,7 +151,7 @@ export class Conversations {
         await this.save();
         // Until a turn has answered, each turn starts afresh with the prompt and what came since.
         const words = conversation.answered || input === conversation.prompt ? input : `${conversation.prompt}\n\n${input}`;
-        const { reply, drafts = [] } = await this.answer({ conversation, input: words, resume: conversation.answered, signal: stop.signal });
+        const { reply, drafts = [] } = await this.answer({ conversation, input: words, resume: conversation.answered, signal: stop.signal, card });
         conversation.answered = true;
         delete conversation.prompt;
         for (const part of parts(reply)) await this.say(conversation, 'answer', part);
