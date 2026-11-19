@@ -16,7 +16,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { pairingId, textHash } from '../shared/e2ee.ts';
 import { cardsOf, copyOf, entriesOf, proposalOf, readCard, usernamesOf, type DocSection } from '../shared/board.ts';
-import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type AskDTO, type PairingPick, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SetupChoice } from '../shared/types.ts';
+import { AGENT_LEVEL, isHeld, isRepoName, LIMITS, setupWords, type BoardSyncDTO, type CardDraftDTO, type DocDTO, type HarnessState, type AskDTO, type PairingPick, type ProjectDTO, type ProjectReposDTO, type RunFix, type RunRequest, type SessionAboutDTO, type SessionEventDTO, type SetupChoice } from '../shared/types.ts';
 import { ApiError } from './api.ts';
 import { AgentClient, checkInEvery, readPairing, SYNC_INTERVAL_MS, type OpenedMessage, type TakenRequest } from './client.ts';
 import { Conversations, type Answerer, type Conversation } from './conversations.ts';
@@ -27,7 +27,7 @@ import { messageOf, REQUEST_TTL_MS, Runs, type Runner, type RunResult } from './
 import { type AgentStatus, type Answer, type Asked, type BoardCopy, type Filed, type Overlap, type Place, type Planned, type PluginOptions, type Pull, type PullView, type Watched, type Who } from './pluginTypes.ts';
 import { cardKey, choiceOf, choosers, overlaps, stackedLine, type Pull as Footprint } from '../shared/overlap.ts';
 import { ANSWER, CHECK, REPLY } from './pluginSchemas.ts';
-import { OWNER, checkBrief, fence, fixBrief, goBrief, inParts, overlapBrief, planBrief, promptBrief, pullList, seenOf, steerBrief, workBrief } from './briefs.ts';
+import { OWNER, cardAsk, checkBrief, fence, fixBrief, goBrief, inParts, overlapBrief, planBrief, promptBrief, pullList, seenOf, steerBrief, workBrief } from './briefs.ts';
 import { draftsOf, line } from './drafts.ts';
 import { freeLock, markOf, noCopy, shown, takeLock } from './pluginFiles.ts';
 export { line } from './drafts.ts';
@@ -43,6 +43,8 @@ const CLONE_WAIT_MS = 30 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 /** The least time between two progress reports on a run (docs/decisions/stop-pauses-run.md). */
 const PROGRESS_MS = 30_000;
+/** A conversation's steps go to its owner at most this often, in one sealed message each time (R-072). */
+export const EVENTS_MS = 5_000;
 
 /** Rounds of fixes one pull request gets. */
 const MAX_FIXES = 3;
@@ -410,7 +412,10 @@ export class Plugin {
    */
   private async updateLevel() {
     const asks = this.linkedHarnesses().some((h) => h.asks) ? AGENT_LEVEL.asks : 0;
-    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | asks | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
+    const own = this.linkedHarnesses().some((h) => h.offers.knobs.includes('own')) ? AGENT_LEVEL.own : 0;
+    // A terminal's session goes on only in the owner's own setup, so the adapters that run it list them.
+    const sessions = own ? AGENT_LEVEL.sessions : 0;
+    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | AGENT_LEVEL.events | AGENT_LEVEL.controls | asks | own | sessions | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
   }
 
   /** The work that keeps an agent awake while it goes to sleep: its running cards and questions. */
@@ -833,6 +838,7 @@ export class Plugin {
     if (message.content?.forget) return this.forget(message).catch(log);
     if (message.content?.sleep) return this.sleepOnWord(message).catch(log);
     if (message.content?.setup) return this.setupOnWord(message).catch(log);
+    if (message.content?.sessions) return this.listSessions(message).catch(log);
     if (message.content?.ask) return this.askOnWord(message).catch(log);
     if (message.content?.permit) return this.permits!.answer(message).catch(log);
     if (message.content?.board?.kind === 'link') return this.linkOnWord(message).catch(log);
@@ -858,6 +864,20 @@ export class Plugin {
     await this.sendSetupState(message.conversationId, message.clientId!);
   }
 
+  /**
+   * Answers its owner's ask for the sessions their terminal started in a connected folder, with the
+   * first harness they linked that can go on with one in their own setup (R-072). The list is sealed
+   * and quiet, like the board's traffic.
+   */
+  private async listSessions(message: OpenedMessage) {
+    const { repo, sentAt } = message.content!.sessions!;
+    if (!this.fromOwner(message, sentAt)) return;
+    const folder = this.folderOf(repo);
+    const harness = this.linkedHarnesses().find((h) => h.offers.knobs.includes('own') && this.setup.choice.own?.includes(h.name));
+    const sessions = folder && this.usable(folder) && harness ? await this.bench.sessions(harness.name, folder.dir) : [];
+    await this.client!.send(message.conversationId, { text: `${sessions.length} sessions in ${repo}`, sessionList: { to: message.clientId!, repo, harness: harness?.name ?? '', sessions } }, { kind: 'sync' });
+  }
+
   /** Answers a `setup` with what the laptop offers, the choice it keeps, and what its last run or turn loaded. */
   private async sendSetupState(chat: number, to: string) {
     const { choice, applied } = this.setup;
@@ -876,11 +896,11 @@ export class Plugin {
    * so a page from before linking greys it.
    */
   private async stateOf(harness: HarnessInfo): Promise<HarnessState> {
-    const { instructions, skills, knobs } = harness.offers;
+    const { instructions, skills, knobs, models } = harness.offers;
     const linked = this.isLinked(harness);
     const [own, refused] = await Promise.all([this.bench.refusal(harness.name), this.harnessRefusal(harness)]);
     const attention = linked ? own ?? (harness.signedIn === false ? `${harness.name} is not signed in.` : harness.warning) : undefined;
-    return { name: harness.name, ...(harness.version && { version: harness.version }), ...(harness.signedIn !== undefined && { signedIn: harness.signedIn }), ...(harness.path && { path: shown(harness.path) }), linked, ...(attention && { attention }), answers: refused, refusal: refused, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs };
+    return { name: harness.name, ...(harness.version && { version: harness.version }), ...(harness.signedIn !== undefined && { signedIn: harness.signedIn }), ...(harness.path && { path: shown(harness.path) }), linked, ...(attention && { attention }), answers: refused, refusal: refused, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs, ...(models && { models }) };
   }
 
   /** Keeps the setup on disk, and hands each harness its choice. */
@@ -1165,6 +1185,53 @@ export class Plugin {
     };
   }
 
+  /**
+   * Sends a conversation's steps to its owner as sealed `events` messages, which the server never
+   * pushes: what came in the last `EVENTS_MS` at once, cut to fit a message, and the rest when the
+   * turn ends (R-072). What the session runs with goes along whenever it changed. A server from
+   * before them refuses the kind, and the steps are dropped.
+   */
+  private steps(chat: number, to: string, about: SessionAboutDTO) {
+    let queue: SessionEventDTO[] = [];
+    let timer: NodeJS.Timeout | undefined;
+    let sent = Promise.resolve();
+    let told = '';
+    const flush = () => {
+      clearTimeout(timer);
+      timer = undefined;
+      const now = JSON.stringify(about);
+      // What it runs with goes with the first message, when it changed.
+      let extra = now === told ? undefined : about;
+      told = now;
+      const sizes = queue.map((e) => JSON.stringify(e).length);
+      let at = 0;
+      while (at < queue.length || extra) {
+        // At least one step, each of which fits on its own.
+        let [end, size] = [at, 0];
+        while (end < queue.length && end - at < LIMITS.eventsPerMessage && (end === at || size + sizes[end]! <= LIMITS.eventsJsonLength)) size += sizes[end++]!;
+        const events = queue.slice(at, end);
+        at = end;
+        const text = events.length === 0 ? 'What the session runs with' : events.length === 1 ? 'One step of the session' : `${events.length} steps of the session`;
+        const prompt = { kind: 'events' as const, to, events, ...(extra && { about: extra }) };
+        extra = undefined;
+        sent = sent.then(() => this.client!.send(chat, { text, prompt }, { kind: 'events' }).then(() => undefined, log));
+      }
+      queue = [];
+      return sent;
+    };
+    return {
+      add: (event: SessionEventDTO) => {
+        queue.push(event);
+        timer ??= setTimeout(flush, EVENTS_MS);
+      },
+      about: (more: SessionAboutDTO) => {
+        about = { ...about, ...more };
+        timer ??= setTimeout(flush, EVENTS_MS);
+      },
+      end: flush,
+    };
+  }
+
   /** Closes the draft of a run that fails before its work is done, saying why, and stops watching it; the branch stays (R-042). */
   private async abandon(taken: TakenRequest, why: string) {
     const pull = this.watched.find((w) => w.unfinished && w.taken.message === taken.message);
@@ -1195,7 +1262,15 @@ export class Plugin {
       : undefined;
     // One process takes every turn of a session, so it gets every schema the session's turns use.
     const schemas = schema === CHECK || schema === ANSWER ? [CHECK, ANSWER] : [schema];
-    const { answer, applied } = await this.bench.turn({ harness: harness.name, cwd, session, resume, message, schema, schemas, setup: this.setup.choice }, { signal, progress: progress?.line, permit }).finally(() => {
+    // A conversation's own setup and controls: a model, and a permission mode only in own setup (D-157, R-072).
+    const talk = 'taken' in who ? undefined : who;
+    const own = !!talk?.own;
+    const { model, mode } = talk ?? {};
+    // Only a page that shows the steps asks for them; an older one would show each batch as a message (R-072).
+    const steps = talk?.events ? this.steps(talk.chat, talk.to, { own, ...(talk.branch && { branch: talk.branch }) }) : undefined;
+    const { answer, applied } = await this.bench.turn({ harness: harness.name, cwd, session, resume, message, schema, schemas, setup: this.setup.choice, ...(own && { own }), ...(model && { model }), ...(own && mode && { mode }) }, { signal, progress: progress?.line, events: steps?.add, about: steps?.about, permit }).finally(async () => {
+      // Before the answer, so the timeline is whole when it ends.
+      await steps?.end();
       progress?.end();
       // A conversation's run is its turn.
       if (!taken) this.permits!.drop(session);
@@ -1221,12 +1296,19 @@ export class Plugin {
    * a repository of its own, in the temp folder under a random name: it shares no refs or objects
    * with the checkout, so a turn can move none of the owner's branches, and nothing there is pushed.
    */
-  private async converse({ conversation, input, resume, signal }: Parameters<Answerer>[0]) {
+  private async converse({ conversation, input, resume, signal, card }: Parameters<Answerer>[0]) {
     const refused = await this.refusal();
     if (refused) throw new Error(refused);
     // The harness the prompt named, or the host: kept by name, so each reply resumes with it.
     const harness = await this.harnessFor(conversation.harness);
     conversation.harness = harness.name;
+    // Only a prompt its owner typed, and only while their signed setup turns it on for this harness (D-157).
+    const own = !!conversation.own && !!this.setup.choice.own?.includes(harness.name) && harness.offers.knobs.includes('own');
+    // A terminal's session goes on only where it started: in their own setup, in their folder (R-072).
+    if (conversation.resumed && !(own && conversation.repo)) throw new Error(`I go on with a session from your terminal only in your own setup for ${harness.name}. Turn it on in my settings under Coding agents.`);
+    // A session cannot move between a scratch copy and the owner's folder, nor between setups.
+    if (resume && own !== !!conversation.ownSetup) throw new Error(`You turned your own setup ${own ? 'on' : 'off'} for ${harness.name} since this conversation started. Start a new one.`);
+    conversation.ownSetup = own;
     // A project that links no repository asks about its board alone, in an empty folder (R-038).
     const { repo } = conversation;
     const folder = repo ? await this.folderFor(repo, signal, () => this.client!.send(conversation.chat, { text: noCopy(repo), prompt: { kind: 'nocopy', to: conversation.root } })) : undefined;
@@ -1234,11 +1316,17 @@ export class Plugin {
     const listing = folder && openPulls(folder.repo);
     const board = await this.board(conversation.project);
     if (!folder && !board) throw new Error('I am not in that project, so I cannot read its board. Add me to it, then ask again.');
-    // Every turn fetches, so a reply after a merge reads the merged code, not the first turn's.
-    const base = folder && (await this.fetchBase(folder).catch(() => {
+    // Every turn fetches, so a reply after a merge reads the merged code, not the first turn's. In
+    // their own setup the turn works in their folder as it stands, which nothing here moves.
+    const base = folder && !own ? await this.fetchBase(folder).catch(() => {
       throw new Error('The laptop could not get your team’s code from GitHub. Check that it is online, then ask again.');
-    }));
-    const { scratch, fetched } = await this.bench.scratch({ scratch: conversation.scratch, dir: folder?.dir, base: base?.ref, tip: base?.tip, fetched: conversation.fetched });
+    }) : undefined;
+    // In their own setup the turn works in their folder, so it makes no copy: one without git would
+    // be kept for a later restricted turn, such as after a hand over (D-156).
+    const { scratch, fetched } =
+      own && folder
+        ? { scratch: conversation.scratch, fetched: conversation.fetched }
+        : await this.bench.scratch({ scratch: conversation.scratch, dir: own ? undefined : folder?.dir, base: base?.ref, tip: base?.tip, fetched: conversation.fetched });
     // A new copy starts at the tip, so nothing moved under it.
     const was = scratch === conversation.scratch ? conversation.fetched : undefined;
     conversation.scratch = scratch;
@@ -1260,13 +1348,18 @@ export class Plugin {
           ...(changed.length ? ['', fence('Cards and decisions that changed on the board since', changed)] : []),
           ...(listed !== (conversation.pulls ?? '') ? ['', listed] : []),
         ].join('\n')
-      : promptBrief(input, board, folder?.repo, listed);
-    const answer = (await this.ask(scratch, conversation.session, resume, message, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks })) as { reply?: unknown; drafts?: unknown };
+      : promptBrief(input, board, folder?.repo, listed, own);
+    // The new card form asks for one draft, from its fields as they stand, which the owner may have edited (R-071).
+    const asked = card ? `${message}\n\n${cardAsk(card)}` : message;
+    // Never the owner's folder as `scratch`, which an ended conversation removes.
+    const cwd = own && folder ? folder.dir : scratch!;
+    const answer = (await this.ask(cwd, conversation.session, resume, asked, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks, own, events: conversation.events, ...(base && { branch: base.ref.replace(/^origin\//, '') }), model: conversation.model, mode: conversation.mode })) as { reply?: unknown; drafts?: unknown };
     // Only once the turn read them, so a turn cut short tells the next one again.
     conversation.seen = seen;
     conversation.pulls = listed;
     const held = new Set([...Object.keys(seen), ...(pulls ?? []).map((p) => `#${p.number}`)]);
-    return { reply: String(answer.reply ?? ''), drafts: draftsOf(answer.drafts, seen, held).slice(0, 2) };
+    const drafts = draftsOf(answer.drafts, seen, held);
+    return { reply: String(answer.reply ?? ''), drafts: card ? drafts.filter((d) => !d.replaces && d.kind === card.kind).slice(0, 1) : drafts.slice(0, 2) };
   }
 
   /**

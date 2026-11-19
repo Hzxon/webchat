@@ -212,7 +212,8 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>, si
  * card from GitHub alerts like a message.
  */
 function shouldAlert(message: ChatMessage, conversation: ChatConversation): boolean {
-  if (message.senderId === meId || message.kind === 'reaction' || message.security === 'plain') return false;
+  // A session's steps never alert: only its question and its answer do (R-072).
+  if (message.senderId === meId || message.kind === 'reaction' || message.kind === 'events' || message.security === 'plain') return false;
   // An agent's entries for a link and its claims are its traffic with the owner's page; a proposal is news (R-040).
   if (message.board && message.board.kind !== 'proposal') return false;
   const readUpTo = conversation.members.find((m) => m.userId === meId)?.lastReadId ?? 0;
@@ -615,6 +616,33 @@ export async function loadOlder(conversationId: number) {
   }
 }
 
+/** How far back each chat's session steps are loaded, by the oldest row fetched, and the load under way (R-072). */
+const stepsPagedTo = new Map<number, number>();
+const stepsLoading = new Map<number, Promise<void>>();
+
+/**
+ * Loads the steps of an agent's sessions in a chat back to `since`, a thread's first message id,
+ * page by page. They page apart from the history, which therefore does not grow with them (R-072).
+ * Two threads of one chat wait for one load, then go further back if they need to.
+ */
+export async function loadSteps(conversationId: number, since: number): Promise<void> {
+  const running = stepsLoading.get(conversationId);
+  if (running) return running.then(() => loadSteps(conversationId, since));
+  const load = pageSteps(conversationId, since).finally(() => stepsLoading.delete(conversationId));
+  stepsLoading.set(conversationId, load);
+  return load;
+}
+
+async function pageSteps(conversationId: number, since: number) {
+  const conversation = store.get().conversations[conversationId];
+  while (conversation && (stepsPagedTo.get(conversationId) ?? Infinity) > since) {
+    const raw: MessageDTO[] = await api.messages(conversationId, stepsPagedTo.get(conversationId), true);
+    const keysOf = currentLookup();
+    actions.addMessages(conversationId, await Promise.all(raw.map((m) => keyring.open(m, conversation, keysOf))));
+    stepsPagedTo.set(conversationId, raw.length < LIMITS.pageSize ? 0 : raw[0]!.id);
+  }
+}
+
 /** Adds a chat the server just returned, keeping the key this device created for it. */
 export async function adoptConversation(dto: ConversationDTO, created?: { keyId: string; key: CryptoKey }) {
   if (created && dto.keyId === created.keyId) await keyring.remember(dto.id, created.keyId, created.key);
@@ -804,6 +832,7 @@ function unsentMessage(entry: StoredUnsent): ChatMessage {
     added: entry.content.added ?? null,
     dismissed: entry.content.dismissed ?? null,
     setupState: null,
+    sessionList: null,
     board: entry.content.board ?? null,
     ask: entry.content.ask ?? null,
     permit: entry.content.permit ?? null,

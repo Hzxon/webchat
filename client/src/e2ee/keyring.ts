@@ -63,6 +63,8 @@ interface Opened {
   dismissed: MessageContent['dismissed'] | null;
   /** The agent's answer about what its runs load from its owner's Claude setup (R-039). */
   setupState: MessageContent['setupState'] | null;
+  /** The sessions a terminal started in a connected folder, as the agent listed them (R-072). */
+  sessionList: MessageContent['sessionList'] | null;
   /** The board's copy in a linked repository, between the owner's page and their agent (R-040). */
   board: MessageContent['board'] | null;
   /** A request from the owner's laptop and the owner's answer to it (docs/decisions/harness-linking.md). */
@@ -134,6 +136,7 @@ const openedFrom = (content: MessageContent): Opened => ({
   added: content.added ?? null,
   dismissed: content.dismissed ?? null,
   setupState: content.setupState ?? null,
+  sessionList: content.sessionList ?? null,
   board: content.board ?? null,
   ask: content.ask ?? null,
   permit: content.permit ?? null,
@@ -325,7 +328,7 @@ export const keyring = {
 
   /** Decrypts a message and checks its signature. Never throws: failures come back as "failed". */
   async open(message: MessageDTO, conversation: ChatConversation | ConversationDTO, keysOf: KeyLookup): Promise<ChatMessage> {
-    const none = { replyTo: null, reaction: null, pull: null, github: null, run: null, prompt: null, added: null, dismissed: null, setupState: null, board: null, ask: null, permit: null, card: null, file: null };
+    const none = { replyTo: null, reaction: null, pull: null, github: null, run: null, prompt: null, added: null, dismissed: null, setupState: null, sessionList: null, board: null, ask: null, permit: null, card: null, file: null };
     if (message.kind === 'github') {
       // Shown as GitHub's, never as a person's, whatever sender the server names.
       const card = readGithubCard(message.body);

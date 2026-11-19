@@ -152,7 +152,8 @@ What it does not protect against:
   channel names, who is in which project or group and who added them, who owns each project and
   group, who left, when a chat got a new key, display names, whether a message is urgent, that
   someone reacted (not with which emoji, or to which message), which messages are a coding agent's
-  board traffic with its owner's page (not what they say), which chats each person muted, and
+  board traffic with its owner's page (not what they say), which are batches of a coding agent
+  session's steps, so how busy a session is and when (not what it does), which chats each person muted, and
   roughly how long a message is: which of the fixed sizes it was padded to, not its exact length.
 - **Who edits which doc section, and when.** The server sees which docs a project has, how many
   sections each has, who edited which section and when, who is editing one now, and which of the
@@ -200,6 +201,13 @@ What it does not protect against:
   setup, and its shell runs in its sandbox. Its file, web and MCP tools do not, and a repository's
   `.agents/mcp_config.json` runs a command as you. WebChat refuses a turn in a folder that has one,
   but a file the model writes during a turn can still load before the turn ends.
+- **Your own setup runs unconfined.** Once you turn on "Use my own setup" for a coding agent in
+  its Settings, a question you type in the Coding agents pane runs in your connected folder as your
+  terminal would: your settings, hooks, plugins, MCP servers and permission rules load, and
+  WebChat's sandbox and rules do not. The board's cards in its brief, which teammates write, and
+  the repository's files can steer it to read or change your files, use your own `gh` login and
+  change your working tree. Card runs and Check again stay restricted, and the agent's keys and
+  `gh` login stay in the locked room.
 - **Photos and files: who sent one, to which chat, when, and how large.** The browser encrypts a
   file with a key of its own before it uploads it. The key, the name, the type and the preview of a
   photo travel only inside the encrypted message. The server sees who uploaded a file, to which

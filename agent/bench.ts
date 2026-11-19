@@ -10,7 +10,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { isRepoName, LIMITS, SKILL_NAME, type SetupChoice } from '../shared/types.ts';
+import { isRepoName, LIMITS, SKILL_NAME, type PermissionMode, type SessionAboutDTO, type SessionEventDTO, type SetupChoice, type TerminalSessionDTO } from '../shared/types.ts';
 import { Lab } from './browser.ts';
 import { secretDirs, type Ask, type Harness, type Reply } from './harness.ts';
 import { sha256 } from './keep.ts';
@@ -99,9 +99,11 @@ export interface Bench {
   /** Removes a scratch copy. */
   drop(scratch: string): Promise<void>;
   /** Runs one turn, and returns its answer for the schema with what it loaded of the owner's setup (D-097). */
-  turn(turn: TurnJob, options: { signal: AbortSignal; progress?: (sentence: string) => void; permit?: () => Permit | undefined }): Promise<{ answer: unknown; applied: { claudeMd: boolean; skills: string[]; noAttribution: boolean } }>;
+  turn(turn: TurnJob, options: { signal: AbortSignal; progress?: (sentence: string) => void; events?: (event: SessionEventDTO) => void; about?: (about: SessionAboutDTO) => void; permit?: () => Permit | undefined }): Promise<{ answer: unknown; applied: { claudeMd: boolean; skills: string[]; noAttribution: boolean; own?: string[] } }>;
   /** Ends what a harness keeps running for a session, or for all. */
   end(session?: string): Promise<void>;
+  /** The newest sessions the owner's terminal started with a harness in a folder (R-072). */
+  sessions(harness: string, dir: string): Promise<TerminalSessionDTO[]>;
 }
 
 export interface TurnJob {
@@ -113,6 +115,11 @@ export interface TurnJob {
   schema: object;
   schemas: object[];
   setup: SetupChoice;
+  /** Runs in the owner's own setup (D-157); the plugin sets it only for a conversation its owner started in their words. */
+  own?: boolean;
+  /** The session's controls (R-072): a model the harness offers, and a permission mode, which counts only with `own`. */
+  model?: string;
+  mode?: PermissionMode;
 }
 
 /**
@@ -329,8 +336,22 @@ export class LocalBench implements Bench {
     return { instructions, skills: skills.length ? folder : undefined, applied: { claudeMd: !!instructions, skills, noAttribution: choice.noAttribution } };
   }
 
-  async turn({ harness: name, cwd, session, resume, message, schema, schemas, setup: choice }: TurnJob, { signal, progress, permit }: Parameters<Bench['turn']>[1]) {
+  async turn({ harness: name, cwd, session, resume, message, schema, schemas, setup: choice, own, model: picked, mode }: TurnJob, { signal, progress, events, about, permit }: Parameters<Bench['turn']>[1]) {
     const harness = this.harness(name);
+    // Only a model the harness offers, as data from the keyholder (R-072).
+    const model = picked && harness.offers().models?.includes(picked) ? picked : undefined;
+    const common = { cwd, session, resume, message, schema, schemas, model, signal, progress, events, about };
+    if (own) {
+      if (!harness.offers().knobs.includes('own')) throw new Error(`${name} cannot run in your own setup.`);
+      // Their own rules decide; what they would ask about goes to the owner as it is, with no rulebook (D-157).
+      const asked = permit?.();
+      try {
+        const answer = await harness.turn({ ...common, setup: {}, own, ...(mode && { mode }), ...(asked && { ask: asked.ask, quiet: asked.quiet }) });
+        return { answer, applied: { claudeMd: false, skills: [], noAttribution: false, own: [name] } };
+      } finally {
+        asked?.done();
+      }
+    }
     const { instructions, skills, applied } = await this.loadSetup(session, harness, choice);
     const asked = permit?.();
     // The rulebook runs here, where the owner's paths are; the owner's folders never reach the keyholder (docs/decisions/harness-rulebook.md).
@@ -359,13 +380,17 @@ export class LocalBench implements Bench {
       }
     });
     try {
-      const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: { instructions, skills }, signal, progress, ask, quiet: asked?.quiet, ...(lab && { lab }), ...(shot && { shot }) });
+      const answer = await harness.turn({ ...common, setup: { instructions, skills }, ask, quiet: asked?.quiet, ...(lab && { lab }), ...(shot && { shot }) });
       return { answer, applied };
     } finally {
       asked?.done();
       if (lab) lab.stop();
       if (skills) await fs.rm(path.join(os.tmpdir(), 'webchat-skills', session), { recursive: true, force: true });
     }
+  }
+
+  async sessions(harness: string, dir: string) {
+    return (await this.harness(harness).sessions?.(dir)) ?? [];
   }
 
   async end(session?: string) {

@@ -3,7 +3,7 @@
 // it offers; plugin.ts calls only this and never names a harness.
 import os from 'node:os';
 import path from 'node:path';
-import type { SetupChoice } from '../shared/types.ts';
+import type { PermissionMode, SessionAboutDTO, SessionEventDTO, SetupChoice, TerminalSessionDTO } from '../shared/types.ts';
 import type { Lab } from './browser.ts';
 import type { Quiet } from './runner.ts';
 import type { Action } from './rulebook.ts';
@@ -30,9 +30,23 @@ export interface Turn {
   schemas?: object[];
   /** What of the owner's setup to load, as they chose (R-039): their instructions file, and a folder of copies of their chosen skills. */
   setup: { instructions?: string; skills?: string };
+  /**
+   * Runs in the owner's own setup, as their terminal would, with none of WebChat's sandbox or
+   * rules: only a session its owner started in their words, while their setup turns it on, and
+   * never a card run (D-157). Only an adapter whose `offers` has the `own` knob gets it.
+   */
+  own?: boolean;
+  /** The model the session's controls picked, by a name `offers().models` lists (R-072). */
+  model?: string;
+  /** The permission mode the session's controls picked, set only with `own`: a restricted run keeps its own (D-115). */
+  mode?: PermissionMode;
   signal: AbortSignal;
   /** Takes what the model does now, in a sentence, each time the adapter can tell (docs/decisions/stop-pauses-run.md). */
   progress?: (sentence: string) => void;
+  /** Takes each step of the session as the harness reports it, for the owner's timeline (R-072). */
+  events?: (event: SessionEventDTO) => void;
+  /** Takes what the session runs with, a part at a time, as the harness says it (R-072). */
+  about?: (about: SessionAboutDTO) => void;
   /**
    * Asks the owner before an action the harness would ask about, and rejects when the run cannot go
    * on. Set only when the owner's page can show the question; without it an adapter refuses such an
@@ -69,15 +83,17 @@ export interface Harness {
    * What of the owner's setup it can load: the instructions file and the skills folder it reads,
    * and the knobs it honors, named as in `SetupChoice`, such as `noAttribution`. It declares a knob
    * only when it honors it without running code outside the sandbox and without changing
-   * permission or sandbox mode (D-115).
+   * permission or sandbox mode (D-115), except `own`, which says it can run `Turn.own` (D-157).
    */
-  offers(): { instructions?: string; skills?: string; knobs: string[] };
+  offers(): { instructions?: string; skills?: string; knobs: string[]; models?: string[] };
   /** What the laptop has of it: where it is, its version, and whether it is signed in, each left out when it cannot tell. */
   found(): Promise<{ path?: string; version?: string; signedIn?: boolean }>;
   /** Takes the owner's choice for its knobs: before any proof or turn, and again whenever it changes. */
   apply(choice: SetupChoice): Promise<void>;
   /** Runs one turn, and resolves to its answer for the schema. */
   turn(turn: Turn): Promise<unknown>;
+  /** The newest sessions the owner's terminal started in `cwd`, for a harness that can resume one there (R-072). */
+  sessions?(cwd: string): Promise<TerminalSessionDTO[]>;
   /** Ends what an adapter keeps running for a session, once the session is over, or for every session when the agent shuts down. An adapter that starts a process for each turn has nothing to end. */
   end?(session?: string): Promise<void>;
 }

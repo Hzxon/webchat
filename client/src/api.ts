@@ -159,8 +159,9 @@ export const api = {
   unlockSection: (docId: string, section: string) => request<void>('DELETE', `/docs/${docId}/sections/${section}/lock`),
   saveSection: (docId: string, section: string, envelope: EnvelopeDTO) =>
     request<DocRevisionDTO>('PUT', `/docs/${docId}/sections/${section}`, { envelope }),
-  messages: (conversationId: number, before?: number) =>
-    request<MessageDTO[]>('GET', `/conversations/${conversationId}/messages${before ? `?before=${before}` : ''}`),
+  /** A page of a chat's history, or with `events`, of the agent sessions' steps in it alone (R-072). */
+  messages: (conversationId: number, before?: number, events = false) =>
+    request<MessageDTO[]>('GET', `/conversations/${conversationId}/messages?${new URLSearchParams({ ...(before && { before: String(before) }), ...(events && { events: '1' }) })}`),
   sendMessage: (conversationId: number, input: SendMessageInput) =>
     request<MessageDTO>('POST', `/conversations/${conversationId}/messages`, input),
   uploadAddress: (conversationId: number, size: number) => request<UploadDTO>('POST', `/conversations/${conversationId}/files`, { size }),

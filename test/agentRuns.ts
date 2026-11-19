@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import pkg from '../package.json' with { type: 'json' };
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { claudeResult } from '../agent/claude.ts';
+import { claudeAbout, claudeEvents, claudeResult, claudeSessions } from '../agent/claude.ts';
 import { AgentClient } from '../agent/client.ts';
 import type { Harness, Turn } from '../agent/harness.ts';
 import { LocalBench } from '../agent/bench.ts';
@@ -348,6 +349,46 @@ export function runTests(w: World) {
       session: 's-1',
       answer: { reply: 'Hi' },
     });
+  });
+
+  test("reads a session's steps from Claude Code's output lines, a command with its output (R-072)", () => {
+    const open = new Map();
+    const line = (type: string, content: unknown[]) => JSON.stringify({ type, message: { content } });
+    const steps = [
+      line('assistant', [{ type: 'text', text: 'Let me look.\nThen test.' }, { type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: '/w/sum.js', old_string: 'a - b', new_string: 'a + b' } }]),
+      line('assistant', [{ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'npm test' } }]),
+      line('user', [{ type: 'tool_result', tool_use_id: 't2', content: [{ type: 'text', text: 'ok' }] }]),
+      line('user', [{ type: 'tool_result', tool_use_id: 'unknown', content: 'ignored' }]),
+      'not json',
+    ].flatMap((l) => claudeEvents(l, '/w', open, 1));
+    assert.deepEqual(steps, [
+      { kind: 'text', title: 'Let me look.', detail: 'Let me look.\nThen test.', at: 1 },
+      { kind: 'edit', title: 'sum.js', detail: '- a - b\n+ a + b', at: 1 },
+      { kind: 'command', title: 'npm test', detail: 'ok', at: 1 },
+    ]);
+    assert.equal(open.size, 0, 'the command left the open list with its output');
+    const todo = line('assistant', [{ type: 'tool_use', id: 't3', name: 'TodoWrite', input: { todos: [{ content: 'Read', status: 'completed' }, { content: 'Fix', status: 'in_progress' }, { content: 'Test', status: 'pending' }] } }]);
+    assert.deepEqual(claudeEvents(todo, '/w', open, 1), [{ kind: 'plan', title: 'Plan', detail: '[x] Read\n[~] Fix\n[ ] Test', at: 1 }]);
+  });
+
+  test("lists a terminal's Claude Code sessions in a folder, newest first, by their first prompt (R-072)", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-sessions-'));
+    const [older, newer] = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
+    const lines = (...entries: object[]) => entries.map((e) => JSON.stringify(e)).join('\n');
+    await fs.writeFile(path.join(dir, `${older}.jsonl`), lines({ type: 'user', isMeta: true, message: { content: 'Caveat' } }, { type: 'user', message: { content: [{ type: 'text', text: 'Fix the sums\nin sum.js' }] } }));
+    await fs.writeFile(path.join(dir, `${newer}.jsonl`), lines({ type: 'user', message: { content: '<command-name>/clear</command-name>' } }, { type: 'user', message: { content: 'Plan the CSV export' } }));
+    await fs.writeFile(path.join(dir, 'notes.txt'), 'not a session');
+    await fs.utimes(path.join(dir, `${older}.jsonl`), new Date(1000), new Date(1000));
+    assert.deepEqual((await claudeSessions(dir)).map((s) => [s.id, s.title]), [[newer, 'Plan the CSV export'], [older, 'Fix the sums']]);
+    assert.deepEqual(await claudeSessions(path.join(dir, 'missing')), []);
+  });
+
+  test('reads what a Claude Code session runs with: its start line, and the context of each answer (R-072)', () => {
+    const init = JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-x', plugins: [{ name: 'a' }, { name: 'b' }], skills: ['s'], mcp_servers: [{ name: 'github', status: 'connected' }] });
+    assert.deepEqual(claudeAbout(init), { model: 'claude-x', plugins: 2, skills: 1, mcp: ['github'], commands: ['s'] }, 'its skills are commands the box offers too');
+    const answer = JSON.stringify({ type: 'assistant', message: { content: [], usage: { input_tokens: 10, cache_creation_input_tokens: 1000, cache_read_input_tokens: 20000, output_tokens: 5 } } });
+    assert.deepEqual(claudeAbout(answer), { context: 21010 });
+    assert.equal(claudeAbout('{"type":"user"}'), undefined);
   });
 
   test('starts again from its file, and signs in again when its session ends', async () => {

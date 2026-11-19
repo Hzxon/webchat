@@ -98,6 +98,8 @@ async function payloadFor(
  * so the reaction shows up there at once. A card from GitHub has no sender and goes to everyone.
  */
 export async function notifyNewMessage(db: Db, push: Push, config: Config, message: MessageDTO, sender: UserRow | null) {
+  // A session's steps push nothing, not even to a tab that looks: the page reads them on its check-in (R-072).
+  if (message.kind === 'events') return;
   const memberIds = await db.memberIds(message.conversationId);
   await Promise.all(
     memberIds

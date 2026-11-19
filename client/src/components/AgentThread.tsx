@@ -3,18 +3,23 @@
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
+import { List, ListItem } from '@astryxdesign/core/List';
+import { Selector } from '@astryxdesign/core/Selector';
 import { Text } from '@astryxdesign/core/Text';
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { LIMITS, type RunRequest } from '../../../shared/types';
+import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { LIMITS, takesControls, type PermissionMode, type RunRequest, type SessionEventDTO } from '../../../shared/types';
 import { blockedBy, threadProject, WAKE, type Seat, type Thread } from '../agents';
-import { answerPermit, askClone, askFix, cancelRun, discardMessage, retryMessage, saveDraft, tellAgent } from '../chat';
+import { answerPermit, askClone, askFix, cancelRun, discardMessage, loadSteps, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatMessage } from '../e2ee/keyring';
 import { actions, useAppState } from '../store';
 import { FileBubble, useAutoGrow, useDraft } from './ChatView';
-import { formatTime } from './format';
-import { AlertIcon, SendIcon } from './icons';
+import { formatAgo, formatTime } from './format';
+import { AlertIcon, SendIcon, StopIcon } from './icons';
 import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
+import { Controls, Summary } from './SessionControls';
+import { SessionDetails } from './SessionDetails';
+import { SessionSteps } from './SessionSteps';
 
 /**
  * A message box that sends on Enter, as the chat's does, and grows with its text. While the agent
@@ -26,8 +31,10 @@ export function Box(props: {
   canSend: boolean;
   onSend: (text: string) => Promise<unknown>;
   stop?: { stopping: boolean; onStop: () => void };
+  /** The harness's own commands and skills, offered after a slash (R-072). */
+  commands?: string[];
 }) {
-  const { name, placeholder, canSend, onSend, stop } = props;
+  const { name, placeholder, canSend, onSend, stop, commands } = props;
   const [text, edit] = useDraft(name);
   const input = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(input, text);
@@ -43,7 +50,18 @@ export function Box(props: {
       send();
     }
   }
+  // A slash and a word offer the commands that start with it; a space ends the offer.
+  const typed = /^\/([\w:.-]*)$/.exec(text)?.[1];
+  const offered = typed === undefined ? [] : (commands ?? []).filter((c) => c.startsWith(typed)).slice(0, 6);
   return (
+    <>
+    {offered.length > 0 && (
+      <List edge="flush">
+        {offered.map((c) => (
+          <ListItem key={c} label={`/${c}`} onClick={() => edit(`/${c} `)} />
+        ))}
+      </List>
+    )}
     <div className="composer-row">
       <textarea
         ref={input}
@@ -54,8 +72,9 @@ export function Box(props: {
         onChange={(e) => edit(e.target.value)}
         onKeyDown={onKeyDown}
       />
-      {stop ? (
-        <Button label="Stop" isDisabled={stop.stopping} onClick={stop.onStop} />
+      {/* One round button: it stops a running turn while the box is empty, and sends otherwise (R-072). */}
+      {stop && !text.trim() ? (
+        <IconButton variant="primary" label="Stop" icon={<StopIcon />} isDisabled={stop.stopping} onClick={stop.onStop} />
       ) : (
         <IconButton
           variant="primary"
@@ -66,12 +85,26 @@ export function Box(props: {
         />
       )}
     </div>
+    </>
   );
 }
 
 const isCancel = (m: ChatMessage) => m.prompt?.kind === 'cancel' || m.run?.kind === 'cancel';
 
-export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: Seat | undefined; agentId: number }) {
+export function AgentThread({
+  thread,
+  seat,
+  agentId,
+  inForm,
+  details,
+}: {
+  thread: Thread;
+  seat: Seat | undefined;
+  agentId: number;
+  inForm?: boolean;
+  /** Shows what the session runs with beside it, as the pane does (R-072). */
+  details?: boolean;
+}) {
   const pending = useAppState((s) => s.pending);
   const meId = useAppState((s) => s.me?.id);
   const docs = useAppState((s) => s.docs);
@@ -97,6 +130,17 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
   const decision =
     thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'decision' && m.run.card) : undefined;
   const decided = decision && thread.added[decision.clientId ?? ''];
+  // The session's controls, for an agent that takes them: the model and mode the next reply carries (R-072).
+  const controls = thread.kind === 'question' && !inForm && !!seat && takesControls(seat.protocol);
+  const [choice, setChoice] = useState<{ model?: string; mode?: PermissionMode }>({});
+  // Make a card: the session drafts one of the kind picked, into the board's new card form (R-071).
+  const [cardKind, setCardKind] = useState<'R' | 'K' | 'D'>('R');
+  const makeCard = () => {
+    const projectId = thread.project;
+    if (projectId === undefined) return;
+    actions.openNewCard({ projectId, kind: cardKind, session: thread.root });
+    void tellAgent(thread.conversationId, thread.root, 'reply', 'Make a card of this.', { card: { kind: cardKind, title: '', body: '' } });
+  };
   const stop = () =>
     void (request ? cancelRun(request) : tellAgent(thread.conversationId, thread.root, 'cancel', 'Stop'));
   const again = () => {
@@ -110,11 +154,32 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
     return () => clearInterval(timer);
   }, []);
 
-  // The newest message stays in view as answers come in.
+  // The newest message stays in view as answers and steps come in.
+  const steps = thread.steps ?? [];
   useEffect(() => {
     const el = list.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [thread.messages.length]);
+  }, [thread.messages.length, steps.length]);
+  // A question's steps page apart from the chat's history, back to its prompt (R-072).
+  const since = thread.kind === 'question' ? thread.messages[0]!.id : 0;
+  useEffect(() => {
+    if (since > 0) void loadSteps(thread.conversationId, since).catch(() => undefined);
+  }, [thread.conversationId, since]);
+  // Each message's steps, those after the message before it, in one pass, as both lists go by id; a message still sending has no id yet.
+  const buckets = useMemo(() => {
+    const out: SessionEventDTO[][] = thread.messages.map(() => []).concat([[]]);
+    let i = 0;
+    for (const s of steps) {
+      while (i < thread.messages.length && (thread.messages[i]!.id <= 0 ? Infinity : thread.messages[i]!.id) < s.id) i++;
+      out[i]!.push(...s.events);
+    }
+    return out;
+  }, [thread.messages, steps]);
+  const stepsBefore = (i: number) => buckets[i]!.length > 0 && <SessionSteps events={buckets[i]!} />;
+  const newest = steps.at(-1);
+  // What the session runs with, once it said anything, beside the timeline (R-072).
+  const rail = !!details && (steps.length > 0 || !!thread.about);
+  const [showDetails, setShowDetails] = useState(false);
 
   const blocked = blockedBy(seat);
   let waiting: string;
@@ -125,11 +190,25 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
     const minutes = Math.floor(
       (now - (thread.messages.findLast((m) => m.senderId === meId && !isCancel(m))?.createdAt ?? thread.last)) / 60_000,
     );
-    waiting = `${minutes > 0 ? `Working… ${minutes} min` : 'Working…'}${thread.progress ? ` · ${thread.progress}` : ''}`;
+    // What it does now, from its newest step, and how old that is: steps come only with a check-in (R-072).
+    const step = newest?.events.at(-1);
+    const doing = step ? `${step.title} · ${formatAgo(newest!.at)}` : thread.progress;
+    waiting = `${minutes > 0 ? `Working… ${minutes} min` : 'Working…'}${doing ? ` · ${doing}` : ''}`;
   }
 
   return (
     <>
+      <div className="agents-session">
+      {/* On a phone the details hide behind a button, which shows only there. */}
+      {rail && (
+        <Button
+          className="agents-details-toggle"
+          size="sm"
+          variant="ghost"
+          label={showDetails ? 'Hide details' : 'Details'}
+          onClick={() => setShowDetails(!showDetails)}
+        />
+      )}
       <div className="messages" ref={list}>
         {thread.messages.map((message, i) => {
           const status = message.clientId ? pending[message.clientId] : undefined;
@@ -146,6 +225,7 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
           if (isCancel(message)) {
             return (
               <div key={message.clientId ?? message.id}>
+                {stepsBefore(i)}
                 <Text as="p" color="secondary">
                   You asked it to stop.
                 </Text>
@@ -161,10 +241,9 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
               ? message.run.card
               : undefined;
           return (
-            <div
-              key={message.clientId ?? message.id}
-              className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}
-            >
+            <Fragment key={message.clientId ?? message.id}>
+            {stepsBefore(i)}
+            <div className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}>
               <div className="bubble-line">
                 <div
                   className={`bubble ${message.prompt?.kind === 'failed' || message.run?.kind === 'failed' ? 'agents-failed' : ''}`}
@@ -172,6 +251,8 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
                   {/* A review is teammates' text that would run with the owner's login, so nothing of it hides in Markdown. */}
                   {mine || message.run?.kind === 'review' || message.permit?.kind === 'question' ? (
                     <span className="bubble-text">{message.text}</span>
+                  ) : message.prompt?.kind === 'summary' ? (
+                    <Summary thread={thread} message={message} />
                   ) : message.prompt?.kind === 'answer' && message.prompt.card ? (
                     <AgentDraft message={message} draft={message.prompt.card} thread={thread} agentId={agentId} />
                   ) : message.board?.kind === 'proposal' ? (
@@ -231,31 +312,6 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
                   />
                 </div>
               )}
-              {message === thread.ask?.message && (
-                <div className="agents-draft-actions">
-                  <Button
-                    variant="primary"
-                    label="Allow"
-                    isDisabled={!!blocked || thread.ask.answered}
-                    onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'once')}
-                  />
-                  <Button
-                    label="Allow for this run"
-                    isDisabled={!!blocked || thread.ask.answered}
-                    onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'run')}
-                  />
-                  <Button
-                    label="Deny"
-                    isDisabled={!!blocked || thread.ask.answered}
-                    onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'deny')}
-                  />
-                  <Text as="p" color="secondary">
-                    Your agent waits for you. It ends in{' '}
-                    {Math.max(1, Math.round((thread.ask.message.permit.expires - now) / 86_400_000))} days if you do not
-                    answer.
-                  </Text>
-                </div>
-              )}
               {message === nocopy && (
                 <div className="agents-draft-actions">
                   <Button
@@ -274,13 +330,21 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
               )}
               {unsent}
             </div>
+            </Fragment>
           );
         })}
+        {stepsBefore(thread.messages.length)}
         {working && (
           <Text as="p" color="secondary">
             {waiting}
           </Text>
         )}
+      </div>
+      {rail && (
+        <aside className={`agents-rail${showDetails ? ' is-open' : ''}`}>
+          <SessionDetails thread={thread} />
+        </aside>
+      )}
       </div>
       <footer className="composer">
         {/* A proposal is the repository's: it waits for Add or Update, and takes no reply (R-040). */}
@@ -339,6 +403,63 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
           (request && (thread.state === 'unsent' || nocopy)) ? null : (
           <>
             {!working && blocked && <Banner status="warning" title={blocked} />}
+            {/* The question docks above the box until it is answered; it stays in the timeline as plain text (R-072). */}
+            {thread.ask && (
+              <div className="agents-dock">
+                <Text as="p" weight="semibold">
+                  {thread.ask.message.text}
+                </Text>
+                <div className="agents-draft-actions">
+                  <Button
+                    variant="primary"
+                    label="Allow"
+                    isDisabled={!!blocked || thread.ask.answered}
+                    onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'once')}
+                  />
+                  <Button
+                    label="Allow for this run"
+                    isDisabled={!!blocked || thread.ask.answered}
+                    onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'run')}
+                  />
+                  <Button
+                    label="Deny"
+                    isDisabled={!!blocked || thread.ask.answered}
+                    onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'deny')}
+                  />
+                </div>
+                <Text as="p" color="secondary">
+                  It waits for you, and ends in{' '}
+                  {Math.max(1, Math.round((thread.ask.message.permit.expires - now) / 86_400_000))} days if you do not
+                  answer.
+                </Text>
+              </div>
+            )}
+            {/* In the new card form, the form's own box asks for the draft. */}
+            {thread.kind === 'question' && thread.project !== undefined && !inForm && !working && !asking && !blocked && (
+              <div className="agents-draft-actions">
+                <Selector
+                  label="Kind of card"
+                  isLabelHidden
+                  value={cardKind}
+                  onChange={(v) => setCardKind(v as 'R' | 'K' | 'D')}
+                  options={[
+                    { value: 'R', label: 'Idea' },
+                    { value: 'K', label: 'Issue' },
+                    { value: 'D', label: 'Decision' },
+                  ]}
+                />
+                <Button label="Make a card" onClick={makeCard} />
+              </div>
+            )}
+            {controls && (
+              <Controls
+                thread={thread}
+                agent={seat!.agent}
+                choice={choice}
+                onChoice={setChoice}
+                isDisabled={!!blocked || working || asking}
+              />
+            )}
             <Box
               name={`agents:${thread.root}`}
               placeholder={request ? 'Ask for changes to the draft' : 'Reply'}
@@ -347,9 +468,10 @@ export function AgentThread({ thread, seat, agentId }: { thread: Thread; seat: S
               onSend={(text) =>
                 request
                   ? askFix(thread.conversationId, request.id, text, notNow ? undefined : review?.id)
-                  : tellAgent(thread.conversationId, thread.root, 'reply', text)
+                  : tellAgent(thread.conversationId, thread.root, 'reply', text, choice)
               }
               stop={working || asking ? { stopping, onStop: stop } : undefined}
+              commands={thread.about?.commands}
             />
           </>
         )}

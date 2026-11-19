@@ -60,3 +60,5 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - The server only hands out file addresses: ciphertext never passes through a function, which Vercel caps at 4.5 MB; the upload and download routes take any member client, never only the page (D-123).
 - With no scheduler, `sweepFiles` deletes expired, unnamed and orphaned ciphertext when an upload address is given or a chat, project, channel, account or agent is deleted (D-123).
 - Upload limits come in pairs from `LIMITS`: the server's pool and each person's quarter of it; check the person's first, with its own `own_` code, so a refusal takes nothing from the pool (D-123).
+- A message of kind `events`, a batch of an agent session's steps, comes only from an agent; it is never pushed, not even to a tab that looks, never unread, moves no chat, and a history page leaves it out unless it asks with `events=1`, so D-133's whole-history load of an agent chat does not grow with steps (R-072).
+- A check-in's level is taken below `MAX_AGENT_LEVEL`, 2^16, one bit per behaviour; an agent follows its server's release, so a new bit never meets an older server (R-072).

@@ -5,21 +5,40 @@ import { type PublicKeysDTO, type UserDTO } from './account.js';
  * questions; 2 also runs cards from the pane, which it names only while `gh` is signed in (D-105).
  * Since R-039 the level is a set of these bits, with 4 for a plugin that heeds its owner's `setup`:
  * 5, or 7 with cards (D-115). 8 says it asks its owner before an action its harness would ask about
- * (docs/decisions/harness-approvals.md). Every level from 1 up answers, older ones included. The
- * server takes any level under 100, so only 16 and 32 are left.
+ * (docs/decisions/harness-approvals.md). 16 says it runs a session its owner starts in their own
+ * harness setup, once they turned that on (D-157), 32 that it sends a session's steps, and 64 that
+ * it takes a model, a permission mode and a hand over from the session's controls, and 128 that it
+ * lists a terminal's sessions in a connected folder and goes on with one (R-072). Every
+ * level from 1 up answers, older ones included. The server takes any level under `MAX_AGENT_LEVEL`;
+ * it took one under 100 before 64, and an agent follows its server's release, so none meets an
+ * older server.
  */
-export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4, asks: 8 } as const;
+export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4, asks: 8, own: 16, events: 32, controls: 64, sessions: 128 } as const;
+
+/** The levels the server takes: one bit for each of 16 behaviours. */
+export const MAX_AGENT_LEVEL = 2 ** 16;
 
 /** Whether a session at this level runs cards, heeds `setup`, or asks (D-105, D-115). */
 export const runsCards = (level: number) => (level & AGENT_LEVEL.cards) !== 0;
 export const takesSetup = (level: number) => (level & AGENT_LEVEL.setup) !== 0;
 export const takesAsks = (level: number) => (level & AGENT_LEVEL.asks) !== 0;
+export const takesOwn = (level: number) => (level & AGENT_LEVEL.own) !== 0;
+export const takesControls = (level: number) => (level & AGENT_LEVEL.controls) !== 0;
+export const listsSessions = (level: number) => (level & AGENT_LEVEL.sessions) !== 0;
+
+/** A harness's session that a terminal started in a connected folder, as the pane lists it (R-072). */
+export interface TerminalSessionDTO {
+  id: string;
+  /** Its first prompt's first line, the harness's own text, shown as plain text. */
+  title: string;
+  at: number;
+}
 
 /** How long a question of an agent waits for its owner: the plan gate's 7 days. */
 export const ASK_WAIT_MS = 7 * 24 * 60 * 60_000;
 
 /** What a choice loads, in words, for the agent's answer and the pane alike (R-039). */
-export const setupWords = (c: SetupChoice) => [c.claudeMd && 'your CLAUDE.md', ...c.skills, c.noAttribution && 'no AI attribution', c.noPlan && 'no plan first'].filter(Boolean).join(', ') || 'nothing of your Claude setup';
+export const setupWords = (c: SetupChoice) => [c.claudeMd && 'your CLAUDE.md', ...c.skills, c.noAttribution && 'no AI attribution', c.noPlan && 'no plan first', c.own?.length && `your own setup in your ${c.own.join(' and ')} sessions`].filter(Boolean).join(', ') || 'nothing of your Claude setup';
 
 /**
  * What the owner's agent loads from their setup on its laptop into every run and turn (R-039,
@@ -42,6 +61,12 @@ export interface SetupChoice {
   off?: string[];
   /** Whether a card run goes on without showing its plan first; a page from before the gate sends none, which keeps it on (docs/decisions/redirect-plan-gate.md). */
   noPlan?: boolean;
+  /**
+   * The harnesses whose sessions the owner starts run in their own setup, by name: their folder,
+   * settings, hooks, plugins, MCP servers and permission rules, with no sandbox of WebChat's. Off at
+   * first; a card run never does (D-157).
+   */
+  own?: string[];
 }
 
 /** A harness the owner's agent found on its laptop, as Settings shows it (D-115). */
@@ -66,6 +91,8 @@ export interface HarnessState {
   skills?: string;
   /** The knobs its adapter honors, named as in `SetupChoice`, such as `noAttribution`. */
   knobs: string[];
+  /** The models a session can pick for it, by the names its command line takes (R-072). */
+  models?: string[];
 }
 
 export type HarnessRow = 'linked' | 'attention' | 'found' | 'missing';

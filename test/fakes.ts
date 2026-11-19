@@ -56,6 +56,21 @@ for await (const text of readline.createInterface({ input: process.stdin })) {
     execFileSync('git', ['add', file]);
     execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-q', '-m', 'Change ' + file]);
   }
+  // A turn that shows its steps (R-072): it thinks, reads a file, and runs a command with its output.
+  if (env('FAKE_CLAUDE_STEPS') && !check) {
+    const say = (type, content) => console.log(JSON.stringify({ type, message: { content } }));
+    say('assistant', [{ type: 'thinking', thinking: 'Where is the sum?\\nIn sum.js.' }]);
+    say('assistant', [{ type: 'tool_use', id: 'read1', name: 'Read', input: { file_path: process.cwd() + '/sum.js' } }]);
+    say('assistant', [{ type: 'tool_use', id: 'bash1', name: 'Bash', input: { command: 'npm test' } }]);
+    say('user', [{ type: 'tool_result', tool_use_id: 'bash1', content: 'x'.repeat(5000) + '\\n1 passing' }]);
+  }
+  // A session that also says what it runs with, plans and edits (R-072), for trying the pane by hand.
+  if (env('FAKE_CLAUDE_MORE') && !check) {
+    const say = (type, content, extra = {}) => console.log(JSON.stringify({ type, message: { content, ...extra } }));
+    console.log(JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-opus-5-5', plugins: [{ name: 'astryx' }, { name: 'caveman' }], skills: ['git-commit-message', 'apple-screenshot', 'astryx'], mcp_servers: [{ name: 'github', status: 'connected' }, { name: 'linear', status: 'connected' }] }));
+    say('assistant', [{ type: 'tool_use', id: 'plan1', name: 'TodoWrite', input: { todos: [{ content: 'Read the board export code', status: 'completed' }, { content: 'Add the CSV button', status: 'in_progress' }, { content: 'Test with two rows', status: 'pending' }] } }]);
+    say('assistant', [{ type: 'tool_use', id: 'edit1', name: 'Edit', input: { file_path: process.cwd() + '/client/board.ts', old_string: 'export {}', new_string: 'export { toCsv }' } }], { usage: { input_tokens: 1200, cache_read_input_tokens: 41000 } });
+  }
   // A work turn its owner will stop: it says what it does, twice within a second, then holds.
   if (env('FAKE_CLAUDE_HOLD') && !check) {
     const use = (name, input) => console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name, input }] } }));

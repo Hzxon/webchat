@@ -135,8 +135,19 @@ export const heldDecisions = (decisions: string[]) => decisions.filter(isHeld).m
 export type PromptDTO =
   // A prompt names its project's board and, unless the project links none, one of its repositories
   // (R-038), and the harness that answers, which every reply then resumes; none for the host harness.
-  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true }
-  | { kind: 'reply'; to: string; sentAt: number }
+  // `own` says the owner typed it, so it may run in their own setup; Check again never sets it (D-157).
+  // `events` says the page shows the session's steps, which an older page would show as messages (R-072).
+  // `card` asks for one checked draft of that kind, from the new card form's fields as they stand (R-071).
+  // `model` and `mode` are the session's controls (R-072); a mode counts only in the user's own setup.
+  // `resume` goes on with a session a terminal started in the folder, by its id (R-072).
+  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true; own?: true; events?: true; card?: CardAskDTO; model?: string; mode?: PermissionMode; resume?: string }
+  // A batch of the session's steps, in a message of kind `events` (R-072).
+  | { kind: 'events'; to: string; events: SessionEventDTO[]; about?: SessionAboutDTO }
+  // `handover` asks for a summary to hand the session to another harness, or, with the summary as
+  // the user saw and edited it, hands it over (D-156).
+  | { kind: 'reply'; to: string; sentAt: number; card?: CardAskDTO; model?: string; mode?: PermissionMode; handover?: { harness: string; summary?: string } }
+  // The summary a harness wrote for handing its session over, which the user reads and may edit (D-156).
+  | { kind: 'summary'; to: string; harness: string }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }
   | { kind: 'failed'; to: string }
@@ -145,6 +156,48 @@ export type PromptDTO =
   | { kind: 'nocopy'; to: string }
   | { kind: 'clone'; to: string; repo: string; sentAt: number }
   | { kind: 'note'; to: string };
+
+/** A session's permission mode in the user's own setup, as Claude Code names them (R-072). */
+export type PermissionMode = 'default' | 'acceptEdits' | 'plan';
+export const PERMISSION_MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan'];
+
+/** The new card form's fields as they stand, which ask the session for one draft of that kind (R-071). */
+export interface CardAskDTO {
+  kind: 'R' | 'K' | 'D';
+  title: string;
+  body: string;
+}
+
+/**
+ * What a session runs with, as its harness and the agent know it, for the pane's head and its
+ * details (R-072). Each field is left out when nobody can tell. `context` is the tokens the newest
+ * turn sent the model.
+ */
+export interface SessionAboutDTO {
+  model?: string;
+  branch?: string;
+  own?: boolean;
+  plugins?: number;
+  skills?: number;
+  hooks?: number;
+  mcp?: string[];
+  context?: number;
+  /** The harness's own commands and skills, which the box offers after a slash. */
+  commands?: string[];
+}
+
+/**
+ * One step of a harness session as its adapter saw it (R-072). Every field is the harness's own
+ * text, which the page shows as plain text, never Markdown: a command can hide in it.
+ */
+export interface SessionEventDTO {
+  kind: 'thinking' | 'read' | 'search' | 'command' | 'edit' | 'tool' | 'text' | 'plan';
+  /** Its line: the command, the file, the pattern or the tool, or the text's first line. */
+  title: string;
+  /** The reasoning, the text, a command's output, an edit's change, or a plan's steps as `[x] Step` lines, cut to its end. */
+  detail?: string;
+  at: number;
+}
 
 /**
  * A board card an agent drafted when its owner asked (D-104): a new decision, idea or issue, or a

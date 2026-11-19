@@ -21,13 +21,16 @@ import {
   type DocSection,
 } from '../../../shared/board';
 import { cardKey, lineChoice, waitsOn, withChoice, type Choice } from '../../../shared/overlap';
-import { LIMITS, type CardNoteDTO, type ProjectDTO, type RunRequest, type UserDTO } from '../../../shared/types';
+import { LIMITS, type CardDraftDTO, type CardNoteDTO, type ProjectDTO, type RunRequest, type UserDTO } from '../../../shared/types';
 import {
   afterWarnings,
   boardDocs,
   cardRuns,
   GOING,
   cardTemplate,
+  withChecked,
+  withSession,
+  sessionOf,
   COLUMN_TITLES,
   columnOf,
   COLUMNS,
@@ -51,8 +54,8 @@ import {
   type CardRun,
   type Move,
 } from '../board';
-import { inOrder, ownAgents, ready, seatFor, short, useAgentChats, useAgentThreads, waitingProposals } from '../agents';
-import { askAgent, askFix, askLink, cancelRun, sendCardNote, startDirectChat, syncNow } from '../chat';
+import { inOrder, ownAgents, ready, seatFor, short, useAgentChats, useAgentThreads, waitingProposals, type Seat, type Thread } from '../agents';
+import { askAgent, askFix, askLink, cancelRun, noteAdded, sendCardNote, startDirectChat, syncNow, tellAgent } from '../chat';
 import {
   addCard,
   beginEditing,
@@ -84,7 +87,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Avatar } from './Avatar';
 import { AgentDraft } from './AgentDraft';
-import { AgentThread } from './AgentThread';
+import { AgentThread, Box } from './AgentThread';
 import { CardPeek } from './CardPeek';
 import { SectionEditor, SectionHistory } from './DocView';
 import {
@@ -185,6 +188,8 @@ export function BoardView({ project }: { project: ProjectDTO }) {
             doc={boards[column]}
             proposals={proposals.filter((p) => columnOf(p.draft.kind) === column)}
             check={check}
+            // The user's own agent drafts a new card from the form, in the project's first repository (R-071).
+            asker={linked && seat && ready(seat) ? { seat, repo } : undefined}
             elsewhere={editingIn && editingIn !== column ? COLUMN_TITLES[editingIn] : undefined}
             onEditing={(on) => setEditingIn(on ? column : null)}
             onPeek={() => setShown(column)}
@@ -306,6 +311,7 @@ function BoardColumnView({
   doc,
   proposals,
   check,
+  asker,
   elsewhere,
   onEditing,
   onPeek,
@@ -316,6 +322,8 @@ function BoardColumnView({
   /** The drafts from proposal files that wait for the user to add them to this column. */
   proposals: Proposal[];
   check?: (id: string) => Promise<void>;
+  /** The user's own agent in the project, which drafts a new card from the form's prompt box (R-071). */
+  asker?: Asker;
   /** The other column's title while it holds the open editor. */
   elsewhere?: string;
   onEditing: (on: boolean) => void;
@@ -361,6 +369,8 @@ function BoardColumnView({
   } | null>(null);
   // The kind of card the new-card form is writing.
   const [adding, setAdding] = useState<CardKind | null>(null);
+  // The session that drafts the new card, by its prompt's client id (R-071).
+  const [session, setSession] = useState<string | null>(null);
   const editorOpen = editing !== null || adding !== null;
   const [history, setHistory] = useState(false);
   // In the open card: the member picked to ask for a review, and the note of a requested change being written.
@@ -372,6 +382,16 @@ function BoardColumnView({
   const messages = useAppState((s) => s.messages);
   // A card's runs are messages in the user's chats with their agents, which load at start (D-105).
   const { chats, threads } = useAgentThreads();
+  // Make a card on a session opens this form for it, on the column of its kind (R-071).
+  const newCard = useAppState((s) => s.newCard);
+  useEffect(() => {
+    if (!newCard || newCard.projectId !== projectId || columnOf(newCard.kind) !== column || editing || adding) return;
+    actions.openNewCard(null);
+    setAdding(newCard.kind);
+    setSession(newCard.session);
+    onEditing(true);
+  }, [newCard]);
+  const sessionThread = session ? threads.find((t) => t.root === session) : undefined;
   // In id order across chats, so the newest request of a card is the one that counts.
   const agentMessages = useMemo(() => inOrder(chats.flatMap((c) => messages[c.id] ?? [])), [chats, messages]);
   // Read on every render, so a request nobody answered stops blocking once its time is up.
@@ -501,14 +521,21 @@ function BoardColumnView({
 
   function closeForm() {
     setAdding(null);
+    setSession(null);
     onEditing(false);
   }
 
-  /** Saves the new card once, with the next free number, which it takes under the column's lock (D-116). */
-  async function add(kind: CardKind, title: string, body: string) {
+  /**
+   * Saves the new card once, with the next free number, which it takes under the column's lock
+   * (D-116). One drafted in a session carries the check's line and a line naming the session, and
+   * the session hears it was added, so the draft waits nowhere (R-071).
+   */
+  async function add(kind: CardKind, title: string, body: string, from?: Drafted) {
     const target = doc ?? (await createBoard(projectId, column));
     const id = newSectionId();
-    await addCard(target, id, kind, (cardId) => cardText(cardId, title, NEW_STATUS[kind], body));
+    const text = from ? withSession(from.draft.checked ? withChecked(body, from.draft.checked) : body, from.thread.root) : body;
+    const { id: cardId } = await addCard(target, id, kind, (cardId) => cardText(cardId, title, NEW_STATUS[kind], text));
+    if (from) await noteAdded(from.thread.conversationId, from.thread.root, from.message.clientId!, cardId);
     // A new card is open, so it shows in the Open drawer; its peek shows once it loads.
     setDrawer(true);
     closeForm();
@@ -954,6 +981,13 @@ function BoardColumnView({
             </span>
           </p>
         )}
+        {/* A card drafted in a session names it; only its owner has the session, in their pane (R-071). */}
+        {inPeek && threads.some((t) => t.root === sessionOf(card.body)) && (
+          <p className="board-card-run">
+            <span>Drafted in a session with your agent.</span>
+            <Button variant="ghost" size="sm" label="Open the session" onClick={() => actions.setAgentsOpen(true, sessionOf(card.body)!)} />
+          </p>
+        )}
         {check && card.kind && !card.failed && (
           <p className="board-card-run">
             <span>Your agent checks it against the board, the code and the open pull requests.</span>
@@ -1076,8 +1110,33 @@ function BoardColumnView({
           ))}
       </div>
       {adding && (
-        <CardPeek title={`New ${KIND_NAMES[adding]}`} onOpen={openCard} onClose={closeForm}>
-          <NewCardForm kind={adding} onDone={(title, body) => add(adding, title, body)} onCancel={closeForm} />
+        <CardPeek
+          title={`New ${KIND_NAMES[adding]}`}
+          onOpen={openCard}
+          onClose={closeForm}
+          // The session beside the form, before it, as a card's peek shows its run (R-071).
+          runFirst
+          run={
+            sessionThread && (
+              <AgentThread
+                key={sessionThread.root}
+                thread={sessionThread}
+                seat={asker?.seat}
+                agentId={asker?.seat.agent.id ?? 0}
+                inForm
+              />
+            )
+          }
+        >
+          <NewCardForm
+            kind={adding}
+            projectId={projectId}
+            asker={asker}
+            thread={sessionThread}
+            onSession={setSession}
+            onDone={(title, body, from) => add(adding, title, body, from)}
+            onCancel={closeForm}
+          />
         </CardPeek>
       )}
       {proposal && (
@@ -1139,17 +1198,50 @@ function BoardColumnView({
 }
 
 /** A new card's title and details. Nothing reaches the server, and no number is taken, until Done (D-116). */
+/** The user's own agent in a project, ready to answer, and the repository it reads. */
+type Asker = { seat: Seat; repo?: string };
+/** The session's draft that filled the form, which the card that goes on the board came from. */
+type Drafted = { message: ChatMessage; draft: CardDraftDTO; thread: Thread };
+
 function NewCardForm({
   kind,
+  projectId,
+  asker,
+  thread,
+  onSession,
   onDone,
   onCancel,
 }: {
   kind: CardKind;
-  onDone: (title: string, body: string) => Promise<void>;
+  projectId: number;
+  asker?: Asker;
+  /** The session that drafts this card, once there is one. */
+  thread?: Thread;
+  onSession: (root: string) => void;
+  onDone: (title: string, body: string, from?: Drafted) => Promise<void>;
   onCancel: () => void;
 }) {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  // The session's newest new draft of this kind fills the fields, once each, over what they held (R-071).
+  const message = thread?.messages.findLast(
+    (m) => m.prompt?.kind === 'answer' && m.prompt.card?.kind === kind && !m.prompt.card.replaces,
+  );
+  const draft = message?.prompt?.kind === 'answer' ? message.prompt.card : undefined;
+  const [filled, setFilled] = useState<string>();
+  useEffect(() => {
+    if (!draft || !message?.clientId || message.clientId === filled) return;
+    setTitle(draft.title);
+    setBody(draft.body);
+    setFilled(message.clientId);
+  }, [message?.clientId]);
+  // Each prompt carries the fields as they stand, so the agent builds on the user's edits.
+  async function ask(text: string) {
+    const card = { kind: kind as 'R' | 'K' | 'D', title, body };
+    if (thread) return tellAgent(thread.conversationId, thread.root, 'reply', text, { card });
+    onSession(await askAgent(asker!.seat.agent.id, projectId, asker!.repo, text, { own: true, card }));
+  }
+  const working = thread?.state === 'working' || thread?.state === 'asking';
   const [needTitle, setNeedTitle] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -1162,7 +1254,7 @@ function NewCardForm({
     if (!title.trim()) return setNeedTitle(true);
     setBusy(true);
     try {
-      await onDone(title.trim(), body.trim() || prompts);
+      await onDone(title.trim(), body.trim() || prompts, draft && thread && message ? { message, draft, thread } : undefined);
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
@@ -1176,6 +1268,18 @@ function NewCardForm({
         if (e.key === 'Escape') onCancel();
       }}
     >
+      {asker ? (
+        <Box
+          name={`newcard:${projectId}:${kind}`}
+          placeholder="Describe it to your agent, which drafts it here"
+          canSend={!working}
+          onSend={ask}
+        />
+      ) : (
+        <Text as="p" color="secondary">
+          To draft cards with your coding agent, connect it in the Coding agents pane.
+        </Text>
+      )}
       <TextInput
         label="Title"
         value={title}
@@ -1195,6 +1299,15 @@ function NewCardForm({
         maxLength={LIMITS.docSectionLength}
         placeholder={prompts}
       />
+      {draft?.checked && <Text color="secondary">Checked: {draft.checked}</Text>}
+      {/* Nothing is blocked: the user weighs what the check found, a conflict as a warning (R-041). */}
+      {draft?.related?.map((r) => (
+        <Banner
+          key={r.id}
+          status={r.kind === 'conflict' ? 'warning' : 'info'}
+          title={`${r.kind === 'conflict' ? 'Goes against' : 'Repeats'} ${r.id}${r.why ? `: ${r.why}` : ''}`}
+        />
+      ))}
       <div className="doc-editor-actions">
         <Text color="secondary" className="doc-editor-status">
           {error}

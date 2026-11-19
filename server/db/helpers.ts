@@ -11,7 +11,7 @@ export function createHelpers(sql: Sql) {
            k.wrapped_by AS my_wrapped_by, k.iv AS my_iv, k.wrapped AS my_wrapped,
            (SELECT COUNT(*)::int FROM webchat.messages x
              WHERE x.conversation_id = c.id AND x.id > m.last_read_id AND x.sender_id IS DISTINCT FROM m.user_id
-               AND x.kind NOT IN ('reaction', 'sync')) AS unread
+               AND x.kind NOT IN ('reaction', 'sync', 'events')) AS unread
          FROM webchat.conversations c JOIN webchat.members m ON m.conversation_id = c.id
          LEFT JOIN webchat.conversation_keys k ON k.conversation_id = c.id AND k.user_id = m.user_id
          WHERE m.user_id = $1 AND ($2::int IS NULL OR c.id = $2)

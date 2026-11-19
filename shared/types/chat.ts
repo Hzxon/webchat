@@ -18,8 +18,10 @@ export interface EnvelopeDTO {
  * which message and which emoji are inside the envelope, so only members can see them. "github" is
  * a card the server writes from GitHub's webhook, in plain text, with no sender (D-050). "sync" is an
  * agent's board traffic with its owner's page: it is pushed and counted like a reaction (K-69).
+ * "events" is a batch of an agent session's steps (R-072): never pushed or counted, and left out of
+ * a chat's history unless asked for, so loading an agent chat does not grow with every step.
  */
-export type MessageKind = 'message' | 'reaction' | 'github' | 'sync';
+export type MessageKind = 'message' | 'reaction' | 'github' | 'sync' | 'events';
 
 export interface MessageDTO {
   id: number;

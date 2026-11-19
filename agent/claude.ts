@@ -7,12 +7,14 @@
 // question, it asks before an action through its permission prompt tool (approve.ts). This is the
 // plugin's harness adapter for Claude Code (harness.ts).
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { constants } from 'node:fs';
+import { constants, realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { promisify } from 'node:util';
+import { LIMITS, type PermissionMode, type SessionAboutDTO, type SessionEventDTO, type TerminalSessionDTO } from '../shared/types.ts';
+import { SESSION_ID } from '../shared/e2ee.ts';
 import { fits } from './answer.ts';
 import { APPROVE_TOOL, openApprover, TOOL_TIMEOUT_MS, type Call } from './approve.ts';
 import { isCredential, olderThan, secretDirs, type Ask, type Harness, type Turn } from './harness.ts';
@@ -68,7 +70,21 @@ export function claudeSettings({ secrets, npmCache, env, noAttribution }: { secr
  * the config file of the approval endpoint, an action Claude Code would ask about is asked of the
  * owner; without it, it is refused.
  */
-export function claudeArgs({ settings, session, resume, schema, claudeMd, skills, mcp }: { settings: string; session: string; resume: boolean; schema: object; claudeMd?: string; skills?: string; mcp?: string }) {
+export function claudeArgs({ settings, session, resume, schema, claudeMd, skills, mcp, own, model, mode }: { settings: string; session: string; resume: boolean; schema: object; claudeMd?: string; skills?: string; mcp?: string; own?: boolean; model?: string; mode?: PermissionMode }) {
+  const tail = [
+    ...(model ? ['--model', model] : []),
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--json-schema',
+    JSON.stringify(schema),
+    resume ? '--resume' : '--session-id',
+    session,
+  ];
+  const asking = mcp ? ['--mcp-config', mcp, '--permission-prompt-tool', APPROVE_TOOL, '--disallowedTools', APPROVE_TOOL] : ['--permission-prompts', 'none'];
+  // The owner's own setup, as their terminal runs it: their settings, hooks, plugins, MCP servers,
+  // permission mode and rules load, and WebChat's endpoint only joins them to ask (D-157).
+  if (own) return ['-p', '--input-format', 'stream-json', ...(mode ? ['--permission-mode', mode] : []), ...asking, ...tail];
   return [
     '-p',
     '--input-format',
@@ -87,14 +103,8 @@ export function claudeArgs({ settings, session, resume, schema, claudeMd, skills
     '--permission-mode',
     'acceptEdits',
     // The tool is hidden from the model, which must not call it for itself.
-    ...(mcp ? ['--mcp-config', mcp, '--permission-prompt-tool', APPROVE_TOOL, '--disallowedTools', APPROVE_TOOL] : ['--permission-prompts', 'none']),
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    '--json-schema',
-    JSON.stringify(schema),
-    resume ? '--resume' : '--session-id',
-    session,
+    ...asking,
+    ...tail,
   ];
 }
 
@@ -151,6 +161,103 @@ export function claudeProgress(output: string, cwd: string): string | undefined 
   };
   const said = block.type === 'tool_use' ? words[block.name ?? ''] : block.type === 'text' ? block.text?.trim().split('\n')[0] : undefined;
   return line(said, 200) || undefined;
+}
+
+/** A step for a tool call: what it reads, searches, edits or runs, with the file as the folder knows it. */
+function toolStep(name: string, input: Record<string, unknown>, cwd: string, at: number): SessionEventDTO {
+  const field = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '');
+  // A file outside the folder shows as given, not as a climb out of it.
+  const relative = field('file_path') && path.relative(cwd, field('file_path'));
+  const file = relative.startsWith('..') ? field('file_path') : relative;
+  switch (name) {
+    case 'Bash':
+      return { kind: 'command', title: field('command'), at };
+    case 'Read':
+      return { kind: 'read', title: file, at };
+    case 'WebFetch':
+      return { kind: 'read', title: field('url'), at };
+    case 'Glob':
+    case 'Grep':
+      return { kind: 'search', title: field('pattern'), at };
+    case 'WebSearch':
+      return { kind: 'search', title: field('query'), at };
+    case 'Write':
+      return { kind: 'edit', title: file, detail: field('content'), at };
+    case 'Edit':
+      return { kind: 'edit', title: file, detail: `- ${field('old_string')}\n+ ${field('new_string')}`, at };
+    case 'TodoWrite': {
+      const todos = Array.isArray(input.todos) ? (input.todos as Array<{ content?: unknown; status?: unknown }>) : [];
+      const mark = (status: unknown) => (status === 'completed' ? '[x]' : status === 'in_progress' ? '[~]' : '[ ]');
+      return { kind: 'plan', title: 'Plan', detail: todos.map((t) => `${mark(t.status)} ${String(t.content ?? '')}`).join('\n'), at };
+    }
+    default:
+      return { kind: 'tool', title: `${name} ${JSON.stringify(input)}`, at };
+  }
+}
+
+/** A tool result's text, from a string or its text blocks. */
+const resultText = (content: unknown) =>
+  typeof content === 'string' ? content : Array.isArray(content) ? content.map((c: { text?: unknown }) => (typeof c?.text === 'string' ? c.text : '')).join('\n') : '';
+
+/**
+ * The steps one line of Claude Code's stream-json output holds, for the owner's timeline (R-072):
+ * its reasoning, its words and each tool call. A command waits in `open`, by its call's id, until
+ * its output comes. Every field is cut to its limits, a long output to its end.
+ */
+export function claudeEvents(output: string, cwd: string, open: Map<string, SessionEventDTO>, at = Date.now()): SessionEventDTO[] {
+  const assistant = output.includes('"type":"assistant"');
+  // A tool's result can run to hundreds of kilobytes; it is parsed only while a command waits for one.
+  if (!assistant && !(open.size && output.includes('"type":"user"'))) return [];
+  let event: { type?: string; message?: { content?: unknown } } | null;
+  try {
+    event = JSON.parse(output) as typeof event;
+  } catch {
+    return [];
+  }
+  const blocks = Array.isArray(event?.message?.content) ? (event.message.content as Array<Record<string, unknown>>) : [];
+  const steps: SessionEventDTO[] = [];
+  const said = event?.type === 'assistant';
+  for (const block of blocks) {
+    const words = typeof block.thinking === 'string' ? block.thinking : typeof block.text === 'string' ? block.text : '';
+    if (said && (block.type === 'thinking' || block.type === 'text') && words.trim()) {
+      steps.push({ kind: block.type, title: words.trim().split('\n')[0]!, detail: words, at });
+    } else if (said && block.type === 'tool_use' && typeof block.id === 'string') {
+      const step = toolStep(String(block.name), (block.input ?? {}) as Record<string, unknown>, cwd, at);
+      if (step.kind === 'command') open.set(block.id, step);
+      else steps.push(step);
+    } else if (!said && block.type === 'tool_result' && open.has(String(block.tool_use_id))) {
+      steps.push({ ...open.get(String(block.tool_use_id))!, detail: resultText(block.content) });
+      open.delete(String(block.tool_use_id));
+    }
+  }
+  return steps.map((s) => ({ ...s, title: s.title.slice(0, LIMITS.eventTitleLength), ...(s.detail && { detail: s.detail.slice(-LIMITS.eventDetailLength) }) }));
+}
+
+/**
+ * What one line of Claude Code's output says the session runs with (R-072): its model, plugins,
+ * skills and MCP servers from the line that starts it, and the context the newest turn sent from
+ * each answer's usage. Undefined for every other line.
+ */
+export function claudeAbout(output: string): SessionAboutDTO | undefined {
+  if (!output.includes('"subtype":"init"') && !(output.includes('"type":"assistant"') && output.includes('"usage"'))) return undefined;
+  let event: { type?: string; subtype?: string; model?: unknown; plugins?: unknown; skills?: unknown; mcp_servers?: unknown; slash_commands?: unknown; message?: { usage?: Record<string, unknown> } } | null;
+  try {
+    event = JSON.parse(output) as typeof event;
+  } catch {
+    return undefined;
+  }
+  const list = (v: unknown) => (Array.isArray(v) ? (v as unknown[]) : undefined);
+  if (event?.type === 'system' && event.subtype === 'init') {
+    const [plugins, skills] = [list(event.plugins), list(event.skills)];
+    const mcp = list(event.mcp_servers)?.map((s) => String((s as { name?: unknown })?.name ?? '')).filter(Boolean);
+    // Its own commands and skills, by name, which the box offers after a slash.
+    const commands = [...(list(event.slash_commands) ?? []), ...(skills ?? [])].filter((c): c is string => typeof c === 'string');
+    return { ...(typeof event.model === 'string' && { model: event.model }), ...(plugins && { plugins: plugins.length }), ...(skills && { skills: skills.length }), ...(mcp && { mcp }), ...(commands.length && { commands: [...new Set(commands)] }) };
+  }
+  const usage = event?.type === 'assistant' ? event.message?.usage : undefined;
+  if (!usage) return undefined;
+  const tokens = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'].reduce((sum, key) => sum + (Number.isInteger(usage[key]) ? (usage[key] as number) : 0), 0);
+  return tokens ? { context: tokens } : undefined;
 }
 
 const ASK_KINDS: Record<string, Ask['kind']> = { Bash: 'execute', Edit: 'edit', MultiEdit: 'edit', Write: 'edit', NotebookEdit: 'edit', Read: 'read', Glob: 'read', Grep: 'read', WebFetch: 'fetch', WebSearch: 'fetch' };
@@ -219,6 +326,9 @@ const claudeHome = () => process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir()
  */
 export const claudeSecrets = (dataDir: string) => [...secretDirs(dataDir), path.join(claudeHome(), 'session-env')];
 
+/** The models a session may pick, as aliases `claude --model` takes, so a new release's model needs no change here (R-072). */
+export const CLAUDE_MODELS = ['opus', 'sonnet', 'haiku'];
+
 /** The first release with `--permission-prompts`, which a turn with no way to ask passes (claude.ts `claudeArgs`; Claude Code's changelog, 2.1.259). */
 export const CLAUDE_MIN_VERSION = '2.1.259';
 
@@ -271,7 +381,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
         })
       : undefined;
     // The skills' copies load as a plugin, which holds only `skills/`.
-    const args = claudeArgs({ settings, session: t.session, resume: t.resume, schema, claudeMd: t.setup.instructions, skills: t.setup.skills && path.dirname(t.setup.skills), mcp: live.approver?.file });
+    const args = claudeArgs({ settings, session: t.session, resume: t.resume, schema, claudeMd: t.setup.instructions, skills: t.setup.skills && path.dirname(t.setup.skills), mcp: live.approver?.file, own: t.own, model: t.model, mode: t.own ? t.mode : undefined });
     const child = (live.child = spawn(program, args, { cwd: t.cwd, stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, ...(live.approver && { MCP_TOOL_TIMEOUT: String(TOOL_TIMEOUT_MS) }) } }));
     keep(child);
     // A process that exits before it reads closes the pipe; its exit says why.
@@ -290,6 +400,9 @@ export function claudeHarness(program: string, dataDir: string): Harness {
   function converse(live: Live, t: Turn) {
     return new Promise<unknown>((resolve, reject) => {
       let done = false;
+      // The commands of this turn that wait for their output, and the folder as the harness names it, past any link (R-072).
+      const open = new Map<string, SessionEventDTO>();
+      const real = t.events ? realpathSync(t.cwd) : t.cwd;
       const dog = watchdog(IDLE_MS, t.quiet ?? new Quiet(), () => finish(new Error(`the agent printed nothing for ${IDLE_MS / 60_000} minutes.`)));
       const onAbort = () => finish(new Error(CANCELLED));
       function finish(error?: Error, answer?: unknown) {
@@ -315,6 +428,9 @@ export function claudeHarness(program: string, dataDir: string): Harness {
         fail: finish,
         line(output) {
           dog.arm();
+          if (t.events) for (const step of claudeEvents(output, real, open)) t.events(step);
+          const about = t.about && claudeAbout(output);
+          if (about) t.about!(about);
           const result = claudeResult(output);
           if (!result) {
             const said = t.progress && claudeProgress(output, t.cwd);
@@ -347,7 +463,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
     // Nothing to check before the first `apply` writes the file.
     warning: async () => ((await fs.access(settings).then(() => true, () => false)) ? sandboxProblem(path.join(os.homedir(), 'WebChat'), secrets, restrictedSettings(settings)) : undefined),
     sandboxed: async () => !(await sandboxProblem(path.join(os.homedir(), 'WebChat'), secrets, restrictedSettings(settings))),
-    offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution', 'noPlan'] }),
+    offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution', 'noPlan', 'own'], models: CLAUDE_MODELS }),
     async found() {
       if (!program) return {};
       // `auth status` prints its JSON and exits 1 when signed out.
@@ -365,8 +481,10 @@ export function claudeHarness(program: string, dataDir: string): Harness {
     },
     async turn(t) {
       if (t.signal.aborted) throw new Error(CANCELLED);
+      // A restricted run loads none of the owner's hooks (D-097); their own setup loads theirs.
+      t.about?.({ hooks: t.own ? await hookCount(t.cwd) : 0 });
       const schema = mergeSchemas((t.schemas ?? [t.schema]) as Schema[]);
-      const key = JSON.stringify([t.cwd, !!t.ask, t.setup, schema, t.lab?.proxy]);
+      const key = JSON.stringify([t.cwd, !!t.ask, t.setup, schema, t.lab?.proxy, !!t.own, t.model, t.mode]);
       let live = lives.get(t.session);
       if (live?.turn) throw new Error('a turn of this session is running already.');
       // A session that starts over, or needs other arguments, cannot keep its process.
@@ -382,10 +500,57 @@ export function claudeHarness(program: string, dataDir: string): Harness {
       }
       return converse(live, t);
     },
+    async sessions(cwd) {
+      return claudeSessions(path.join(claudeHome(), 'projects', (await fs.realpath(cwd)).replace(/[^a-zA-Z0-9]/g, '-')));
+    },
     async end(session) {
       await Promise.all([...[...lives].filter(([id]) => !session || id === session).map(([, live]) => close(live)), ...closing]);
     },
   };
+}
+
+/** The hooks the owner's Claude Code settings and the folder's own load, as a session in their own setup runs them (R-072). */
+async function hookCount(cwd: string) {
+  const read = async (file: string): Promise<Record<string, Array<{ hooks?: unknown[] }>>> => {
+    try {
+      return (JSON.parse(await fs.readFile(file, 'utf8')) as { hooks?: Record<string, Array<{ hooks?: unknown[] }>> }).hooks ?? {};
+    } catch {
+      // A file that is missing or does not parse loads no hooks.
+      return {};
+    }
+  };
+  const files = [path.join(claudeHome(), 'settings.json'), path.join(cwd, '.claude', 'settings.json'), path.join(cwd, '.claude', 'settings.local.json')];
+  return (await Promise.all(files.map(read))).flatMap((hooks) => Object.values(hooks)).flat().reduce((n, m) => n + (Array.isArray(m?.hooks) ? m.hooks.length : 0), 0);
+}
+
+/**
+ * The newest sessions in a folder of Claude Code's own session files, one `<id>.jsonl` each: its id,
+ * the first line of its first prompt and when it last changed (R-072). Only the start of each file
+ * is read, and a file without a prompt there is left out.
+ */
+export async function claudeSessions(dir: string, max = 10) {
+  const names = (await fs.readdir(dir).catch(() => [] as string[])).filter((n) => n.endsWith('.jsonl') && SESSION_ID.test(n.slice(0, -6)));
+  const dated = await Promise.all(names.map(async (name) => ({ name, at: (await fs.stat(path.join(dir, name))).mtimeMs })));
+  const read = async ({ name, at }: { name: string; at: number }): Promise<TerminalSessionDTO[]> => {
+    const file = await fs.open(path.join(dir, name));
+    const { buffer, bytesRead } = await file.read({ buffer: Buffer.alloc(64 * 1024) }).finally(() => file.close());
+    const said = buffer
+      .subarray(0, bytesRead)
+      .toString('utf8')
+      .split('\n')
+      .map((l) => {
+        try {
+          const e = JSON.parse(l) as { type?: string; isMeta?: boolean; message?: { content?: unknown } };
+          const c = e.type === 'user' && !e.isMeta ? e.message?.content : undefined;
+          return typeof c === 'string' ? c : Array.isArray(c) ? (c.find((b: { type?: string }) => b?.type === 'text') as { text?: string } | undefined)?.text : undefined;
+        } catch {
+          return undefined;
+        }
+      })
+      .find((t) => t?.trim() && !t.startsWith('<'));
+    return said ? [{ id: name.slice(0, -6), title: said.trim().split('\n')[0]!.slice(0, LIMITS.eventTitleLength), at: Math.round(at) }] : [];
+  };
+  return (await Promise.all(dated.sort((a, b) => b.at - a.at).slice(0, max).map(read))).flat();
 }
 
 /** The absolute folders of the PATH only, since the background Claude starts in a worktree whose files the model writes. */

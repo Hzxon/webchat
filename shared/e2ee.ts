@@ -32,6 +32,12 @@ import {
   type PullCardDTO,
   type PullChecks,
   type PromptDTO,
+  type SessionEventDTO,
+  type SessionAboutDTO,
+  type PermissionMode,
+  PERMISSION_MODES,
+  type CardAskDTO,
+  type TerminalSessionDTO,
   type PullReview,
   type RunDTO,
   type RunReport,
@@ -403,6 +409,9 @@ export interface MessageContent {
   permit?: PermitDTO;
   /** A photo or file (R-005). The text says the same in words, for older pages, pushes and the chat list. */
   file?: FileDTO;
+  /** The owner asks for the sessions a terminal started in a connected folder, and the agent's list (R-072). */
+  sessions?: { repo: string; sentAt: number };
+  sessionList?: { to: string; repo: string; harness: string; sessions: TerminalSessionDTO[] };
 }
 
 /** The longest emoji a reaction may carry, in UTF-16 units: family and flag sequences fit. */
@@ -575,16 +584,84 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
     const repo = typeof raw.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
     if ((raw.repo !== undefined && !repo) || (!repo && !isId(raw.project)) || !isId(raw.sentAt)) return;
     const harness = short(raw.harness, LIMITS.harnessFieldLength);
-    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }) };
+    return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }), ...(raw.own === true && { own: true as const }), ...(raw.events === true && { events: true as const }), ...readCardAsk(raw.card), ...readControls(raw), ...(typeof raw.resume === 'string' && SESSION_ID.test(raw.resume) && { resume: raw.resume }) };
   }
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
-  if (raw.kind === 'reply' || raw.kind === 'cancel') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt } : undefined;
+  if (raw.kind === 'reply') {
+    const handover = raw.handover as { harness?: unknown; summary?: unknown } | undefined;
+    const harness = short(handover?.harness, LIMITS.harnessFieldLength);
+    const summary = short(handover?.summary, LIMITS.messageLength);
+    return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt, ...readCardAsk(raw.card), ...readControls(raw), ...(harness && { handover: { harness, ...(summary !== undefined && { summary }) } }) } : undefined;
+  }
+  if (raw.kind === 'summary') {
+    const harness = short(raw.harness, LIMITS.harnessFieldLength);
+    return harness ? { kind: 'summary', to, harness } : undefined;
+  }
+  if (raw.kind === 'cancel') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt } : undefined;
   if (raw.kind === 'failed' || raw.kind === 'nocopy' || raw.kind === 'note') return { kind: raw.kind, to };
+  if (raw.kind === 'events') {
+    const about = readAbout(raw.about);
+    return { kind: 'events', to, events: readEvents(raw.events), ...(about && { about }) };
+  }
   if (raw.kind === 'clone') return typeof raw.repo === 'string' && isRepoName(raw.repo) && isId(raw.sentAt) ? { kind: 'clone', to, repo: raw.repo, sentAt: raw.sentAt } : undefined;
   if (raw.kind !== 'answer') return;
   const card = readDraft(raw.card as Record<string, unknown> | undefined);
   return card ? { kind: 'answer', to, card } : { kind: 'answer', to };
+}
+
+/** A model's name, as a harness's command line takes it (R-072). */
+export const MODEL_NAME = /^[\w.:[\]-]{1,64}$/;
+
+/** A harness's session id, as Claude Code names its sessions (R-072). */
+export const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A terminal's sessions of the right shape, at most `max` (R-072). */
+export function readTerminalSessions(raw: unknown, max = 10): TerminalSessionDTO[] {
+  return (Array.isArray(raw) ? (raw as Array<Record<string, unknown> | null>) : []).slice(0, max).flatMap((s) =>
+    typeof s?.id === 'string' && SESSION_ID.test(s.id) && typeof s.title === 'string' && isId(s.at) ? [{ id: s.id, title: s.title.slice(0, LIMITS.eventTitleLength), at: s.at }] : [],
+  );
+}
+
+/** A session's model and permission mode, of the right shape, as the fields that carry them (R-072). */
+function readControls(raw: Record<string, unknown>): { model?: string; mode?: PermissionMode } {
+  const model = typeof raw.model === 'string' && MODEL_NAME.test(raw.model) ? raw.model : undefined;
+  const mode = PERMISSION_MODES.find((m) => m === raw.mode);
+  return { ...(model && { model }), ...(mode && { mode }) };
+}
+
+/** A card mark of the right shape, as the field that carries it, or nothing (R-071). */
+function readCardAsk(raw: unknown): { card?: CardAskDTO } {
+  const card = raw as { kind?: unknown; title?: unknown; body?: unknown } | null | undefined;
+  const title = short(card?.title, LIMITS.docTitleLength);
+  const body = short(card?.body, LIMITS.docSectionLength);
+  return (card?.kind === 'R' || card?.kind === 'K' || card?.kind === 'D') && title !== undefined && body !== undefined ? { card: { kind: card.kind, title, body } } : {};
+}
+
+const EVENT_KINDS: ReadonlyArray<SessionEventDTO['kind']> = ['thinking', 'read', 'search', 'command', 'edit', 'tool', 'text', 'plan'];
+
+/** What a session runs with, the fields of the right shape (R-072). */
+export function readAbout(raw: unknown): SessionAboutDTO | undefined {
+  const a = raw as Record<string, unknown> | null | undefined;
+  if (!a || typeof a !== 'object') return;
+  const count = (v: unknown) => (Number.isInteger(v) && (v as number) >= 0 && (v as number) < 1e7 ? (v as number) : undefined);
+  const text = (v: unknown) => short(v, LIMITS.harnessFieldLength);
+  const mcp = Array.isArray(a.mcp) ? a.mcp.filter((n): n is string => !!text(n)).slice(0, 50) : undefined;
+  const commands = Array.isArray(a.commands) ? a.commands.filter((n): n is string => typeof n === 'string' && /^[\w:.-]{1,64}$/.test(n)).slice(0, 200) : undefined;
+  const about: SessionAboutDTO = { model: text(a.model), branch: text(a.branch), own: typeof a.own === 'boolean' ? a.own : undefined, plugins: count(a.plugins), skills: count(a.skills), hooks: count(a.hooks), mcp, context: count(a.context), commands };
+  return Object.fromEntries(Object.entries(about).filter(([, v]) => v !== undefined)) as SessionAboutDTO;
+}
+
+/** A session's steps of the right shape, each cut to its limits (R-072). */
+export function readEvents(raw: unknown): SessionEventDTO[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Array<Record<string, unknown> | null>).slice(0, LIMITS.eventsPerMessage).flatMap((e) => {
+    const kind = EVENT_KINDS.find((k) => k === e?.kind);
+    const title = typeof e?.title === 'string' ? e.title.slice(0, LIMITS.eventTitleLength) : undefined;
+    if (!kind || title === undefined || !isId(e!.at)) return [];
+    const detail = typeof e!.detail === 'string' && e!.detail ? e!.detail.slice(-LIMITS.eventDetailLength) : undefined;
+    return [{ kind, title, at: e!.at, ...(detail && { detail }) }];
+  });
 }
 
 /** A card draft in an agent's answer, if it has the right shape (D-104, D-116). */
@@ -620,12 +697,12 @@ function readDraft(raw: Record<string, unknown> | undefined): CardDraftDTO | und
 
 /** A setup choice, if it has the right shape: skills only by a folder name that cannot leave `~/.claude/skills` (R-039). */
 function readChoice(raw: unknown): SetupChoice | undefined {
-  const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown; linked?: unknown; off?: unknown; noPlan?: unknown } | null | undefined;
+  const choice = raw as { claudeMd?: unknown; skills?: unknown; noAttribution?: unknown; linked?: unknown; off?: unknown; noPlan?: unknown; own?: unknown } | null | undefined;
   if (typeof choice?.claudeMd !== 'boolean' || typeof choice.noAttribution !== 'boolean' || !Array.isArray(choice.skills)) return;
   const skills = choice.skills.filter((s): s is string => typeof s === 'string' && SKILL_NAME.test(s)).slice(0, LIMITS.setupSkills);
   const names = (list: unknown) => (Array.isArray(list) ? list.filter((n): n is string => !!short(n, LIMITS.harnessFieldLength)).slice(0, LIMITS.harnesses) : undefined);
-  const [linked, off] = [names(choice.linked), names(choice.off)];
-  return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution, ...(linked && { linked }), ...(off && { off }), ...(typeof choice.noPlan === 'boolean' && { noPlan: choice.noPlan }) };
+  const [linked, off, own] = [names(choice.linked), names(choice.off), names(choice.own)];
+  return { claudeMd: choice.claudeMd, skills, noAttribution: choice.noAttribution, ...(linked && { linked }), ...(off && { off }), ...(typeof choice.noPlan === 'boolean' && { noPlan: choice.noPlan }), ...(own && { own }) };
 }
 
 /** The harnesses an agent's answer lists, those of the right shape, or nothing from a plugin before them (D-115). */
@@ -636,9 +713,10 @@ function readHarnesses(raw: unknown): HarnessState[] | undefined {
     const name = field(h?.name);
     if (!h || !name) return [];
     const knobs = Array.isArray(h.knobs) ? h.knobs.filter((k): k is string => typeof k === 'string' && /^\w{1,32}$/.test(k)) : [];
+    const models = Array.isArray(h.models) ? h.models.filter((m): m is string => typeof m === 'string' && MODEL_NAME.test(m)).slice(0, 20) : undefined;
     const signedIn = typeof h.signedIn === 'boolean' ? h.signedIn : undefined;
     const linked = typeof h.linked === 'boolean' ? h.linked : undefined;
-    return [{ name, path: field(h.path), linked, attention: field(h.attention), answers: field(h.answers), version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs }];
+    return [{ name, path: field(h.path), linked, attention: field(h.attention), answers: field(h.answers), version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs, ...(models?.length && { models }) }];
   });
 }
 
@@ -777,6 +855,8 @@ function readContent(value: unknown): MessageContent {
     card?: Record<string, unknown>;
     permit?: Record<string, unknown>;
     file?: Record<string, unknown>;
+    sessions?: { repo?: unknown; sentAt?: unknown };
+    sessionList?: Record<string, unknown>;
   } | null;
   if (typeof raw?.text !== 'string') throw new TamperedMessageError('malformed content');
   const content: MessageContent = { text: raw.text };
@@ -821,6 +901,10 @@ function readContent(value: unknown): MessageContent {
   if (permit) content.permit = permit;
   const file = readFile(raw.file);
   if (file) content.file = file;
+  if (typeof raw.sessions?.repo === 'string' && isRepoName(raw.sessions.repo) && isId(raw.sessions.sentAt)) content.sessions = { repo: raw.sessions.repo, sentAt: raw.sessions.sentAt };
+  const list = raw.sessionList;
+  const [listTo, listHarness] = [short(list?.to, 64), short(list?.harness, LIMITS.harnessFieldLength)];
+  if (listTo && listHarness && typeof list!.repo === 'string' && isRepoName(list!.repo)) content.sessionList = { to: listTo, repo: list!.repo, harness: listHarness, sessions: readTerminalSessions(list!.sessions) };
   return content;
 }
 

@@ -2,7 +2,7 @@
 // D-102, D-103). A conversation is a prompt and the messages whose `prompt` field names the
 // prompt's client id, all in the user's direct chat with the agent.
 import { useMemo } from 'react';
-import { AGENT_LEVEL, ASK_WAIT_MS, takesSetup, type AgentRepoDTO, type PermitDTO, type RunDTO, type UserDTO } from '../../shared/types';
+import { AGENT_LEVEL, ASK_WAIT_MS, takesSetup, type AgentRepoDTO, type PermitDTO, type RunDTO, type SessionAboutDTO, type SessionEventDTO, type UserDTO } from '../../shared/types';
 import { formatSince } from './components/format';
 import type { Tone } from './components/PullTags';
 import type { ChatConversation, ChatMessage } from './e2ee/keyring';
@@ -36,6 +36,10 @@ export interface Thread {
   ask?: { message: ChatMessage & { permit: Extract<PermitDTO, { kind: 'question' }> }; answered: boolean };
   /** The cards its drafts became on the board, by the draft's client id (D-104). */
   added: Record<string, string>;
+  /** Its session's steps, in batches by the message that carried them, which order them among its messages (R-072). */
+  steps?: Array<{ id: number; at: number; events: SessionEventDTO[] }>;
+  /** What its session runs with, the newest of each part (R-072). */
+  about?: SessionAboutDTO;
 }
 
 /** A conversation's state, in words, wherever the page names it. */
@@ -222,6 +226,15 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
       }
       continue;
     }
+    // A batch of the session's steps is no message of the thread, and moves nothing (R-072).
+    if (prompt.kind === 'events') {
+      const thread = threads.get(prompt.to);
+      if (thread && message.senderId === agentId) {
+        (thread.steps ??= []).push({ id: message.id, at: message.createdAt, events: prompt.events });
+        if (prompt.about) thread.about = { ...thread.about, ...prompt.about };
+      }
+      continue;
+    }
     const thread = threads.get(prompt.to);
     const fromMe = prompt.kind === 'reply' || prompt.kind === 'cancel' || prompt.kind === 'clone';
     if (!thread || message.senderId !== (fromMe ? meId : agentId)) continue;
@@ -231,12 +244,19 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     if (part(message) && part(previous)) thread.messages[thread.messages.length - 1] = { ...previous, text: previous.text + message.text };
     else thread.messages.push(message);
     thread.last = Math.max(thread.last, message.createdAt);
+    // A hand over moves the session to the other harness, which says anew what it runs with (D-156).
+    if (prompt.kind === 'reply' && prompt.handover?.summary !== undefined) {
+      thread.harness = prompt.handover.harness;
+      delete thread.about;
+    }
     // A cancel changes nothing until the agent says it stopped.
     if (prompt.kind === 'reply' || prompt.kind === 'clone') thread.state = pending[message.clientId ?? ''] === 'failed' ? 'unsent' : 'working';
     else if (prompt.kind === 'answer') thread.state = 'answered';
     else if (prompt.kind === 'failed') thread.state = 'failed';
     // The laptop has no copy of the repository, and the turn waits for the owner (R-036).
     else if (prompt.kind === 'nocopy') thread.state = 'waiting';
+    // A summary waits for its owner to hand the session over, or to go on as it is (D-156).
+    else if (prompt.kind === 'summary') thread.state = 'answered';
   }
   // A card's conversation lasts as long as its draft is watched, so only a question ends, and one that asks waits as long as the agent does.
   for (const t of threads.values()) if (t.state !== 'asking') delete t.ask;

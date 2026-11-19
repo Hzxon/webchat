@@ -10,7 +10,7 @@ import { Selector } from '@astryxdesign/core/Selector';
 import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { useEffect, useMemo, useState } from 'react';
-import { AGENT_LEVEL } from '../../../shared/types';
+import { AGENT_LEVEL, listsSessions } from '../../../shared/types';
 import {
   asleep,
   blockedBy,
@@ -34,6 +34,7 @@ import { AgentDialog } from './AgentDialog';
 import { AgentAsks } from './AgentAsks';
 import { AgentSetup } from './AgentSetup';
 import { AgentThread, Box } from './AgentThread';
+import { TerminalSessions } from './TerminalSessions';
 import { HarnessPicker, useHarnessPick } from './HarnessPicker';
 import { Tag, type Tone } from './PullTags';
 
@@ -87,7 +88,8 @@ export function AgentsView() {
   else if (thread?.kind === 'proposal')
     subtitle = `Proposed in ${short(thread.repo)} · ${THREAD_STATE[thread.state].label}`;
   else if (thread)
-    subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board'}${thread.harness ? ` with ${thread.harness}` : ''} · ${THREAD_STATE[thread.state].label}`;
+    // A session's head names its branch, and whether it runs in the user's own setup (R-072).
+    subtitle = `${thread.kind === 'card' ? 'Runs in' : 'Asked'} ${thread.repo ? `${thread.kind === 'card' ? '' : 'in '}${short(thread.repo)}` : 'about the board'}${thread.about?.branch ? ` on ${thread.about.branch}` : ''}${thread.harness ? ` with ${thread.harness}` : ''}${thread.about?.own ? ', your own setup' : ''} · ${THREAD_STATE[thread.state].label}`;
   else if (brief) subtitle = 'Before it starts';
   // An agent runs several cards at once, so the list says how many go (R-037).
   const running = threads.filter((t) => t.kind === 'card' && t.state === 'working').length;
@@ -147,6 +149,7 @@ export function AgentsView() {
         <AgentThread
           key={thread.root}
           thread={thread}
+          details
           seat={seatOf(thread)}
           agentId={conversations[thread.conversationId]?.members.find((m) => m.userId !== meId)?.userId ?? 0}
         />
@@ -231,7 +234,7 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
 
   async function ask(text: string) {
     try {
-      actions.setAgentsOpen(true, await askAgent(agent!.id, project!.id, repo || undefined, text, harness));
+      actions.setAgentsOpen(true, await askAgent(agent!.id, project!.id, repo || undefined, text, { harness, own: true }));
     } catch (err) {
       actions.addToast({ conversationId: null, title: 'Question not sent', body: (err as Error).message });
       throw err;
@@ -297,6 +300,10 @@ function ProjectList({ threads, chats }: { threads: Thread[]; chats: ChatConvers
             ? 'It reads your team’s code as it is on GitHub, and catches up on each reply.'
             : 'Your agent answers from the project’s board alone: its decisions and cards.'}
         </p>
+        {/* A terminal's session, continued here, in the user's own setup (R-072). */}
+        {agent && project && repo && listsSessions(seatFor(agent, repo)?.protocol ?? 0) && (
+          <TerminalSessions key={`${project.id}:${repo}`} agent={agent} project={project} repo={repo} />
+        )}
       </div>
       {mine.map((p) => {
         const inIt = agentIn(p.id);

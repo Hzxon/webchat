@@ -11,7 +11,7 @@ import { codexHarness } from '../agent/codex.ts';
 import { Plugin } from '../agent/plugin.ts';
 import { REQUEST_TTL_MS } from '../agent/runs.ts';
 import { newKeyId, newPairingCode, pairingId, openPicks, textHash, permitHash, type MessageContent } from '../shared/e2ee.ts';
-import { briefText, harnessRow, LIMITS, type RunReport, type CreateProjectResponse, type PermitDTO, type PromptDTO, type RunRequest, type SetupChoice } from '../shared/types.ts';
+import { briefText, harnessRow, LIMITS, type CardDraftDTO, type RunReport, type CreateProjectResponse, type PermitDTO, type PromptDTO, type RunRequest, type SetupChoice } from '../shared/types.ts';
 import { copyOf, readCard } from '../shared/board.ts';
 import { FAKE_CLAUDE, FAKE_CODEX } from './fakes.ts';
 import { sh, git, connect, disconnect, FAKE_GH, newChatKey, withEnv, setEnv, waitFor, approve } from './agentHelpers.ts';
@@ -279,7 +279,7 @@ export function serveTests(w: World) {
         // The runs before loaded nothing of it, as nothing was chosen.
         const { harnesses, ...shown } = (await setup(w.alice, direct))[0]!;
         assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false, linked: ['Claude Code', 'Codex'], noPlan: true }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
-        const claudeCode = { name: 'Claude Code', path: path.join(bin, 'claude'), linked: true, attention: undefined, version: '2.1.300', signedIn: true, answers: undefined, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution', 'noPlan'] };
+        const claudeCode = { name: 'Claude Code', path: path.join(bin, 'claude'), linked: true, attention: undefined, version: '2.1.300', signedIn: true, answers: undefined, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution', 'noPlan', 'own'], models: ['opus', 'sonnet', 'haiku'] };
         const codexState = { name: 'Codex', path: path.join(bin, 'codex'), linked: true, attention: undefined, version: '0.58.0', signedIn: true, answers: undefined, refusal: undefined, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: [] };
         assert.deepEqual(harnesses, [claudeCode, codexState], 'the pane learns each harness the laptop has, the knobs it honors');
         // Turned off, Claude Code leaves the linked harnesses, and only Codex is left; a page from before the list keeps it off.
@@ -316,18 +316,18 @@ export function serveTests(w: World) {
         const lkNotLinked = (name: string) => [`I could not answer. You have not linked ${name}, so I start nothing with it. Link it in my settings under Coding agents.`];
         const [lkOnlyClaude] = await lkLink('Claude Code');
         assert.deepEqual(lkOnlyClaude!.harnesses!.map((h) => [h.name, harnessRow(h)]), [['Claude Code', 'linked'], ['Codex', 'found']]);
-        assert.equal(plugin.client!.protocol, 15, 'Claude Code linked, and gh signed in: cards, and it asks');
+        assert.equal(plugin.client!.protocol, 255, 'Claude Code linked, and gh signed in: cards, it asks, it runs own setups, sends steps, takes controls and lists sessions');
         await lkCodexPrompt();
         assert.deepEqual(await lkFailures(), lkNotLinked('Codex'));
         assert.equal(await lkHarnessOf(await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, lkPlain)), 'Claude Code', 'Claude Code still runs');
         await lkLink('Codex', 'Claude Code');
-        assert.equal(plugin.client!.protocol, 15);
+        assert.equal(plugin.client!.protocol, 255);
         assert.equal(await lkHarnessOf(await lkPlain()), 'Codex', 'a prompt that names none runs on the first she linked');
         const [lkOnlyCodex] = await lkLink('Codex');
-        assert.equal(plugin.client!.protocol, 15, 'Codex takes cards now, and it asks');
+        assert.equal(plugin.client!.protocol, 111, 'Codex takes cards now, and it asks, but runs no own setup');
         assert.deepEqual(lkOnlyCodex!.harnesses!.map((h) => harnessRow(h)), ['found', 'linked']);
         await lkLink();
-        assert.equal(plugin.client!.protocol, 5, 'with none linked the agent still answers settings');
+        assert.equal(plugin.client!.protocol, 101, 'with none linked the agent still answers settings');
         assert.match((await plugin.status()).text, /Every card fails at once: You have linked no coding agent[\s\S]*Linked: none\./);
         await lkPlain();
         assert.deepEqual(await lkFailures(), ['I could not answer. You have linked no coding agent on this laptop, so I start nothing. Link one in my settings under Coding agents.']);
@@ -367,7 +367,7 @@ export function serveTests(w: World) {
         // Her approve links the harness the laptop recorded, whatever name the message adds, and says so.
         const lkHeard = await lkAnswer(w.alice, direct, 'approve', lkAsked!, { harness: 'Claude Code' });
         assert.deepEqual(await lkLinked(), ['Claude Code', 'Codex']);
-        assert.equal(plugin.client!.protocol, 15);
+        assert.equal(plugin.client!.protocol, 255);
         assert.ok((await lkAsks()).some((c) => c.ask?.step === 'done'), 'the laptop says it linked it');
         // The same message again, or another that names the same request, changes nothing.
         await lkLink('Claude Code');
@@ -486,6 +486,104 @@ export function serveTests(w: World) {
         assert.ok(boardTurn!.input.includes('It links no code') && boardTurn!.input.includes('### K-7: Sums are off by one'), 'the brief holds the board');
         assert.deepEqual(await answers(), ['From the board.']);
 
+        // Her own setup (D-157) is off at first, so a question she typed runs restricted all the same.
+        const ownPrompt = (own?: true) => withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Mine."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, asks: true, ...(own && { own }) }, 'What does sum.js do?'));
+        const lastTurn = async () => (await turns()).at(-1)!;
+        const unrestricted = ['--restricted', '--settings', '--tools', '--strict-mcp-config', '--plugin-dir', '--append-system-prompt-file', '--permission-mode'];
+        await ownPrompt(true);
+        assert.ok((await lastTurn()).args.includes('--restricted'), 'the switch is off at first');
+        assert.deepEqual((harnesses.find((h) => h.name === 'Claude Code')?.knobs as string[] | undefined)?.includes('own'), true, 'Claude Code offers it');
+        assert.equal(plugin.client!.protocol & 16, 16, 'the check-in says the agent runs own setups');
+        await setup(w.alice, direct, { ...chosen, linked: ['Claude Code', 'Codex'], off: [], own: ['Claude Code'] });
+        // Turned on, a question she typed runs in her folder, with her own setup and nothing of WebChat's but the question endpoint.
+        await ownPrompt(true);
+        const ownTurn = await lastTurn();
+        assert.equal(ownTurn.cwd, await fs.realpath(project), 'in her connected folder');
+        assert.deepEqual(ownTurn.args.filter((a) => unrestricted.includes(a)), [], 'none of the restricted run');
+        assert.ok(ownTurn.args.includes('--permission-prompt-tool'), 'what her rules would ask about comes to her');
+        assert.ok(ownTurn.input.includes('their own copy of it'), 'the brief says where it runs');
+        assert.deepEqual({ ...(await setup(w.alice, direct))[0]!.applied!, at: 0 }, { claudeMd: false, skills: [], noAttribution: false, own: ['Claude Code'], at: 0 }, 'the pane learns the turn ran in her setup');
+        // A prompt with no `own`, as Check again and `webchat-agent card` send, stays restricted.
+        await ownPrompt();
+        assert.ok((await lastTurn()).args.includes('--restricted'), 'Check again stays restricted');
+
+        // A page that shows a session's steps gets them sealed, in one quiet batch before the answer (R-072).
+        await w.instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+        const stepped = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}', FAKE_CLAUDE_COMMIT: '0', FAKE_CLAUDE_STEPS: '1' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, events: true }, 'What does sum.js do?'));
+        const heardSteps = (await w.alice.sync()).filter((m) => m.senderId === agent.id && (m.content?.prompt as { to?: string } | undefined)?.to === stepped);
+        assert.deepEqual(heardSteps.map((m) => [m.kind, m.content!.prompt!.kind]), [['events', 'events'], ['message', 'answer']], 'one batch of steps, then the answer');
+        const batch = heardSteps[0]!.content!.prompt as Extract<PromptDTO, { kind: 'events' }>;
+        assert.deepEqual(batch.events.map((e) => [e.kind, e.title]), [['thinking', 'Where is the sum?'], ['read', 'sum.js'], ['command', 'npm test']]);
+        assert.deepEqual(batch.about, { own: false, branch: 'main', hooks: 0 }, 'what the session runs with goes along: a restricted run on main, with no hooks');
+        assert.ok(batch.events[2]!.detail!.endsWith('1 passing') && batch.events[2]!.detail!.length === LIMITS.eventDetailLength, 'a command shows its output, cut to its end');
+        // The history leaves the steps out, so loading an agent chat does not grow with them; they page apart.
+        const page = await w.alice.request<Array<{ id: number; kind: string }>>('GET', `/conversations/${direct}/messages`);
+        assert.ok(!page.some((m) => m.kind === 'events'), 'the history leaves steps out');
+        const stepsPage = await w.alice.request<Array<{ id: number; kind: string }>>('GET', `/conversations/${direct}/messages?events=1`);
+        assert.deepEqual(stepsPage.map((m) => m.id), [heardSteps[0]!.id], 'the steps page apart');
+        // Only an agent sends steps.
+        await assert.rejects(w.alice.send(direct, { text: 'Steps', prompt: { kind: 'events', to: stepped, events: [] } }, { kind: 'events' }), /Unknown message kind/);
+        // A prompt from a page that shows no steps gets none.
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}', FAKE_CLAUDE_COMMIT: '0', FAKE_CLAUDE_STEPS: '1' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id }, 'What does sum.js do?'));
+        assert.ok(!(await w.alice.sync()).some((m) => m.kind === 'events'), 'an older page hears no steps');
+
+        // The new card form asks for one checked draft of its kind, from its fields as they stand (R-071).
+        await w.instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+        const two = JSON.stringify({ reply: 'Checked.', drafts: [{ kind: 'idea', title: 'Sums add cents', body: 'Why: totals.', checked: 'Read sum.js.' }, { kind: 'decision', title: 'Cents stay exact', body: 'Why.', checked: 'Read sum.js.' }] });
+        const form = { kind: 'R' as const, title: 'Sums add cents', body: 'My edit: keep two places.' };
+        const carded = await withEnv({ FAKE_CLAUDE_ANSWER: two, FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, card: form }, 'Turn this into an idea.'));
+        const cardTurn2 = await lastTurn();
+        assert.ok(cardTurn2.input.includes('exactly one draft in drafts, of kind idea') && cardTurn2.input.includes('My edit: keep two places.'), 'the brief asks for one idea and carries the fields');
+        assert.ok(cardTurn2.input.includes("OWNER'S WORDS START"), "the fields are fenced as the owner's words");
+        const formDrafts = (await w.alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'answer' && (m.content.prompt as { to: string }).to === carded && m.content.prompt.card);
+        assert.deepEqual(formDrafts.map((m) => (m.content!.prompt as { card: CardDraftDTO }).card.title), ['Sums add cents'], 'only the one draft of the kind it asked for');
+        // A reply carries the fields as they stand, so the next draft builds on the edits.
+        await withEnv({ FAKE_CLAUDE_ANSWER: two, FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'reply', to: carded, sentAt: Date.now(), card: { ...form, body: 'Edited again.' } }, 'Shorter, please.'));
+        assert.ok((await lastTurn()).input.includes('Edited again.'), 'the reply carries the edited fields');
+        await w.alice.sync();
+
+        // The session's controls (R-072): a model the harness offers, and a permission mode only in her own setup.
+        await w.instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+        const controlled = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Sure."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, own: true, model: 'sonnet', mode: 'plan' }, 'Plan it.'));
+        const flagOf = (args: string[], name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+        let args = (await lastTurn()).args;
+        assert.deepEqual([flagOf(args, '--model'), flagOf(args, '--permission-mode')], ['sonnet', 'plan'], 'her own setup takes the model and the mode');
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Sure."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, model: 'gpt-9', mode: 'default' }, 'Plan it.'));
+        args = (await lastTurn()).args;
+        assert.deepEqual([flagOf(args, '--model'), flagOf(args, '--permission-mode')], [undefined, 'acceptEdits'], 'a restricted run keeps its mode, and a model the harness does not offer is dropped');
+        // Hand over (D-156): the harness that ran it writes a summary, which she reads and edits; the other starts from it, in the same thread.
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Goal: plan sums. Done: read sum.js. Next: fix."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'reply', to: controlled, sentAt: Date.now(), handover: { harness: 'Codex' } }, 'Hand over to Codex'));
+        assert.ok((await lastTurn()).input.includes('hands this session over to Codex'), 'the old harness is asked for the summary');
+        const summary = (await w.alice.sync()).find((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'summary');
+        assert.deepEqual([summary?.content?.prompt, summary?.content?.text], [{ kind: 'summary', to: controlled, harness: 'Codex' }, 'Goal: plan sums. Done: read sum.js. Next: fix.']);
+        const codexTurns = async () => (await fs.readFile(path.join(w.home, 'codex.log'), 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l) as { method?: string; input?: string }).filter((l) => l.method === 'turn/start');
+        const codexBefore = (await codexTurns()).length;
+        await tell({ kind: 'reply', to: controlled, sentAt: Date.now(), handover: { harness: 'Codex', summary: 'Goal: plan sums. Edited by Alice.' } }, 'Hand over to Codex');
+        const handed = (await codexTurns()).slice(codexBefore);
+        assert.equal(handed.length, 1, 'Codex starts a session of its own');
+        assert.ok(handed[0]!.input!.includes('Edited by Alice.'), 'from the summary as she edited it');
+        const keptAfter = JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'conversations.json'), 'utf8')) as Array<{ root: string; harness?: string }>;
+        assert.equal(keptAfter.find((c) => c.root === controlled)?.harness, 'Codex', 'replies go to Codex now');
+        await w.alice.sync();
+
+        // A terminal's session, continued (R-072): the agent lists her Claude Code sessions in the connected folder, and goes on with one in her own setup.
+        await w.instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+        const terminal = '33333333-3333-4333-8333-333333333333';
+        const sessionsDir = path.join(claudeDir, 'projects', (await fs.realpath(project)).replace(/[^a-zA-Z0-9]/g, '-'));
+        await fs.mkdir(sessionsDir, { recursive: true });
+        await fs.writeFile(path.join(sessionsDir, `${terminal}.jsonl`), JSON.stringify({ type: 'user', message: { content: 'Why are sums off?' } }) + '\n');
+        const listAsk = await w.alice.send(direct, { text: 'Sessions', sessions: { repo: 'acme/app', sentAt: Date.now() } });
+        await Promise.all((await plugin.client!.sync()).map((m) => plugin.handle(m)));
+        const listed = (await w.alice.sync()).find((m) => m.senderId === agent.id && m.content?.sessionList)!;
+        assert.equal(listed.kind, 'sync', 'the list is quiet');
+        assert.deepEqual(listed.content!.sessionList, { to: listAsk.clientId, repo: 'acme/app', harness: 'Claude Code', sessions: [{ id: terminal, title: 'Why are sums off?', at: listed.content!.sessionList!.sessions[0]!.at }] });
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Going on."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, own: true, harness: 'Claude Code', resume: terminal }, 'Go on.'));
+        const resumedTurn = await lastTurn();
+        assert.deepEqual([flagOf(resumedTurn.args, '--resume'), resumedTurn.cwd, resumedTurn.args.includes('--restricted')], [terminal, await fs.realpath(project), false], 'it resumes the session in her folder, in her own setup');
+        // Not in a restricted run: the session is hers, with her setup.
+        await tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Claude Code', resume: terminal }, 'Go on.');
+        assert.match((await w.alice.sync()).find((m) => m.content?.prompt?.kind === 'failed')?.content?.text ?? '', /only in your own setup/);
+
         // A draft whose request is not in Alice's direct chat with the agent, as every one from before
         // D-105 is, ends when the plugin loads: the pane shows a card's thread only from that chat (K-58).
         const old = (await ask(w.alice)).id;
@@ -494,6 +592,10 @@ export function serveTests(w: World) {
         await freeClaims();
         const current = (await w.alice.send(direct, { text: 'Run K-7 with Claude Code', run: request })).id;
         await (await checkIn()).handled;
+        // A card run in the same minute stays restricted, with her own setup on (D-157).
+        const cardTurn = await lastTurn();
+        assert.ok(cardTurn.args.includes('--restricted') && cardTurn.cwd.includes(path.join('.claude', 'worktrees')), 'a card run stays restricted');
+        await setup(w.alice, direct, { ...chosen, linked: ['Claude Code', 'Codex'], off: [] });
         const watching = async () => (JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'pulls.json'), 'utf8')) as Array<{ pull: { number: number } }>).map((w) => w.pull.number);
         assert.deepEqual(await watching(), [2, 3]);
         await plugin.endStrandedDrafts();

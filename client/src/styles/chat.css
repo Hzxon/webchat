@@ -404,7 +404,8 @@
   gap: 8px;
 }
 
-.composer textarea {
+.composer textarea,
+.composer-row textarea {
   flex: 1;
   min-height: 40px;
   max-height: 150px;
@@ -417,7 +418,8 @@
   transition: border-color 0.12s, background-color 0.12s;
 }
 
-.composer textarea:focus {
+.composer textarea:focus,
+.composer-row textarea:focus {
   border-color: var(--accent);
   background: var(--panel);
 }
