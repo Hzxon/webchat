@@ -212,7 +212,8 @@ async function applyChanges(result: Extract<SyncResponse, { changed: true }>, si
  * card from GitHub alerts like a message.
  */
 function shouldAlert(message: ChatMessage, conversation: ChatConversation): boolean {
-  if (message.senderId === meId || message.kind === 'reaction' || message.security === 'plain') return false;
+  // A session's steps never alert: only its question and its answer do (R-072).
+  if (message.senderId === meId || message.kind === 'reaction' || message.kind === 'events' || message.security === 'plain') return false;
   // An agent's entries for a link and its claims are its traffic with the owner's page; a proposal is news (R-040).
   if (message.board && message.board.kind !== 'proposal') return false;
   const readUpTo = conversation.members.find((m) => m.userId === meId)?.lastReadId ?? 0;
@@ -612,6 +613,23 @@ export async function loadOlder(conversationId: number) {
     const complete = raw.length < LIMITS.pageSize;
     actions.setHistory(conversationId, page, complete);
     if (complete || page.some((m) => m.kind !== 'reaction')) return;
+  }
+}
+
+/** How far back each chat's session steps are loaded, by the oldest row fetched (R-072). */
+const stepsPagedTo = new Map<number, number>();
+
+/**
+ * Loads the steps of an agent's sessions in a chat back to `since`, a thread's first message id,
+ * page by page. They page apart from the history, which therefore does not grow with them (R-072).
+ */
+export async function loadSteps(conversationId: number, since: number) {
+  const conversation = store.get().conversations[conversationId];
+  while (conversation && (stepsPagedTo.get(conversationId) ?? Infinity) > since) {
+    const raw: MessageDTO[] = await api.messages(conversationId, stepsPagedTo.get(conversationId), true);
+    const keysOf = currentLookup();
+    actions.addMessages(conversationId, await Promise.all(raw.map((m) => keyring.open(m, conversation, keysOf))));
+    stepsPagedTo.set(conversationId, raw.length < LIMITS.pageSize ? 0 : raw[0]!.id);
   }
 }
 

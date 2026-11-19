@@ -27,9 +27,11 @@ export function messagesRoutes(router: Router, { db, push, files, config, sweepF
     await requireMember(conversationId, me.id);
     // Read with the WHATWG URL API: on Vercel, reading req.query logs Node's url.parse()
     // deprecation warning (DEP0169).
-    const beforeParam = new URL(req.originalUrl, 'http://localhost').searchParams.get('before');
+    const params = new URL(req.originalUrl, 'http://localhost').searchParams;
+    const beforeParam = params.get('before');
     const before = beforeParam === null ? MAX_ID : positiveInt(beforeParam, 'before');
-    res.json(await db.messagesBefore(conversationId, before, LIMITS.pageSize));
+    // A session's steps page apart, so a chat's history does not grow with them (R-072).
+    res.json(await db.messagesBefore(conversationId, before, LIMITS.pageSize, params.get('events') === '1'));
   });
 
   router.post('/conversations/:id/messages', requireAuth, async (req, res) => {
@@ -41,7 +43,9 @@ export function messagesRoutes(router: Router, { db, push, files, config, sweepF
     const sealed = envelope(req.body?.envelope, me.agent_owner === null ? LIMITS.ciphertextLength : LIMITS.docCiphertextLength);
     // Signed into the envelope, so it must stay exactly as the client sent it.
     const clientId = base64url(req.body?.clientId, 'clientId', 1, 64);
-    const kind: Exclude<MessageKind, 'github'> = req.body?.kind === 'reaction' || req.body?.kind === 'sync' ? req.body.kind : 'message';
+    const kinds = ['reaction', 'sync', ...(me.agent_owner === null ? [] : ['events'])];
+    const kind: Exclude<MessageKind, 'github'> = kinds.includes(req.body?.kind) ? req.body.kind : 'message';
+    // Only an agent sends a session's steps (R-072).
     if (req.body?.kind !== undefined && req.body.kind !== kind) throw new HttpError(400, 'Unknown message kind.');
     await requireMember(conversationId, me.id);
     await requireCurrentKey(conversationId, sealed.kid);

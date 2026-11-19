@@ -136,7 +136,10 @@ export type PromptDTO =
   // A prompt names its project's board and, unless the project links none, one of its repositories
   // (R-038), and the harness that answers, which every reply then resumes; none for the host harness.
   // `own` says the owner typed it, so it may run in their own setup; Check again never sets it (D-157).
-  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true; own?: true }
+  // `events` says the page shows the session's steps, which an older page would show as messages (R-072).
+  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true; own?: true; events?: true }
+  // A batch of the session's steps, in a message of kind `events` (R-072).
+  | { kind: 'events'; to: string; events: SessionEventDTO[] }
   | { kind: 'reply'; to: string; sentAt: number }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }
@@ -146,6 +149,19 @@ export type PromptDTO =
   | { kind: 'nocopy'; to: string }
   | { kind: 'clone'; to: string; repo: string; sentAt: number }
   | { kind: 'note'; to: string };
+
+/**
+ * One step of a harness session as its adapter saw it (R-072). Every field is the harness's own
+ * text, which the page shows as plain text, never Markdown: a command can hide in it.
+ */
+export interface SessionEventDTO {
+  kind: 'thinking' | 'read' | 'search' | 'command' | 'edit' | 'tool' | 'text';
+  /** Its line: the command, the file, the pattern or the tool, or the text's first line. */
+  title: string;
+  /** The reasoning, the text, a command's output or an edit's change, cut to its end. */
+  detail?: string;
+  at: number;
+}
 
 /**
  * A board card an agent drafted when its owner asked (D-104): a new decision, idea or issue, or a

@@ -10,7 +10,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { isRepoName, LIMITS, SKILL_NAME, type SetupChoice } from '../shared/types.ts';
+import { isRepoName, LIMITS, SKILL_NAME, type SessionEventDTO, type SetupChoice } from '../shared/types.ts';
 import { Lab } from './browser.ts';
 import { secretDirs, type Ask, type Harness, type Reply } from './harness.ts';
 import { sha256 } from './keep.ts';
@@ -99,7 +99,7 @@ export interface Bench {
   /** Removes a scratch copy. */
   drop(scratch: string): Promise<void>;
   /** Runs one turn, and returns its answer for the schema with what it loaded of the owner's setup (D-097). */
-  turn(turn: TurnJob, options: { signal: AbortSignal; progress?: (sentence: string) => void; permit?: () => Permit | undefined }): Promise<{ answer: unknown; applied: { claudeMd: boolean; skills: string[]; noAttribution: boolean; own?: string[] } }>;
+  turn(turn: TurnJob, options: { signal: AbortSignal; progress?: (sentence: string) => void; events?: (event: SessionEventDTO) => void; permit?: () => Permit | undefined }): Promise<{ answer: unknown; applied: { claudeMd: boolean; skills: string[]; noAttribution: boolean; own?: string[] } }>;
   /** Ends what a harness keeps running for a session, or for all. */
   end(session?: string): Promise<void>;
 }
@@ -331,14 +331,14 @@ export class LocalBench implements Bench {
     return { instructions, skills: skills.length ? folder : undefined, applied: { claudeMd: !!instructions, skills, noAttribution: choice.noAttribution } };
   }
 
-  async turn({ harness: name, cwd, session, resume, message, schema, schemas, setup: choice, own }: TurnJob, { signal, progress, permit }: Parameters<Bench['turn']>[1]) {
+  async turn({ harness: name, cwd, session, resume, message, schema, schemas, setup: choice, own }: TurnJob, { signal, progress, events, permit }: Parameters<Bench['turn']>[1]) {
     const harness = this.harness(name);
     if (own) {
       if (!harness.offers().knobs.includes('own')) throw new Error(`${name} cannot run in your own setup.`);
       // Their own rules decide; what they would ask about goes to the owner as it is, with no rulebook (D-157).
       const asked = permit?.();
       try {
-        const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: {}, own, signal, progress, ...(asked && { ask: asked.ask, quiet: asked.quiet }) });
+        const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: {}, own, signal, progress, events, ...(asked && { ask: asked.ask, quiet: asked.quiet }) });
         return { answer, applied: { claudeMd: false, skills: [], noAttribution: false, own: [name] } };
       } finally {
         asked?.done();
@@ -372,7 +372,7 @@ export class LocalBench implements Bench {
       }
     });
     try {
-      const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: { instructions, skills }, signal, progress, ask, quiet: asked?.quiet, ...(lab && { lab }), ...(shot && { shot }) });
+      const answer = await harness.turn({ cwd, session, resume, message, schema, schemas, setup: { instructions, skills }, signal, progress, events, ask, quiet: asked?.quiet, ...(lab && { lab }), ...(shot && { shot }) });
       return { answer, applied };
     } finally {
       asked?.done();

@@ -77,11 +77,12 @@ export function messagesQueries(sql: Sql, { markRead }: Helpers) {
         return toMessageDTO(row);
       });
     },
-    messagesBefore: async (conversationId: number, beforeId: number, limit: number) =>
+    /** A page of a chat's history, without a session's steps, or only those (R-072). */
+    messagesBefore: async (conversationId: number, beforeId: number, limit: number, events = false) =>
       (
         await sql.query<MessageRow>(
-          'SELECT * FROM webchat.messages WHERE conversation_id = $1 AND id < $2::bigint ORDER BY id DESC LIMIT $3',
-          [conversationId, beforeId, limit],
+          `SELECT * FROM webchat.messages WHERE conversation_id = $1 AND id < $2::bigint AND (kind = 'events') = $4 ORDER BY id DESC LIMIT $3`,
+          [conversationId, beforeId, limit, events],
         )
       )
         .reverse()
@@ -125,7 +126,7 @@ export function messagesQueries(sql: Sql, { markRead }: Helpers) {
           sql.query<{ total: number }>(
             `SELECT COUNT(*)::int AS total FROM webchat.messages x
              JOIN webchat.members m ON m.conversation_id = x.conversation_id
-             WHERE m.user_id = $1 AND NOT m.muted AND x.id > m.last_read_id AND x.sender_id IS DISTINCT FROM $1 AND x.kind NOT IN ('reaction', 'sync')`,
+             WHERE m.user_id = $1 AND NOT m.muted AND x.id > m.last_read_id AND x.sender_id IS DISTINCT FROM $1 AND x.kind NOT IN ('reaction', 'sync', 'events')`,
             [userId],
           ),
         )

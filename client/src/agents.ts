@@ -2,7 +2,7 @@
 // D-102, D-103). A conversation is a prompt and the messages whose `prompt` field names the
 // prompt's client id, all in the user's direct chat with the agent.
 import { useMemo } from 'react';
-import { AGENT_LEVEL, ASK_WAIT_MS, takesSetup, type AgentRepoDTO, type PermitDTO, type RunDTO, type UserDTO } from '../../shared/types';
+import { AGENT_LEVEL, ASK_WAIT_MS, takesSetup, type AgentRepoDTO, type PermitDTO, type RunDTO, type SessionEventDTO, type UserDTO } from '../../shared/types';
 import { formatSince } from './components/format';
 import type { Tone } from './components/PullTags';
 import type { ChatConversation, ChatMessage } from './e2ee/keyring';
@@ -36,6 +36,8 @@ export interface Thread {
   ask?: { message: ChatMessage & { permit: Extract<PermitDTO, { kind: 'question' }> }; answered: boolean };
   /** The cards its drafts became on the board, by the draft's client id (D-104). */
   added: Record<string, string>;
+  /** Its session's steps, in batches by the message that carried them, which order them among its messages (R-072). */
+  steps?: Array<{ id: number; at: number; events: SessionEventDTO[] }>;
 }
 
 /** A conversation's state, in words, wherever the page names it. */
@@ -220,6 +222,12 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
         const state = pending[message.clientId] === 'failed' ? 'unsent' : 'working';
         threads.set(message.clientId, { kind: 'question', root: message.clientId, conversationId: message.conversationId, repo: prompt.repo ?? '', harness: prompt.harness, project: prompt.project, messages: [message], state, last: message.createdAt, added: {} });
       }
+      continue;
+    }
+    // A batch of the session's steps is no message of the thread, and moves nothing (R-072).
+    if (prompt.kind === 'events') {
+      const thread = threads.get(prompt.to);
+      if (thread && message.senderId === agentId) (thread.steps ??= []).push({ id: message.id, at: message.createdAt, events: prompt.events });
       continue;
     }
     const thread = threads.get(prompt.to);

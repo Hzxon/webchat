@@ -4,7 +4,7 @@ import path from 'node:path';
 import pkg from '../package.json' with { type: 'json' };
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { claudeResult } from '../agent/claude.ts';
+import { claudeEvents, claudeResult } from '../agent/claude.ts';
 import { AgentClient } from '../agent/client.ts';
 import type { Harness, Turn } from '../agent/harness.ts';
 import { LocalBench } from '../agent/bench.ts';
@@ -348,6 +348,24 @@ export function runTests(w: World) {
       session: 's-1',
       answer: { reply: 'Hi' },
     });
+  });
+
+  test("reads a session's steps from Claude Code's output lines, a command with its output (R-072)", () => {
+    const open = new Map();
+    const line = (type: string, content: unknown[]) => JSON.stringify({ type, message: { content } });
+    const steps = [
+      line('assistant', [{ type: 'text', text: 'Let me look.\nThen test.' }, { type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: '/w/sum.js', old_string: 'a - b', new_string: 'a + b' } }]),
+      line('assistant', [{ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'npm test' } }]),
+      line('user', [{ type: 'tool_result', tool_use_id: 't2', content: [{ type: 'text', text: 'ok' }] }]),
+      line('user', [{ type: 'tool_result', tool_use_id: 'unknown', content: 'ignored' }]),
+      'not json',
+    ].flatMap((l) => claudeEvents(l, '/w', open, 1));
+    assert.deepEqual(steps, [
+      { kind: 'text', title: 'Let me look.', detail: 'Let me look.\nThen test.', at: 1 },
+      { kind: 'edit', title: 'sum.js', detail: '- a - b\n+ a + b', at: 1 },
+      { kind: 'command', title: 'npm test', detail: 'ok', at: 1 },
+    ]);
+    assert.equal(open.size, 0, 'the command left the open list with its output');
   });
 
   test('starts again from its file, and signs in again when its session ends', async () => {

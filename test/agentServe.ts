@@ -316,18 +316,18 @@ export function serveTests(w: World) {
         const lkNotLinked = (name: string) => [`I could not answer. You have not linked ${name}, so I start nothing with it. Link it in my settings under Coding agents.`];
         const [lkOnlyClaude] = await lkLink('Claude Code');
         assert.deepEqual(lkOnlyClaude!.harnesses!.map((h) => [h.name, harnessRow(h)]), [['Claude Code', 'linked'], ['Codex', 'found']]);
-        assert.equal(plugin.client!.protocol, 31, 'Claude Code linked, and gh signed in: cards, it asks, and it runs own setups');
+        assert.equal(plugin.client!.protocol, 63, 'Claude Code linked, and gh signed in: cards, it asks, it runs own setups, and it sends steps');
         await lkCodexPrompt();
         assert.deepEqual(await lkFailures(), lkNotLinked('Codex'));
         assert.equal(await lkHarnessOf(await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, lkPlain)), 'Claude Code', 'Claude Code still runs');
         await lkLink('Codex', 'Claude Code');
-        assert.equal(plugin.client!.protocol, 31);
+        assert.equal(plugin.client!.protocol, 63);
         assert.equal(await lkHarnessOf(await lkPlain()), 'Codex', 'a prompt that names none runs on the first she linked');
         const [lkOnlyCodex] = await lkLink('Codex');
-        assert.equal(plugin.client!.protocol, 15, 'Codex takes cards now, and it asks, but runs no own setup');
+        assert.equal(plugin.client!.protocol, 47, 'Codex takes cards now, and it asks, but runs no own setup');
         assert.deepEqual(lkOnlyCodex!.harnesses!.map((h) => harnessRow(h)), ['found', 'linked']);
         await lkLink();
-        assert.equal(plugin.client!.protocol, 5, 'with none linked the agent still answers settings');
+        assert.equal(plugin.client!.protocol, 37, 'with none linked the agent still answers settings');
         assert.match((await plugin.status()).text, /Every card fails at once: You have linked no coding agent[\s\S]*Linked: none\./);
         await lkPlain();
         assert.deepEqual(await lkFailures(), ['I could not answer. You have linked no coding agent on this laptop, so I start nothing. Link one in my settings under Coding agents.']);
@@ -367,7 +367,7 @@ export function serveTests(w: World) {
         // Her approve links the harness the laptop recorded, whatever name the message adds, and says so.
         const lkHeard = await lkAnswer(w.alice, direct, 'approve', lkAsked!, { harness: 'Claude Code' });
         assert.deepEqual(await lkLinked(), ['Claude Code', 'Codex']);
-        assert.equal(plugin.client!.protocol, 31);
+        assert.equal(plugin.client!.protocol, 63);
         assert.ok((await lkAsks()).some((c) => c.ask?.step === 'done'), 'the laptop says it linked it');
         // The same message again, or another that names the same request, changes nothing.
         await lkLink('Claude Code');
@@ -506,6 +506,25 @@ export function serveTests(w: World) {
         // A prompt with no `own`, as Check again and `webchat-agent card` send, stays restricted.
         await ownPrompt();
         assert.ok((await lastTurn()).args.includes('--restricted'), 'Check again stays restricted');
+
+        // A page that shows a session's steps gets them sealed, in one quiet batch before the answer (R-072).
+        await w.instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+        const stepped = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}', FAKE_CLAUDE_COMMIT: '0', FAKE_CLAUDE_STEPS: '1' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, events: true }, 'What does sum.js do?'));
+        const heardSteps = (await w.alice.sync()).filter((m) => m.senderId === agent.id && (m.content?.prompt as { to?: string } | undefined)?.to === stepped);
+        assert.deepEqual(heardSteps.map((m) => [m.kind, m.content!.prompt!.kind]), [['events', 'events'], ['message', 'answer']], 'one batch of steps, then the answer');
+        const batch = heardSteps[0]!.content!.prompt as Extract<PromptDTO, { kind: 'events' }>;
+        assert.deepEqual(batch.events.map((e) => [e.kind, e.title]), [['thinking', 'Where is the sum?'], ['read', 'sum.js'], ['command', 'npm test']]);
+        assert.ok(batch.events[2]!.detail!.endsWith('1 passing') && batch.events[2]!.detail!.length === LIMITS.eventDetailLength, 'a command shows its output, cut to its end');
+        // The history leaves the steps out, so loading an agent chat does not grow with them; they page apart.
+        const page = await w.alice.request<Array<{ id: number; kind: string }>>('GET', `/conversations/${direct}/messages`);
+        assert.ok(!page.some((m) => m.kind === 'events'), 'the history leaves steps out');
+        const stepsPage = await w.alice.request<Array<{ id: number; kind: string }>>('GET', `/conversations/${direct}/messages?events=1`);
+        assert.deepEqual(stepsPage.map((m) => m.id), [heardSteps[0]!.id], 'the steps page apart');
+        // Only an agent sends steps.
+        await assert.rejects(w.alice.send(direct, { text: 'Steps', prompt: { kind: 'events', to: stepped, events: [] } }, { kind: 'events' }), /Unknown message kind/);
+        // A prompt from a page that shows no steps gets none.
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}', FAKE_CLAUDE_COMMIT: '0', FAKE_CLAUDE_STEPS: '1' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id }, 'What does sum.js do?'));
+        assert.ok(!(await w.alice.sync()).some((m) => m.kind === 'events'), 'an older page hears no steps');
 
         // A draft whose request is not in Alice's direct chat with the agent, as every one from before
         // D-105 is, ends when the plugin loads: the pane shows a card's thread only from that chat (K-58).

@@ -41,6 +41,8 @@ export interface Conversation {
   asks?: true;
   /** Its owner typed the prompt, so it may run in their own setup; Check again and `webchat-agent card` never set it (D-157). */
   own?: true;
+  /** Its owner's page shows the session's steps, so the turns send them (R-072). */
+  events?: true;
   /** Whether its turns ran in the owner's own setup, which every reply keeps. */
   ownSetup?: boolean;
   /** The board its owner's page picked for the prompt, the only one its briefs hold (D-104). */
@@ -106,7 +108,7 @@ export class Conversations {
     const conversation =
       prompt.kind === 'prompt'
         ? message.clientId
-          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, harness: prompt.harness, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project, asks: prompt.asks, ...(prompt.own && { own: prompt.own }) }
+          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, harness: prompt.harness, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project, asks: prompt.asks, ...(prompt.own && { own: prompt.own }), ...(prompt.events && { events: prompt.events }) }
           : undefined
         : this.list.find((c) => c.root === prompt.to && c.chat === message.conversationId);
     // A copy the server posted again under a new id does nothing (K-47).
