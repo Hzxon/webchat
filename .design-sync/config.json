@@ -1,0 +1,67 @@
+{
+  "pkg": "@webchat/board-kit",
+  "globalName": "WebchatBoard",
+  "shape": "package",
+  "buildCmd": "npm run build:board-kit",
+  "cssEntry": "dist/style.css",
+  "provider": {
+    "component": "BoardTheme"
+  },
+  "componentSrcMap": {
+    "BellIcon": null,
+    "FileIcon": null,
+    "HistoryIcon": null,
+    "PencilIcon": null,
+    "PlayIcon": null,
+    "StopIcon": null,
+    "TrashIcon": null
+  },
+  "overrides": {
+    "Banner": {
+      "cardMode": "column"
+    },
+    "BoardDrawer": {
+      "cardMode": "column"
+    },
+    "BoardLanes": {
+      "cardMode": "single",
+      "primaryStory": "Roadmap",
+      "viewport": "960x300"
+    },
+    "BoardTheme": {
+      "cardMode": "single",
+      "primaryStory": "Light",
+      "viewport": "960x420"
+    },
+    "CardFace": {
+      "cardMode": "column"
+    },
+    "CardPeek": {
+      "cardMode": "single",
+      "primaryStory": "WithRun",
+      "viewport": "1280x760"
+    },
+    "Markdown": {
+      "cardMode": "column"
+    },
+    "NeedsRow": {
+      "cardMode": "column"
+    },
+    "ProposalFace": {
+      "cardMode": "column"
+    },
+    "RunAsk": {
+      "cardMode": "column"
+    },
+    "RunPanel": {
+      "cardMode": "column"
+    },
+    "RunStep": {
+      "cardMode": "column"
+    },
+    "Text": {
+      "cardMode": "column"
+    }
+  },
+  "readmeHeader": ".design-sync/conventions.md"
+}
