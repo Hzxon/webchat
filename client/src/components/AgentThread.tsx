@@ -17,7 +17,7 @@ import { formatAgo, formatTime } from './format';
 import { AlertIcon, SendIcon, StopIcon } from './icons';
 import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
-import { Tag } from './PullTags';
+import { RunAsk, RunPanel, RunStep } from './RunPanel';
 import { Controls, Summary } from './SessionControls';
 import { SessionDetails } from './SessionDetails';
 import { SessionSteps } from './SessionSteps';
@@ -200,27 +200,8 @@ export function AgentThread({
     waiting = `${minutes > 0 ? `Working… ${minutes} min` : 'Working…'}${doing ? ` · ${doing}` : ''}`;
   }
 
-  return (
+  const rows = (
     <>
-      {panel && (
-        <header className="run-head">
-          <Text weight="semibold">Run</Text>
-          <Text color="secondary">Started {formatAgo(thread.messages[0]!.createdAt)}</Text>
-          <Tag tone={THREAD_STATE[thread.state].tone}>{THREAD_STATE[thread.state].label}</Tag>
-        </header>
-      )}
-      <div className="agents-session">
-      {/* On a phone the details hide behind a button, which shows only there. */}
-      {rail && (
-        <Button
-          className="agents-details-toggle"
-          size="sm"
-          variant="ghost"
-          label={showDetails ? 'Hide details' : 'Details'}
-          onClick={() => setShowDetails(!showDetails)}
-        />
-      )}
-      <div className={`messages${panel ? ' is-panel' : ''}`} ref={list}>
         {thread.messages.map((message, i) => {
           const status = message.clientId ? pending[message.clientId] : undefined;
           const unsent = status === 'failed' && (
@@ -251,14 +232,8 @@ export function AgentThread({
             message.run?.kind === 'stale' || message.run?.kind === 'decision' || message.run?.kind === 'draft'
               ? message.run.card
               : undefined;
-          return (
-            <Fragment key={message.clientId ?? message.id}>
-            {stepsBefore(i)}
-            <div className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}>
-              <div className="bubble-line">
-                <div
-                  className={`${panel ? 'step' : 'bubble'} ${message.prompt?.kind === 'failed' || message.run?.kind === 'failed' ? 'agents-failed' : ''}`}
-                >
+          const body = (
+            <>
                   {/* A review is teammates' text that would run with the owner's login, so nothing of it hides in Markdown. */}
                   {mine || message.run?.kind === 'review' || message.permit?.kind === 'question' ? (
                     <span className="bubble-text">{message.text}</span>
@@ -291,11 +266,12 @@ export function AgentThread({
                       Open the draft on GitHub
                     </a>
                   )}
-                  <span className="bubble-meta">
-                    {status === 'sending' ? 'Sending…' : formatTime(message.createdAt)}
-                  </span>
-                </div>
-              </div>
+            </>
+          );
+          const time = status === 'sending' ? 'Sending…' : formatTime(message.createdAt);
+          const failed = message.prompt?.kind === 'failed' || message.run?.kind === 'failed';
+          const after = (
+            <>
               {message === review && !notNow && (
                 <div className="agents-draft-actions">
                   <Button
@@ -340,7 +316,29 @@ export function AgentThread({
                 </div>
               )}
               {unsent}
-            </div>
+            </>
+          );
+          return (
+            <Fragment key={message.clientId ?? message.id}>
+              {stepsBefore(i)}
+              {panel ? (
+                <>
+                  <RunStep time={time} isMine={mine} isFailed={failed}>
+                    {body}
+                  </RunStep>
+                  {after}
+                </>
+              ) : (
+                <div className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}>
+                  <div className="bubble-line">
+                    <div className={`bubble ${failed ? 'agents-failed' : ''}`}>
+                      {body}
+                      <span className="bubble-meta">{time}</span>
+                    </div>
+                  </div>
+                  {after}
+                </div>
+              )}
             </Fragment>
           );
         })}
@@ -350,14 +348,10 @@ export function AgentThread({
             {waiting}
           </Text>
         )}
-      </div>
-      {rail && (
-        <aside className={`agents-rail${showDetails ? ' is-open' : ''}`}>
-          <SessionDetails thread={thread} />
-        </aside>
-      )}
-      </div>
-      <footer className="composer">
+    </>
+  );
+  const foot = (
+    <>
         {/* A proposal is the repository's: it waits for Add or Update, and takes no reply (R-040). */}
         {thread.kind === 'proposal' ? null : thread.state === 'ended' ? (
           <div className="agents-ended">
@@ -416,34 +410,12 @@ export function AgentThread({
             {!working && blocked && <Banner status="warning" title={blocked} />}
             {/* The question docks above the box until it is answered; it stays in the timeline as plain text (R-072). */}
             {thread.ask && (
-              <div className="agents-dock">
-                <Text as="p" weight="semibold">
-                  {thread.ask.message.text}
-                </Text>
-                <div className="agents-draft-actions">
-                  <Button
-                    variant="primary"
-                    label="Allow"
-                    isDisabled={!!blocked || thread.ask.answered}
-                    onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'once')}
-                  />
-                  <Button
-                    label="Allow for this run"
-                    isDisabled={!!blocked || thread.ask.answered}
-                    onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'run')}
-                  />
-                  <Button
-                    label="Deny"
-                    isDisabled={!!blocked || thread.ask.answered}
-                    onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'deny')}
-                  />
-                </div>
-                <Text as="p" color="secondary">
-                  It waits for you, and ends in{' '}
-                  {Math.max(1, Math.round((thread.ask.message.permit.expires - now) / 86_400_000))} days if you do not
-                  answer.
-                </Text>
-              </div>
+              <RunAsk
+                text={thread.ask.message.text}
+                days={Math.max(1, Math.round((thread.ask.message.permit.expires - now) / 86_400_000))}
+                isDisabled={!!blocked || thread.ask.answered}
+                onAnswer={(decision) => void answerPermit(thread.conversationId, thread.ask!.message, decision)}
+              />
             )}
             {/* In the new card form, the form's own box asks for the draft. */}
             {thread.kind === 'question' && thread.project !== undefined && !inForm && !working && !asking && !blocked && (
@@ -486,6 +458,38 @@ export function AgentThread({
             />
           </>
         )}
+    </>
+  );
+  if (panel)
+    return (
+      <RunPanel started={formatAgo(thread.messages[0]!.createdAt)} state={THREAD_STATE[thread.state]} listRef={list} footer={foot}>
+        {rows}
+      </RunPanel>
+    );
+  return (
+    <>
+      <div className="agents-session">
+      {/* On a phone the details hide behind a button, which shows only there. */}
+      {rail && (
+        <Button
+          className="agents-details-toggle"
+          size="sm"
+          variant="ghost"
+          label={showDetails ? 'Hide details' : 'Details'}
+          onClick={() => setShowDetails(!showDetails)}
+        />
+      )}
+      <div className="messages" ref={list}>
+        {rows}
+      </div>
+      {rail && (
+        <aside className={`agents-rail${showDetails ? ' is-open' : ''}`}>
+          <SessionDetails thread={thread} />
+        </aside>
+      )}
+      </div>
+      <footer className="composer">
+        {foot}
       </footer>
     </>
   );

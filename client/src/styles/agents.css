@@ -177,19 +177,10 @@
   padding: 0.75rem 1rem;
 }
 
-.messages.is-panel .bubble-row {
-  align-items: stretch;
-  margin-top: 0.625rem;
-}
-
-.messages.is-panel .bubble-line {
-  max-width: none;
-}
-
-.step {
+.run-step {
   display: grid;
-  flex: 1;
   min-width: 0;
+  margin-top: 0.625rem;
   padding-inline-start: 0.75rem;
   border-inline-start: 2px solid var(--line);
   font-size: 0.875rem;
@@ -198,19 +189,17 @@
 }
 
 /* The owner's own words, such as the start and a redirect, carry the accent. */
-.mine .step {
+.run-step.is-mine {
   border-color: var(--accent);
 }
 
-.step.agents-failed {
-  padding-inline-start: 0.75rem;
+.run-step.is-failed {
   border-color: var(--danger);
-  box-shadow: none;
 }
 
-.messages.is-panel .bubble-meta {
-  justify-content: flex-start;
-  margin: 0;
+.run-step-time {
+  color: var(--muted);
+  font-size: 0.6875rem;
 }
 
 /* The header holds Put to sleep, Settings and Connect: the button keeps one line, and on a phone the
@@ -223,12 +212,12 @@
 }
 
 .bubble .markdown,
-.step .markdown {
+.run-step .markdown {
   min-width: 0;
 }
 
 .bubble .markdown pre,
-.step .markdown pre {
+.run-step .markdown pre {
   overflow-x: auto;
 }
 

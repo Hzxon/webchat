@@ -88,7 +88,7 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { Avatar } from './Avatar';
 import { AgentDraft } from './AgentDraft';
 import { AgentThread, Box } from './AgentThread';
-import { NeedsRow, ProposalFace } from './BoardParts';
+import { BoardDrawer, BoardLane, BoardLanes, CardFace, NeedsRow, ProposalFace } from './BoardParts';
 import { CardPeek } from './CardPeek';
 import { SectionEditor, SectionHistory } from './DocView';
 import {
@@ -457,9 +457,9 @@ function BoardColumnView({
   const canDelete = (card: Card) => card.owner === undefined || card.owner === meId;
   /** A member as a sentence names them. */
   const whom = (id: number) => (id === meId ? 'you' : senderName(users, id));
-  const avatarOf = (id: number, size: number) => (
-    <Avatar name={id === meId ? meName : senderName(users, id)} seed={id} size={size} />
-  );
+  /** A member as a face draws them. */
+  const personOf = (id: number) => ({ name: id === meId ? meName : senderName(users, id), seed: id });
+  const avatarOf = (id: number, size: number) => <Avatar {...personOf(id)} size={size} />;
   const titleOf = (card: Card) => (card.failed ? 'This card could not be decrypted.' : card.title || 'Untitled');
 
   /** Opens a card in the peek, or closes it, which closes its editor too: the editor saves and frees the card as it goes. */
@@ -720,60 +720,28 @@ function BoardColumnView({
     const chosen = waits ? lineChoice(card.text, waits) : undefined;
     // As `moved` allows approve and ask for changes.
     const reviewer = canMove && inReview && !!card.kind && card.reviews.some((r) => r.who === me.id);
-    const head = (
-      <button
-        className={`board-card-head ${face ? 'board-face' : ''}`}
-        onClick={() => openCard(card.id)}
-        aria-haspopup="dialog"
-      >
-        {!face ? (
-          card.kind && <span className="board-card-id">{card.cardId}</span>
-        ) : card.owner !== undefined ? (
-          avatarOf(card.owner, 24)
-        ) : (
-          <span className="board-no-owner" role="img" title="No owner" aria-label="No owner" />
-        )}
-        <strong>{titleOf(card)}</strong>
-        {inReview && card.reviews.length > 0 ? (
-          <span className="board-reviewers">
-            {card.reviews.map((r) => {
-              const [tone, label] = REVIEWS[r.verdict];
-              return (
-                <span
-                  key={r.who}
-                  className={`board-reviewer tag-${tone}`}
-                  role="img"
-                  title={`${nameOf(r.who)}: ${label}`}
-                  aria-label={`${nameOf(r.who)}: ${label}`}
-                >
-                  {avatarOf(r.who, 20)}
-                </span>
-              );
-            })}
-          </span>
-        ) : (
-          right && <span className="board-card-status">{right}</span>
-        )}
-        {face && need ? <Tag tone="warn">{NEEDS[need]}</Tag> : face && cardRun && <Tag tone={runTone}>{runLabel}</Tag>}
-      </button>
-    );
     if (!part)
       return (
-        <article
+        <CardFace
           key={card.id}
-          className={`board-card ${lock ? 'is-locked' : ''} ${face && (need || card.status.startsWith(WAITING) || card.waits) ? 'is-waiting' : ''}`}
+          title={titleOf(card)}
+          id={card.kind ? card.cardId : undefined}
+          owner={!face ? undefined : card.owner !== undefined ? personOf(card.owner) : null}
+          status={right || undefined}
+          reviewers={
+            inReview
+              ? card.reviews.map((r) => ({ ...personOf(r.who), tone: REVIEWS[r.verdict][0], label: REVIEWS[r.verdict][1] }))
+              : undefined
+          }
+          tag={face && need ? { tone: 'warn', label: NEEDS[need] } : face && cardRun ? { tone: runTone, label: runLabel } : undefined}
+          action={pick && <Button size="sm" label="Pick" onClick={() => run(move(card, 'pick'))} />}
+          isWaiting={face && !!(need || card.status.startsWith(WAITING) || card.waits)}
+          isLocked={!!lock}
+          onOpen={() => openCard(card.id)}
         >
-          {pick ? (
-            <div className="board-face-row">
-              {head}
-              <Button size="sm" label="Pick" onClick={() => run(move(card, 'pick'))} />
-            </div>
-          ) : (
-            head
-          )}
           {same.has(card.id) && <Banner status="warning" title="Another card has this number. Renumber one of them." />}
           {face && card.waits && afterWarnings(card.waits).map((w) => <Banner key={w} status="warning" title={w} />)}
-        </article>
+        </CardFace>
       );
     if (part === 'tools')
       return (
@@ -1083,36 +1051,29 @@ function BoardColumnView({
           />
         )}
         {lanes.length > 0 && (
-          <div className="board-lanes">
+          <BoardLanes>
             {lanes.map((lane) => (
-              <section key={lane.name} className="board-lane">
-                <h3>
-                  {lane.name} <small>{lane.cards.length + lane.drafts.length}</small>
-                </h3>
+              <BoardLane key={lane.name} name={lane.name} count={lane.cards.length + lane.drafts.length}>
                 {lane.drafts.map(draftView)}
                 {lane.cards.map((card) => cardView(card))}
-              </section>
+              </BoardLane>
             ))}
-          </div>
+          </BoardLanes>
         )}
         {drawers
           .filter((group) => group.cards.length + group.drafts.length > 0)
           .map((group) => (
-            <details
+            <BoardDrawer
               key={group.name}
-              className="board-group"
-              open={group.key === 'open' ? drawerOpen : !group.folded}
+              name={group.name}
+              count={group.cards.length + group.drafts.length}
+              isOpen={group.key === 'open' ? drawerOpen : !group.folded}
               // Only a toggle that differs from what was rendered is the user's.
-              onToggle={(e) =>
-                group.key === 'open' && e.currentTarget.open !== drawerOpen && setDrawer(e.currentTarget.open)
-              }
+              onToggle={(open) => group.key === 'open' && open !== drawerOpen && setDrawer(open)}
             >
-              <summary>
-                {group.name} <small>{group.cards.length + group.drafts.length}</small>
-              </summary>
               {group.drafts.map(draftView)}
               {group.cards.map((card) => cardView(card))}
-            </details>
+            </BoardDrawer>
           ))}
       </div>
       {adding && (
