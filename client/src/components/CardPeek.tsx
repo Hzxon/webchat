@@ -1,7 +1,10 @@
-import { useSyncExternalStore, type ReactNode } from 'react';
+import { Fragment, useSyncExternalStore, type ReactNode } from 'react';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { Divider } from '@astryxdesign/core/Divider';
+import { Heading } from '@astryxdesign/core/Heading';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Stack, StackItem } from '@astryxdesign/core/Stack';
+import { Text } from '@astryxdesign/core/Text';
 import { DownIcon, UpIcon } from './icons';
 
 // The width of the narrow layout in styles.css. Astryx's dialog takes its variant as a prop, not by breakpoint.
@@ -16,9 +19,15 @@ const onNarrow = (changed: () => void) => {
  * Its arrows step to the card above or below it in its lane or list. Purpose "form" keeps a
  * backdrop click from closing it once a field was used. A card's run of the user's own sits beside
  * the card, or under it at phone width (the card-run-in-peek decision, proposed in #259).
+ *
+ * A card that names its `id` reads as a page: the id and the tools in the header, then its title,
+ * its facts as a list of names and values, and its text under a line.
  */
 export function CardPeek({
   title,
+  id,
+  tools,
+  facts,
   prev,
   next,
   onOpen,
@@ -28,6 +37,12 @@ export function CardPeek({
   children,
 }: {
   title: string;
+  /** The card's id, such as R-12, which moves the title into the page. */
+  id?: string;
+  /** The card's own buttons, beside the arrows. */
+  tools?: ReactNode;
+  /** What the card says about itself, each a name and its value; an empty value is left out. */
+  facts?: Array<[string, ReactNode]>;
   prev?: string;
   next?: string;
   onOpen: (id: string) => void;
@@ -51,10 +66,11 @@ export function CardPeek({
       variant={phone ? 'fullscreen' : 'standard'}
     >
       <DialogHeader
-        title={title}
+        title={id ? <Text type="label" color="secondary">{id}</Text> : title}
         onOpenChange={close}
         endContent={
           <>
+            {tools}
             <IconButton
               variant="ghost"
               size="sm"
@@ -82,6 +98,20 @@ export function CardPeek({
         <StackItem size="fill" isScrollable>
           {/* The card's tools sit right under the header's line, so the top pads less than the sides. */}
           <Stack gap={4} padding={5} paddingBlockStart={2}>
+            {id && <Heading level={2}>{title}</Heading>}
+            {facts && (
+              <dl className="card-facts">
+                {facts
+                  .filter(([, value]) => value)
+                  .map(([name, value]) => (
+                    <Fragment key={name}>
+                      <dt>{name}</dt>
+                      <dd>{value}</dd>
+                    </Fragment>
+                  ))}
+              </dl>
+            )}
+            {id && <Divider />}
             {children}
           </Stack>
         </StackItem>
