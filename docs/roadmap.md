@@ -4,52 +4,6 @@ This file is a copy of the Roadmap column of the project's board in WebChat, whi
 
 ## Running
 
-### R-005: Photos and files
-
-Status: In review in #236 and #238. The Vercel path waits for a private Blob store.
-
-Why: students share drafts, slides and screenshots. WebChat sends text only.
-
-Scope:
-
-- The message box takes a photo or a file of an allowed type: JPEG, PNG, WebP, GIF, PDF, Word, PowerPoint, Excel, plain text and zip. No programs, scripts, HTML or SVG.
-- The page resizes a photo to at most 1600 pixels and encodes it again before upload, which also removes its GPS position and device details. Any other file is at most 10 MB (`LIMITS`, D-011).
-- The browser encrypts the file with a random AES-256-GCM key of its own and uploads only the ciphertext.
-- The message is an ordinary message of kind "message" whose sealed content carries a `file` field: the file's id, key, name, type and size, and for a photo its width, height and a tiny blurred preview. Its text says the same in words, so an older page, a push and the chat list show something, as with `pull` (D-042). The signature covers it (D-016), and the server never sees the name, the key or the preview.
-- The page asks the server for an upload address, uploads, then sends the message. To show a file it asks for a download address, which the server gives only to a member of the file's chat.
-- The receiving page checks every file after it decrypts it: the type must be on the list, and the file's first bytes must match the type its name claims. It refuses any other file with a note, whatever the sender's page did.
-- A photo shows inline through `<img>`. Every other file shows as its name and size with a download button, and is never opened inside the page.
-- The server drops a file 7 days after it was sent. The message stays: it shows the name, the size and the preview with "No longer on the server". The page tells from the message's time and asks for nothing. The message box says "Kept for 7 days" when a file is attached.
-- A photo whose upload or send failed stays on the device with the unsent message, for a retry (D-051).
-- Deleting a chat, a channel, a project or an account also deletes the stored ciphertext of its files (D-039, D-088, D-096). An upload that no message followed is deleted after an hour.
-
-Constraints:
-
-- Vercel Functions accept request bodies of at most 4.5 MB, so on Vercel the ciphertext goes from the browser straight to a private Vercel Blob store through a presigned URL, which enforces the size. A self-hosted server takes the upload on a route of its own and keeps the ciphertext on disk. The page uploads to whatever address the server answers (D-005).
-- Free hosting (D-003): Hobby includes 1 GB of storage, 2,000 uploads and 10 GB of downloads a month, shared with the rest of the project, and a store that goes over is blocked for 30 days. The server counts uploads and stored bytes and refuses a new upload before either limit.
-- No scheduler: the server refuses a download address for a file older than 7 days, and deletes expired ciphertext when it next gives an upload address.
-- No scan on the server: it holds only ciphertext (D-014). The README says that nobody scans files and that the checks above catch a wrong type, not malware inside an allowed one.
-- The Content Security Policy must allow the storage hosts in `connect-src` and `blob:` in `img-src`, in `vercel.json` and `server/app.ts` together (D-009).
-- The server learns who uploaded a file, to which chat, when and how large, and the storage service holds the ciphertext. D-020 and the README list that.
-- A new `files` table ties each file to its chat, in a new migration (D-010). The upload does not go through `request`, whose timer would cut a slow upload after a minute (D-077).
-- Tests run against a fake storage service and check that no plain text and no key reaches it (D-036).
-
-Needs D-123.
-
-Not yet confirmed: that a browser can fetch a presigned Blob URL from the page's origin (CORS), and which host a presigned upload goes to. Try both in a short spike before the rest. #236 found from the SDK's source (`@vercel/blob` 2.9.0) that an upload goes to `https://vercel.com/api/blob/` and a download to `https://<store>.private.blob.vercel-storage.com`. CORS is still unconfirmed: there is no store to try it against.
-
-Done when, with two accounts that share a chat, one sending and the other receiving:
-
-1. Alice sends a photo and a PDF, and Bob opens both. This works on Vercel and on a self-hosted server.
-2. The uploaded photo is at most 1600 pixels and carries no GPS data.
-3. The storage and the database hold no plain text, file name or key, and a test proves it.
-4. A file over the size limit, or of a type off the list, is refused before it uploads.
-5. A program renamed to `.pdf` that got past the sender's check is refused on Bob's page, and a test proves it.
-6. Someone outside the chat gets no download address.
-7. A file older than 7 days gets no download address either. Its ciphertext is gone after the next upload, and its message still shows the name and the preview.
-8. Deleting the chat deletes its stored files.
-9. The README and D-020 list what the server and the storage service see, and say that nobody scans files.
-
 ### Q-6: How does a pull request get tested on the main it lands on?
 
 Status: Running. Raised 2026-11-17 from the parallel work design. The owner chose the second way that day, and #262 set it in main's ruleset. The day's measurement is still open.
@@ -116,6 +70,52 @@ Every project member is in every channel (D-024). A private channel needs its ow
 wrapped only for that list, and a new rule for adding people to a project without adding them to
 every channel (D-025).
 
+### R-005: Photos and files
+
+Status: Blocked. #236 and #238 merged on 2026-11-14. The Vercel path waits for a private Blob store, and CORS on it is still unconfirmed.
+
+Why: students share drafts, slides and screenshots. WebChat sends text only.
+
+Scope:
+
+- The message box takes a photo or a file of an allowed type: JPEG, PNG, WebP, GIF, PDF, Word, PowerPoint, Excel, plain text and zip. No programs, scripts, HTML or SVG.
+- The page resizes a photo to at most 1600 pixels and encodes it again before upload, which also removes its GPS position and device details. Any other file is at most 10 MB (`LIMITS`, D-011).
+- The browser encrypts the file with a random AES-256-GCM key of its own and uploads only the ciphertext.
+- The message is an ordinary message of kind "message" whose sealed content carries a `file` field: the file's id, key, name, type and size, and for a photo its width, height and a tiny blurred preview. Its text says the same in words, so an older page, a push and the chat list show something, as with `pull` (D-042). The signature covers it (D-016), and the server never sees the name, the key or the preview.
+- The page asks the server for an upload address, uploads, then sends the message. To show a file it asks for a download address, which the server gives only to a member of the file's chat.
+- The receiving page checks every file after it decrypts it: the type must be on the list, and the file's first bytes must match the type its name claims. It refuses any other file with a note, whatever the sender's page did.
+- A photo shows inline through `<img>`. Every other file shows as its name and size with a download button, and is never opened inside the page.
+- The server drops a file 7 days after it was sent. The message stays: it shows the name, the size and the preview with "No longer on the server". The page tells from the message's time and asks for nothing. The message box says "Kept for 7 days" when a file is attached.
+- A photo whose upload or send failed stays on the device with the unsent message, for a retry (D-051).
+- Deleting a chat, a channel, a project or an account also deletes the stored ciphertext of its files (D-039, D-088, D-096). An upload that no message followed is deleted after an hour.
+
+Constraints:
+
+- Vercel Functions accept request bodies of at most 4.5 MB, so on Vercel the ciphertext goes from the browser straight to a private Vercel Blob store through a presigned URL, which enforces the size. A self-hosted server takes the upload on a route of its own and keeps the ciphertext on disk. The page uploads to whatever address the server answers (D-005).
+- Free hosting (D-003): Hobby includes 1 GB of storage, 2,000 uploads and 10 GB of downloads a month, shared with the rest of the project, and a store that goes over is blocked for 30 days. The server counts uploads and stored bytes and refuses a new upload before either limit.
+- No scheduler: the server refuses a download address for a file older than 7 days, and deletes expired ciphertext when it next gives an upload address.
+- No scan on the server: it holds only ciphertext (D-014). The README says that nobody scans files and that the checks above catch a wrong type, not malware inside an allowed one.
+- The Content Security Policy must allow the storage hosts in `connect-src` and `blob:` in `img-src`, in `vercel.json` and `server/app.ts` together (D-009).
+- The server learns who uploaded a file, to which chat, when and how large, and the storage service holds the ciphertext. D-020 and the README list that.
+- A new `files` table ties each file to its chat, in a new migration (D-010). The upload does not go through `request`, whose timer would cut a slow upload after a minute (D-077).
+- Tests run against a fake storage service and check that no plain text and no key reaches it (D-036).
+
+Needs D-123.
+
+Not yet confirmed: that a browser can fetch a presigned Blob URL from the page's origin (CORS), and which host a presigned upload goes to. Try both in a short spike before the rest. #236 found from the SDK's source (`@vercel/blob` 2.9.0) that an upload goes to `https://vercel.com/api/blob/` and a download to `https://<store>.private.blob.vercel-storage.com`. CORS is still unconfirmed: there is no store to try it against.
+
+Done when, with two accounts that share a chat, one sending and the other receiving:
+
+1. Alice sends a photo and a PDF, and Bob opens both. This works on Vercel and on a self-hosted server.
+2. The uploaded photo is at most 1600 pixels and carries no GPS data.
+3. The storage and the database hold no plain text, file name or key, and a test proves it.
+4. A file over the size limit, or of a type off the list, is refused before it uploads.
+5. A program renamed to `.pdf` that got past the sender's check is refused on Bob's page, and a test proves it.
+6. Someone outside the chat gets no download address.
+7. A file older than 7 days gets no download address either. Its ciphertext is gone after the next upload, and its message still shows the name and the preview.
+8. Deleting the chat deletes its stored files.
+9. The README and D-020 list what the server and the storage service see, and say that nobody scans files.
+
 ### R-006: Mentions
 
 Status: Idea.
@@ -146,14 +146,6 @@ Status: Idea.
 
 Replies quote a message (D-029) but do not open a side conversation like a Slack thread. Find out
 whether quotes are enough for students before building threads.
-
-### R-010: Deadline reminders
-
-Status: Idea. Depends on R-001, which was dropped for R-021.
-
-Reminders need a scheduler, because Vercel Hobby cron jobs run once a day. Reuse the `CRON_SECRET`
-approach of the GitHub connector (D-034). A reminder that shows a task's title must be decrypted on
-the device, like a message (D-017).
 
 ### R-011: Typing indicators and instant presence
 
@@ -195,43 +187,6 @@ decides it first.
 Done when: a session finishes a change that makes a decision without waiting for a number, and
 main never shows a file path where a number should be.
 
-### R-064: A Codex adapter, and a sandbox WebChat owns
-
-Status: Idea. Proposed 2026-11-09 from the harness audit. Needs the harness adapter card.
-
-Order: the spike first and at any time, since it needs no code and its result decides the
-second half. The adapter fourth, after the harness card is done, since the picker is how an
-owner reaches Codex and the Settings row is where it says why it takes no cards; it may run
-beside the pause card, which touches other files. Codex takes cards last, only once the spike
-held and the gh token question is answered.
-
-Why: with the seam in place no second harness exists. Codex is the likely first, and it cannot
-prove that its shell is kept from the secret folders: its sandbox allows reads everywhere, as
-far as its documentation shows. D-097 requires that proof before a run pushes with the owner's
-login.
-
-Scope: `agent/codex.ts` runs `codex exec --json --output-schema` with the brief on stdin and
-resumes by thread id, with a fixture that prints Codex's JSONL as `FAKE_CLAUDE` prints Claude
-Code's. Its `refusal` names the isolation gap, so Codex answers questions in a scratch copy and
-takes no cards, and Settings says why. Then a spike, with no code to merge: run `codex exec`
-under `@anthropic-ai/sandbox-runtime` (`srt`, the engine behind Claude Code's sandbox) with the
-API domain allowed and the token in the environment; check that the shell cannot read
-`~/.config/gh` or the keychain; check what Claude Code's own sandbox does when started inside
-it. The result goes in a decision either way. If it holds, `refusal` clears when `srt` is
-installed and Codex takes cards.
-
-Constraints: answers only is the floor for a harness without an isolation proof, decided
-2026-11-09: the accepted risk is that the model reads the GitHub token and puts it in a sealed
-answer only the owner reads. `srt` wraps the whole process, so the harness and its shell share
-one policy: the shell reaches the model's API domain, which the Claude adapter's shell does
-not. Whether `--output-schema` works with `codex exec resume` is to be checked against the
-installed version. ACP agents have their own adapter (docs/roadmap/new-acp-adapter.md), which
-needs no third harness.
-
-Done when: a Codex agent answers a question about a repository; Settings says why it takes no
-cards; the spike's decision is on the board; and, if the spike held, a Codex run opens a draft
-pull request.
-
 ### R-070: The board's copy merges without the owner
 
 Status: Idea. Found on 2026-11-09 in the review of the board as the source of truth (R-040).
@@ -250,24 +205,6 @@ Done when: a board change reaches main with no click from the owner, and a pull 
 touches anything else on `agent/board` waits for them.
 
 ## Known issues
-
-### K-77: picomatch has a ReDoS advisory with no patched release
-
-Status: Blocked. Found 2026-11-18 by `npm audit` while fixing the zod advisory in #281. Waits for a picomatch release after 4.0.7.
-
-Why: `npm audit` reports GHSA-fc5q-39xc-vjpf (high): picomatch can take very long on a glob with
-repeated single-branch extglobs. Every version up to 4.0.7, the newest, is affected, so no update
-or override fixes it. A red audit hides new advisories that do matter.
-
-Scope: picomatch comes in only through devDependencies: `vite` (directly and through
-`tinyglobby` and `fdir`) and `@astryxdesign/cli` (through `jscodeshift`). `npm ls picomatch
---omit=dev` is empty, so neither the server nor the client bundle holds it. The patterns come from
-our own build config, not from users, so nobody outside can reach it. Dependabot opened no alert.
-
-Fix: when picomatch publishes a patched version, update the lockfile so every path resolves to it.
-Do not run `npm audit fix --force`: it downgrades vite to 6.2.7, a breaking change.
-
-Done when: `npm audit` reports no picomatch advisory.
 
 ### K-80: A reverted run's card stays Done
 
@@ -318,17 +255,6 @@ Everyone on a deployment can see everyone else (D-002). A student in several cla
 separate spaces. Projects already group people. Is that enough, or should one deployment host
 several communities?
 
-### Q-3: Should the Pull requests pane move to the GitHub App too?
-
-Status: Open.
-
-Projects link repositories through a GitHub App since #17 (D-050). Each person's pane still uses
-the OAuth App (D-032), with its polling, its scheduler and the `repo` scope (D-033, D-034). The
-pane could use the same app: its webhooks would bring review requests at once, and it reads pull
-requests only. Cost: the app only sees repositories it is installed on, so the pane would show
-nothing from the others, such as a course repository whose organization never installed it. The
-owner decided on 2026-11-01 to keep the OAuth App for the pane.
-
 ### Q-4: When does WebChat reach 1.0.0?
 
 Status: Open.
@@ -342,6 +268,14 @@ example an upgrade path that people who self-host can trust.
 ### R-001: Task board for projects, like Jira
 
 Status: Dropped on 2026-11-04, replaced by R-021. The owner chose a board of decisions and roadmap cards, like this repository's own documents, over a Jira-style task board.
+
+### R-010: Deadline reminders
+
+Status: Dropped on 2026-11-22. It depended on R-001, the task board, which was dropped for R-021, so no tasks with deadlines exist to remind anyone of.
+
+Reminders need a scheduler, because Vercel Hobby cron jobs run once a day. Reuse the `CRON_SECRET`
+approach of the GitHub connector (D-034). A reminder that shows a task's title must be decrypted on
+the device, like a message (D-017).
 
 ### R-023: Rebrand, step 2: a linear message feed instead of bubbles
 
@@ -398,6 +332,24 @@ Done when: a Claude Code agent behaves as before and the tests pass; Settings li
 harnesses the laptop has, each with its state and knobs; a card run and a conversation each
 show the harness the owner picked; a request from an old page runs on the host harness; a
 request naming a harness that is not enabled fails with the reason.
+
+### K-77: picomatch has a ReDoS advisory with no patched release
+
+Status: Dropped on 2026-11-22. GitHub withdrew GHSA-fc5q-39xc-vjpf on 2026-11-18, and `npm audit` on main now reports 0 vulnerabilities with picomatch still at 4.0.7. Nothing to change.
+
+Why: `npm audit` reports GHSA-fc5q-39xc-vjpf (high): picomatch can take very long on a glob with
+repeated single-branch extglobs. Every version up to 4.0.7, the newest, is affected, so no update
+or override fixes it. A red audit hides new advisories that do matter.
+
+Scope: picomatch comes in only through devDependencies: `vite` (directly and through
+`tinyglobby` and `fdir`) and `@astryxdesign/cli` (through `jscodeshift`). `npm ls picomatch
+--omit=dev` is empty, so neither the server nor the client bundle holds it. The patterns come from
+our own build config, not from users, so nobody outside can reach it. Dependabot opened no alert.
+
+Fix: when picomatch publishes a patched version, update the lockfile so every path resolves to it.
+Do not run `npm audit fix --force`: it downgrades vite to 6.2.7, a breaking change.
+
+Done when: `npm audit` reports no picomatch advisory.
 
 ## Done
 
@@ -492,6 +444,7 @@ request naming a harness that is not enabled fails with the reason.
 | R-043: Run cards through a harness adapter, picked per session | #174, #176, #179 |
 | R-062: Serve the agent from a daemon as well as from the plugin | #177 |
 | R-057: Pause a run and redirect it | #178, #181, #182, #174 |
+| R-064: A Codex adapter, and a sandbox WebChat owns | #180, #204, #209 |
 | R-065: The roadmap as lanes, with a card owner who holds its gates | #188, #189, #190 |
 | Q-7: Should a card run stop needing the owner's gh token? | #193 |
 | K-82: The flipped-ciphertext test fails about once in 4,000 runs | #194 |
@@ -530,3 +483,4 @@ request naming a harness that is not enabled fails with the reason.
 | R-072: The member's own harness, with its whole session shown, in WebChat | #284, #285, #287, #288, #289 |
 | R-071: A card from a harness session, and a prompt box in the new card form | #286 |
 | K-74: An agent's card draft loses everything past 4,000 characters | Fixed |
+| Q-3: Should the Pull requests pane move to the GitHub App too? | Done. Answered on 2026-11-01: the owner keeps the OAuth App for the pane |
