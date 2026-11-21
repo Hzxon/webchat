@@ -18,7 +18,8 @@
     "icons": "tsx scripts/gen-icons.ts",
     "agent": "tsx agent/index.ts",
     "build:client": "vite build && vite build --config vite.sw.config.ts",
-    "build:agent": "vite build --config vite.agent.config.ts && node --build-sea agent/sea.json && if [ \"$(uname)\" = Darwin ]; then codesign --sign - dist/agent/webchat-agent; fi"
+    "build:agent": "vite build --config vite.agent.config.ts && node --build-sea agent/sea.json && if [ \"$(uname)\" = Darwin ]; then codesign --sign - dist/agent/webchat-agent; fi",
+    "build:board-kit": "vite build --config design/board-kit/vite.config.ts && tsc -p design/board-kit/tsconfig.json"
   },
   "dependencies": {
     "@astryxdesign/core": "^0.7.16",
