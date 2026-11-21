@@ -257,7 +257,7 @@ export function AgentThread({
             <div className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}>
               <div className="bubble-line">
                 <div
-                  className={`bubble ${message.prompt?.kind === 'failed' || message.run?.kind === 'failed' ? 'agents-failed' : ''}`}
+                  className={`${panel ? 'step' : 'bubble'} ${message.prompt?.kind === 'failed' || message.run?.kind === 'failed' ? 'agents-failed' : ''}`}
                 >
                   {/* A review is teammates' text that would run with the owner's login, so nothing of it hides in Markdown. */}
                   {mine || message.run?.kind === 'review' || message.permit?.kind === 'question' ? (

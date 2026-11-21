@@ -436,6 +436,8 @@ function BoardColumnView({
   const siblings = groups.find((group) => group.cards.some((c) => c.id === boardCard))?.cards ?? [];
   const at = siblings.findIndex((c) => c.id === boardCard);
   // The user's own run of the open card shows beside it; run messages reach only their owner, so a teammate sees the card alone (D-100).
+  // The open card as its peek's page, with its id, buttons and facts, unless its editor or history shows instead.
+  const page = peek && !editsPeek && !history ? peek : undefined;
   const peekRun = peek && runs?.get(peek.id);
   const runThread = threadOf(peekRun, threads);
   useEffect(() => {
@@ -651,22 +653,17 @@ function BoardColumnView({
         'Status',
         <>
           {card.status}
-          {need && <Tag tone="warn">{NEEDS[need]}</Tag>}
+          {/* A run says where it stands on its own line. */}
+          {need && !cardRun && <Tag tone="warn">{NEEDS[need]}</Tag>}
         </>,
       ],
       ['Owner', card.owner !== undefined && person(card.owner)],
       // A page cannot check a merge, so it says who wrote a status that is not the owner's.
       ['Set by', card.setBy !== undefined && card.setBy !== card.owner && laneOf(card.status) !== 'open' && person(card.setBy)],
-      [
-        'Run',
-        cardRun && (
-          <>
-            <Tag tone={RUN_STATES[cardRun.state][0]}>{RUN_STATES[cardRun.state][1]}</Tag>
-            {cardRun.note}
-          </>
-        ),
-      ],
-      ['Runs it', cardRun && `${nameOf(cardRun.runtime)}${cardRun.harness ? ` · ${cardRun.harness}` : ''}`],
+      // Its note, such as a plan or why it failed, is in the run beside the card.
+      ['Run', cardRun && <Tag tone={RUN_STATES[cardRun.state][0]}>{RUN_STATES[cardRun.state][1]}</Tag>],
+      // An agent is often named after its harness.
+      ['Runs it', cardRun && [...new Set([nameOf(cardRun.runtime), cardRun.harness])].filter(Boolean).join(' · ')],
       ['Repository', cardRun?.repo],
       [
         'Pull request',
@@ -1163,7 +1160,9 @@ function BoardColumnView({
         <CardPeek
           title={peek ? titleOf(peek) : 'New card'}
           // The card reads as a page; its editor and its history take the peek alone.
-          {...(peek && !editsPeek && !history && { id: peek.cardId || undefined, tools: cardView(peek, 'tools'), facts: factsOf(peek) })}
+          id={page?.cardId || undefined}
+          tools={page && cardView(page, 'tools')}
+          facts={page && factsOf(page)}
           // The editor stays on its card until it closes.
           prev={editing ? undefined : siblings[at - 1]?.id}
           next={editing ? undefined : siblings[at + 1]?.id}

@@ -186,21 +186,24 @@
   max-width: none;
 }
 
-.messages.is-panel .bubble {
+.step {
+  display: grid;
   flex: 1;
-  padding: 0 0 0 0.75rem;
+  min-width: 0;
+  padding-inline-start: 0.75rem;
   border-inline-start: 2px solid var(--line);
-  border-radius: 0;
-  background: none;
   font-size: 0.875rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 /* The owner's own words, such as the start and a redirect, carry the accent. */
-.messages.is-panel .mine .bubble {
+.mine .step {
   border-color: var(--accent);
 }
 
-.messages.is-panel .agents-failed {
+.step.agents-failed {
+  padding-inline-start: 0.75rem;
   border-color: var(--danger);
   box-shadow: none;
 }
@@ -219,11 +222,13 @@
   }
 }
 
-.bubble .markdown {
+.bubble .markdown,
+.step .markdown {
   min-width: 0;
 }
 
-.bubble .markdown pre {
+.bubble .markdown pre,
+.step .markdown pre {
   overflow-x: auto;
 }
 

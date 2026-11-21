@@ -145,9 +145,8 @@
   color: var(--muted);
 }
 
-.board-card.is-proposal > button:last-child {
-  flex: none;
-  margin-inline-end: 0.5rem;
+.board-card.is-proposal {
+  padding-inline-end: 0.5rem;
 }
 
 /* What a card says about itself in its peek: a name and its value on each line. */

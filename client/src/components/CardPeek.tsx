@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type ReactNode } from 'react';
+import { Fragment, useSyncExternalStore, type ReactNode } from 'react';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Divider } from '@astryxdesign/core/Divider';
 import { Heading } from '@astryxdesign/core/Heading';
@@ -101,7 +101,14 @@ export function CardPeek({
             {id && <Heading level={2}>{title}</Heading>}
             {facts && (
               <dl className="card-facts">
-                {facts.map(([name, value]) => value && [<dt key={name}>{name}</dt>, <dd key={`${name}:`}>{value}</dd>])}
+                {facts
+                  .filter(([, value]) => value)
+                  .map(([name, value]) => (
+                    <Fragment key={name}>
+                      <dt>{name}</dt>
+                      <dd>{value}</dd>
+                    </Fragment>
+                  ))}
               </dl>
             )}
             {id && <Divider />}
