@@ -1,6 +1,7 @@
 {
   "pkg": "@webchat/board-kit",
   "globalName": "WebchatBoard",
+  "projectId": "6a3de211-0e03-4904-9467-24da6c9a40e0",
   "shape": "package",
   "buildCmd": "npm run build:board-kit",
   "cssEntry": "dist/style.css",
