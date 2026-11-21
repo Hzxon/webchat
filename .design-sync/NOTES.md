@@ -3,6 +3,11 @@
 WebChat is an app, not a component library. The design system holds the project board's parts,
 built as a small library in `design/board-kit/`. Read this before a re-sync.
 
+## Where it syncs to
+
+- The Claude Design project is "WebChat Board", `https://claude.ai/design/p/6a3de211-0e03-4904-9467-24da6c9a40e0`.
+  Its id is `projectId` in `config.json`. The first upload was on 2026-11-22: 18 components, 98 files.
+
 ## How to build
 
 - `npm ci`, then `npm run build:board-kit`. It writes `design/board-kit/dist/`: `index.js`,
