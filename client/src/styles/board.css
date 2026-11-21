@@ -139,6 +139,41 @@
   background: none;
 }
 
+/* Its file icon sits on the title's line, and its button stays beside the face, as Pick does. */
+.board-card.is-proposal .board-card-head svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.board-card.is-proposal > button:last-child {
+  flex: none;
+  margin-inline-end: 0.5rem;
+}
+
+/* What a card says about itself in its peek: a name and its value on each line. */
+.card-facts {
+  display: grid;
+  grid-template-columns: minmax(6rem, max-content) minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  align-items: center;
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.card-facts dt {
+  color: var(--muted);
+}
+
+.card-facts dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .board-card.is-locked {
   box-shadow: inset 3px 0 0 var(--warn);
 }
@@ -230,10 +265,6 @@
   font-weight: 600;
 }
 
-.board-card-body .doc-section-tools {
-  margin-top: 6px;
-}
-
 /* Where the user's latest run of the card stands (R-027). */
 .board-card-run {
   display: flex;
@@ -298,6 +329,7 @@
 
 /* The cards that wait for the user (R-047): a few rows at most, which scroll, so many never push the lanes off the screen. */
 .board-needs {
+  color: var(--warn);
   max-height: 7.5rem;
   margin-bottom: 0.5rem;
   border-radius: var(--radius);

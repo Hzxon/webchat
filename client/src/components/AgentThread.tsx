@@ -8,7 +8,7 @@ import { Selector } from '@astryxdesign/core/Selector';
 import { Text } from '@astryxdesign/core/Text';
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { LIMITS, takesControls, type PermissionMode, type RunRequest, type SessionEventDTO } from '../../../shared/types';
-import { blockedBy, threadProject, WAKE, type Seat, type Thread } from '../agents';
+import { blockedBy, THREAD_STATE, threadProject, WAKE, type Seat, type Thread } from '../agents';
 import { answerPermit, askClone, askFix, cancelRun, discardMessage, loadSteps, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatMessage } from '../e2ee/keyring';
 import { actions, useAppState } from '../store';
@@ -17,6 +17,7 @@ import { formatAgo, formatTime } from './format';
 import { AlertIcon, SendIcon, StopIcon } from './icons';
 import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
+import { Tag } from './PullTags';
 import { Controls, Summary } from './SessionControls';
 import { SessionDetails } from './SessionDetails';
 import { SessionSteps } from './SessionSteps';
@@ -97,6 +98,7 @@ export function AgentThread({
   agentId,
   inForm,
   details,
+  panel,
 }: {
   thread: Thread;
   seat: Seat | undefined;
@@ -104,6 +106,8 @@ export function AgentThread({
   inForm?: boolean;
   /** Shows what the session runs with beside it, as the pane does (R-072). */
   details?: boolean;
+  /** Reads as a run's panel beside its card: a heading with where it stands, and each message as a step, not a bubble (R-047). */
+  panel?: boolean;
 }) {
   const pending = useAppState((s) => s.pending);
   const meId = useAppState((s) => s.me?.id);
@@ -198,6 +202,13 @@ export function AgentThread({
 
   return (
     <>
+      {panel && (
+        <header className="run-head">
+          <Text weight="semibold">Run</Text>
+          <Text color="secondary">Started {formatAgo(thread.messages[0]!.createdAt)}</Text>
+          <Tag tone={THREAD_STATE[thread.state].tone}>{THREAD_STATE[thread.state].label}</Tag>
+        </header>
+      )}
       <div className="agents-session">
       {/* On a phone the details hide behind a button, which shows only there. */}
       {rail && (
@@ -209,7 +220,7 @@ export function AgentThread({
           onClick={() => setShowDetails(!showDetails)}
         />
       )}
-      <div className="messages" ref={list}>
+      <div className={`messages${panel ? ' is-panel' : ''}`} ref={list}>
         {thread.messages.map((message, i) => {
           const status = message.clientId ? pending[message.clientId] : undefined;
           const unsent = status === 'failed' && (

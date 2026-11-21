@@ -3,7 +3,7 @@
 // lanes, each with its owner's face (the board-lanes decision). Cards are written in the section
 // editor docs have, and keep its locks and history. The board docs are created the first time
 // someone adds a card.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   cardsOf,
   cardText,
@@ -88,6 +88,7 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { Avatar } from './Avatar';
 import { AgentDraft } from './AgentDraft';
 import { AgentThread, Box } from './AgentThread';
+import { NeedsRow, ProposalFace } from './BoardParts';
 import { CardPeek } from './CardPeek';
 import { SectionEditor, SectionHistory } from './DocView';
 import {
@@ -622,22 +623,67 @@ function BoardColumnView({
     setProposal(p);
   }
 
-  /** A proposal's dashed face: a draft that is not a card until its owner adds it (R-047). */
   const draftView = (p: Proposal) => (
-    <article key={p.thread.root} className="board-card is-proposal">
-      <button className="board-card-head" onClick={() => openProposal(p)} aria-haspopup="dialog">
-        <Tag tone="info">{p.draft.replaces ? `Proposed change to ${p.draft.replaces.card}` : 'Proposal'}</Tag>
-        <strong>{p.draft.title}</strong>
-        <span className="board-card-status">{short(p.thread.repo)}</span>
-      </button>
-    </article>
+    <ProposalFace
+      key={p.thread.root}
+      title={p.draft.title}
+      tag={p.draft.replaces ? `Proposed change to ${p.draft.replaces.card}` : 'Proposal'}
+      repo={short(p.thread.repo)}
+      onOpen={() => openProposal(p)}
+    />
   );
 
   const kinds: CardKind[] = column === 'decisions' ? ['D'] : ['R', 'K'];
   const edited = editing && cards.find((c) => c.id === editing.section.id);
 
-  /** A card's face in its lane, or with `inPeek` what the peek shows of it. */
-  const cardView = (card: Card, inPeek = false) => {
+  /** What a card's peek lists about it, each a name and its value: where it stands, whose it is, and its run. */
+  const factsOf = (card: Card): Array<[string, ReactNode]> => {
+    const lock = lockOf(card.id);
+    const cardRun = runs?.get(card.id);
+    const need = needs.find((n) => n.card === card)?.need;
+    const person = (id: number) => (
+      <>
+        {avatarOf(id, 20)} {nameOf(id)}
+      </>
+    );
+    return [
+      [
+        'Status',
+        <>
+          {card.status}
+          {need && <Tag tone="warn">{NEEDS[need]}</Tag>}
+        </>,
+      ],
+      ['Owner', card.owner !== undefined && person(card.owner)],
+      // A page cannot check a merge, so it says who wrote a status that is not the owner's.
+      ['Set by', card.setBy !== undefined && card.setBy !== card.owner && laneOf(card.status) !== 'open' && person(card.setBy)],
+      [
+        'Run',
+        cardRun && (
+          <>
+            <Tag tone={RUN_STATES[cardRun.state][0]}>{RUN_STATES[cardRun.state][1]}</Tag>
+            {cardRun.note}
+          </>
+        ),
+      ],
+      ['Runs it', cardRun && `${nameOf(cardRun.runtime)}${cardRun.harness ? ` · ${cardRun.harness}` : ''}`],
+      ['Repository', cardRun?.repo],
+      [
+        'Pull request',
+        cardRun?.pull && (
+          <a href={`https://github.com/${cardRun.pull.repo}/pull/${cardRun.pull.number}`} target="_blank" rel="noopener noreferrer">
+            {cardRun.pull.repo}#{cardRun.pull.number}
+          </a>
+        ),
+      ],
+      // No agent checked it against the board, the code and the open pull requests yet (R-041).
+      ['Checked', column === 'roadmap' && unchecked(card) && <Tag tone="muted">Not checked by an agent yet</Tag>],
+      ['Editing', lock && nameOf(lock.userId)],
+    ];
+  };
+
+  /** A card's face in its lane, or the part of its peek that is named: its buttons, or what stands under its facts. */
+  const cardView = (card: Card, part?: 'tools' | 'body') => {
     const lock = lockOf(card.id);
     const cardRun = runs?.get(card.id);
     const need = needs.find((n) => n.card === card)?.need;
@@ -648,19 +694,6 @@ function BoardColumnView({
     // A Roadmap card's face shows its owner and whose move it is; its id and status are inside (the board-lanes decision).
     const face = column === 'roadmap';
     const right = face ? moveOf(card) : card.status;
-    // A page cannot check a merge, so it says who wrote a status that is not the owner's.
-    const about = face
-      ? [
-          card.status,
-          card.setBy !== undefined &&
-            card.setBy !== card.owner &&
-            laneOf(card.status) !== 'open' &&
-            `set by ${whom(card.setBy)}`,
-          card.owner !== undefined && `opened by ${whom(card.owner)}`,
-        ]
-          .filter(Boolean)
-          .join(' · ')
-      : '';
     const canMove = face && me && !lock;
     const inReview = face && laneOf(card.status) === 'review';
     const pick = canMove && moved(card, 'pick', me);
@@ -727,7 +760,7 @@ function BoardColumnView({
         {face && need ? <Tag tone="warn">{NEEDS[need]}</Tag> : face && cardRun && <Tag tone={runTone}>{runLabel}</Tag>}
       </button>
     );
-    if (!inPeek)
+    if (!part)
       return (
         <article
           key={card.id}
@@ -745,12 +778,9 @@ function BoardColumnView({
           {face && card.waits && afterWarnings(card.waits).map((w) => <Banner key={w} status="warning" title={w} />)}
         </article>
       );
-    // Its review lines show above the rest, as who said what.
-    const shown = face ? withReviews(card.body, []) : card.body;
-    return (
-      <div className="board-card-body">
-        <div className="doc-section-tools">
-          {lock && <span className="doc-lock">{nameOf(lock.userId)} is editing</span>}
+    if (part === 'tools')
+      return (
+        <>
           <IconButton
             variant="ghost"
             size="sm"
@@ -808,7 +838,12 @@ function BoardColumnView({
               icon={<TrashIcon width={18} height={18} />}
             />
           )}
-        </div>
+        </>
+      );
+    // Its review lines show above the rest, as who said what.
+    const shown = face ? withReviews(card.body, []) : card.body;
+    return (
+      <div className="board-card-body">
         {card.refused && (
           <Banner
             status="warning"
@@ -962,27 +997,8 @@ function BoardColumnView({
             )}
           </p>
         )}
-        {face && (card.kind || about) && (
-          <p className="board-card-run">
-            {card.kind && <span className="board-card-id">{card.cardId}</span>}
-            {about && <span>{about}</span>}
-            {/* No agent checked it against the board, the code and the open pull requests yet (R-041). */}
-            {unchecked(card) && <Tag tone="muted">Not checked by an agent yet</Tag>}
-          </p>
-        )}
-        {cardRun && (
-          <p className="board-card-run">
-            <Tag tone={runTone}>{runLabel}</Tag>
-            <span>
-              {nameOf(cardRun.runtime)}
-              {cardRun.repo && ` in ${cardRun.repo}`}
-              {cardRun.harness && ` with ${cardRun.harness}`}
-              {cardRun.note && ` · ${cardRun.note}`}
-            </span>
-          </p>
-        )}
         {/* A card drafted in a session names it; only its owner has the session, in their pane (R-071). */}
-        {inPeek && threads.some((t) => t.root === sessionOf(card.body)) && (
+        {threads.some((t) => t.root === sessionOf(card.body)) && (
           <p className="board-card-run">
             <span>Drafted in a session with your agent.</span>
             <Button variant="ghost" size="sm" label="Open the session" onClick={() => actions.setAgentsOpen(true, sessionOf(card.body)!)} />
@@ -1052,29 +1068,22 @@ function BoardColumnView({
           <p className="doc-note">No {column === 'decisions' ? 'decisions' : 'ideas or issues'} yet.</p>
         )}
         {needs.length + proposals.length > 0 && (
-          <Stack className="board-needs" direction="horizontal" wrap="wrap" align="center" gap={1} padding={1} isScrollable>
-            <Text weight="semibold">
-              {needs.length + proposals.length === 1 ? '1 card needs you' : `${needs.length + proposals.length} cards need you`}
-            </Text>
-            {needs.map(({ card, need }) => (
-              <Button
-                key={card.id}
-                size="sm"
-                label={`${card.cardId} ${titleOf(card)}`}
-                endContent={<Tag tone="warn">{NEEDS[need]}</Tag>}
-                onClick={() => openCard(card.id)}
-              />
-            ))}
-            {proposals.map((p) => (
-              <Button
-                key={p.thread.root}
-                size="sm"
-                label={p.draft.replaces ? `${p.draft.replaces.card} ${p.draft.title}` : p.draft.title}
-                endContent={<Tag tone="warn">{NEEDS.proposal}</Tag>}
-                onClick={() => openProposal(p)}
-              />
-            ))}
-          </Stack>
+          <NeedsRow
+            items={[
+              ...needs.map(({ card, need }) => ({
+                key: card.id,
+                label: `${card.cardId} ${titleOf(card)}`,
+                reason: NEEDS[need],
+                onOpen: () => openCard(card.id),
+              })),
+              ...proposals.map((p) => ({
+                key: p.thread.root,
+                label: p.draft.replaces ? `${p.draft.replaces.card} ${p.draft.title}` : p.draft.title,
+                reason: NEEDS.proposal,
+                onOpen: () => openProposal(p),
+              })),
+            ]}
+          />
         )}
         {lanes.length > 0 && (
           <div className="board-lanes">
@@ -1153,6 +1162,8 @@ function BoardColumnView({
       {(peek || editsPeek) && (
         <CardPeek
           title={peek ? titleOf(peek) : 'New card'}
+          // The card reads as a page; its editor and its history take the peek alone.
+          {...(peek && !editsPeek && !history && { id: peek.cardId || undefined, tools: cardView(peek, 'tools'), facts: factsOf(peek) })}
           // The editor stays on its card until it closes.
           prev={editing ? undefined : siblings[at - 1]?.id}
           next={editing ? undefined : siblings[at + 1]?.id}
@@ -1165,6 +1176,7 @@ function BoardColumnView({
                 thread={runThread}
                 seat={users[peekRun!.runtime] && seatFor(users[peekRun!.runtime]!, runThread.repo)}
                 agentId={peekRun!.runtime}
+                panel
               />
             )
           }
@@ -1189,7 +1201,7 @@ function BoardColumnView({
               <SectionHistory doc={doc!} section={peek!} nameOf={nameOf} onClose={() => setHistory(false)} />
             </>
           ) : (
-            cardView(peek!, true)
+            cardView(peek!, 'body')
           )}
         </CardPeek>
       )}
