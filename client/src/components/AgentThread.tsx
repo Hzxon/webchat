@@ -103,7 +103,8 @@ export function AgentThread({
   thread: Thread;
   seat: Seat | undefined;
   agentId: number;
-  inForm?: boolean;
+  /** In the new card form, its box asks for the draft with the form's fields as they stand (R-071). */
+  inForm?: (text: string) => Promise<unknown>;
   /** Shows what the session runs with beside it, as the pane does (R-072). */
   details?: boolean;
   /** Reads as a run's panel beside its card: a heading with where it stands, and each message as a step, not a bubble (R-047). */
@@ -417,7 +418,7 @@ export function AgentThread({
                 onAnswer={(decision) => void answerPermit(thread.conversationId, thread.ask!.message, decision)}
               />
             )}
-            {/* In the new card form, the form's own box asks for the draft. */}
+            {/* In the new card form, the session already drafts a card. */}
             {thread.kind === 'question' && thread.project !== undefined && !inForm && !working && !asking && !blocked && (
               <div className="agents-draft-actions">
                 <Selector
@@ -451,7 +452,9 @@ export function AgentThread({
               onSend={(text) =>
                 request
                   ? askFix(thread.conversationId, request.id, text, notNow ? undefined : review?.id)
-                  : tellAgent(thread.conversationId, thread.root, 'reply', text, choice)
+                  : inForm
+                    ? inForm(text)
+                    : tellAgent(thread.conversationId, thread.root, 'reply', text, choice)
               }
               stop={working || asking ? { stopping, onStop: stop } : undefined}
               commands={thread.about?.commands}

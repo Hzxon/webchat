@@ -78,11 +78,12 @@ import { holdReloadWhile } from '../build';
 import { actions, senderName, useAppState } from '../store';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
+import { Heading } from '@astryxdesign/core/Heading';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { Selector } from '@astryxdesign/core/Selector';
 import { Tab, TabList } from '@astryxdesign/core/TabList';
-import { Stack } from '@astryxdesign/core/Stack';
+import { Stack, StackItem } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Avatar } from './Avatar';
@@ -96,7 +97,6 @@ import {
   BoardIcon,
   CopyIcon,
   HistoryIcon,
-  PencilIcon,
   PlayIcon,
   PlusIcon,
   StopIcon,
@@ -440,6 +440,19 @@ function BoardColumnView({
   const page = peek && !editsPeek && !history ? peek : undefined;
   const peekRun = peek && runs?.get(peek.id);
   const runThread = threadOf(peekRun, threads);
+  const peekLock = peek && lockOf(peek.id);
+  // The agent panel's switch opens the card's editor where it could open today, and closes it.
+  const editOff = editsPeek
+    ? undefined
+    : elsewhere
+      ? `Close the editor in ${elsewhere} first`
+      : editorOpen
+        ? 'Close the other editor first'
+        : peekLock
+          ? `${nameOf(peekLock.userId)} is editing it`
+          : peek?.failed
+            ? 'This card could not be decrypted.'
+            : undefined;
   useEffect(() => {
     if (peek || editsPeek) onPeek();
   }, [!!peek || editsPeek]);
@@ -746,16 +759,6 @@ function BoardColumnView({
     if (part === 'tools')
       return (
         <>
-          <IconButton
-            variant="ghost"
-            size="sm"
-            // From the text that stands, so a typo fix never signs a status someone could not set.
-            onClick={() => run(edit(doc!, card.id, card.text, card.pos))}
-            isDisabled={editorOpen || !!elsewhere || !!lock || card.failed}
-            tooltip={elsewhere ? `Close the editor in ${elsewhere} first` : 'Edit'}
-            label="Edit card"
-            icon={<PencilIcon width={18} height={18} />}
-          />
           <IconButton
             variant="ghost"
             size="sm"
@@ -1077,37 +1080,23 @@ function BoardColumnView({
           ))}
       </div>
       {adding && (
-        <CardPeek
-          title={`New ${KIND_NAMES[adding]}`}
-          onOpen={openCard}
-          onClose={closeForm}
-          // The session beside the form, before it, as a card's peek shows its run (R-071).
-          runFirst
-          run={
-            sessionThread && (
-              <AgentThread
-                key={sessionThread.root}
-                thread={sessionThread}
-                seat={asker?.seat}
-                agentId={asker?.seat.agent.id ?? 0}
-                inForm
-              />
-            )
-          }
-        >
-          <NewCardForm
-            kind={adding}
-            projectId={projectId}
-            asker={asker}
-            thread={sessionThread}
-            onSession={setSession}
-            onDone={(title, body, from) => add(adding, title, body, from)}
-            onCancel={closeForm}
-          />
-        </CardPeek>
+        <NewCardForm
+          kind={adding}
+          projectId={projectId}
+          asker={asker}
+          thread={sessionThread}
+          onSession={setSession}
+          onDone={(title, body, from) => add(adding, title, body, from)}
+          onCancel={closeForm}
+        />
       )}
       {proposal && (
-        <CardPeek title={proposal.draft.title} onOpen={openCard} onClose={() => setProposal(null)}>
+        <CardPeek
+          title={proposal.draft.title}
+          onClose={() => setProposal(null)}
+          isEditing={false}
+          editOff="Add it to the board to edit it"
+        >
           <AgentDraft
             message={proposal.message}
             draft={proposal.draft}
@@ -1129,6 +1118,24 @@ function BoardColumnView({
           next={editing ? undefined : siblings[at + 1]?.id}
           onOpen={openCard}
           onClose={() => openCard(null)}
+          isEditing={editsPeek}
+          editOff={editOff}
+          onEditing={(on) => {
+            if (!on) {
+              setEditing(null);
+              onEditing(false);
+              return;
+            }
+            setHistory(false);
+            // From the text that stands, so a typo fix never signs a status someone could not set.
+            run(edit(doc!, peek!.id, peek!.text, peek!.pos));
+          }}
+          // Where the header's Run with your agent shows, as the brief starts a run (D-105).
+          onRun={
+            peek && canRun && peek.kind && !peek.failed && !(peekRun && GOING.has(peekRun.state))
+              ? () => actions.openBrief({ projectId, docId: doc!.id, section: peek.id })
+              : undefined
+          }
           run={
             runThread && (
               <AgentThread
@@ -1214,6 +1221,8 @@ function NewCardForm({
     onSession(await askAgent(asker!.seat.agent.id, projectId, asker!.repo, text, { own: true, card }));
   }
   const working = thread?.state === 'working' || thread?.state === 'asking';
+  // Preview reads the fields as the card would; nothing is saved until Done (D-116).
+  const [preview, setPreview] = useState(false);
   const [needTitle, setNeedTitle] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -1234,59 +1243,93 @@ function NewCardForm({
   }
 
   return (
-    <div
-      className="doc-section doc-editor"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onCancel();
-      }}
+    <CardPeek
+      title={`New ${KIND_NAMES[kind]}`}
+      onClose={onCancel}
+      isEditing={!preview}
+      onEditing={(on) => setPreview(!on)}
+      run={
+        // The session drafts the card from its box, which carries the fields as they stand (R-071).
+        thread ? (
+          <AgentThread key={thread.root} thread={thread} seat={asker?.seat} agentId={asker?.seat.agent.id ?? 0} inForm={ask} />
+        ) : (
+          <>
+            <StackItem size="fill">
+              <Stack padding={5}>
+                <Text as="p" color="secondary">
+                  {asker
+                    ? 'Your agent drafts this card from what you tell it.'
+                    : 'To draft cards with your coding agent, connect it in the Coding agents pane.'}
+                </Text>
+              </Stack>
+            </StackItem>
+            {asker && (
+              <footer className="composer">
+                <Box
+                  name={`newcard:${projectId}:${kind}`}
+                  placeholder="Describe it to your agent, which drafts it here"
+                  canSend={!working}
+                  onSend={ask}
+                />
+              </footer>
+            )}
+          </>
+        )
+      }
     >
-      {asker ? (
-        <Box
-          name={`newcard:${projectId}:${kind}`}
-          placeholder="Describe it to your agent, which drafts it here"
-          canSend={!working}
-          onSend={ask}
-        />
-      ) : (
-        <Text as="p" color="secondary">
-          To draft cards with your coding agent, connect it in the Coding agents pane.
-        </Text>
-      )}
-      <TextInput
-        label="Title"
-        value={title}
-        onChange={(v) => {
-          setTitle(v);
-          setNeedTitle(false);
+      <div
+        className="doc-section doc-editor"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onCancel();
         }}
-        status={needTitle ? { type: 'error', message: 'A card needs a title.' } : undefined}
-        hasAutoFocus
-      />
-      <textarea
-        className="field-input doc-textarea"
-        aria-label="Details"
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        rows={Math.max(6, body.split('\n').length + 1)}
-        maxLength={LIMITS.docSectionLength}
-        placeholder={prompts}
-      />
-      {draft?.checked && <Text color="secondary">Checked: {draft.checked}</Text>}
-      {/* Nothing is blocked: the user weighs what the check found, a conflict as a warning (R-041). */}
-      {draft?.related?.map((r) => (
-        <Banner
-          key={r.id}
-          status={r.kind === 'conflict' ? 'warning' : 'info'}
-          title={`${r.kind === 'conflict' ? 'Goes against' : 'Repeats'} ${r.id}${r.why ? `: ${r.why}` : ''}`}
-        />
-      ))}
-      <div className="doc-editor-actions">
-        <Text color="secondary" className="doc-editor-status">
-          {error}
-        </Text>
-        <Button label="Cancel" onClick={onCancel} />
-        <Button variant="primary" label="Done" isDisabled={busy} onClick={() => void done()} />
+      >
+        {preview ? (
+          <>
+            <Heading level={2}>{title.trim() || 'Untitled'}</Heading>
+            <div className="board-card-body">
+              <Markdown text={body.trim() || prompts} />
+            </div>
+          </>
+        ) : (
+          <>
+            <TextInput
+              label="Title"
+              value={title}
+              onChange={(v) => {
+                setTitle(v);
+                setNeedTitle(false);
+              }}
+              status={needTitle ? { type: 'error', message: 'A card needs a title.' } : undefined}
+              hasAutoFocus
+            />
+            <textarea
+              className="field-input doc-textarea"
+              aria-label="Details"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={Math.max(6, body.split('\n').length + 1)}
+              maxLength={LIMITS.docSectionLength}
+              placeholder={prompts}
+            />
+          </>
+        )}
+        {draft?.checked && <Text color="secondary">Checked: {draft.checked}</Text>}
+        {/* Nothing is blocked: the user weighs what the check found, a conflict as a warning (R-041). */}
+        {draft?.related?.map((r) => (
+          <Banner
+            key={r.id}
+            status={r.kind === 'conflict' ? 'warning' : 'info'}
+            title={`${r.kind === 'conflict' ? 'Goes against' : 'Repeats'} ${r.id}${r.why ? `: ${r.why}` : ''}`}
+          />
+        ))}
+        <div className="doc-editor-actions">
+          <Text color="secondary" className="doc-editor-status">
+            {error}
+          </Text>
+          <Button label="Cancel" onClick={onCancel} />
+          <Button variant="primary" label="Done" isDisabled={busy} onClick={() => void done()} />
+        </div>
       </div>
-    </div>
+    </CardPeek>
   );
 }
