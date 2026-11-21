@@ -1,0 +1,9 @@
+{
+  "name": "@webchat/board-kit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The project board's parts as a library, built only for the design system in .design-sync/. The app does not import it.",
+  "type": "module",
+  "module": "dist/index.js",
+  "types": "dist/types/design/board-kit/src/index.d.ts"
+}

@@ -14,3 +14,10 @@ data/
 # Local Claude Code tooling, except the rules of each area, which every agent reads (D-090)
 .claude/*
 !.claude/rules/
+
+# The design system sync (.design-sync/): staged scripts, built output and machine state
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
