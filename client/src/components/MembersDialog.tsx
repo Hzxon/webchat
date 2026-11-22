@@ -1,9 +1,6 @@
 import { useState } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
-import { Button } from '@astryxdesign/core/Button';
-import { List, ListItem } from '@astryxdesign/core/List';
-import { Stack } from '@astryxdesign/core/Stack';
-import { Text } from '@astryxdesign/core/Text';
+import { Dialog as AstryxDialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import {
   deleteGroup,
   deleteProject,
@@ -16,17 +13,25 @@ import {
 } from '../chat';
 import { useAppState } from '../store';
 import { Avatar } from './Avatar';
-import { Dialog } from './Dialog';
+import { PlusIcon } from './icons';
 import { confirmAction } from './ConfirmHost';
 
 /** Whose members to show or add to: a project's or a group's. */
 export type MembersTarget = { kind: 'project'; projectId: number } | { kind: 'group'; conversationId: number };
 
 /**
- * The people in a project or group. Its owner can remove people, hand it to someone else, and
- * delete it for everyone. Everyone else can leave, and sees who owns it.
+ * The people in a project or group and their roles. Its owner can remove people, hand it to someone
+ * else from a member's role, and delete it for everyone. Everyone else can leave.
  */
-export function MembersDialog({ target, onClose }: { target: MembersTarget; onClose: () => void }) {
+export function MembersDialog({
+  target,
+  onAdd,
+  onClose,
+}: {
+  target: MembersTarget;
+  onAdd: () => void;
+  onClose: () => void;
+}) {
   const me = useAppState((s) => s.me);
   const users = useAppState((s) => s.users);
   const project = useAppState((s) => (target.kind === 'project' ? s.projects[target.projectId] : undefined));
@@ -47,12 +52,9 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
     .map(({ id, user }) => ({
       id,
       name: user?.displayName ?? 'Someone',
-      username: user?.username ?? '',
-      online: user?.online,
       agent: user?.agentOwner != null,
     }))
     .sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));
-  const owner = people.find((p) => p.id === ownerId);
   // The owner hands it over first, so it always has one. The last person in it deletes it instead.
   const canLeave = ownerId !== me.id && people.length > 1;
 
@@ -136,75 +138,89 @@ export function MembersDialog({ target, onClose }: { target: MembersTarget; onCl
   }
 
   return (
-    <Dialog title={name} onClose={onClose}>
-      <Text as="p" color="secondary">
-        {people.length} {people.length === 1 ? 'member' : 'members'}
-        {owner && `. ${owner.id === me.id ? 'You own' : `${owner.name} owns`} this ${noun}.`}
-      </Text>
-      <List edge="flush">
-        {people.map((person) => (
-          <ListItem
-            key={person.id}
-            startContent={
-              <Avatar name={person.name} seed={person.id} size={38} online={person.id !== me.id && person.online} />
-            }
-            label={person.id === me.id ? 'You' : person.name}
-            description={person.id === ownerId ? 'Owner' : `@${person.username}`}
-            endContent={
-              canManage &&
-              person.id !== me.id &&
-              person.id !== ownerId && (
-                <Stack direction="horizontal" gap={1}>
-                  {/* An agent can neither remove people nor hand it back, so it never owns one (D-114). */}
-                  {!person.agent && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      label="Make owner"
-                      aria-label={`Make ${person.name} the owner of ${name}`}
+    <AstryxDialog
+      isOpen
+      onOpenChange={(open) => !open && onClose()}
+      width={600}
+      maxHeight="min(720px, 90dvh)"
+      padding={0}
+    >
+      <div className="mhead">
+        <DialogHeader title={`Members of ${name}`} onOpenChange={(open) => !open && onClose()} />
+      </div>
+      <div className="mbody">
+        <section className="mlbl-row">
+          <h3 className="mlbl">Invite people</h3>
+          <button type="button" className="btn btn-secondary sm" onClick={onAdd}>
+            <PlusIcon width={16} height={16} />
+            Add member
+          </button>
+        </section>
+        <section>
+          <h3 className="mlbl">
+            {people.length} {people.length === 1 ? 'member' : 'members'}
+          </h3>
+          <div className="mlist">
+            {people.map((person) => {
+              // An agent can neither remove people nor hand it back, so it never owns one (D-114).
+              const role = person.id === ownerId ? 'Owner' : person.agent ? 'Agent' : 'Member';
+              const manageable = canManage && person.id !== me.id && person.id !== ownerId;
+              return (
+                <div key={person.id} className="mrow">
+                  <Avatar name={person.name} seed={person.id} size={32} />
+                  <span className="mrow-who">{person.name}</span>
+                  {manageable && !person.agent ? (
+                    <button
+                      type="button"
+                      className="btn btn-quiet"
+                      title="Make owner"
+                      aria-label={`${role}. Make ${person.name} the owner of ${name}`}
                       onClick={() => handOver(person)}
-                      isDisabled={busy}
-                    />
+                      disabled={busy}
+                    >
+                      {role}
+                    </button>
+                  ) : (
+                    <span className="mrow-role">{role}</span>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    label="Remove"
-                    aria-label={`Remove ${person.name} from ${name}`}
-                    onClick={() => remove(person)}
-                    isDisabled={busy}
-                  />
-                </Stack>
-              )
-            }
-          />
-        ))}
-      </List>
-      {error && <Banner status="error" title={error} />}
-      {(canLeave || canManage) && (
-        <Stack direction="horizontal" gap={2} wrap="wrap">
-          {canLeave && <Button label={`Leave ${noun}`} onClick={() => void leave()} isDisabled={busy} />}
-          {canManage && (
-            <Button
-              variant="destructive"
-              label={`Delete ${noun}`}
-              onClick={() => void deleteForEveryone()}
-              isDisabled={busy}
-            />
-          )}
-        </Stack>
-      )}
-      {ownerId === me.id
-        ? people.length > 1 && (
-            <Text as="p" color="secondary">
-              To leave, make someone else the owner first.
-            </Text>
-          )
-        : owner && (
-            <Text as="p" color="secondary">
-              Only {owner.name} can remove people or delete this {noun}.
-            </Text>
-          )}
-    </Dialog>
+                  {manageable && (
+                    <button
+                      type="button"
+                      className="btn btn-danger-quiet"
+                      aria-label={`Remove ${person.name} from ${name}`}
+                      onClick={() => remove(person)}
+                      disabled={busy}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+        {error && <Banner status="error" title={error} />}
+      </div>
+      <footer className="mfoot">
+        {canLeave && (
+          <button type="button" className="btn btn-secondary" onClick={() => void leave()} disabled={busy}>
+            Leave {noun}
+          </button>
+        )}
+        {canManage && (
+          <button
+            type="button"
+            className="btn btn-danger-quiet"
+            onClick={() => void deleteForEveryone()}
+            disabled={busy}
+          >
+            Delete {noun}
+          </button>
+        )}
+        <button type="button" className="btn btn-primary mfoot-done" onClick={onClose}>
+          Done
+        </button>
+      </footer>
+    </AstryxDialog>
   );
 }
