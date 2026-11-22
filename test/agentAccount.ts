@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
+import { claudeHarness } from '../agent/claude.ts';
 import { AgentClient } from '../agent/client.ts';
+import { Plugin } from '../agent/plugin.ts';
+import { freeLock } from '../agent/pluginFiles.ts';
 import { openDb, toUserDTO } from '../server/db.ts';
 import { newPairingCode } from '../shared/e2ee.ts';
 import { KDF_ROUNDS, PASSWORD, approve } from './agentHelpers.ts';
@@ -32,6 +35,19 @@ export function accountTests(w: World) {
     // Its session ends, and it cannot sign in again.
     await assert.rejects(agent.sync(), { status: 401 });
     await assert.rejects(w.alice.request('DELETE', `/agents/${spare.id}`), { status: 404 });
+  });
+
+  test('a removed agent stops serving and says so, rather than restart and use up the sign-in limit', async () => {
+    const dataDir = path.join(w.home, 'removed', 'laptop');
+    const code = newPairingCode();
+    const plugin = new Plugin({ harnesses: [claudeHarness('', dataDir)], cloneRoot: path.join(w.home, 'WebChat'), dataDir, code: `${w.baseUrl}#${code}` });
+    const starting = plugin.start();
+    const agent = await approve(w.alice, code, 'Removed');
+    assert.equal(await starting, true);
+    await w.alice.request('DELETE', `/agents/${agent.id}`);
+    freeLock(path.join(dataDir, 'watch.lock'));
+    await plugin.serve();
+    assert.match(plugin.problem, /setup/);
   });
 
   test('counts an agent online for 2 minutes after its check-in, a person for 1, on the page and in the sync fingerprint (docs/roadmap/new-agent-setup.md)', async () => {
