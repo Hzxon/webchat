@@ -92,7 +92,7 @@ export function AgentBrief({ brief }: { brief: NonNullable<State['agentBrief']> 
   else if (!seat) blocked = 'Your agent is not in this project. Add it under the project’s people, then start.';
   else if (!seat.online) blocked = `${asleep(seat.lastSeen)}. ${WAKE}`;
   else if (!runsCards(seat.protocol))
-    blocked = `${short(seat.repo)} can’t take cards yet. Link a coding agent in Agent settings, then connect a folder by running webchat-agent connect there, which you approve here. Running webchat-agent status says what is missing.`;
+    blocked = `${short(seat.repo)} can’t take cards yet. Link a coding agent in Agent settings, then connect a folder with Choose folder under Add folder in the agents window, which you approve here. Running webchat-agent status says what is missing.`;
   else if (lock)
     blocked = `${senderName(users, lock.userId)} is editing this card. Start once they are done, so your agent gets all of it.`;
 
