@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.15.0](https://github.com/Hzxon/webchat/compare/v0.14.1...v0.15.0) (2026-11-22)
+
+
+### Features
+
+* **agent:** Run a member's session in their own setup ([#284](https://github.com/Hzxon/webchat/issues/284)) ([c75b32c](https://github.com/Hzxon/webchat/commit/c75b32cdabe2537abbe4ce95c41843b4b37b9f80))
+* **agents:** Continue a terminal's session ([#289](https://github.com/Hzxon/webchat/issues/289)) ([3c929fe](https://github.com/Hzxon/webchat/commit/3c929feb9e535484845a391bb9c374cccef36c6e))
+* **agents:** Lay out agent settings and connect ([#300](https://github.com/Hzxon/webchat/issues/300)) ([8325068](https://github.com/Hzxon/webchat/commit/83250682e53a4bbe1556f335c6eb166b905ee691))
+* **agents:** Lay out the coding agents window as designed ([#298](https://github.com/Hzxon/webchat/issues/298)) ([6f7c751](https://github.com/Hzxon/webchat/commit/6f7c751ae63c259d0cf52bb326d4c54527dec063))
+* **agents:** Show a session's steps as a timeline ([#285](https://github.com/Hzxon/webchat/issues/285)) ([75e16c6](https://github.com/Hzxon/webchat/commit/75e16c68070c018f18e448ec50639c2999e8ca45))
+* **agents:** Show what a session runs with ([#287](https://github.com/Hzxon/webchat/issues/287)) ([daa1df7](https://github.com/Hzxon/webchat/commit/daa1df7f8e04b1b9688a51dc180db39e84724715))
+* **agents:** Steer a session and hand it over ([#288](https://github.com/Hzxon/webchat/issues/288)) ([5f76c9c](https://github.com/Hzxon/webchat/commit/5f76c9c4c9a61a2852270bee592e30df19c32208))
+* **agent:** Wait when a run's files overlap ([#276](https://github.com/Hzxon/webchat/issues/276)) ([2eeb2bb](https://github.com/Hzxon/webchat/commit/2eeb2bb60a0e7b11e9206a8e519472ede756b3ef))
+* **board:** Dismiss waiting proposal drafts ([#280](https://github.com/Hzxon/webchat/issues/280)) ([2dbda5f](https://github.com/Hzxon/webchat/commit/2dbda5f3bd9faecea8289268227eeaf906f0586e))
+* **board:** Draft a new card with your agent ([#286](https://github.com/Hzxon/webchat/issues/286)) ([c61c998](https://github.com/Hzxon/webchat/commit/c61c998530b363a36c7feebed207ffeeeb68f62e))
+* **board:** Lay out a card's peek as designed ([#290](https://github.com/Hzxon/webchat/issues/290)) ([8c517ae](https://github.com/Hzxon/webchat/commit/8c517ae2ba13477059d3c9331967a7761c0b3328))
+* **board:** Lay out the board and peek as designed ([#299](https://github.com/Hzxon/webchat/issues/299)) ([1c4e10e](https://github.com/Hzxon/webchat/commit/1c4e10e7b987a88dcd14d2fc4876a4127f4cb63f))
+* **board:** Open every card in two panels ([#293](https://github.com/Hzxon/webchat/issues/293)) ([3f0d8ed](https://github.com/Hzxon/webchat/commit/3f0d8ed50b385f98bc7ffd5c9537d2d5b4365977))
+* **board:** Wait for the cards After names ([#277](https://github.com/Hzxon/webchat/issues/277)) ([188e762](https://github.com/Hzxon/webchat/commit/188e762fc003af1bda115974fb23152ea4783185))
+* **chat:** Lay out the chat pane as designed ([#295](https://github.com/Hzxon/webchat/issues/295)) ([ff3a558](https://github.com/Hzxon/webchat/commit/ff3a5582296cee56a6d153617442fe2801032248))
+* **client:** Collapse the sidebar to a rail ([#255](https://github.com/Hzxon/webchat/issues/255)) ([de5dbba](https://github.com/Hzxon/webchat/commit/de5dbbae519e517256660f4dc50ff5efe249b480))
+* **client:** List the cards that need you ([#272](https://github.com/Hzxon/webchat/issues/272)) ([31833b9](https://github.com/Hzxon/webchat/commit/31833b9caa44bb49d86160e6ec27ee44d9ce5451))
+* **client:** Move the board and panes to Astryx ([#251](https://github.com/Hzxon/webchat/issues/251)) ([3cbd931](https://github.com/Hzxon/webchat/commit/3cbd9317ad24b9bf0b3ae881d69f4cb92a6f4e26))
+* **client:** Move the chat's controls to Astryx ([#250](https://github.com/Hzxon/webchat/issues/250)) ([3e5a482](https://github.com/Hzxon/webchat/commit/3e5a482ad66ddb56cb03ddb65140dd13ffecb5ac))
+* **client:** Move the dialogs to Astryx ([#248](https://github.com/Hzxon/webchat/issues/248)) ([10e5cdf](https://github.com/Hzxon/webchat/commit/10e5cdfae83c0adefcdc39fc3ec0f7d9fc18e4e1))
+* **client:** Move the sidebar to Astryx ([#249](https://github.com/Hzxon/webchat/issues/249)) ([9b17f35](https://github.com/Hzxon/webchat/commit/9b17f35cd81594bc3c04182f9af23b685b9af771))
+* **client:** Open a board card in a peek ([#257](https://github.com/Hzxon/webchat/issues/257)) ([b42467d](https://github.com/Hzxon/webchat/commit/b42467def2c25fd4d87ca2e1ab6de1705f00855b))
+* **client:** Restyle the app with warm neutrals ([#254](https://github.com/Hzxon/webchat/issues/254)) ([d588a8a](https://github.com/Hzxon/webchat/commit/d588a8a627b0fe611e4755c1837f7ced315c57d5))
+* **client:** Show a card's run in its peek ([#259](https://github.com/Hzxon/webchat/issues/259)) ([961cc0d](https://github.com/Hzxon/webchat/commit/961cc0d842e710ee8aeaf2a4c7636cbfbdef55e7))
+* **client:** Show proposal drafts as cards ([#274](https://github.com/Hzxon/webchat/issues/274)) ([bce10c1](https://github.com/Hzxon/webchat/commit/bce10c11f912a0f3b9f5e1175ce09a8e2bbcc5f4))
+* **client:** Try Astryx on the sign-in screen ([#247](https://github.com/Hzxon/webchat/issues/247)) ([605bb1b](https://github.com/Hzxon/webchat/commit/605bb1bb3ba0cb707855b0ace376d90910bd4f9c))
+* Fix daily-use problems from the UX audit ([#266](https://github.com/Hzxon/webchat/issues/266)) ([362d824](https://github.com/Hzxon/webchat/commit/362d82459180b33e8fc32c0328e7c1540d16f0d2))
+* **frame:** Add the app frame and member menus ([#297](https://github.com/Hzxon/webchat/issues/297)) ([079a595](https://github.com/Hzxon/webchat/commit/079a595cd6ea8e0234592369c776b043dca347af))
+* **github:** Show pull requests in lanes ([#296](https://github.com/Hzxon/webchat/issues/296)) ([4a2e82e](https://github.com/Hzxon/webchat/commit/4a2e82ec5134bfbeece96e569bf26125bc29852f))
+
+
+### Bug Fixes
+
+* **board:** Read a wrapped proposal status ([#279](https://github.com/Hzxon/webchat/issues/279)) ([81207b4](https://github.com/Hzxon/webchat/commit/81207b4415e8d3c93043a50435a0efed07c9e082))
+* **claim:** Claim an item with a tag first ([#271](https://github.com/Hzxon/webchat/issues/271)) ([daaa847](https://github.com/Hzxon/webchat/commit/daaa8471d4594528cceb475dfbec634e48e38d52))
+* **client:** Give dialogs the page's text color ([#275](https://github.com/Hzxon/webchat/issues/275)) ([01e0ac9](https://github.com/Hzxon/webchat/commit/01e0ac94ead059404a09d3523e97b6b2ecb375c3))
+* **client:** Load the page on iOS 15 ([#273](https://github.com/Hzxon/webchat/issues/273)) ([beb299f](https://github.com/Hzxon/webchat/commit/beb299f88f45f461177c96d37aec07fa438ae0fc))
+* **client:** Load the whole history of agent chats ([#283](https://github.com/Hzxon/webchat/issues/283)) ([7ae616d](https://github.com/Hzxon/webchat/commit/7ae616de96d2bdb27658ded4e1515afa778e8689))
+* **client:** Polyfill popovers for Safari below 17 ([#256](https://github.com/Hzxon/webchat/issues/256)) ([db02a0b](https://github.com/Hzxon/webchat/commit/db02a0b1193bac022f3ac5212c14c1121a994301))
+* **deps:** Override zod to patched 4.6.7 ([#281](https://github.com/Hzxon/webchat/issues/281)) ([27d59a9](https://github.com/Hzxon/webchat/commit/27d59a928e3aff2f8cc624a036165085b2889e48))
+
 ## [0.14.1](https://github.com/Hzxon/webchat/compare/v0.14.0...v0.14.1) (2026-11-14)
 
 
