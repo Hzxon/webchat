@@ -373,3 +373,31 @@ test('a login service from before the room that still runs `serve` is told to ru
     await ended;
   }
 });
+
+// Python's pty gives setup a real terminal, which is where a second question lost its answer.
+const PTY_DRIVER = `
+import os, pty, select, sys, time
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+out = b''
+def until(text):
+    global out
+    end = time.time() + 10
+    while text not in out and time.time() < end:
+        if select.select([fd], [], [], 0.2)[0]:
+            try: out += os.read(fd, 4096)
+            except OSError: return
+for prompt, answer in ((b'one? ', b'a'), (b'two? ', b'b')):
+    until(prompt)
+    time.sleep(0.3)
+    os.write(fd, answer + b'\\n')
+until(b'DONE')
+sys.stdout.write(out.decode(errors='replace'))
+`;
+
+test('setup reads the answer to each of its questions on the terminal, the second one too', { timeout: 30_000 }, async () => {
+  const script = "const { askLine } = await import('./agent/setup.ts'); const a = await askLine('one? '); const b = await askLine('two? '); console.log('DONE', JSON.stringify([a, b])); process.exit(0)";
+  const { stdout } = await sh('python3', ['-I', '-c', PTY_DRIVER, process.execPath, '--import', 'tsx', '-e', script], { timeout: 25_000 });
+  assert.match(stdout, /DONE \["a","b"\]/, stdout);
+});
