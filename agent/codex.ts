@@ -58,7 +58,8 @@ export const codexArgs = (servers: string[]) => [
 
 /**
  * The models Codex shows in its own picker, from a short-lived app-server with the restricted
- * arguments, so a new release's model needs no change here (R-072).
+ * arguments, so a new release's model needs no change here (R-072), and the efforts each takes,
+ * `''` for the one Codex runs when none is picked.
  */
 async function listModels(program: string, servers: string[]) {
   const child = spawn(program, codexArgs(servers), { stdio: ['pipe', 'pipe', 'ignore'] });
@@ -69,8 +70,11 @@ async function listModels(program: string, servers: string[]) {
   try {
     await peer.request('initialize', { clientInfo: { name: 'webchat', title: 'WebChat agent', version: pkg.version } });
     peer.notify('initialized');
-    const { data } = await peer.request<{ data: { model: string; hidden?: boolean }[] }>('model/list', {});
-    return data.filter((m) => !m.hidden).map((m) => m.model);
+    const { data } = await peer.request<{ data: { model: string; hidden?: boolean; isDefault?: boolean; supportedReasoningEfforts?: { reasoningEffort: string }[] }[] }>('model/list', {});
+    const shown = data.filter((m) => !m.hidden);
+    const efforts = (m: (typeof shown)[number]) => (m.supportedReasoningEfforts ?? []).map((e) => e.reasoningEffort);
+    const fallback = shown.find((m) => m.isDefault);
+    return { models: shown.map((m) => m.model), efforts: Object.fromEntries([...shown.map((m) => [m.model, efforts(m)]), ...(fallback ? [['', efforts(fallback)]] : [])]) };
   } finally {
     clearTimeout(timer);
     child.kill();
@@ -101,8 +105,9 @@ export function codexHarness(program: string, dataDir: string): Harness {
   const file = path.join(dataDir, 'codex-threads.json');
   let threads: Record<string, string> | undefined;
   const lives = new Map<string, Live>();
-  /** The models the owner's Codex lists for its picker, as `found` last read them. */
+  /** The models the owner's Codex lists for its picker, and their efforts, as `found` last read them. */
   let models: string[] | undefined;
+  let efforts: Record<string, string[]> | undefined;
 
   async function close(live: Live) {
     clearTimeout(live.timer);
@@ -232,7 +237,7 @@ export function codexHarness(program: string, dataDir: string): Harness {
       }
       hold(live.child, true);
       live.peer
-        .request<{ turn: { id: string } }>('turn/start', { threadId: live.thread, input: [{ type: 'text', text: t.message }], outputSchema: strictSchema(t.schema as Schema) })
+        .request<{ turn: { id: string } }>('turn/start', { threadId: live.thread, input: [{ type: 'text', text: t.message }], outputSchema: strictSchema(t.schema as Schema), ...(t.effort && { effort: t.effort }) })
         .then((started) => {
           turn.id = started.turn.id;
           if (early?.turn?.id === turn.id) complete(early);
@@ -249,7 +254,7 @@ export function codexHarness(program: string, dataDir: string): Harness {
       if (!program) return 'I cannot find Codex on this laptop.';
     },
     // Codex reads both on every turn, whatever the owner chose: its config has no switch for them.
-    offers: () => ({ instructions: path.join(home, 'AGENTS.md'), skills: path.join(os.homedir(), '.agents', 'skills'), knobs: ['own'], ...(models?.length && { models }) }),
+    offers: () => ({ instructions: path.join(home, 'AGENTS.md'), skills: path.join(os.homedir(), '.agents', 'skills'), knobs: ['own'], ...(models?.length && { models }), ...(efforts && { efforts }) }),
     async found() {
       if (!program) return {};
       const [version, signedIn, listed] = await Promise.all([
@@ -258,7 +263,8 @@ export function codexHarness(program: string, dataDir: string): Harness {
         exec(program, ['login', 'status'], { timeout: 10_000 }).then(() => true, () => false),
         fs.readFile(path.join(home, 'config.toml'), 'utf8').catch(() => '').then((config) => listModels(program, mcpServerNames(config))).catch(() => undefined),
       ]);
-      models = listed;
+      models = listed?.models;
+      efforts = listed?.efforts;
       return { path: program, version, signedIn };
     },
     async apply() {},

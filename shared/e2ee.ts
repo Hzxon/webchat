@@ -613,6 +613,19 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
 /** A model's name, as a harness's command line takes it (R-072). */
 export const MODEL_NAME = /^[\w.:[\]-]{1,64}$/;
 
+/** An effort level's name, as a harness takes it, such as `high`. */
+export const EFFORT_NAME = /^[a-z]{1,16}$/;
+
+/** Each model's effort levels of the right shape, `''` for the default model, or nothing. */
+export function readEfforts(raw: unknown): Record<string, string[]> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
+  const entries = Object.entries(raw as Record<string, unknown>)
+    .slice(0, 21)
+    .flatMap(([model, list]) => ((model === '' || MODEL_NAME.test(model)) && Array.isArray(list) ? [[model, list.filter((e): e is string => typeof e === 'string' && EFFORT_NAME.test(e)).slice(0, 10)] as const] : []))
+    .filter(([, list]) => list.length);
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
 /** A harness's session id, as Claude Code names its sessions (R-072). */
 export const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -623,11 +636,12 @@ export function readTerminalSessions(raw: unknown, max = 10): TerminalSessionDTO
   );
 }
 
-/** A session's model and permission mode, of the right shape, as the fields that carry them (R-072). */
-function readControls(raw: Record<string, unknown>): { model?: string; mode?: PermissionMode } {
+/** A session's model, effort and permission mode, of the right shape, as the fields that carry them (R-072). */
+function readControls(raw: Record<string, unknown>): { model?: string; effort?: string; mode?: PermissionMode } {
   const model = typeof raw.model === 'string' && MODEL_NAME.test(raw.model) ? raw.model : undefined;
+  const effort = typeof raw.effort === 'string' && EFFORT_NAME.test(raw.effort) ? raw.effort : undefined;
   const mode = PERMISSION_MODES.find((m) => m === raw.mode);
-  return { ...(model && { model }), ...(mode && { mode }) };
+  return { ...(model && { model }), ...(effort && { effort }), ...(mode && { mode }) };
 }
 
 /** A card mark of the right shape, as the field that carries it, or nothing (R-071). */
@@ -714,9 +728,10 @@ function readHarnesses(raw: unknown): HarnessState[] | undefined {
     if (!h || !name) return [];
     const knobs = Array.isArray(h.knobs) ? h.knobs.filter((k): k is string => typeof k === 'string' && /^\w{1,32}$/.test(k)) : [];
     const models = Array.isArray(h.models) ? h.models.filter((m): m is string => typeof m === 'string' && MODEL_NAME.test(m)).slice(0, 20) : undefined;
+    const efforts = readEfforts(h.efforts);
     const signedIn = typeof h.signedIn === 'boolean' ? h.signedIn : undefined;
     const linked = typeof h.linked === 'boolean' ? h.linked : undefined;
-    return [{ name, path: field(h.path), linked, attention: field(h.attention), answers: field(h.answers), version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs, ...(models?.length && { models }) }];
+    return [{ name, path: field(h.path), linked, attention: field(h.attention), answers: field(h.answers), version: field(h.version), signedIn, refusal: field(h.refusal), instructions: field(h.instructions), skills: field(h.skills), knobs, ...(models?.length && { models }), ...(efforts && { efforts }) }];
   });
 }
 

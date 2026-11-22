@@ -127,14 +127,14 @@ for await (const text of readline.createInterface({ input: process.stdin })) {
     continue;
   }
   if (message.method === 'initialize') send({ id: message.id, result: { userAgent: 'fake', codexHome: '/tmp', platformFamily: 'unix', platformOs: 'macos' } });
-  else if (message.method === 'model/list') send({ id: message.id, result: { data: [{ model: 'gpt-5.5-codex', hidden: false }, { model: 'gpt-5.5-mini', hidden: false }, { model: 'internal', hidden: true }], nextCursor: null } });
+  else if (message.method === 'model/list') send({ id: message.id, result: { data: [{ model: 'gpt-5.5-codex', hidden: false, isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }, { reasoningEffort: 'high' }, { reasoningEffort: 'xhigh' }] }, { model: 'gpt-5.5-mini', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }, { reasoningEffort: 'high' }] }, { model: 'internal', hidden: true }], nextCursor: null } });
   else if (message.method === 'thread/start' || message.method === 'thread/resume') {
     thread = message.params.threadId ?? thread;
     log({ method: message.method, args, params: message.params, cwd: process.cwd() });
     send({ id: message.id, result: { thread: { id: thread } } });
   } else if (message.method === 'turn/start') {
     const turn = 'turn-' + ++turns;
-    log({ method: message.method, input: message.params.input[0].text, schema: message.params.outputSchema, thread: message.params.threadId, pid: process.pid });
+    log({ method: message.method, input: message.params.input[0].text, schema: message.params.outputSchema, thread: message.params.threadId, effort: message.params.effort, pid: process.pid });
     // As Claude's fake does: a check turn changes nothing; with FAKE_CODEX_FILE a work turn leaves that file uncommitted, as Codex's sandbox leaves its work.
     const check = message.params.input[0].text.includes('Change and commit nothing in this turn');
     if (env('FAKE_CODEX_FILE') && !check) fs.writeFileSync(env('FAKE_CODEX_FILE'), 'done\\n');

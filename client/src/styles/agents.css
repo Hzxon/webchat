@@ -984,6 +984,16 @@
   padding: 8px 12px;
 }
 
+.model-picker-modes > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-picker-modes > div + div {
+  margin-top: 8px;
+}
+
 .model-picker-head {
   margin-bottom: 4px;
   padding: 8px 4px 10px;

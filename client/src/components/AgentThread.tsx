@@ -6,7 +6,7 @@ import { IconButton } from '@astryxdesign/core/IconButton';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { Text } from '@astryxdesign/core/Text';
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { LIMITS, takesControls, type PermissionMode, type RunRequest, type SessionEventDTO } from '../../../shared/types';
+import { LIMITS, takesControls, type RunRequest, type SessionEventDTO } from '../../../shared/types';
 import { blockedBy, THREAD_STATE, threadProject, WAKE, type Seat, type Thread } from '../agents';
 import { answerPermit, askClone, askFix, cancelRun, discardMessage, loadSteps, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatMessage } from '../e2ee/keyring';
@@ -18,7 +18,7 @@ import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
 import { QuestionCard } from './AgentAsks';
 import { RunAsk, RunPanel, RunStep } from './RunPanel';
-import { Controls, Summary } from './SessionControls';
+import { Controls, Summary, type Choice } from './SessionControls';
 import { SessionDetails } from './SessionDetails';
 import { SessionSteps } from './SessionSteps';
 
@@ -150,9 +150,9 @@ export function AgentThread({
   const decision =
     thread.state === 'waiting' ? thread.messages.findLast((m) => m.run?.kind === 'decision' && m.run.card) : undefined;
   const decided = decision && thread.added[decision.clientId ?? ''];
-  // The session's controls, for an agent that takes them: the model and mode the next reply carries (R-072).
+  // The session's controls, for an agent that takes them: the model, effort and mode the next reply carries (R-072).
   const controls = thread.kind === 'question' && !inForm && !!seat && takesControls(seat.protocol);
-  const [choice, setChoice] = useState<{ model?: string; mode?: PermissionMode }>({});
+  const [choice, setChoice] = useState<Choice>({});
   // Make a card: the session drafts one of the kind picked, into the board's new card form (R-071).
   const [kinds, setKinds] = useState(false);
   const makeCard = (cardKind: 'R' | 'K' | 'D') => {

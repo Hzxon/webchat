@@ -279,8 +279,8 @@ export function serveTests(w: World) {
         // The runs before loaded nothing of it, as nothing was chosen.
         const { harnesses, ...shown } = (await setup(w.alice, direct))[0]!;
         assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false, linked: ['Claude Code', 'Codex'], noPlan: true }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
-        const claudeCode = { name: 'Claude Code', path: path.join(bin, 'claude'), linked: true, attention: undefined, version: '2.1.300', signedIn: true, answers: undefined, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution', 'noPlan', 'own'], models: ['opus', 'sonnet', 'haiku'] };
-        const codexState = { name: 'Codex', path: path.join(bin, 'codex'), linked: true, attention: undefined, version: '0.58.0', signedIn: true, answers: undefined, refusal: undefined, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: ['own'], models: ['gpt-5.5-codex', 'gpt-5.5-mini'] };
+        const claudeCode = { name: 'Claude Code', path: path.join(bin, 'claude'), linked: true, attention: undefined, version: '2.1.300', signedIn: true, answers: undefined, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['claudeMd', 'skills', 'noAttribution', 'noPlan', 'own'], models: ['opus', 'sonnet', 'haiku'], efforts: { '': ['low', 'medium', 'high', 'xhigh', 'max'], opus: ['low', 'medium', 'high', 'xhigh', 'max'], sonnet: ['low', 'medium', 'high', 'xhigh', 'max'], haiku: ['low', 'medium', 'high', 'xhigh', 'max'] } };
+        const codexState = { name: 'Codex', path: path.join(bin, 'codex'), linked: true, attention: undefined, version: '0.58.0', signedIn: true, answers: undefined, refusal: undefined, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: ['own'], models: ['gpt-5.5-codex', 'gpt-5.5-mini'], efforts: { 'gpt-5.5-codex': ['low', 'medium', 'high', 'xhigh'], 'gpt-5.5-mini': ['low', 'medium', 'high'], '': ['low', 'medium', 'high', 'xhigh'] } };
         assert.deepEqual(harnesses, [claudeCode, codexState], 'the pane learns each harness the laptop has, the knobs it honors');
         // Turned off, Claude Code leaves the linked harnesses, and only Codex is left; a page from before the list keeps it off.
         const [{ harnesses: offHarnesses }] = await setup(w.alice, direct, { claudeMd: false, skills: [], noAttribution: false, off: ['Claude Code'] });
@@ -549,15 +549,15 @@ export function serveTests(w: World) {
         assert.ok((await lastTurn()).input.includes('Edited again.'), 'the reply carries the edited fields');
         await w.alice.sync();
 
-        // The session's controls (R-072): a model the harness offers, and a permission mode only in her own setup.
+        // The session's controls (R-072): a model and an effort the harness offers, and a permission mode only in her own setup.
         await w.instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
-        const controlled = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Sure."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, own: true, model: 'sonnet', mode: 'plan' }, 'Plan it.'));
+        const controlled = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Sure."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, own: true, model: 'sonnet', effort: 'xhigh', mode: 'plan' }, 'Plan it.'));
         const flagOf = (args: string[], name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
         let args = (await lastTurn()).args;
-        assert.deepEqual([flagOf(args, '--model'), flagOf(args, '--permission-mode')], ['sonnet', 'plan'], 'her own setup takes the model and the mode');
-        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Sure."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, model: 'gpt-9', mode: 'default' }, 'Plan it.'));
+        assert.deepEqual([flagOf(args, '--model'), flagOf(args, '--effort'), flagOf(args, '--permission-mode')], ['sonnet', 'xhigh', 'plan'], 'her own setup takes the model, the effort and the mode');
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Sure."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, model: 'gpt-9', effort: 'turbo', mode: 'default' }, 'Plan it.'));
         args = (await lastTurn()).args;
-        assert.deepEqual([flagOf(args, '--model'), flagOf(args, '--permission-mode')], [undefined, 'acceptEdits'], 'a restricted run keeps its mode, and a model the harness does not offer is dropped');
+        assert.deepEqual([flagOf(args, '--model'), flagOf(args, '--effort'), flagOf(args, '--permission-mode')], [undefined, undefined, 'acceptEdits'], 'a restricted run keeps its mode, and a model or effort the harness does not offer is dropped');
         // Hand over (D-156): the harness that ran it writes a summary, which she reads and edits; the other starts from it, in the same thread.
         await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Goal: plan sums. Done: read sum.js. Next: fix."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'reply', to: controlled, sentAt: Date.now(), handover: { harness: 'Codex' } }, 'Hand over to Codex'));
         assert.ok((await lastTurn()).input.includes('hands this session over to Codex'), 'the old harness is asked for the summary');

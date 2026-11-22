@@ -43,8 +43,9 @@ export interface Conversation {
   own?: true;
   /** Its owner's page shows the session's steps, so the turns send them (R-072). */
   events?: true;
-  /** The model and permission mode its owner's controls picked last (R-072). */
+  /** The model, effort and permission mode its owner's controls picked last (R-072). */
   model?: string;
+  effort?: string;
   mode?: PermissionMode;
   /** It goes on with a session a terminal started, by that session's id (R-072). */
   resumed?: true;
@@ -120,7 +121,7 @@ export class Conversations {
     const conversation =
       prompt.kind === 'prompt'
         ? message.clientId
-          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, harness: prompt.harness, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project, asks: prompt.asks, ...(prompt.own && { own: prompt.own }), ...(prompt.events && { events: prompt.events }), ...(prompt.model && { model: prompt.model }), ...(prompt.mode && { mode: prompt.mode }), ...(prompt.resume && { session: prompt.resume, answered: true, resumed: true as const, ownSetup: true }) }
+          ? { root: message.clientId, chat: message.conversationId, repo: prompt.repo, harness: prompt.harness, session: randomUUID(), answered: false, prompt: text, last: Date.now(), project: prompt.project, asks: prompt.asks, ...(prompt.own && { own: prompt.own }), ...(prompt.events && { events: prompt.events }), ...(prompt.model && { model: prompt.model }), ...(prompt.effort && { effort: prompt.effort }), ...(prompt.mode && { mode: prompt.mode }), ...(prompt.resume && { session: prompt.resume, answered: true, resumed: true as const, ownSetup: true }) }
           : undefined
         : this.list.find((c) => c.root === prompt.to && c.chat === message.conversationId);
     // A copy the server posted again under a new id does nothing (K-47).
@@ -149,6 +150,7 @@ export class Conversations {
     if (prompt.kind === 'prompt') this.list.push(conversation);
     // A reply's controls hold for the turns after it (R-072).
     if (prompt.model) conversation.model = prompt.model;
+    if (prompt.effort) conversation.effort = prompt.effort;
     if (prompt.mode) conversation.mode = prompt.mode;
     const handover = prompt.kind === 'reply' ? prompt.handover : undefined;
     // The summary as its owner saw and edited it starts the other harness's own session, in the same

@@ -95,6 +95,8 @@ export interface HarnessState {
   knobs: string[];
   /** The models a session can pick for it, by the names its command line takes (R-072). */
   models?: string[];
+  /** The effort levels a session can pick, by model, with `''` for the harness's default model, by the names the harness takes. */
+  efforts?: Record<string, string[]>;
 }
 
 export type HarnessRow = 'linked' | 'attention' | 'found' | 'missing';

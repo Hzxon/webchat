@@ -123,13 +123,16 @@ test("lists Codex's models, runs the one picked, and runs the owner's own setup 
   try {
     await harness.found();
     assert.deepEqual(harness.offers().models, ['gpt-5.5-codex', 'gpt-5.5-mini'], 'a hidden model stays out');
+    assert.deepEqual(harness.offers().efforts, { 'gpt-5.5-codex': ['low', 'medium', 'high', 'xhigh'], 'gpt-5.5-mini': ['low', 'medium', 'high'], '': ['low', 'medium', 'high', 'xhigh'] }, 'each model with its own efforts, and the default model as the one with none picked');
     assert.ok(harness.offers().knobs.includes('own'));
     const schema = { type: 'object', properties: { reply: { type: 'string' } }, required: ['reply'] };
     const turn = (session: string, extra: Partial<Turn>) => harness.turn({ cwd: dir, session, resume: false, message: 'Hi', schema, setup: {}, signal: new AbortController().signal, ...extra });
-    await turn('s-restricted', { model: 'gpt-5.5-mini' });
+    await turn('s-restricted', { model: 'gpt-5.5-mini', effort: 'high' });
     await turn('s-own', { own: true, model: 'gpt-5.5-codex' });
     await turn('s-plan', { own: true, mode: 'plan' });
-    const [restricted, own, plan] = (await fs.readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string; args?: string[]; params?: Record<string, unknown> }).filter((e) => e.method === 'thread/start');
+    const logged = (await fs.readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string; args?: string[]; params?: Record<string, unknown>; effort?: string });
+    const [restricted, own, plan] = logged.filter((e) => e.method === 'thread/start');
+    assert.deepEqual(logged.filter((e) => e.method === 'turn/start').map((e) => e.effort), ['high', undefined, undefined], 'the effort goes with the turn');
     assert.equal(restricted!.params!.model, 'gpt-5.5-mini');
     assert.equal(restricted!.params!.sandbox, 'workspace-write');
     assert.ok(restricted!.args!.includes('features.hooks=false'));

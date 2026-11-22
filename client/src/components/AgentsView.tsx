@@ -32,7 +32,7 @@ import { AgentAsks } from './AgentAsks';
 import { AgentSetup } from './AgentSetup';
 import { AgentThread, Box, LaptopIcon, ShieldIcon, BranchIcon } from './AgentThread';
 import { TerminalSessions } from './TerminalSessions';
-import { ModelButton, useHarnessPick } from './HarnessPicker';
+import { effortsOf, ModelButton, useHarnessPick } from './HarnessPicker';
 
 /** Where the agent stands on a folder it has, as Add folder lists it (R-038). */
 function folderState(seat: Seat | undefined): [string, boolean?] {
@@ -670,6 +670,7 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
   const agent = folder?.agent ?? (outside ? agents[0] : project && agentIn(project.id));
   const { list, harness, pick, own: owns } = useHarnessPick(agent, true);
   const [model, setModel] = useState<string>();
+  const [effort, setEffort] = useState<string>();
   const [mode, setMode] = useState<PermissionMode>('default');
   // A typed question runs in the user's own setup when Agent settings turn it on for its harness (D-157); this switches one chat back.
   const [restricted, setRestricted] = useState(false);
@@ -692,6 +693,7 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
         await askAgent(agent!.id, project?.id, repo || undefined, text, {
           harness,
           ...(model && { model }),
+          ...(effort && { effort }),
           ...(own ? { own: true, mode } : {}),
         }),
       );
@@ -706,9 +708,13 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
       list={list}
       value={{ harness, model }}
       own={own}
+      effort={effort}
       mode={mode}
+      onEffort={setEffort}
       onMode={setMode}
       onPick={(p) => {
+        // Another model may not take it.
+        if (effort && !effortsOf(list, p).includes(effort)) setEffort(undefined);
         pick(p.harness);
         setModel(p.model);
       }}
