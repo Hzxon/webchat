@@ -666,8 +666,8 @@
 /* The pill box's round button, in the text color. */
 .agents-send {
   flex: none;
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
   display: inline-grid;
   place-items: center;
   border: 0;
@@ -696,10 +696,10 @@
 .composer-row.agents-pill {
   align-items: center;
   gap: 10px;
-  min-height: 56px;
-  padding: 7px 7px 7px 16px;
+  min-height: 46px;
+  padding: 5px 5px 5px 16px;
   border: 1px solid var(--line);
-  border-radius: 28px;
+  border-radius: 23px;
   background: var(--panel);
 }
 
@@ -710,11 +710,12 @@
 .composer-row.agents-pill textarea,
 .composer-row.agents-pill textarea:focus {
   min-width: 0;
-  padding: 8px 0;
+  min-height: 32px;
+  padding: 5px 0;
   border: 0;
   background: transparent;
   font-size: 16px;
-  line-height: 24px;
+  line-height: 22px;
 }
 
 .agents-chip-row {
@@ -747,15 +748,20 @@
   gap: 4px 12px;
   padding: 0 6px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .agents-where > span {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
-  min-height: 32px;
+  min-height: 28px;
+}
+
+.agents-where svg {
+  width: 14px;
+  height: 14px;
 }
 
 .agents-where > .is-own,
@@ -764,6 +770,7 @@
 }
 
 .agents-where select {
+  appearance: none;
   field-sizing: content;
   max-width: 180px;
   padding: 2px 0;
