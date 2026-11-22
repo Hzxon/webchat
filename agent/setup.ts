@@ -6,12 +6,13 @@
 // agent, it prints the fix.
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync } from 'node:fs';
+import { existsSync, openSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
+import tty from 'node:tty';
 import { promisify } from 'node:util';
 import pkg from '../package.json' with { type: 'json' };
 import { HARNESS_ROW_WORDS, HARNESS_WARNING, harnessRow, type ConfigDTO, type HarnessState, type PairingPick, type SetupChoice } from '../shared/types.ts';
@@ -432,12 +433,18 @@ async function waitForTools() {
  * Asks on the terminal, not on stdin: the line runs under `curl … | sh`, where stdin is the script.
  * Returns the line typed.
  */
-async function askLine(question: string) {
-  const input = createReadStream('/dev/tty');
-  await new Promise((resolve, reject) => input.once('open', resolve).once('error', reject)).catch(() => {
+export async function askLine(question: string) {
+  let fd: number;
+  try {
+    fd = openSync('/dev/tty', 'r');
+  } catch {
     throw new Error('Setup asks a question, so run it in a terminal.');
-  });
-  const lines = readline.createInterface({ input, output: process.stdout });
+  }
+  // A file stream reads the terminal on a worker thread, and closing it leaves that read waiting, so
+  // it took the next line typed and the next question never got it. A tty stream leaves none behind.
+  const input = new tty.ReadStream(fd);
+  // Not a terminal interface: the terminal keeps echoing and Ctrl+C still stops setup.
+  const lines = readline.createInterface({ input, output: process.stdout, terminal: false });
   const answer = await lines.question(question);
   lines.close();
   input.destroy();
