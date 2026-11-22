@@ -161,7 +161,14 @@ export class Plugin {
 
   /** Serves while it holds the watch, waits while it cannot, and waits again after the agent goes to sleep. */
   async serve() {
-    while (await this.start()) await this.loop();
+    try {
+      while (await this.start()) await this.loop();
+    } catch (error) {
+      // A removed account is refused on every try. A service that exits on it restarts every 10
+      // seconds, and its failed sign-ins use up the address's limit, which the next pairing needs.
+      if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      this.problem = 'WebChat refused this agent’s sign-in: it was removed, or paired again. Run `webchat-agent setup` with a new code.';
+    }
   }
 
   /**
@@ -401,8 +408,11 @@ export class Plugin {
       if (this.busy().length) this.lastWork = Date.now();
       return checkInEvery(Date.now() - this.lastWork);
     };
-    for await (const message of this.client!.watch(this.stop.signal, every)) this.handle(message);
-    timers.forEach(clearInterval);
+    try {
+      for await (const message of this.client!.watch(this.stop.signal, every)) this.handle(message);
+    } finally {
+      timers.forEach(clearInterval);
+    }
   }
 
   /**
