@@ -11,8 +11,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import pkg from '../package.json' with { type: 'json' };
+import type { SessionAboutDTO } from '../shared/types.ts';
 import { fits } from './answer.ts';
-import type { Ask, Harness, Turn } from './harness.ts';
+import { cutStep, planLine, shownPath, type Ask, type Harness, type Turn } from './harness.ts';
 import { Peer } from './rpc.ts';
 import { shellPaths } from './rulebook.ts';
 import { hold, IDLE_MS, keep, Quiet, watchdog } from './runner.ts';
@@ -79,6 +80,25 @@ async function listModels(program: string, servers: string[]) {
     clearTimeout(timer);
     child.kill();
   }
+}
+
+/**
+ * What a session runs with, as its server lists it, for the session's details (R-072). A list an
+ * older Codex does not answer is left out. A restricted run turns hooks and MCP servers off.
+ */
+async function codexAbout(peer: Peer, threadId: string, cwd: string, own: boolean): Promise<SessionAboutDTO> {
+  const ask = <T>(method: string, params: object) => peer.request<T>(method, params).catch(() => undefined);
+  const [skills, hooks, mcp] = await Promise.all([
+    ask<{ data: { skills: { enabled: boolean }[] }[] }>('skills/list', { cwds: [cwd] }),
+    own ? ask<{ data: { hooks: { enabled: boolean }[] }[] }>('hooks/list', { threadId }) : { data: [] },
+    ask<{ data: { name: string; runtimeStatus: string | null }[] }>('mcpServerStatus/list', { threadId, detail: 'toolsAndAuthOnly' }),
+  ]);
+  const enabled = (lists?: { enabled: boolean }[][]) => lists && lists.flat().filter((x) => x.enabled).length;
+  return {
+    ...(skills && { skills: enabled(skills.data.map((e) => e.skills)) }),
+    ...(hooks && { hooks: enabled(hooks.data.map((e) => e.hooks)) }),
+    ...(mcp && { mcp: mcp.data.filter((s) => s.runtimeStatus !== 'disabled').map((s) => s.name) }),
+  };
 }
 
 /** The parts of turn/completed a turn reads. */
@@ -149,8 +169,9 @@ export function codexHarness(program: string, dataDir: string): Harness {
         ...(t.own ? t.mode === 'plan' && { sandbox: 'read-only' } : { approvalPolicy: t.ask ? 'on-request' : 'never', sandbox: 'workspace-write' }),
       };
       const stored = t.resume ? threads[t.session] : undefined;
-      const opened = await live.peer.request<{ thread: { id: string } }>(stored ? 'thread/resume' : 'thread/start', stored ? { threadId: stored, ...settings } : settings);
+      const opened = await live.peer.request<{ thread: { id: string }; model?: string }>(stored ? 'thread/resume' : 'thread/start', stored ? { threadId: stored, ...settings } : settings);
       live.thread = opened.thread.id;
+      if (t.about) t.about({ ...(opened.model && { model: opened.model }), ...(await codexAbout(live.peer, live.thread, t.cwd, !!t.own)) });
       if (threads[t.session] !== live.thread) {
         threads[t.session] = live.thread;
         // At once, so two sessions that start together cannot interleave their writes.
@@ -213,8 +234,12 @@ export function codexHarness(program: string, dataDir: string): Harness {
         cwd: t.cwd,
         ask: t.ask,
         fail: finish,
-        note(method, params: Completed & { item?: { type?: string; text?: string; phase?: string } }) {
+        note(method, params: Completed & { item?: { type?: string; text?: string; phase?: string; changes?: { path: string; diff?: string }[] }; plan?: { step: string; status: string }[]; tokenUsage?: { last?: { inputTokens?: number } } }) {
           dog.arm();
+          const at = Date.now();
+          if (method === 'turn/plan/updated' && params.plan) t.events?.(cutStep({ kind: 'plan', title: 'Plan', detail: params.plan.map((s) => planLine(s.status, s.step)).join('\n'), at }));
+          if (method === 'item/completed' && params.item?.type === 'fileChange') for (const change of params.item.changes ?? []) t.events?.(cutStep({ kind: 'edit', title: shownPath(t.cwd, change.path), detail: change.diff, at }));
+          if (method === 'thread/tokenUsage/updated' && params.tokenUsage?.last?.inputTokens) t.about?.({ context: params.tokenUsage.last.inputTokens });
           // The last message of the turn is its answer, the final one if Codex marks it.
           if (method === 'item/completed' && params.item?.type === 'agentMessage' && (params.item.phase === 'final_answer' || !text)) text = params.item.text ?? '';
           if (method !== 'turn/completed') return;

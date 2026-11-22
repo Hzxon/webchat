@@ -9,10 +9,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import pkg from '../package.json' with { type: 'json' };
-import { HARNESS_WARNING } from '../shared/types.ts';
+import { HARNESS_WARNING, type SessionAboutDTO, type SessionEventDTO } from '../shared/types.ts';
 import type { AcpAgent } from './acp-agents.ts';
 import { listenForAnswers } from './answer.ts';
-import { isCredential, olderThan, secretDirs, type Harness, type Turn } from './harness.ts';
+import { cutStep, isCredential, olderThan, planLine, secretDirs, shownPath, type Harness, type Turn } from './harness.ts';
 import { Peer, RpcError } from './rpc.ts';
 import { IDLE_MS, Quiet, watchdog } from './runner.ts';
 import { judge, type Action } from './rulebook.ts';
@@ -63,6 +63,43 @@ function actionOf(call: ToolCall, cwd: string): Action {
   return { tool: call.name ?? call.title, kind: call.kind ?? 'other', paths: paths.map((p) => path.resolve(cwd, p)) };
 }
 
+type ConfigOption = { category?: string; currentValue?: unknown };
+type Update = {
+  sessionUpdate?: string;
+  kind?: Action['kind'];
+  status?: string;
+  locations?: { path: string }[];
+  /** A message chunk's one block, or a tool call's list, in which a diff names a file it changed. */
+  content?: { text?: string } | { type?: string; path?: string; oldText?: string | null; newText?: string }[];
+  entries?: { content?: string; status?: string }[];
+  used?: number;
+  configOptions?: ConfigOption[];
+  availableCommands?: { name?: string }[];
+};
+
+/** The model a session's config options pick, which ACP gives as the option of the `model` category. */
+const modelOf = (options?: ConfigOption[]) => {
+  const value = options?.find((o) => o.category === 'model')?.currentValue;
+  return typeof value === 'string' ? value : undefined;
+};
+
+/** What an update says the session runs with (R-072): its model, the context it fills and its slash commands. */
+export function acpAbout(update: Update): SessionAboutDTO | undefined {
+  if (update.sessionUpdate === 'usage_update' && Number.isInteger(update.used)) return { context: update.used! };
+  const model = update.sessionUpdate === 'config_option_update' ? modelOf(update.configOptions) : undefined;
+  if (model) return { model };
+  if (update.sessionUpdate === 'available_commands_update' && Array.isArray(update.availableCommands)) return { commands: update.availableCommands.map((c) => c.name).filter((n): n is string => typeof n === 'string') };
+}
+
+/** The steps the session's details show from an update: the plan, and each file a finished tool call changed (R-072). */
+export function acpSteps(update: Update, cwd: string): SessionEventDTO[] {
+  const at = Date.now();
+  if (update.sessionUpdate === 'plan' && Array.isArray(update.entries)) return [cutStep({ kind: 'plan', title: 'Plan', detail: update.entries.map((e) => planLine(e.status, e.content ?? '')).join('\n'), at })];
+  // A tool call's content is a list; only its diffs name a file it changed, once the call has finished.
+  if ((update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') || update.status !== 'completed' || !Array.isArray(update.content)) return [];
+  return update.content.filter((c) => c.type === 'diff' && c.path).map((c) => cutStep({ kind: 'edit', title: shownPath(cwd, c.path!), detail: `${c.oldText ? `- ${c.oldText}\n` : ''}+ ${c.newText ?? ''}`, at }));
+}
+
 /** How progress reads for each kind of tool call: a sentence of ours, never the agent's own words. */
 const WORDS: Partial<Record<Action['kind'], string>> = { read: 'Reading', edit: 'Editing', delete: 'Deleting', move: 'Moving', search: 'Searching', fetch: 'Reading the web', execute: 'Running a command' };
 
@@ -81,7 +118,9 @@ interface Live {
   timer?: NodeJS.Timeout;
   /** Marks that the agent said something, for the idle watch of the turn. */
   touch?: () => void;
-  turn?: { progress?: (sentence: string) => void; ask?: Turn['ask']; cwd: string; done: boolean; last: string; denied?: string; fail?: (error: Error) => void };
+  turn?: { progress?: (sentence: string) => void; events?: Turn['events']; about?: Turn['about']; ask?: Turn['ask']; cwd: string; done: boolean; last: string; denied?: string; fail?: (error: Error) => void };
+  /** What the session runs with, as the agent said it, which can come between turns, given to each turn. */
+  about: SessionAboutDTO;
 }
 
 export interface AcpOptions {
@@ -153,12 +192,19 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
     return Promise.reject(new Error(`${method} is not offered.`));
   }
 
-  function onNote(live: Live, method: string, params: { update?: { sessionUpdate?: string; kind?: Action['kind']; locations?: { path: string }[]; content?: { type?: string; text?: string } } }) {
+  function onNote(live: Live, method: string, params: { update?: Update }) {
     const { turn } = live;
     const update = params.update;
+    if (method !== 'session/update' || !update) return;
+    const more = acpAbout(update);
+    if (more) {
+      live.about = { ...live.about, ...more };
+      turn?.about?.(more);
+    }
     // What an agent replays on `session/load` comes between turns, and is dropped here.
-    if (method !== 'session/update' || !turn || !update) return;
-    if (update.sessionUpdate === 'agent_message_chunk') turn.last = (turn.last + (update.content?.text ?? '')).slice(-2000);
+    if (!turn) return;
+    if (turn.events) for (const step of acpSteps(update, turn.cwd)) turn.events(step);
+    if (update.sessionUpdate === 'agent_message_chunk') turn.last = (turn.last + ((!Array.isArray(update.content) && update.content?.text) || '')).slice(-2000);
     const word = update.kind && WORDS[update.kind];
     if (update.sessionUpdate === 'tool_call' && word && !turn.done) {
       // Hermes reports the path its tool was given, which may be relative to the working folder.
@@ -191,7 +237,7 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
     gone.catch(() => undefined);
     const peer = new Peer({ input: child.stdout, output: child.stdin, handle: (method, params) => onRequest(live, method, params), notified: (method, params) => onNote(live, method, params) });
     exited.then((why) => peer.fail(new Error(why)));
-    const live: Live = { child, peer, listener, exited, gone, acp: '', cwd: t.cwd };
+    const live: Live = { child, peer, listener, exited, gone, acp: '', cwd: t.cwd, about: {} };
     child.stdout.on('data', () => live.touch?.());
     const start = new Promise<never>((_, reject) => setTimeout(reject, time.start, new Error(`${name} did not start in ACP mode. Check that "${path.basename(program)} ${agent.args.join(' ')}" runs on its own.`)).unref());
     start.catch(() => undefined);
@@ -222,7 +268,7 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
       method = can.sessionCapabilities?.resume ? 'session/resume' : 'session/load';
       params = { sessionId: stored, cwd: live.cwd, mcpServers };
     }
-    let result: { sessionId?: string } | undefined;
+    let result: { sessionId?: string; configOptions?: ConfigOption[] } | undefined;
     try {
       result = await live.peer.request(method, params);
     } catch (error) {
@@ -234,6 +280,8 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
       result = await live.peer.request(method, params);
     }
     live.acp = result?.sessionId ?? stored;
+    const model = modelOf(result?.configOptions);
+    if (model) live.about = { ...live.about, model };
     if (!resume) writeFileSync(file, JSON.stringify({ ...sessions(), [session]: live.acp }));
   }
 
@@ -319,7 +367,8 @@ export function acpHarness({ agent, program, self, dataDir, timing }: AcpOptions
       }
       if (live) clearTimeout(live.timer);
       else lives.set(t.session, (live = await open(t)));
-      const turn = (live.turn = { progress: t.progress, ask: t.ask, cwd: t.cwd, done: false, last: '' });
+      const turn = (live.turn = { progress: t.progress, events: t.events, about: t.about, ask: t.ask, cwd: t.cwd, done: false, last: '' });
+      t.about?.(live.about);
       try {
         return await converse(live, t, turn);
       } catch (error) {

@@ -3,7 +3,7 @@
 // it offers; plugin.ts calls only this and never names a harness.
 import os from 'node:os';
 import path from 'node:path';
-import type { PermissionMode, SessionAboutDTO, SessionEventDTO, SetupChoice, TerminalSessionDTO } from '../shared/types.ts';
+import { LIMITS, type PermissionMode, type SessionAboutDTO, type SessionEventDTO, type SetupChoice, type TerminalSessionDTO } from '../shared/types.ts';
 import type { Lab } from './browser.ts';
 import type { Quiet } from './runner.ts';
 import type { Action } from './rulebook.ts';
@@ -16,6 +16,20 @@ export interface Ask extends Action {
 
 /** The answer to an `Ask`. A refusal's message is a fixed sentence, which the model reads. */
 export type Reply = { allow: true } | { allow: false; message: string };
+
+// What every adapter's steps share, so the session's details read the same for each harness (R-072).
+
+/** A file as the folder knows it: one outside the folder shows as given, not as a climb out of it. */
+export function shownPath(cwd: string, file: string) {
+  const relative = path.relative(cwd, path.resolve(cwd, file));
+  return relative.startsWith('..') ? file : relative;
+}
+
+/** A plan step as a `[x] Step` line, from the status words each harness uses. */
+export const planLine = (status: unknown, step: string) => `${status === 'completed' ? '[x]' : status === 'in_progress' || status === 'inProgress' ? '[~]' : '[ ]'} ${step}`;
+
+/** A step cut to `LIMITS`, its detail kept at its end, where a command's output ends. */
+export const cutStep = (s: SessionEventDTO): SessionEventDTO => ({ ...s, title: s.title.slice(0, LIMITS.eventTitleLength), ...(s.detail && { detail: s.detail.slice(-LIMITS.eventDetailLength) }) });
 
 /** One turn: `message` goes on stdin, never in arguments, which `ps` shows. */
 export interface Turn {

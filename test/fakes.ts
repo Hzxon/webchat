@@ -131,8 +131,11 @@ for await (const text of readline.createInterface({ input: process.stdin })) {
   else if (message.method === 'thread/start' || message.method === 'thread/resume') {
     thread = message.params.threadId ?? thread;
     log({ method: message.method, args, params: message.params, cwd: process.cwd() });
-    send({ id: message.id, result: { thread: { id: thread } } });
-  } else if (message.method === 'turn/start') {
+    send({ id: message.id, result: { thread: { id: thread }, model: message.params.model ?? 'gpt-5.5-codex' } });
+  } else if (message.method === 'skills/list') send({ id: message.id, result: { data: [{ cwd: process.cwd(), skills: [{ name: 'a', enabled: true }, { name: 'b', enabled: false }], errors: [] }] } });
+  else if (message.method === 'hooks/list') send({ id: message.id, result: { data: [{ cwd: process.cwd(), hooks: [{ key: 'h', enabled: true }], warnings: [], errors: [] }] } });
+  else if (message.method === 'mcpServerStatus/list') send({ id: message.id, result: { data: [{ name: 'github', runtimeStatus: message.params.threadId && args.includes('mcp_servers.github.enabled=false') ? 'disabled' : 'connected' }], nextCursor: null } });
+  else if (message.method === 'turn/start') {
     const turn = 'turn-' + ++turns;
     log({ method: message.method, input: message.params.input[0].text, schema: message.params.outputSchema, thread: message.params.threadId, effort: message.params.effort, pid: process.pid });
     // As Claude's fake does: a check turn changes nothing; with FAKE_CODEX_FILE a work turn leaves that file uncommitted, as Codex's sandbox leaves its work.
@@ -144,8 +147,12 @@ for await (const text of readline.createInterface({ input: process.stdin })) {
     // them in one read: the client must not drop an end that comes before it knows the turn's id.
     if (!env('FAKE_CODEX_ASK')) {
       const answer = { method: 'item/completed', params: { threadId: thread, turnId: turn, item: { type: 'agentMessage', id: 'm1', phase: 'final_answer', text: said } } };
+      // What the session's details read: its plan, a file it changed and the context it sent.
+      const plan = { method: 'turn/plan/updated', params: { threadId: thread, turnId: turn, explanation: null, plan: [{ step: 'Read', status: 'completed' }, { step: 'Fix', status: 'inProgress' }, { step: 'Test', status: 'pending' }] } };
+      const edit = { method: 'item/completed', params: { threadId: thread, turnId: turn, item: { type: 'fileChange', id: 'f1', changes: [{ path: process.cwd() + '/sum.js', kind: { type: 'update' }, diff: '+ fixed' }], status: 'completed' } } };
+      const usage = { method: 'thread/tokenUsage/updated', params: { threadId: thread, turnId: turn, tokenUsage: { last: { inputTokens: 12000 }, total: {}, modelContextWindow: null } } };
       const end = { method: 'turn/completed', params: { threadId: thread, turn: { id: turn, status: env('FAKE_CODEX_FAIL') ? 'failed' : 'completed', ...(env('FAKE_CODEX_FAIL') && { error: { message: env('FAKE_CODEX_FAIL') } }) } } };
-      process.stdout.write([started, answer, end].map((m) => JSON.stringify(m)).join('\\n') + '\\n');
+      process.stdout.write([started, plan, edit, usage, answer, end].map((m) => JSON.stringify(m)).join('\\n') + '\\n');
       continue;
     }
     send(started);
@@ -159,6 +166,6 @@ for await (const text of readline.createInterface({ input: process.stdin })) {
     send({ method: 'item/completed', params: { threadId: thread, turnId: turn, item: { type: 'agentMessage', id: 'm1', phase: 'final_answer', text: said } } });
     send({ method: 'turn/completed', params: { threadId: thread, turn: { id: turn, status: env('FAKE_CODEX_FAIL') ? 'failed' : 'completed', ...(env('FAKE_CODEX_FAIL') && { error: { message: env('FAKE_CODEX_FAIL') } }) } } });
     })();
-  }
+  } else if (message.id !== undefined) send({ id: message.id, error: { code: -32601, message: 'Method not found' } });
 }
 `;
