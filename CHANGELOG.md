@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.1](https://github.com/Hzxon/webchat/compare/v0.15.0...v0.15.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **agent:** Say why doctor finds a service stopped ([#303](https://github.com/Hzxon/webchat/issues/303)) ([3740a33](https://github.com/Hzxon/webchat/commit/3740a338357b8ffc06b7b8edf5551da972b94dcd))
+* **agent:** Stop a refused keyholder restarting ([#301](https://github.com/Hzxon/webchat/issues/301)) ([9fe6642](https://github.com/Hzxon/webchat/commit/9fe6642e72300b0c4c8f3004747a6b9444145951))
+
 ## [0.15.0](https://github.com/Hzxon/webchat/compare/v0.14.1...v0.15.0) (2026-11-22)
 
 
