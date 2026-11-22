@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/Hzxon/webchat/compare/v0.18.0...v0.19.0) (2026-11-22)
+
+
+### Features
+
+* **agents:** Fill details for every harness ([#317](https://github.com/Hzxon/webchat/issues/317)) ([760f0ee](https://github.com/Hzxon/webchat/commit/760f0ee3228427ce04271fcc46fefab4ba71a937))
+
 ## [0.18.0](https://github.com/Hzxon/webchat/compare/v0.17.0...v0.18.0) (2026-11-22)
 
 
