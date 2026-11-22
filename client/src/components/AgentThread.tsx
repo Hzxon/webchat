@@ -462,7 +462,20 @@ export function AgentThread({
             )}
             <Box
               name={`agents:${thread.root}`}
-              placeholder={request ? 'Ask for changes to the draft' : 'Reply'}
+              placeholder={
+                panel
+                  ? request
+                    ? 'Ask for changes to the draft'
+                    : 'Reply'
+                  : // In the window, the box says what a reply does now, as the design words it.
+                    asking
+                    ? 'Answer your agent'
+                    : working
+                      ? 'Tell your agent something'
+                      : request
+                        ? 'Ask for a change'
+                        : 'Ask a follow-up'
+              }
               canSend={!blocked && !working && !asking}
               // While a review waits, a reply is the go for it too, unless the owner said Not now.
               onSend={(text) =>
