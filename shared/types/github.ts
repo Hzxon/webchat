@@ -34,6 +34,8 @@ export interface PullRequestDTO {
   reviewers?: string[];
   /** GitHub logins of the people assigned. Absent in lists stored before WebChat read it. */
   assignees?: string[];
+  /** GitHub logins of the people whose newest review approves it. Absent in lists stored before WebChat read it. */
+  approvedBy?: string[];
   /** The branch it merges from. Absent in lists stored before WebChat read it. */
   branch?: string;
   /** When it was merged, or null while it is not. Absent in lists stored before WebChat read it. */

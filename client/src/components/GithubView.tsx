@@ -21,18 +21,15 @@ import { runnerOf } from '../board';
 import { boardCards } from '../docs';
 import { connectGithub, disconnectGithub, refreshGithub, setGithubNotify } from '../github';
 import { actions, useAppState } from '../store';
-import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
 import { formatAgo } from './format';
 import {
   BackIcon,
   BellIcon,
-  BoardIcon,
   CloseIcon,
   CommentIcon,
   GithubIcon,
   LockIcon,
-  MoreIcon,
   PlusIcon,
   PullRequestIcon,
   RefreshIcon,
@@ -111,6 +108,8 @@ const BackButton = () => (
 
 type LaneKey = 'draft' | 'review' | 'approved' | 'merged';
 type Lane = (typeof LANES)[number];
+/** The Merged lane shows the newest few; Show all opens them in the List view. */
+const MERGED_CARDS = 3;
 type Sort = 'newest' | 'oldest' | 'owner' | 'id';
 type Show = 'all' | 'mine' | 'waiting';
 
@@ -154,12 +153,19 @@ function shortAgo(ts: number) {
   return days < 7 ? `${days} d` : `${Math.floor(days / 7)} w`;
 }
 
-/** A GitHub login has no WebChat account behind it, so its colour comes from its letters. */
-const Face = ({ login }: { login: string | null }) => (
-  <span className="pulls-face" role="img" aria-label={login ?? 'Unknown'} title={login ?? 'Unknown'}>
-    <Avatar name={login ?? '?'} seed={[...(login ?? '')].reduce((sum, c) => sum + c.charCodeAt(0), 0)} size={22} />
-  </span>
-);
+/**
+ * A GitHub login has no WebChat account behind it. The user's own face takes the accent tint, as
+ * in the design; anyone else's takes one of the other three, from its letters.
+ */
+function Face({ login, label = login ?? 'Unknown' }: { login: string | null; label?: string }) {
+  const me = useAppState((s) => s.github?.account?.login.toLowerCase());
+  const tint = login?.toLowerCase() === me ? 0 : 1 + ([...(login ?? '')].reduce((sum, c) => sum + c.charCodeAt(0), 0) % 3);
+  return (
+    <span className={`pulls-face tint-${tint}`} role="img" aria-label={label} title={label}>
+      {(login ?? '?').slice(0, 2).toUpperCase()}
+    </span>
+  );
+}
 
 /**
  * The board cards the pull requests belong to, found once each time the boards change: a card whose
@@ -221,11 +227,13 @@ function Pulls({ github, account }: { github: GithubDTO; account: GithubAccountD
   const me = account.login.toLowerCase();
   const pulls = useMemo(() => {
     if (!lists) return [];
-    const team = scope === 'all' ? (lists.team ?? []) : [];
+    // For you also holds the teammates' pull requests the user approved, as the design's Approved lane does.
+    const approved = (p: PullRequestDTO) => p.approvedBy?.some((login) => login.toLowerCase() === me);
+    const team = scope === 'all' ? (lists.team ?? []) : (lists.team ?? []).filter(approved);
     return unique([...lists.authored, ...lists.reviewRequested, ...(lists.merged ?? []), ...team]).filter(
       (p) => p.mergedAt || !p.closed,
     );
-  }, [lists, scope]);
+  }, [lists, scope, me]);
   const lanes = useMemo(
     () =>
       LANES.filter((l) => l.key !== 'merged' || showMerged).map((lane) => {
@@ -296,28 +304,37 @@ function Pulls({ github, account }: { github: GithubDTO; account: GithubAccountD
     );
   };
 
-  const laneButtons = ({ key, title }: Lane) =>
+  /** The List view's group heads carry only +, as the design's do. */
+  const laneButtons = ({ key, title }: Lane, list = false) =>
     key === 'merged' ? (
-      <IconButton size="sm" variant="ghost" label="Hide merged" icon={<CloseIcon width={16} height={16} />} onClick={() => setShowMerged(false)} />
+      !list && (
+        <button type="button" className="pulls-icon" aria-label="Hide merged" title="Hide merged" onClick={() => setShowMerged(false)}>
+          <CloseIcon width={16} height={16} />
+        </button>
+      )
     ) : (
       <>
-        <IconButton
-          size="sm"
-          variant="ghost"
-          label={`New pull request in ${title}`}
-          tooltip="Open a pull request"
-          icon={<PlusIcon width={16} height={16} />}
+        <button
+          type="button"
+          className="pulls-icon"
+          aria-label={`New pull request in ${title}`}
+          title="Open a pull request"
           onClick={() => setOpening(true)}
-        />
-        <IconButton
-          size="sm"
-          variant="ghost"
-          label={`More for ${title}`}
-          aria-haspopup="menu"
-          aria-expanded={menu === key}
-          icon={<MoreIcon width={16} height={16} />}
-          onClick={() => setMenu(menu === key ? null : key)}
-        />
+        >
+          <PlusIcon width={16} height={16} />
+        </button>
+        {!list && (
+          <button
+            type="button"
+            className="pulls-icon"
+            aria-label={`More for ${title}`}
+            aria-haspopup="menu"
+            aria-expanded={menu === key}
+            onClick={() => setMenu(menu === key ? null : key)}
+          >
+            <DotsIcon />
+          </button>
+        )}
       </>
     );
 
@@ -378,19 +395,19 @@ function Pulls({ github, account }: { github: GithubDTO; account: GithubAccountD
             <ListIcon />
           </SegButton>
           <SegButton pressed={layout === 'board'} label="Board" onClick={() => setLayout('board')}>
-            <BoardIcon width={16} height={16} />
+            <LanesIcon />
           </SegButton>
         </span>
-        <span className="pulls-phone-more">
-          <IconButton
-            variant="ghost"
-            label="Sort and show"
-            aria-haspopup="menu"
-            aria-expanded={menu === current}
-            icon={<MoreIcon />}
-            onClick={() => setMenu(current)}
-          />
-        </span>
+        <button
+          type="button"
+          className="pulls-icon pulls-phone-more"
+          aria-label="Sort and show"
+          aria-haspopup="menu"
+          aria-expanded={menu === current}
+          onClick={() => setMenu(current)}
+        >
+          <DotsIcon />
+        </button>
       </header>
       {!lists ? (
         <Text as="p" color="secondary" className="pulls-loading">
@@ -410,7 +427,7 @@ function Pulls({ github, account }: { github: GithubDTO; account: GithubAccountD
             {lanes.map((lane) => (
               <section
                 key={lane.key}
-                className={`pulls-lane ${folded.includes(lane.key) ? 'is-folded' : ''} ${current === lane.key ? 'is-current' : ''}`}
+                className={`pulls-lane ${folded.includes(lane.key) ? 'is-folded' : ''} ${current === lane.key ? 'is-current' : ''} is-${lane.key}`}
                 aria-label={lane.title}
               >
                 <h3 className="pulls-lane-head">
@@ -421,9 +438,14 @@ function Pulls({ github, account }: { github: GithubDTO; account: GithubAccountD
                 </h3>
                 {menu === lane.key && laneMenu(lane)}
                 <div className="pulls-cards">
-                  {lane.pulls.map((pull) => (
+                  {(lane.key === 'merged' ? lane.pulls.slice(0, MERGED_CARDS) : lane.pulls).map((pull) => (
                     <PullCard key={pull.id} pull={pull} waiting={waiting.has(pull.id)} peek={peeks.get(pull.id)} />
                   ))}
+                  {lane.key === 'merged' && lane.pulls.length > MERGED_CARDS && (
+                    <button type="button" className="pulls-quiet pulls-show-all" onClick={() => setLayout('list')}>
+                      Show all {lane.pulls.length}
+                    </button>
+                  )}
                   {lane.pulls.length === 0 && <p className="pulls-empty">No pull requests</p>}
                 </div>
               </section>
@@ -439,9 +461,8 @@ function Pulls({ github, account }: { github: GithubDTO; account: GithubAccountD
                 {lane.title}
                 <span className="pulls-n">{lane.pulls.length}</span>
                 <span className="pulls-gap" />
-                {laneButtons(lane)}
+                {laneButtons(lane, true)}
               </h3>
-              {menu === lane.key && laneMenu(lane)}
               {!folded.includes(lane.key) &&
                 lane.pulls.map((pull) => (
                   <PullCard key={pull.id} row pull={pull} waiting={waiting.has(pull.id)} peek={peeks.get(pull.id)} />
@@ -526,6 +547,20 @@ const FoldIcon = () => (
     <line x1="5" y1="19" x2="19" y2="19" />
   </svg>
 );
+const DotsIcon = () => (
+  <svg {...icon}>
+    <circle cx="5" cy="12" r="1" />
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="19" cy="12" r="1" />
+  </svg>
+);
+const LanesIcon = () => (
+  <svg {...icon}>
+    <rect x="3" y="4" width="5" height="16" rx="1" />
+    <rect x="10" y="4" width="5" height="11" rx="1" />
+    <rect x="17" y="4" width="4" height="7" rx="1" />
+  </svg>
+);
 const ListIcon = () => (
   <svg {...icon}>
     <line x1="8" y1="6" x2="20" y2="6" />
@@ -576,12 +611,14 @@ function PullCard({
         {waiting && <span className="pull-chip is-yours">Your review</span>}
         <PullChips pull={pull} />
         <span className="pulls-end">
-          {pull.comments > 0 && (
+          {pull.review === 'approved' && pull.approvedBy?.length && !pull.mergedAt ? (
+            pull.approvedBy.map((login) => <Face key={login} login={login} label={`Approved by ${login}`} />)
+          ) : pull.comments > 0 ? (
             <>
               <CommentIcon width={13} height={13} aria-label="Comments" />
               {pull.comments} ·{' '}
             </>
-          )}
+          ) : null}
           {shortAgo(pull.mergedAt ?? pull.updatedAt)}
           <span className="pulls-share">
             <IconButton
@@ -613,6 +650,8 @@ function OpenPullDialog({ onClose }: { onClose: (done?: string) => void }) {
     });
   }, []);
 
+  const repos = new Set(branches?.map((b) => b.repo)).size;
+
   async function submit() {
     const choice = branches?.[picked];
     if (!choice) return;
@@ -632,7 +671,7 @@ function OpenPullDialog({ onClose }: { onClose: (done?: string) => void }) {
   return (
     <Dialog title="Open a pull request" onClose={() => onClose()}>
       <Text as="p" color="secondary">
-        Pull requests come from GitHub. Pick a branch that has none yet.
+        Pull requests come from GitHub. Pick a branch whose card has none yet.
       </Text>
       {!branches ? (
         <Text as="p" color="secondary">
@@ -648,9 +687,10 @@ function OpenPullDialog({ onClose }: { onClose: (done?: string) => void }) {
             <label key={`${b.repo}:${b.branch}`} className="pulls-branch">
               <input type="radio" name="branch" checked={picked === i} onChange={() => setPicked(i)} />
               <span>
-                <code>{b.branch}</code>
+                {b.branch}
                 <small>
-                  {b.title} · {b.repo}
+                  {b.title}
+                  {repos > 1 && ` · ${b.repo}`}
                 </small>
               </span>
             </label>

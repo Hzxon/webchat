@@ -100,6 +100,7 @@ fragment Pull on PullRequest {
     nodes { requestedReviewer { ... on User { login } ... on Bot { login } ... on Mannequin { login } } }
   }
   assignees(first: ${LIMITS.pullPeople}) { nodes { login } }
+  latestReviews(first: ${LIMITS.pullPeople}) { nodes { state author { login } } }
 }`;
 
 const PULLS_QUERY = `
@@ -178,6 +179,7 @@ interface PullNode {
     nodes: Array<{ requestedReviewer: { login?: string } | null } | null> | null;
   } | null;
   assignees: { nodes: Array<{ login: string } | null> | null } | null;
+  latestReviews: { nodes: Array<{ state: string; author: { login: string } | null } | null> | null } | null;
 }
 
 interface PullsResult {
@@ -255,6 +257,9 @@ function toPulls(list: { nodes: Array<PullNode | null> | null } | null): PullReq
           return name ? [name] : [];
         }),
         assignees: (node.assignees?.nodes ?? []).flatMap((user) => (user ? [user.login] : [])),
+        approvedBy: (node.latestReviews?.nodes ?? []).flatMap((review) =>
+          review?.state === 'APPROVED' && review.author ? [review.author.login] : [],
+        ),
         branch: node.headRefName,
         mergedAt: node.mergedAt ? Date.parse(node.mergedAt) : null,
         closed: node.closed,
