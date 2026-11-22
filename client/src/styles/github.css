@@ -102,16 +102,10 @@
 
 /* The pane as lanes of pull requests, in the board's look: tinted lanes, light cards, one accent. */
 
+/* Lanes and cards take the board's --lane and --card (board.css), so both screens look alike. */
 .github-pane {
-  --pr-lane: color-mix(in srgb, var(--panel-2) 50%, var(--hover));
-  --pr-card: #ffffff;
   position: relative;
   background: var(--panel);
-}
-
-:root[data-theme='dark'] .github-pane {
-  --pr-lane: var(--panel-2);
-  --pr-card: var(--hover);
 }
 
 .pulls-header {
@@ -173,7 +167,7 @@
 
 .pulls-seg button[aria-pressed='true'],
 .pulls-tabs button[aria-pressed='true'] {
-  background: var(--pr-card);
+  background: var(--card);
   color: var(--text);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
 }
@@ -313,7 +307,7 @@
   max-width: 320px;
   min-height: 0;
   border-radius: 12px;
-  background: var(--pr-lane);
+  background: var(--lane);
 }
 
 .pulls-lane-head,
@@ -358,7 +352,7 @@
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--pr-card);
+  background: var(--card);
 }
 
 .pulls-open {
@@ -416,7 +410,7 @@
   right: 6px;
   display: inline-flex;
   border-radius: var(--radius);
-  background: var(--pr-card);
+  background: var(--card);
 }
 
 .pulls-row {
@@ -466,13 +460,13 @@
   margin-bottom: 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--pr-card);
+  background: var(--card);
 }
 
 .pulls-group-head {
   padding: 4px 4px 4px 14px;
   border-radius: 12px 12px 0 0;
-  background: var(--pr-lane);
+  background: var(--lane);
 }
 
 .pulls-group .pulls-menu {
@@ -539,7 +533,7 @@
   padding: 6px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--pr-card);
+  background: var(--card);
   box-shadow: var(--shadow);
 }
 
