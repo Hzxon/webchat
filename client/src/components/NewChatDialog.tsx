@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
-import { List, ListItem } from '@astryxdesign/core/List';
-import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
+import { List } from '@astryxdesign/core/List';
+import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { LIMITS } from '../../../shared/types';
@@ -17,9 +17,10 @@ const NO_KEYS = 'Must sign in again to turn on encryption';
 
 export type NewChatMode = 'person' | 'group' | 'project';
 
+/** People and groups start from one list: pick one person or several. A project starts from the same list with a name. */
 export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode?: NewChatMode; onClose: () => void }) {
   const users = useAppState((s) => s.users);
-  const [mode, setMode] = useState<NewChatMode>(initialMode);
+  const project = initialMode === 'project';
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [groupName, setGroupName] = useState('');
@@ -48,8 +49,13 @@ export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode
     }
   }
 
-  const openDirect = (userId: number) => run(() => startDirectChat(userId));
-  const createGroup = () => run(() => startGroupChat(groupName.trim(), [...picked]));
+  // One person picked opens the chat with them; more make a group, named by its people unless named.
+  function startChat() {
+    const ids = [...picked];
+    if (ids.length === 1) return run(() => startDirectChat(ids[0]));
+    const named = groupName.trim() || ['You', ...ids.map((id) => users[id]?.displayName.split(' ')[0] ?? 'Someone')].join(', ');
+    return run(() => startGroupChat(named.slice(0, LIMITS.groupTitleLength), ids));
+  }
   const startProject = () => run(() => createProject(groupName.trim(), [...picked]));
 
   function toggle(id: number) {
@@ -61,30 +67,16 @@ export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode
     });
   }
 
-  const nameLimit = mode === 'project' ? LIMITS.projectNameLength : LIMITS.groupTitleLength;
-
   return (
-    <Dialog title={mode === 'project' ? 'New project' : 'New chat'} onClose={onClose}>
-      <SegmentedControl label="Kind of chat" value={mode} onChange={(v) => setMode(v as NewChatMode)} layout="fill">
-        <SegmentedControlItem value="person" label="Person" />
-        <SegmentedControlItem value="group" label="Group" />
-        <SegmentedControlItem value="project" label="Project" />
-      </SegmentedControl>
-
-      {mode !== 'person' && (
+    <Dialog title={project ? 'New project' : 'New chat'} onClose={onClose}>
+      {(project || picked.size > 1) && (
         <TextInput
-          label={mode === 'project' ? 'Project name' : 'Group name'}
+          label={project ? 'Project name' : 'Group name'}
           value={groupName}
-          onChange={(v) => setGroupName(v.slice(0, nameLimit))}
-          placeholder={mode === 'project' ? 'Capstone, Thesis, Robotics club' : undefined}
-          hasAutoFocus
+          onChange={(v) => setGroupName(v.slice(0, project ? LIMITS.projectNameLength : LIMITS.groupTitleLength))}
+          placeholder={project ? 'Capstone, Thesis, Robotics club' : 'Optional'}
+          hasAutoFocus={project}
         />
-      )}
-      {mode === 'project' && (
-        <Text as="p" color="secondary">
-          The project starts with a #general channel. Everyone in it can read every channel, including earlier messages,
-          and can add more people later.
-        </Text>
       )}
 
       <TextInput
@@ -94,32 +86,21 @@ export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode
         type="search"
         value={query}
         onChange={setQuery}
-        hasAutoFocus={mode === 'person'}
+        hasAutoFocus={!project}
       />
 
       <List edge="flush">
-        {people.map((user) =>
-          mode === 'person' ? (
-            <ListItem
-              key={user.id}
-              label={user.displayName}
-              description={user.keys ? presenceText(user) : NO_KEYS}
-              startContent={<Avatar name={user.displayName} seed={user.id} size={38} online={user.online} />}
-              onClick={() => void openDirect(user.id)}
-              isDisabled={busy || !user.keys}
-            />
-          ) : (
-            <PickItem
-              key={user.id}
-              label={user.displayName}
-              description={user.keys ? `@${user.username}` : NO_KEYS}
-              start={<Avatar name={user.displayName} seed={user.id} size={38} online={user.online} />}
-              checked={picked.has(user.id)}
-              onChange={() => toggle(user.id)}
-              isDisabled={!user.keys}
-            />
-          ),
-        )}
+        {people.map((user) => (
+          <PickItem
+            key={user.id}
+            label={user.displayName}
+            description={user.keys ? presenceText(user) : NO_KEYS}
+            start={<Avatar name={user.displayName} seed={user.id} size={32} online={user.online} />}
+            checked={picked.has(user.id)}
+            onChange={() => toggle(user.id)}
+            isDisabled={busy || !user.keys}
+          />
+        ))}
       </List>
       {people.length === 0 && (
         <Text as="p" color="secondary">
@@ -128,24 +109,19 @@ export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode
       )}
 
       {error && <Banner status="error" title={error} />}
-      {mode === 'project' && (
-        <Button
-          variant="primary"
-          onClick={() => void startProject()}
-          isLoading={busy}
-          isDisabled={!groupName.trim()}
-          label={picked.size > 0 ? `Create project with ${picked.size}` : 'Create project'}
-        />
-      )}
-      {mode === 'group' && (
-        <Button
-          variant="primary"
-          onClick={() => void createGroup()}
-          isLoading={busy}
-          isDisabled={picked.size === 0 || !groupName.trim()}
-          label={`Create group${picked.size > 0 ? ` with ${picked.size}` : ''}`}
-        />
-      )}
+      <Stack direction="horizontal" hAlign="end">
+        {project ? (
+          <Button
+            variant="primary"
+            onClick={() => void startProject()}
+            isLoading={busy}
+            isDisabled={!groupName.trim()}
+            label="Create project"
+          />
+        ) : (
+          <Button variant="primary" onClick={() => void startChat()} isLoading={busy} isDisabled={picked.size === 0} label="Start chat" />
+        )}
+      </Stack>
     </Dialog>
   );
 }
