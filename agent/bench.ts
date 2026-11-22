@@ -79,6 +79,8 @@ export interface Bench {
   folders(marks: Array<{ repo: string; dir: string }>): Promise<Folder[]>;
   /** Whether a folder exists, and the GitHub repository it pushes to, from origin's address as configured. */
   checkout(dir: string): Promise<{ exists: boolean; repo: string | null }>;
+  /** Opens a folder window on the laptop's screen, and returns the folder the owner picked, or null when they cancel. */
+  pickFolder(): Promise<string | null>;
   /**
    * Takes a bundle of a remote branch, `base` such as `origin/main`, into a checkout. It becomes
    * origin's default branch unless `other` says it is another branch, such as one a run stacks on.
@@ -230,6 +232,20 @@ export class LocalBench implements Bench {
 
   async checkout(dir: string) {
     return { exists: existsSync(dir), repo: repoOfUrl(await originUrl(dir)) };
+  }
+
+  async pickFolder() {
+    const prompt = 'Choose a copy of a repository for your WebChat agent';
+    // `activate` brings the window to the front, as a background service opens it behind other windows.
+    const [command, args] = process.platform === 'darwin' ? ['osascript', ['-e', 'activate', '-e', `POSIX path of (choose folder with prompt "${prompt}")`]] : ['zenity', ['--file-selection', '--directory', `--title=${prompt}`]];
+    try {
+      return path.resolve((await exec(command, args)).stdout.trim());
+    } catch (error) {
+      const { code, stderr = '' } = error as { code?: unknown; stderr?: string };
+      // osascript says -128 on Cancel, zenity exits with 1.
+      if (/-128/.test(stderr) || (process.platform !== 'darwin' && code === 1)) return null;
+      throw error;
+    }
   }
 
   async take(dir: string, file: string, base: string, other = false) {
