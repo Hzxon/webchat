@@ -5,7 +5,6 @@ import {
   HistoryIcon,
   IconButton,
   Markdown,
-  PencilIcon,
   RunAsk,
   RunPanel,
   RunStep,
@@ -26,7 +25,6 @@ const BODY = `**Why:** a channel with 500 messages has no way to find an old dec
 
 const tools = (running: boolean) => (
   <>
-    <IconButton variant="ghost" size="sm" label="Edit card" tooltip="Edit" icon={<PencilIcon width={18} height={18} />} onClick={act} />
     <IconButton variant="ghost" size="sm" label="Card history" tooltip="History" icon={<HistoryIcon width={18} height={18} />} onClick={act} />
     {running && <IconButton variant="ghost" size="sm" label="Stop the run" tooltip="Stop" icon={<StopIcon width={18} height={18} />} onClick={act} />}
     <IconButton variant="ghost" size="sm" label="Delete card" tooltip="Delete" icon={<TrashIcon width={18} height={18} />} onClick={act} />
@@ -38,7 +36,8 @@ const owner = (
   </>
 );
 
-// A card with a run of the user's own: the card on the left, the run's panel on the right.
+// Every peek has two panels: the card on the left, and on the right a Preview and Edit switch over
+// the agent's panel. Here the card has a run of the user's own.
 export const WithRun = () => (
   <CardPeek
     id="R-12"
@@ -56,6 +55,8 @@ export const WithRun = () => (
     next="r-13"
     onOpen={act}
     onClose={act}
+    isEditing={false}
+    onEditing={act}
     run={
       <RunPanel started="14 min ago" state={{ tone: 'warn', label: 'Asking you' }} footer={<RunAsk text="npm install minisearch" days={7} onAnswer={act} />}>
         <RunStep time="12:40 AM" isMine>
@@ -70,8 +71,8 @@ export const WithRun = () => (
   </CardPeek>
 );
 
-// A card with no run, as a teammate also sees it: one column, with the card's moves over its text.
-export const CardOnly = () => (
+// A card with no run: the right panel says so, and offers to start one where the user may.
+export const NoRun = () => (
   <CardPeek
     id="R-14"
     title="Export a chat as a file"
@@ -84,6 +85,9 @@ export const CardOnly = () => (
     next="r-15"
     onOpen={act}
     onClose={act}
+    isEditing={false}
+    onEditing={act}
+    onRun={act}
   >
     <p className="board-card-run">
       <Button size="sm" label="Mark ready" onClick={act} />
@@ -92,9 +96,10 @@ export const CardOnly = () => (
   </CardPeek>
 );
 
-// With no id the title stays in the header: a form or a draft takes the peek alone.
-export const TitleOnly = () => (
-  <CardPeek title="Bark banner for iOS 15" onOpen={act} onClose={act}>
+// With no id the title stays in the header, as for a draft that is not a card yet. Its switch is
+// off, with the reason as its tooltip.
+export const Draft = () => (
+  <CardPeek title="Bark banner for iOS 15" onClose={act} isEditing={false} editOff="Add it to the board to edit it">
     <Markdown text={`A new idea for the board.\n\n**Why:** an iPhone on iOS 15 gets no alert for an urgent message.\n\n**Done when:** the phone rings through Bark.`} />
     <p className="board-card-run">
       <Button variant="primary" label="Add as idea R-15" onClick={act} />

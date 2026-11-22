@@ -40,8 +40,12 @@ never nest a second `BoardTheme` to make one region dark.
 - What waits for the user, above the lanes: `NeedsRow`.
 - An opened card: `CardPeek` with `id`, `title`, `tools` (`IconButton`s), `facts` (pairs of a
   name and a value) and the card's text as children, usually `<Markdown text="..." />`.
-- A run beside the card: pass `run={<RunPanel ...>}` to `CardPeek`. Its children are `RunStep`s;
-  its `footer` holds `RunAsk` (the agent's question) or a `Banner` with `Button`s.
+- `CardPeek` always has two panels. The left is the card. The right starts with a Preview and Edit
+  switch: pass `isEditing` (required) and `onEditing`, and render the card's editor as the
+  children while it is on. `editOff="reason"` turns the switch off and shows the reason.
+- Under the switch comes the agent's panel: pass `run={<RunPanel ...>}`. `RunPanel`'s children are
+  `RunStep`s; its `footer` holds `RunAsk` (the agent's question) or a `Banner` with `Button`s.
+  With no `run`, the panel says no agent works on the card, and `onRun` adds a button to start one.
 - People: `Avatar` (`size` 20 in a fact, 24 on a face). States: `Tag` with `tone`
   `ok | warn | danger | info | muted`; its child is one plain string.
 - Icons: `PencilIcon`, `HistoryIcon`, `PlayIcon`, `StopIcon`, `TrashIcon`, `BellIcon`, `FileIcon`,

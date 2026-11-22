@@ -7,6 +7,7 @@ built as a small library in `design/board-kit/`. Read this before a re-sync.
 
 - The Claude Design project is "WebChat Board", `https://claude.ai/design/p/6a3de211-0e03-4904-9467-24da6c9a40e0`.
   Its id is `projectId` in `config.json`. The first upload was on 2026-11-22: 18 components, 98 files.
+  A re-sync on the same day followed #293, which changed `CardPeek`.
 
 ## How to build
 
@@ -55,7 +56,7 @@ built as a small library in `design/board-kit/`. Read this before a re-sync.
 - `.design-sync/conventions.md` names CSS variables and three class names
   (`board-card-run`, `agents-ended`, `doc-note`). Check them against the bundle's CSS if
   `client/src/styles/` changes.
-- A pull request that makes every card open in two panels was in progress when this sync ran
-  (branch `claude/peek-two-panels`). It changes `CardPeek`: re-sync after it lands, and update the
-  `CardPeek` preview.
+- `CardPeek` always renders its right panel since #293, and `isEditing` is a required prop. Its
+  preview's examples are `WithRun`, `NoRun` and `Draft`. The card's editor (`SectionEditor`) is
+  not in the kit, so no example shows the switch on Edit.
 - Not verified: the dark palette in a preview, and how the cards look in Claude Design itself.
