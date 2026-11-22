@@ -15,11 +15,10 @@ Scope:
 - New folder by cloning: the owner clones a project's repository on a laptop from Add folder,
   without a run or a question waiting for it. Today `askClone` needs one.
 - Effort for a session's model, as the picker's third column shows it: a signed `effort` field
-  on `prompt` and `reply`, which the harness adapters pass on where the harness takes one. Until
-  then the picker's third column holds the permission mode.
-- Switching a running session between the owner's own setup and restricted. A session's setup
-  is fixed when it starts (D-157), and a card run is always restricted, so this needs a decision
-  first.
+  on `prompt` and `reply`, which the harness adapters pass on where the harness takes one. The
+  permission mode moved to the shield under the ask box (docs/decisions/new-setup-switch.md).
+- Switching a running session between the owner's own setup and restricted: done by a hand over
+  to the same harness (docs/decisions/new-setup-switch.md).
 
 Done when: each of the four works from the window, signed where it changes what runs, and the
 rules files name the new fields.

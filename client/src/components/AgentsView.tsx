@@ -6,7 +6,7 @@
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AGENT_LEVEL, asksAnywhere, listsSessions, type PermissionMode, type UserDTO } from '../../../shared/types';
 import {
   asleep,
@@ -30,9 +30,10 @@ import { AgentBrief } from './AgentBrief';
 import { AgentDialog } from './AgentDialog';
 import { AgentAsks } from './AgentAsks';
 import { AgentSetup } from './AgentSetup';
-import { AgentThread, Box, LaptopIcon, ShieldIcon, BranchIcon } from './AgentThread';
+import { AgentThread, Box, LaptopIcon, BranchIcon } from './AgentThread';
 import { TerminalSessions } from './TerminalSessions';
 import { ModelButton, useHarnessPick } from './HarnessPicker';
+import { Popover, SetupButton } from './SessionControls';
 
 /** Where the agent stands on a folder it has, as Add folder lists it (R-038). */
 function folderState(seat: Seat | undefined): [string, boolean?] {
@@ -458,42 +459,6 @@ function AgentsSidebar({
   );
 }
 
-/** A small panel that closes on a click outside it or on Escape. */
-function Popover({
-  className,
-  role = 'dialog',
-  label,
-  onClose,
-  children,
-}: {
-  className: string;
-  role?: 'dialog' | 'menu';
-  label: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const away = (e: PointerEvent) => {
-      const target = e.target as Element;
-      // The button that opened it toggles it itself.
-      if (!box.current?.contains(target) && !target.closest('[aria-expanded]')) onClose();
-    };
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    document.addEventListener('pointerdown', away);
-    document.addEventListener('keydown', esc);
-    return () => {
-      document.removeEventListener('pointerdown', away);
-      document.removeEventListener('keydown', esc);
-    };
-  }, []);
-  return (
-    <div ref={box} className={`agents-popover ${className}`} role={role} aria-label={label}>
-      {children}
-    </div>
-  );
-}
-
 /**
  * Put to sleep, per agent (K-66, D-113): each agent finishes the cards it runs first, then takes no
  * new work until `webchat-agent wake` on its laptop. A panel above the foot, a sheet on a phone.
@@ -664,7 +629,7 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
   const agent = folder?.agent ?? (outside ? agents[0] : project && agentIn(project.id));
   const { list, harness, pick, own: owns } = useHarnessPick(agent, true);
   const [model, setModel] = useState<string>();
-  const [mode, setMode] = useState<PermissionMode>('default');
+  const [mode, setMode] = useState<PermissionMode>('auto');
   // A typed question runs in the user's own setup when Agent settings turn it on for its harness (D-157); this switches one chat back.
   const [restricted, setRestricted] = useState(false);
   const canOwn = !!harness && owns.includes(harness);
@@ -699,33 +664,13 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
     <ModelButton
       list={list}
       value={{ harness, model }}
-      own={own}
-      mode={mode}
-      onMode={setMode}
       onPick={(p) => {
         pick(p.harness);
         setModel(p.model);
       }}
     />
   );
-  const modeButton = (
-    <button
-      type="button"
-      className={`agents-mode${own ? ' is-own' : ''}`}
-      disabled={!canOwn}
-      onClick={() => setRestricted(!restricted)}
-      title={
-        !canOwn
-          ? `Turn on your own setup for ${harness ?? 'a coding agent'} in Agent settings to run a chat there.`
-          : own
-            ? 'Runs in your folder with your own settings, hooks, plugins, MCP servers and permission rules, and no sandbox of WebChat’s.'
-            : 'Runs in WebChat’s sandbox and never reads your settings or secrets.'
-      }
-    >
-      <ShieldIcon own={own} />
-      {own ? 'Your own setup' : 'Restricted by WebChat'}
-    </button>
-  );
+  const modeButton = <SetupButton own={own} canOwn={canOwn} harness={harness} mode={mode} onOwn={(to) => setRestricted(!to)} onMode={setMode} />;
 
   return (
     <div className="agents-new">

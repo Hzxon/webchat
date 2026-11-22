@@ -741,6 +741,7 @@
 
 /* Where a session runs, under its box. */
 .agents-where {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -901,7 +902,6 @@
   display: flex;
   flex-direction: column;
   padding: 8px 12px;
-  border-right: 1px solid var(--line);
 }
 
 .model-picker-search {
@@ -936,7 +936,7 @@
 }
 
 .model-picker-list button,
-.model-picker-modes button {
+.setup-menu button {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -977,18 +977,30 @@
 }
 
 .model-picker-list p,
-.model-picker-modes p {
+.setup-menu p {
   margin: 8px;
   color: var(--muted);
   font-size: 13px;
 }
 
-.model-picker-modes {
-  flex: 0 0 180px;
+/* The shield's menu: where a session runs and its permission mode, opening above the shield. */
+.setup-menu {
+  bottom: calc(100% + 8px);
+  left: 0;
+  gap: 2px;
+  width: 240px;
+  max-width: calc(100vw - 32px);
+}
+
+.setup-menu > div {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 8px 12px;
+}
+
+.setup-menu button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .model-picker-head {
@@ -999,7 +1011,7 @@
   font-size: 15px;
 }
 
-.model-picker-modes button[aria-checked='true'] {
+.setup-menu button[aria-checked='true'] {
   background: var(--accent-soft);
   color: var(--accent-strong);
 }
@@ -1147,7 +1159,7 @@
   .model-button > button:hover,
   .model-picker-tabs button:not(:disabled):hover,
   .model-picker-list button:not(:disabled):hover,
-  .model-picker-modes button:hover,
+  .setup-menu button:not(:disabled):hover,
   .agents-mode:not(:disabled):hover {
     background: var(--hover);
   }
@@ -1256,10 +1268,6 @@
     height: min(400px, 70dvh);
   }
 
-  .model-picker-modes {
-    flex-basis: 128px;
-  }
-
   .agents-where select {
     max-width: 120px;
   }
@@ -1299,6 +1307,7 @@
 
   .agents-new-form > .agents-new-chips {
     order: 4;
+    position: relative;
     display: flex;
     gap: 6px;
     width: 100%;
