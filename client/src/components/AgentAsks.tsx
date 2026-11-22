@@ -2,7 +2,7 @@
 // chat, sealed (docs/decisions/harness-linking.md, docs/decisions/connect-approval.md). The owner
 // approves or declines it here; the answer is a signed message the agent checks, so only the
 // owner's page can link a harness or connect a folder.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { Stack } from '@astryxdesign/core/Stack';
@@ -117,5 +117,98 @@ export function AgentAsks() {
         ),
       )}
     </Stack>
+  );
+}
+
+const DECISIONS = [
+  ['once', 'Allow it', 'Just this once. It asks again next time.'],
+  ['run', 'Allow it for this run', 'It does not ask about this again until the run ends.'],
+  ['deny', 'Deny it', 'It goes on without it, or stops if it cannot.'],
+] as const;
+
+/**
+ * The agent's question before an action, docked above the box (docs/decisions/harness-approvals.md):
+ * what it asks to do, as plain text since a command can hide in Markdown, and the three answers a
+ * permit takes, numbered, which 1, 2 or 3 picks too. Skip folds it for now: it stays in Waiting for
+ * you. Once the answer is sent it folds to one line.
+ */
+export function QuestionCard({
+  text,
+  days,
+  answered,
+  isDisabled,
+  onAnswer,
+}: {
+  text: string;
+  days: number;
+  answered: boolean;
+  isDisabled?: boolean;
+  onAnswer: (decision: 'once' | 'run' | 'deny') => void;
+}) {
+  const [picked, setPicked] = useState<'once' | 'run' | 'deny'>();
+  const [skipped, setSkipped] = useState(false);
+  useEffect(() => {
+    if (answered || skipped || isDisabled) return;
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('textarea, input') || e.metaKey || e.ctrlKey || e.altKey) return;
+      const decision = DECISIONS[Number(e.key) - 1];
+      if (decision) setPicked(decision[0]);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [answered, skipped, isDisabled]);
+  if (skipped) return null;
+  if (answered)
+    return (
+      <div className="qcard is-done">
+        <div className="qhead">
+          <b>Answered</b>
+          <span>{DECISIONS.find((d) => d[0] === picked)?.[1] ?? 'Your answer is sent'}</span>
+          <span className="qgap" />
+          <span>Your agent is back at work</span>
+        </div>
+      </div>
+    );
+  return (
+    <div className="qcard" role="group" aria-label="Your agent asks">
+      <div className="qhead">
+        <b>Question</b>
+        <span>Your agent waits for your answer</span>
+        <span className="qgap" />
+        <span>Ends in {days} {days === 1 ? 'day' : 'days'}</span>
+      </div>
+      <p className="qtext">{text}</p>
+      <div className="qopts" role="radiogroup" aria-label="Your answer">
+        {DECISIONS.map(([decision, label, help], i) => (
+          <button
+            key={decision}
+            type="button"
+            className="qopt"
+            role="radio"
+            aria-checked={picked === decision}
+            disabled={isDisabled}
+            onClick={() => setPicked(decision)}
+          >
+            <span className="qnum">{i + 1}</span>
+            <span>
+              <strong>{label}</strong>
+              <small>{help}</small>
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="qfoot">
+        <span className="qhint">Press 1, 2 or 3 to choose</span>
+        <span className="qgap" />
+        <Button variant="ghost" label="Skip" onClick={() => setSkipped(true)} />
+        <Button
+          variant="primary"
+          label="Submit"
+          isDisabled={!picked || isDisabled}
+          onClick={() => onAnswer(picked!)}
+        />
+      </div>
+    </div>
   );
 }
