@@ -11,7 +11,7 @@ import { askAgent, askSessions } from '../chat';
 import { actions, useAppState } from '../store';
 import { formatAgo } from './format';
 
-export function TerminalSessions({ agent, project, repo }: { agent: UserDTO; project: ProjectDTO; repo: string }) {
+export function TerminalSessions({ agent, project, repo }: { agent: UserDTO; project?: ProjectDTO; repo: string }) {
   const chat = useAgentChat(agent);
   const [asked, setAsked] = useState<string>();
   // Only the answer to this pane's ask, for the repository it named.
@@ -30,7 +30,7 @@ export function TerminalSessions({ agent, project, repo }: { agent: UserDTO; pro
           label={s.title}
           description={formatAgo(s.at)}
           onClick={async () =>
-            actions.setAgentsOpen(true, await askAgent(agent.id, project.id, repo, 'Go on with this session from my terminal.', { harness: answer.harness, own: true, resume: s.id }))
+            actions.setAgentsOpen(true, await askAgent(agent.id, project?.id, repo, 'Go on with this session from my terminal.', { harness: answer.harness, own: true, resume: s.id }))
           }
         />
       ))}

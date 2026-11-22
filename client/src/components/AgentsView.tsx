@@ -457,7 +457,7 @@ function AgentsSidebar({
         })}
         {loose.length > 0 && (
           <>
-            <h3 className="agents-side-h">No folder</h3>
+            <h3 className="agents-side-h">No project</h3>
             {loose.map((t) => row(t, false))}
           </>
         )}
@@ -622,7 +622,7 @@ function AddFolder({ agents, onClose }: { agents: UserDTO[]; onClose: () => void
 
 /**
  * A new question (R-038): the box asks in one of the user's projects, about one of its repositories
- * or its board alone, with the harness and model picked, in the user's own setup or restricted.
+ * or its board alone, or in No project, about one of the agent's folders, with the harness and model picked, in the user's own setup or restricted.
  */
 function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void }) {
   const users = useAppState((s) => s.users);
@@ -654,14 +654,19 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
     return repos.length && linked[projectId]?.configured !== false ? repos : [...repos, ''];
   };
   const askable = mine.filter((p) => agentIn(p.id));
+  // Outside every project, a chat runs in one of the user's agents' folders, with no board in its brief.
+  const folders = agents.flatMap((a) => a.agentRepos.map((s) => ({ agent: a, repo: s.repo })));
+  const outside = picked.project === 0 || (!askable.length && folders.length > 0);
   // The project picked, else the newest conversation's, else the first; then its repository picked, or its first.
-  const project =
-    askable.find((p) => p.id === picked.project) ??
-    askable.find((p) => threads[0] && p.id === threadProject(threads[0], docs, conversations)) ??
-    askable[0];
+  const project = outside
+    ? undefined
+    : (askable.find((p) => p.id === picked.project) ??
+      askable.find((p) => threads[0] && p.id === threadProject(threads[0], docs, conversations)) ??
+      askable[0]);
+  const folder = outside ? (folders.find((f) => `${f.agent.id} ${f.repo}` === picked.repo) ?? folders[0]) : undefined;
   const repos = project ? choicesOf(project.id) : [];
-  const repo = repos.find((r) => r === picked.repo) ?? repos[0];
-  const agent = project && agentIn(project.id);
+  const repo = folder?.repo ?? repos.find((r) => r === picked.repo) ?? repos[0];
+  const agent = folder?.agent ?? (project && agentIn(project.id));
   const { list, harness, pick, own: owns } = useHarnessPick(agent, true);
   const [model, setModel] = useState<string>();
   const [mode, setMode] = useState<PermissionMode>('default');
@@ -670,7 +675,7 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
   const canOwn = !!harness && owns.includes(harness);
   const own = canOwn && !restricted;
   // With no repository, the agent answers from the board alone, on its laptop (R-038).
-  const blocked = !agent ? 'Add your agent to one of your projects first: Add it, in the list.' : blockedBy(seatFor(agent, repo ?? ''));
+  const blocked = !agent ? 'Connect a folder on your laptop, or add your agent to one of your projects: Add it, in the list.' : blockedBy(seatFor(agent, repo ?? ''));
   const loading = !!project && !linked[project.id];
   // Until a project's repositories load, the box speaks of code, as most questions are about it.
   const code = !!repo || loading;
@@ -679,7 +684,7 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
     try {
       actions.setAgentsOpen(
         true,
-        await askAgent(agent!.id, project!.id, repo || undefined, text, {
+        await askAgent(agent!.id, project?.id, repo || undefined, text, {
           harness,
           ...(model && { model }),
           ...(own ? { own: true, mode } : {}),
@@ -736,9 +741,9 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
         <h1>What should your agent look at?</h1>
         <div className="agents-new-form">
           {/* A terminal's session, continued here, in the user's own setup (R-072). */}
-          {agent && project && repo && listsSessions(seatFor(agent, repo)?.protocol ?? 0) && (
+          {agent && repo && listsSessions(seatFor(agent, repo)?.protocol ?? 0) && (
             <div className="agents-new-sessions">
-              <TerminalSessions key={`${project.id}:${repo}`} agent={agent} project={project} repo={repo} />
+              <TerminalSessions key={`${project?.id ?? ''}:${repo}`} agent={agent} project={project} repo={repo} />
             </div>
           )}
           {blocked && <Banner status="warning" title={blocked} />}
@@ -756,27 +761,38 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
               model={modelButton}
             />
           </div>
-          {project && (
+          {(project || folder) && (
             <div className="agents-where agents-new-where">
               <span>
                 <FolderIcon width={16} height={16} />
-                <select aria-label="Project" value={String(project.id)} onChange={(e) => setPicked({ project: Number(e.target.value) })}>
+                <select aria-label="Project" value={String(project?.id ?? 0)} onChange={(e) => setPicked({ project: Number(e.target.value) })}>
                   {askable.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
                     </option>
                   ))}
+                  {folders.length > 0 && <option value={0}>No project</option>}
                 </select>
               </span>
               <span>
                 <BranchIcon />
-                <select aria-label="Repository" value={repo ?? ''} onChange={(e) => setPicked({ project: project.id, repo: e.target.value })}>
-                  {repos.map((r) => (
-                    <option key={r} value={r}>
-                      {r ? short(r) : 'Its board'}
-                    </option>
-                  ))}
-                </select>
+                {project ? (
+                  <select aria-label="Repository" value={repo ?? ''} onChange={(e) => setPicked({ project: project.id, repo: e.target.value })}>
+                    {repos.map((r) => (
+                      <option key={r} value={r}>
+                        {r ? short(r) : 'Its board'}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <select aria-label="Folder" value={`${agent!.id} ${repo}`} onChange={(e) => setPicked({ project: 0, repo: e.target.value })}>
+                    {folders.map((f) => (
+                      <option key={`${f.agent.id} ${f.repo}`} value={`${f.agent.id} ${f.repo}`}>
+                        {short(f.repo)}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </span>
               {agent && (
                 <span>

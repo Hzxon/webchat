@@ -127,6 +127,7 @@ for await (const text of readline.createInterface({ input: process.stdin })) {
     continue;
   }
   if (message.method === 'initialize') send({ id: message.id, result: { userAgent: 'fake', codexHome: '/tmp', platformFamily: 'unix', platformOs: 'macos' } });
+  else if (message.method === 'model/list') send({ id: message.id, result: { data: [{ model: 'gpt-5.5-codex', hidden: false }, { model: 'gpt-5.5-mini', hidden: false }, { model: 'internal', hidden: true }], nextCursor: null } });
   else if (message.method === 'thread/start' || message.method === 'thread/resume') {
     thread = message.params.threadId ?? thread;
     log({ method: message.method, args, params: message.params, cwd: process.cwd() });
