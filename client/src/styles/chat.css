@@ -36,6 +36,10 @@
   font-size: 13px;
 }
 
+.shield-verified {
+  color: var(--ok);
+}
+
 .messages {
   flex: 1;
   /* On a phone the hidden tools of a wide bubble reach past the right edge and let the list slide sideways. */

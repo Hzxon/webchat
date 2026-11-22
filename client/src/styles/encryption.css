@@ -65,3 +65,14 @@
   text-align: center;
   letter-spacing: 0.04em;
 }
+
+/* A person whose current keys the user compared and marked verified. */
+.verified-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;
+  color: var(--ok);
+  font-size: 13px;
+  font-weight: 600;
+}

@@ -88,6 +88,7 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
   const meId = me?.id;
   const users = useAppState((s) => s.users);
   const warnings = useAppState((s) => s.keyWarnings);
+  const verified = useAppState((s) => s.verified);
   const project = useAppState((s) => (conversation.projectId === null ? undefined : s.projects[conversation.projectId]));
   const [showCodes, setShowCodes] = useState(false);
   /** The words searched for in this chat's loaded messages; null while search is closed. */
@@ -107,6 +108,9 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
       : conversation.members
           .map((m) => (m.userId === meId ? 'You' : (users[m.userId]?.displayName ?? 'Unknown')))
           .join(', ');
+  const others = conversation.members.filter((m) => m.userId !== meId);
+  // The shield turns green once the user has compared the code with everyone else here.
+  const allVerified = others.length > 0 && others.every((m) => verified[m.userId]);
   const changed = conversation.members
     .filter((m) => warnings[m.userId])
     .map((m) => users[m.userId]?.displayName ?? 'Someone');
@@ -179,10 +183,10 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
           />
           <IconButton
             variant="ghost"
-            label="Encryption and security codes"
-            tooltip="Encryption and security codes"
+            label={allVerified ? 'Verified. Encryption and security codes' : 'Encryption and security codes'}
+            tooltip={allVerified ? 'Verified. Encryption and security codes' : 'Encryption and security codes'}
             onClick={() => setShowCodes(true)}
-            icon={<ShieldIcon />}
+            icon={<ShieldIcon className={allVerified ? 'shield-verified' : undefined} />}
           />
         </Stack>
       </header>

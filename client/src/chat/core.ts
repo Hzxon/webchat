@@ -171,10 +171,16 @@ export async function syncNow(): Promise<void> {
   }
 }
 
+/** Notes whose keys changed since this device first saw them, and who is still verified. */
+export async function checkKeys(users: UserDTO[]) {
+  actions.setKeyWarnings(await keyring.checkKeys(users));
+  actions.setVerified(await keyring.verifiedOf(users));
+}
+
 /** Returns false when it applied nothing: the page stopped, or changed a chat after `since`. */
 async function applyChanges(result: Extract<SyncResponse, { changed: true }>, since: number): Promise<boolean> {
   const keysOf = lookupFrom(result.users);
-  actions.setKeyWarnings(await keyring.checkKeys(result.users));
+  await checkKeys(result.users);
   const conversations = await openConversations(result.conversations, keysOf);
   const byId = new Map(conversations.map((c) => [c.id, c]));
   const messages = await Promise.all(
@@ -289,7 +295,7 @@ export async function startChat(signedOut: () => void): Promise<StartResult> {
 
   meId = data.me.id;
   const keysOf = lookupFrom(data.users);
-  actions.setKeyWarnings(await keyring.checkKeys(data.users));
+  await checkKeys(data.users);
   const conversations = await openConversations(data.conversations, keysOf);
   const docs = await openDocs(data.docs, conversations, keysOf);
   const docsSeen = (await keystore.getDocsSeen().catch(() => undefined)) ?? {};

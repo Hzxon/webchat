@@ -5,10 +5,17 @@ import { Heading } from '@astryxdesign/core/Heading';
 import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { safetyCode } from '../../../shared/e2ee';
-import { trustKeys } from '../chat';
+import { verifyKeys } from '../chat';
 import { keyring, type ChatConversation } from '../e2ee/keyring';
 import { actions, useAppState } from '../store';
 import { Dialog } from './Dialog';
+import { ShieldIcon } from './icons';
+
+const VerifiedBadge = () => (
+  <span className="verified-badge">
+    <ShieldIcon width={16} height={16} /> Verified
+  </span>
+);
 
 interface CodeRow {
   userId: number;
@@ -24,6 +31,7 @@ export function SecurityCodeDialog({ conversation, onClose }: { conversation: Ch
   const me = useAppState((s) => s.me);
   const users = useAppState((s) => s.users);
   const warnings = useAppState((s) => s.keyWarnings);
+  const verified = useAppState((s) => s.verified);
   const [rows, setRows] = useState<CodeRow[]>([]);
 
   useEffect(() => {
@@ -49,7 +57,7 @@ export function SecurityCodeDialog({ conversation, onClose }: { conversation: Ch
   const verify = (row: CodeRow) => {
     const user = users[row.userId];
     if (!user) return;
-    void trustKeys(user).then(() => actions.addToast({ conversationId: null, title: `Marked ${row.name} as verified`, body: 'This device trusts the code you compared.' }));
+    void verifyKeys(user).then(() => actions.addToast({ conversationId: null, title: `Marked ${row.name} as verified`, body: 'This device trusts the code you compared.' }));
   };
   // A direct chat has one code, so the dialog names the person and its footer verifies them.
   const single = rows.length === 1 ? rows[0] : null;
@@ -66,7 +74,7 @@ export function SecurityCodeDialog({ conversation, onClose }: { conversation: Ch
           {!single && (
             <Stack direction="horizontal" vAlign="center" hAlign="between">
               <Heading level={3}>{row.name}</Heading>
-              {row.code && <Button size="sm" label="Mark as verified" onClick={() => verify(row)} />}
+              {verified[row.userId] ? <VerifiedBadge /> : row.code && <Button size="sm" label="Mark as verified" onClick={() => verify(row)} />}
             </Stack>
           )}
           {row.code ? (
@@ -90,16 +98,19 @@ export function SecurityCodeDialog({ conversation, onClose }: { conversation: Ch
         </Stack>
       ))}
       {single?.code && (
-        <Stack direction="horizontal" gap={2} hAlign="end">
+        <Stack direction="horizontal" gap={2} hAlign="end" vAlign="center">
+          {verified[single.userId] && <VerifiedBadge />}
           <Button label="Close" onClick={onClose} />
-          <Button
-            variant="primary"
-            label="Mark as verified"
-            onClick={() => {
-              verify(single);
-              onClose();
-            }}
-          />
+          {!verified[single.userId] && (
+            <Button
+              variant="primary"
+              label="Mark as verified"
+              onClick={() => {
+                verify(single);
+                onClose();
+              }}
+            />
+          )}
         </Stack>
       )}
     </Dialog>
