@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, before, beforeEach, describe, test } from 'node:test';
 import { PassThrough } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { acpHarness } from '../agent/acp.ts';
+import { acpAbout, acpHarness, acpSteps } from '../agent/acp.ts';
 import { ACP_AGENTS, type AcpAgent } from '../agent/acp-agents.ts';
 import { fits, listenForAnswers } from '../agent/answer.ts';
 import { Peer } from '../agent/rpc.ts';
@@ -207,6 +207,18 @@ describe('the ACP adapter', () => {
     for (let i = 0; i < 100 && (await alive()); i++) await sleep(50);
     return !(await alive());
   };
+
+  test("the session's details read the agent's plan, finished diffs, model, context and commands (R-072)", () => {
+    const steps = (update: Parameters<typeof acpSteps>[0]) => acpSteps(update, '/w').map(({ at: _, ...s }) => s);
+    assert.deepEqual(steps({ sessionUpdate: 'plan', entries: [{ content: 'Read', status: 'completed' }, { content: 'Fix', status: 'in_progress' }, { content: 'Test', status: 'pending' }] }), [{ kind: 'plan', title: 'Plan', detail: '[x] Read\n[~] Fix\n[ ] Test' }]);
+    const diff = { type: 'diff', path: '/w/src/a.ts', oldText: 'a', newText: 'b' };
+    assert.deepEqual(steps({ sessionUpdate: 'tool_call_update', status: 'completed', content: [{ type: 'content' }, diff] }), [{ kind: 'edit', title: 'src/a.ts', detail: '- a\n+ b' }]);
+    assert.deepEqual(steps({ sessionUpdate: 'tool_call', status: 'in_progress', content: [diff] }), [], 'only a finished call changed the file');
+    assert.deepEqual(acpAbout({ sessionUpdate: 'usage_update', used: 5300 }), { context: 5300 });
+    assert.deepEqual(acpAbout({ sessionUpdate: 'config_option_update', configOptions: [{ category: 'mode', currentValue: 'ask' }, { category: 'model', currentValue: 'gemini-3-pro' }] }), { model: 'gemini-3-pro' });
+    assert.deepEqual(acpAbout({ sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'review' }, {}] }), { commands: ['review'] });
+    assert.equal(acpAbout({ sessionUpdate: 'agent_message_chunk' }), undefined);
+  });
 
   test('a peer whose input breaks throws nothing: on Linux a child that exits resets its pipe', async () => {
     const input = new PassThrough();

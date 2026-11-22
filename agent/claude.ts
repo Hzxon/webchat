@@ -17,7 +17,7 @@ import { LIMITS, type PermissionMode, type SessionAboutDTO, type SessionEventDTO
 import { SESSION_ID } from '../shared/e2ee.ts';
 import { fits } from './answer.ts';
 import { APPROVE_TOOL, openApprover, TOOL_TIMEOUT_MS, type Call } from './approve.ts';
-import { isCredential, olderThan, secretDirs, type Ask, type Harness, type Turn } from './harness.ts';
+import { cutStep, isCredential, olderThan, planLine, secretDirs, shownPath, type Ask, type Harness, type Turn } from './harness.ts';
 import { line } from './plugin.ts';
 import { shellPaths, within } from './rulebook.ts';
 import { hold, IDLE_MS, keep, Quiet, watchdog, type Final } from './runner.ts';
@@ -167,9 +167,7 @@ export function claudeProgress(output: string, cwd: string): string | undefined 
 /** A step for a tool call: what it reads, searches, edits or runs, with the file as the folder knows it. */
 function toolStep(name: string, input: Record<string, unknown>, cwd: string, at: number): SessionEventDTO {
   const field = (key: string) => (typeof input[key] === 'string' ? (input[key] as string) : '');
-  // A file outside the folder shows as given, not as a climb out of it.
-  const relative = field('file_path') && path.relative(cwd, field('file_path'));
-  const file = relative.startsWith('..') ? field('file_path') : relative;
+  const file = field('file_path') && shownPath(cwd, field('file_path'));
   switch (name) {
     case 'Bash':
       return { kind: 'command', title: field('command'), at };
@@ -188,8 +186,7 @@ function toolStep(name: string, input: Record<string, unknown>, cwd: string, at:
       return { kind: 'edit', title: file, detail: `- ${field('old_string')}\n+ ${field('new_string')}`, at };
     case 'TodoWrite': {
       const todos = Array.isArray(input.todos) ? (input.todos as Array<{ content?: unknown; status?: unknown }>) : [];
-      const mark = (status: unknown) => (status === 'completed' ? '[x]' : status === 'in_progress' ? '[~]' : '[ ]');
-      return { kind: 'plan', title: 'Plan', detail: todos.map((t) => `${mark(t.status)} ${String(t.content ?? '')}`).join('\n'), at };
+      return { kind: 'plan', title: 'Plan', detail: todos.map((t) => planLine(t.status, String(t.content ?? ''))).join('\n'), at };
     }
     default:
       return { kind: 'tool', title: `${name} ${JSON.stringify(input)}`, at };
@@ -231,7 +228,7 @@ export function claudeEvents(output: string, cwd: string, open: Map<string, Sess
       open.delete(String(block.tool_use_id));
     }
   }
-  return steps.map((s) => ({ ...s, title: s.title.slice(0, LIMITS.eventTitleLength), ...(s.detail && { detail: s.detail.slice(-LIMITS.eventDetailLength) }) }));
+  return steps.map(cutStep);
 }
 
 /**
