@@ -130,6 +130,13 @@
   background: transparent;
 }
 
+.account-tile .avatar[class] {
+  /* The account wears the accent, as the design's rail shows. */
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: calc(var(--radius) + 4px);
+}
+
 .rail-account {
   margin-top: auto;
   margin-bottom: 4px;
@@ -137,6 +144,46 @@
 
 .phone-account {
   display: none;
+}
+
+/* A project's tile, on one of four soft tones that people's avatars share. */
+.ptile {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  border-radius: calc(var(--radius) + 2px);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ptile.tone-0,
+.avatar.tone-0 {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.ptile.tone-1,
+.avatar.tone-1 {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.ptile.tone-2,
+.avatar.tone-2 {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.ptile.tone-3,
+.avatar.tone-3 {
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+/* People are round wherever the frame lists them. */
+.chat-row .avatar,
+.member-peek-row .avatar {
+  border-radius: 50%;
 }
 
 /* Sidebar */
@@ -705,8 +752,22 @@
     padding: 8px 6px 8px 14px;
   }
 
-  .side-title {
+  .side-title,
+  .switcher-name {
     font-size: 20px;
+  }
+
+  /* Members ends the list behind a short rule, as the phone artboard draws it. */
+  .side-foot {
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .side-foot::before {
+    content: '';
+    display: block;
+    margin: 0 10px 8px;
+    border-top: 1px solid var(--line);
   }
 
   .side-row {
@@ -810,11 +871,11 @@
 
 .urgent-chip {
   flex: none;
-  padding: 0 5px;
+  padding: 1px 6px;
   border-radius: 4px;
   background: var(--danger);
-  color: #fff;
-  font-size: 10.5px;
+  color: var(--panel);
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
@@ -827,7 +888,6 @@
   place-items: center;
   flex: none;
   border-radius: var(--radius);
-  color: #fff;
   font-weight: 700;
   letter-spacing: 0.02em;
   user-select: none;

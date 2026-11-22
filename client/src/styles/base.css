@@ -229,6 +229,11 @@ a {
 
 .btn-icon.sm {
   width: 32px;
+  padding: 0;
+}
+
+.btn > svg {
+  flex: none;
 }
 
 @media (hover: hover) {

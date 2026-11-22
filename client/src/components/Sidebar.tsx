@@ -50,7 +50,6 @@ import {
   TerminalIcon,
   Ticks,
   TrashIcon,
-  UserPlusIcon,
   UsersIcon,
 } from './icons';
 import { receiptState } from './receipts';
@@ -85,6 +84,30 @@ const updatedSince = (d: ChatDoc, meId: number | undefined, docsSeen: State['doc
  */
 const urgentIn = (urgent: State['urgent'], meId: number | undefined, c: ChatConversation) =>
   urgent.some((m) => m.conversationId === c.id) || (c.unread > 0 && !!c.lastMessage?.urgent && c.lastMessage.senderId !== meId);
+
+const GearIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+  </svg>
+);
+
+/** A project's tile: its first letter on one of the palette's soft tones, so it never looks like a person. */
+const ProjectTile = ({ project, size }: { project: ProjectDTO; size: number }) => (
+  <span className={`ptile tone-${project.id % 4}`} style={{ width: size, height: size }} aria-hidden="true">
+    {project.name.trim().charAt(0).toUpperCase() || '?'}
+  </span>
+);
 
 const CheckMark = () => (
   <svg
@@ -320,7 +343,7 @@ function ChatsSide({ query, search, banners, onSearch, onNewChat, onNotification
         <h1 className="side-title">Chats</h1>
         <SearchButton label="Search chats" onClick={onSearch} />
         <button type="button" className="btn btn-icon" aria-label="New chat" title="New chat" onClick={onNewChat}>
-          <PlusIcon width={18} height={18} />
+          <PencilIcon width={18} height={18} />
         </button>
         <AccountMenu className="phone-account" onNotifications={onNotifications} />
       </header>
@@ -379,8 +402,8 @@ function ChatRow({ conversation }: { conversation: ChatConversation }) {
             {mine && last && <Ticks state={receiptState(conversation, last.id, meId)} />}
             {last ? `${prefix}${previewText(last)}` : 'No messages yet'}
           </span>
-          {urgent && <span className="urgent-chip">URGENT</span>}
-          <UnreadMark unread={conversation.unread} muted={conversation.muted} />
+          {/* The urgent tag takes the count's place, as the design draws it. */}
+          {urgent ? <span className="urgent-chip">URGENT</span> : <UnreadMark unread={conversation.unread} muted={conversation.muted} />}
         </span>
       </span>
     </button>
@@ -430,7 +453,7 @@ function ProjectSide(props: SideProps) {
   };
 
   const sortedProjects = useMemo(() => Object.values(projects).sort((a, b) => a.name.localeCompare(b.name)), [projects]);
-  const unreadOf = (id: number) => Object.values(conversations).some((c) => c.projectId === id && loudUnread(c) > 0);
+  const unreadOf = (id: number) => Object.values(conversations).reduce((n, c) => (c.projectId === id ? n + loudUnread(c) : n), 0);
 
   if (!project) {
     return (
@@ -457,7 +480,7 @@ function ProjectSide(props: SideProps) {
           menuWidth="min(320px, calc(100vw - 32px))"
           renderTrigger={(trigger) => (
             <button {...trigger} type="button" className="switcher" aria-label={`Switch project, now ${project.name}`}>
-              <Avatar name={project.name} seed={project.id + 5} size={28} square />
+              <ProjectTile project={project} size={28} />
               <span className="switcher-name">{project.name}</span>
               <DownIcon width={14} height={14} />
             </button>
@@ -467,11 +490,11 @@ function ProjectSide(props: SideProps) {
             {sortedProjects.map((p) => (
               <DropdownMenuItem
                 key={p.id}
-                icon={<Avatar name={p.name} seed={p.id + 5} size={26} square />}
+                icon={<ProjectTile project={p} size={26} />}
                 label={p.name}
-                description={`${p.memberIds.length} ${p.memberIds.length === 1 ? 'member' : 'members'}`}
+                description={`${p.memberIds.length} ${p.memberIds.length === 1 ? 'member' : 'members'}${unreadOf(p.id) ? ` · ${unreadOf(p.id)} new` : ''}`}
                 endContent={
-                  p.id === project.id ? <CheckMark /> : unreadOf(p.id) && <span className="side-dot" aria-label="Unread" role="img" />
+                  p.id === project.id ? <CheckMark /> : unreadOf(p.id) > 0 && <span className="side-dot" aria-label="Unread" role="img" />
                 }
                 onClick={() => pick(p.id)}
               />
@@ -480,7 +503,7 @@ function ProjectSide(props: SideProps) {
           <DropdownMenuDivider />
           <DropdownMenuItem label="New project" icon={PlusIcon} onClick={onNewProject} />
           <DropdownMenuDivider />
-          <DropdownMenuItem label={`${project.name} settings`} icon={UsersIcon} onClick={() => onMembers(project.id)} />
+          <DropdownMenuItem label={`${project.name} settings`} icon={<GearIcon />} onClick={() => onMembers(project.id)} />
           {githubApp && <DropdownMenuItem label="GitHub repositories" icon={GithubIcon} onClick={() => onRepos(project.id)} />}
         </DropdownMenu>
         <SearchButton label="Search this project" onClick={onSearch} />
@@ -580,8 +603,7 @@ function ProjectList(props: {
             <button type="button" className="side-row" aria-current={isActive || undefined} onClick={() => void openConversation(c.id)}>
               <HashIcon width={18} height={18} className="side-icon" />
               <span className="side-label">{c.title}</span>
-              {hasUrgent && <span className="urgent-chip">URGENT</span>}
-              <UnreadMark unread={c.unread} muted={c.muted} />
+              {hasUrgent ? <span className="urgent-chip">URGENT</span> : <UnreadMark unread={c.unread} muted={c.muted} />}
             </button>
             {deletable && (
               <RowMenu
@@ -671,8 +693,9 @@ function MembersFoot({ project, onAddPeople, onMembers }: { project: ProjectDTO;
           </button>
         )}
       >
-        <DropdownMenuItem label="Add Member" icon={UserPlusIcon} onClick={onAddPeople} />
-        <DropdownMenuItem label="Manage members" icon={UsersIcon} onClick={onMembers} />
+        <DropdownMenuItem label="Add Member" icon={PlusIcon} onClick={onAddPeople} />
+        <DropdownMenuDivider />
+        <DropdownMenuItem label="Manage members" icon={<GearIcon />} onClick={onMembers} />
       </DropdownMenu>
     </div>
   );

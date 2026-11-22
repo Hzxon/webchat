@@ -138,21 +138,28 @@ export function MembersDialog({
   }
 
   return (
-    <AstryxDialog isOpen onOpenChange={(open) => !open && onClose()} width={600} maxHeight="min(720px, 90dvh)">
+    <AstryxDialog
+      isOpen
+      onOpenChange={(open) => !open && onClose()}
+      width={600}
+      maxHeight="min(720px, 90dvh)"
+      padding={0}
+    >
       <div className="mhead">
         <DialogHeader title={`Members of ${name}`} onOpenChange={(open) => !open && onClose()} />
       </div>
       <div className="mbody">
+        <section className="mlbl-row">
+          <h3 className="mlbl">Invite people</h3>
+          <button type="button" className="btn btn-secondary sm" onClick={onAdd}>
+            <PlusIcon width={16} height={16} />
+            Add member
+          </button>
+        </section>
         <section>
-          <div className="mlbl-row">
-            <h3 className="mlbl">
-              {people.length} {people.length === 1 ? 'member' : 'members'}
-            </h3>
-            <button type="button" className="btn btn-secondary sm" onClick={onAdd}>
-              <PlusIcon width={16} height={16} />
-              Add member
-            </button>
-          </div>
+          <h3 className="mlbl">
+            {people.length} {people.length === 1 ? 'member' : 'members'}
+          </h3>
           <div className="mlist">
             {people.map((person) => {
               // An agent can neither remove people nor hand it back, so it never owns one (D-114).
@@ -161,7 +168,7 @@ export function MembersDialog({
               return (
                 <div key={person.id} className="mrow">
                   <Avatar name={person.name} seed={person.id} size={32} />
-                  <span className="mrow-who">{person.id === me.id ? `${person.name} (you)` : person.name}</span>
+                  <span className="mrow-who">{person.name}</span>
                   {manageable && !person.agent ? (
                     <button
                       type="button"

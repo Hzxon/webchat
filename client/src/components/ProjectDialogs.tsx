@@ -368,7 +368,13 @@ export function AddPeopleDialog({ target, onClose }: { target: MembersTarget; on
 
   if (!chat) return null;
   return (
-    <AstryxDialog isOpen onOpenChange={(open) => !open && onClose()} width={460} maxHeight="min(680px, 90dvh)">
+    <AstryxDialog
+      isOpen
+      onOpenChange={(open) => !open && onClose()}
+      width={460}
+      maxHeight="min(680px, 90dvh)"
+      padding={0}
+    >
       <div className="mhead">
         <DialogHeader title="Add Member" onOpenChange={(open) => !open && onClose()} />
       </div>
