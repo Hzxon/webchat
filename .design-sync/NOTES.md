@@ -7,7 +7,8 @@ built as a small library in `design/board-kit/`. Read this before a re-sync.
 
 - The Claude Design project is "WebChat Board", `https://claude.ai/design/p/6a3de211-0e03-4904-9467-24da6c9a40e0`.
   Its id is `projectId` in `config.json`. The first upload was on 2026-11-22: 18 components, 98 files.
-  A re-sync on the same day followed #293, which changed `CardPeek`.
+  A re-sync on the same day followed #293, which changed `CardPeek`. #299 redesigned the board's
+  parts and the peek from the design canvas; the project needs a re-sync after it lands.
 
 ## How to build
 
@@ -26,14 +27,16 @@ built as a small library in `design/board-kit/`. Read this before a re-sync.
   and sets `data-theme` on the page, as `client/src/main.tsx` and `colorMode.ts` do.
 - The stylesheet is the app's whole CSS (`client/src/layers.css`) plus Astryx's, in the app's
   order. So the bundle's CSS also holds chat and sidebar rules the board's parts do not use.
-- Seven icons are exported for use inside the parts but left out of the component list
+- Six icons are exported for use inside the parts but left out of the component list
   (`componentSrcMap` sets them to `null`).
 - The four Astryx controls in the list (`Banner`, `Button`, `IconButton`, `Text`) are the ones the
   board's parts are built with. Astryx's other components are not in this design system.
 
 ## Previews
 
-- All 18 components have authored previews in `.design-sync/previews/`, graded good.
+- All 19 components have authored previews in `.design-sync/previews/`. The ones #299 rewrote
+  (`BoardGroup`, `BoardLane`, `BoardLanes`, `BoardMenu`, `CardFace`, `CardPeek`, `FoldChip`, the
+  run parts) are not graded yet.
 - `cfg.provider` is `BoardTheme`, so every preview renders in the light palette.
 - The dark palette is page-wide (`:root[data-theme='dark']`), and the preview's own wrapper sets
   light after any inner `BoardTheme`. So no preview shows dark. Do not add a "Dark" cell: it
@@ -43,7 +46,7 @@ built as a small library in `design/board-kit/`. Read this before a re-sync.
 
 ## Known render warns
 
-- `[RENDER_THIN] ... rendered height is 0px` on all 18 components. Astryx's `Theme` root, the
+- `[RENDER_THIN] ... rendered height is 0px` on every component. Astryx's `Theme` root, the
   first child of every preview's mount, has `display: contents`, so it measures 0 pixels high
   while its children render. The sheets and the contact sheets show every card rendered.
 - `[TOKENS_MISSING] 53 CSS custom properties`: Astryx sets these at runtime on its components.
@@ -56,7 +59,8 @@ built as a small library in `design/board-kit/`. Read this before a re-sync.
 - `.design-sync/conventions.md` names CSS variables and three class names
   (`board-card-run`, `agents-ended`, `doc-note`). Check them against the bundle's CSS if
   `client/src/styles/` changes.
-- `CardPeek` always renders its right panel since #293, and `isEditing` is a required prop. Its
-  preview's examples are `WithRun`, `NoRun` and `Draft`. The card's editor (`SectionEditor`) is
-  not in the kit, so no example shows the switch on Edit.
+- `CardPeek` always renders its right pane since #293, and `isEditing` is a required prop. Since
+  #299 its `tools` are a list of `{ label, icon, onClick }`, not buttons, so the phone's ⋯ sheet
+  can list them. The run parts take their look from the peek's `.peek-run` pane, so their previews
+  wrap them in one. The card's editor (`SectionEditor`) is not in the kit.
 - Not verified: the dark palette in a preview, and how the cards look in Claude Design itself.

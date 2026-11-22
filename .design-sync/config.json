@@ -9,7 +9,6 @@
     "component": "BoardTheme"
   },
   "componentSrcMap": {
-    "BellIcon": null,
     "FileIcon": null,
     "HistoryIcon": null,
     "PencilIcon": null,
@@ -21,13 +20,19 @@
     "Banner": {
       "cardMode": "column"
     },
-    "BoardDrawer": {
+    "BoardGroup": {
+      "cardMode": "column"
+    },
+    "BoardLane": {
       "cardMode": "column"
     },
     "BoardLanes": {
       "cardMode": "single",
       "primaryStory": "Roadmap",
-      "viewport": "960x300"
+      "viewport": "1100x460"
+    },
+    "BoardMenu": {
+      "cardMode": "column"
     },
     "BoardTheme": {
       "cardMode": "single",
@@ -42,10 +47,10 @@
       "primaryStory": "WithRun",
       "viewport": "1280x760"
     },
-    "Markdown": {
+    "FoldChip": {
       "cardMode": "column"
     },
-    "NeedsRow": {
+    "Markdown": {
       "cardMode": "column"
     },
     "ProposalFace": {

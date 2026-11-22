@@ -1,69 +1,49 @@
-import {
-  Avatar,
-  Button,
-  CardPeek,
-  HistoryIcon,
-  IconButton,
-  Markdown,
-  RunAsk,
-  RunPanel,
-  RunStep,
-  StopIcon,
-  Tag,
-  TrashIcon,
-} from '@webchat/board-kit';
+import { Button, Face, CardPeek, HistoryIcon, Markdown, RunAsk, RunPanel, RunStep, StateChip, TrashIcon } from '@webchat/board-kit';
 
 const act = () => undefined;
-const BODY = `**Why:** a channel with 500 messages has no way to find an old decision.
+const BODY = `**Why:** a push key that the push service rejects stays in the database. Every new message tries it again and logs an error.
 
 **Scope:**
 
-- Search runs in the browser over decrypted text.
-- Nothing new reaches the server.
+- Drop a key when the push service answers 410 Gone.
+- Keep it on any other error, so a short outage keeps every key.
 
-**Done when:** a word typed in the channel header lists matching messages, newest first.`;
+**Done when:** a 410 removes the key, and the next message sends no push to it.`;
 
-const tools = (running: boolean) => (
-  <>
-    <IconButton variant="ghost" size="sm" label="Card history" tooltip="History" icon={<HistoryIcon width={18} height={18} />} onClick={act} />
-    {running && <IconButton variant="ghost" size="sm" label="Stop the run" tooltip="Stop" icon={<StopIcon width={18} height={18} />} onClick={act} />}
-    <IconButton variant="ghost" size="sm" label="Delete card" tooltip="Delete" icon={<TrashIcon width={18} height={18} />} onClick={act} />
-  </>
-);
+const tools = [
+  { label: 'History', icon: <HistoryIcon width={18} height={18} />, onClick: act },
+  { label: 'Delete card', icon: <TrashIcon width={18} height={18} />, onClick: act },
+];
 const owner = (
   <>
-    <Avatar name="Ann Lee" seed={1} size={20} /> Ann Lee
+    <Face person={{ name: 'Ann Lee', seed: 0 }} size={20} /> Ann Lee
   </>
 );
 
-// Every peek has two panels: the card on the left, and on the right a Preview and Edit switch over
-// the agent's panel. Here the card has a run of the user's own.
+// The card on the left, under its Preview and Edit switch; on the right, the agent's run with its
+// question pinned at the foot. At phone width the run goes under the card and the tools behind ⋯.
 export const WithRun = () => (
   <CardPeek
-    id="R-12"
-    title="Search in channels"
-    tools={tools(true)}
+    id="K-12"
+    title="Drop bad push keys"
+    tools={tools}
     facts={[
-      ['Status', "Running: Ann's agent"],
+      ['Status', 'Running: Ann’s agent'],
       ['Owner', owner],
-      ['Run', <Tag tone="warn">Asking you</Tag>],
-      ['Runs it', "Ann's agent · Claude Code"],
-      ['Repository', 'ann/capstone'],
-      ['Pull request', <a href="https://github.com/ann/capstone/pull/44">ann/capstone#44</a>],
+      ['Run', <StateChip chip={{ tone: 'warn', label: 'Asking you' }} />],
+      ['Runs it', 'Ann’s agent · Claude Code'],
+      ['Repository', 'webchat'],
     ]}
-    prev="r-11"
-    next="r-13"
-    onOpen={act}
     onClose={act}
     isEditing={false}
     onEditing={act}
     run={
-      <RunPanel started="14 min ago" state={{ tone: 'warn', label: 'Asking you' }} footer={<RunAsk text="npm install minisearch" days={7} onAnswer={act} />}>
-        <RunStep time="12:40 AM" isMine>
-          Run R-12: Search in channels
+      <RunPanel started="14 min ago" footer={<RunAsk text="npm install web-push@3.6" days={7} onAnswer={act} />}>
+        <RunStep time="12:40" isMine>
+          Run K-12: Drop bad push keys
         </RunStep>
-        <RunStep time="12:41 AM">I am on R-12: Search in channels</RunStep>
-        <RunStep time="12:43 AM">The card holds. I wrote the index and now add the search box to the channel header.</RunStep>
+        <RunStep time="12:41">Read the card, server/push.ts and its tests</RunStep>
+        <RunStep time="12:43">Wrote a test: a 410 drops the key</RunStep>
       </RunPanel>
     }
   >
@@ -71,27 +51,22 @@ export const WithRun = () => (
   </CardPeek>
 );
 
-// A card with no run: the right panel says so, and offers to start one where the user may.
+// A card with no run: the right pane says so, and offers to start one where the user may.
 export const NoRun = () => (
   <CardPeek
-    id="R-14"
+    id="R-40"
     title="Export a chat as a file"
-    tools={tools(false)}
+    tools={tools}
     facts={[
-      ['Status', 'Idea'],
+      ['Status', 'Ready'],
       ['Owner', owner],
-      ['Checked', <Tag tone="muted">Not checked by an agent yet</Tag>],
+      ['Checked', <StateChip chip={{ tone: 'muted', label: 'Not checked by an agent yet' }} />],
     ]}
-    next="r-15"
-    onOpen={act}
     onClose={act}
     isEditing={false}
     onEditing={act}
     onRun={act}
   >
-    <p className="board-card-run">
-      <Button size="sm" label="Mark ready" onClick={act} />
-    </p>
     <Markdown text={`**Why:** a team that hands in its chat as an appendix copies it by hand today.\n\n**Done when:** a channel exports as one Markdown file.`} />
   </CardPeek>
 );

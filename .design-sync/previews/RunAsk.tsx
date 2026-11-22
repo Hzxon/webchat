@@ -1,7 +1,7 @@
 import { RunAsk } from '@webchat/board-kit';
 
 const answer = () => undefined;
-const column = { width: 520 } as const;
+const column = { width: 400, padding: 14, border: '1px solid var(--line)', borderRadius: 12, background: 'var(--card)' } as const;
 
 // The agent asks to run a command; the text is plain, never Markdown.
 export const Question = () => (
