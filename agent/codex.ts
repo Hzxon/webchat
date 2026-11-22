@@ -56,7 +56,27 @@ export const codexArgs = (servers: string[]) => [
   ...servers.flatMap((name) => ['-c', `mcp_servers.${/^[\w-]+$/.test(name) ? name : JSON.stringify(name)}.enabled=false`]),
 ];
 
-/** One Codex process, which takes the turns of one session. */
+/**
+ * The models Codex shows in its own picker, from a short-lived app-server with the restricted
+ * arguments, so a new release's model needs no change here (R-072).
+ */
+async function listModels(program: string, servers: string[]) {
+  const child = spawn(program, codexArgs(servers), { stdio: ['pipe', 'pipe', 'ignore'] });
+  const peer = new Peer({ input: child.stdout, output: child.stdin });
+  const timer = setTimeout(() => child.kill(), 10_000);
+  const fail = () => peer.fail(new Error('Codex listed no models.'));
+  child.on('error', fail).on('close', fail);
+  try {
+    await peer.request('initialize', { clientInfo: { name: 'webchat', title: 'WebChat agent', version: pkg.version } });
+    peer.notify('initialized');
+    const { data } = await peer.request<{ data: { model: string; hidden?: boolean }[] }>('model/list', {});
+    return data.filter((m) => !m.hidden).map((m) => m.model);
+  } finally {
+    clearTimeout(timer);
+    child.kill();
+  }
+}
+
 /** The parts of turn/completed a turn reads. */
 type Completed = { turn?: { id?: string; status?: string; error?: { message?: string } } };
 
@@ -81,6 +101,8 @@ export function codexHarness(program: string, dataDir: string): Harness {
   const file = path.join(dataDir, 'codex-threads.json');
   let threads: Record<string, string> | undefined;
   const lives = new Map<string, Live>();
+  /** The models the owner's Codex lists for its picker, as `found` last read them. */
+  let models: string[] | undefined;
 
   async function close(live: Live) {
     clearTimeout(live.timer);
@@ -91,7 +113,8 @@ export function codexHarness(program: string, dataDir: string): Harness {
   /** Starts the server, and opens the session's thread: a new one, or the one an earlier process kept. */
   async function open(t: Turn, key: string): Promise<Live> {
     const servers = mcpServerNames(await fs.readFile(path.join(home, 'config.toml'), 'utf8').catch(() => ''));
-    const child = spawn(program, codexArgs(servers), { cwd: t.cwd, stdio: ['pipe', 'pipe', 'inherit'] });
+    // The owner's own setup runs Codex as their terminal does: their config, hooks, MCP servers and environment (D-157).
+    const child = spawn(program, t.own ? ['app-server'] : codexArgs(servers), { cwd: t.cwd, stdio: ['pipe', 'pipe', 'inherit'] });
     keep(child);
     const live = { child, session: t.session, key, changes: new Map() } as Live;
     live.peer = new Peer({
@@ -114,7 +137,12 @@ export function codexHarness(program: string, dataDir: string): Harness {
       live.peer.notify('initialized');
       threads ??= existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, string>) : {};
       // Only a question has Codex ask; with none, it never does, and what it would ask is refused.
-      const settings = { cwd: t.cwd, approvalPolicy: t.ask ? 'on-request' : 'never', sandbox: 'workspace-write' };
+      // In their own setup their config sets the sandbox and when to ask, but Plan first only reads.
+      const settings = {
+        cwd: t.cwd,
+        ...(t.model && { model: t.model }),
+        ...(t.own ? t.mode === 'plan' && { sandbox: 'read-only' } : { approvalPolicy: t.ask ? 'on-request' : 'never', sandbox: 'workspace-write' }),
+      };
       const stored = t.resume ? threads[t.session] : undefined;
       const opened = await live.peer.request<{ thread: { id: string } }>(stored ? 'thread/resume' : 'thread/start', stored ? { threadId: stored, ...settings } : settings);
       live.thread = opened.thread.id;
@@ -221,20 +249,22 @@ export function codexHarness(program: string, dataDir: string): Harness {
       if (!program) return 'I cannot find Codex on this laptop.';
     },
     // Codex reads both on every turn, whatever the owner chose: its config has no switch for them.
-    offers: () => ({ instructions: path.join(home, 'AGENTS.md'), skills: path.join(os.homedir(), '.agents', 'skills'), knobs: [] }),
+    offers: () => ({ instructions: path.join(home, 'AGENTS.md'), skills: path.join(os.homedir(), '.agents', 'skills'), knobs: ['own'], ...(models?.length && { models }) }),
     async found() {
       if (!program) return {};
-      const [version, signedIn] = await Promise.all([
+      const [version, signedIn, listed] = await Promise.all([
         exec(program, ['--version'], { timeout: 10_000 }).then((r) => /\d[\w.-]*/.exec(r.stdout)?.[0], () => undefined),
         // It exits 0 when credentials are present.
         exec(program, ['login', 'status'], { timeout: 10_000 }).then(() => true, () => false),
+        fs.readFile(path.join(home, 'config.toml'), 'utf8').catch(() => '').then((config) => listModels(program, mcpServerNames(config))).catch(() => undefined),
       ]);
+      models = listed;
       return { path: program, version, signedIn };
     },
     async apply() {},
     async turn(t) {
       if (t.signal.aborted) throw new Error(CANCELLED);
-      const key = JSON.stringify([t.cwd, !!t.ask]);
+      const key = JSON.stringify([t.cwd, !!t.ask, !!t.own, t.model, t.mode]);
       let live = lives.get(t.session);
       if (live?.turn) throw new Error('a turn of this session is running already.');
       if (live && (!t.resume || live.key !== key)) {

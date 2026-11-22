@@ -37,7 +37,7 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - A proposal draft waits until the owner's signed `added` or `dismissed` note names it, and only the newest copy of a card's change, or of a new card by kind and title, waits (the dismiss-proposals decision, proposed in #280).
 - Each chat with the user's own agent loads its whole history after the page opens, so a draft that newer messages pushed past the first page still waits; a chat loaded only in part hides it (the agent-chat-history decision, proposed in #283).
 - While a conversation's turn runs, the pane offers Stop instead of Send, so each answer follows what it answers (D-103).
-- The pane lists the user's projects; a question signs its project into the prompt, and one of the project's repositories unless it links none (D-103, D-104).
+- The pane lists the user's projects; a question signs its project into the prompt, and one of the project's repositories unless it links none; a question in No project signs one of the agent's folders and no project (D-103, D-104).
 - A photo shows only from bytes the page decrypted and checked with `fileTypeOf`; any other file is only downloaded, never opened in the page; uploads skip `request`, whose timer would cut them (D-123, D-077).
 - Safari before 17 runs Astryx's layers on `@oddbird/popover-polyfill`: keep its layer first in `layers.css`, and style an open layer with `.\:popover-open` too, since `:popover-open` in CSS fails there (D-052).
 - `styles.css` loads through `layers.css` in the `app` layer, above Astryx's reset and under its components; a stylesheet imported any other way stays unlayered and restyles every Astryx component (the astryx-migration decision, proposed in #248).

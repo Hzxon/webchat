@@ -113,6 +113,36 @@ test('answers through Codex app-server, one process for a session, and resumes i
   }
 });
 
+test("lists Codex's models, runs the one picked, and runs the owner's own setup with none of WebChat's arguments (D-157, R-072)", async () => {
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-codex-own-')));
+  const program = path.join(dir, 'codex');
+  const log = path.join(dir, 'codex.log');
+  await fs.writeFile(program, FAKE_CODEX, { mode: 0o755 });
+  const restore = setEnv({ FAKE_CODEX_LOG: log, CODEX_HOME: path.join(dir, 'home') });
+  const harness = codexHarness(program, dir);
+  try {
+    await harness.found();
+    assert.deepEqual(harness.offers().models, ['gpt-5.5-codex', 'gpt-5.5-mini'], 'a hidden model stays out');
+    assert.ok(harness.offers().knobs.includes('own'));
+    const schema = { type: 'object', properties: { reply: { type: 'string' } }, required: ['reply'] };
+    const turn = (session: string, extra: Partial<Turn>) => harness.turn({ cwd: dir, session, resume: false, message: 'Hi', schema, setup: {}, signal: new AbortController().signal, ...extra });
+    await turn('s-restricted', { model: 'gpt-5.5-mini' });
+    await turn('s-own', { own: true, model: 'gpt-5.5-codex' });
+    await turn('s-plan', { own: true, mode: 'plan' });
+    const [restricted, own, plan] = (await fs.readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string; args?: string[]; params?: Record<string, unknown> }).filter((e) => e.method === 'thread/start');
+    assert.equal(restricted!.params!.model, 'gpt-5.5-mini');
+    assert.equal(restricted!.params!.sandbox, 'workspace-write');
+    assert.ok(restricted!.args!.includes('features.hooks=false'));
+    assert.deepEqual(own!.args, ['app-server'], 'their config, hooks, MCP servers and environment load');
+    assert.deepEqual(own!.params, { cwd: dir, model: 'gpt-5.5-codex' }, 'their config sets the sandbox and when to ask');
+    assert.equal(plan!.params!.sandbox, 'read-only', 'Plan first only reads');
+  } finally {
+    restore();
+    await harness.end?.();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('asks through Claude Code\'s permission prompt tool, one process for a session, and no rule outlives the turn (docs/decisions/harness-approvals.md)', async () => {
   const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-claude-ask-')));
   const program = path.join(dir, 'claude');
