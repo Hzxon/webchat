@@ -18,6 +18,11 @@
   border-bottom: 1px solid var(--line);
 }
 
+/* People are round here, as in the design; a channel's project stays square. */
+.chat-header .avatar:not(.avatar-square) {
+  border-radius: 50%;
+}
+
 .chat-header-text {
   flex: 1;
   display: grid;
@@ -34,6 +39,18 @@
 .chat-header-text span {
   color: var(--muted);
   font-size: 13px;
+}
+
+/* A day between messages, as a small pill. */
+.day-pill {
+  width: fit-content;
+  margin: 8px auto;
+  padding: 2px 10px;
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .shield-verified {
@@ -75,13 +92,14 @@
   max-width: min(75%, 640px);
 }
 
+/* The time floats at the end of the text's last line, so a short message stays one line. */
 .bubble {
   position: relative;
-  display: grid;
+  display: block;
   min-width: 0;
   max-width: 100%;
-  padding: 7px 11px 8px;
-  border-radius: var(--radius);
+  padding: 7px 10px 6px;
+  border-radius: 12px;
   background: var(--bubble-in);
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -92,11 +110,11 @@
 }
 
 .mine.first .bubble {
-  border-top-right-radius: 2px;
+  border-top-right-radius: 4px;
 }
 
 .theirs.first .bubble {
-  border-top-left-radius: 2px;
+  border-top-left-radius: 4px;
 }
 
 .bubble-urgent {
@@ -105,6 +123,7 @@
 }
 
 .bubble-urgent-label {
+  display: block;
   margin-bottom: 2px;
   color: var(--danger);
   font-size: 11px;
@@ -112,6 +131,7 @@
 }
 
 .bubble-sender {
+  display: block;
   font-size: 13px;
   font-weight: 600;
 }
@@ -121,12 +141,11 @@
 }
 
 .bubble-meta {
+  float: right;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 3px;
-  margin-top: -2px;
-  margin-left: 24px;
+  gap: 4px;
+  margin: 6px 0 0 10px;
   color: var(--muted);
   font-size: 11px;
   /* The bubble breaks long words anywhere, and Safari broke the time in two when the ticks changed. */
@@ -435,10 +454,6 @@
   transition: border-color 0.12s;
 }
 
-.composer-row:focus-within {
-  border-color: var(--accent);
-}
-
 .composer-attach,
 .composer-send {
   flex: none;
@@ -460,9 +475,14 @@
   color: var(--panel);
 }
 
-.composer-attach:disabled,
-.composer-send:disabled {
+.composer-attach:disabled {
   opacity: 0.45;
+}
+
+/* Send keeps its full color while the box is empty, as the design draws it. */
+.composer-send:disabled {
+  opacity: 1;
+  cursor: default;
 }
 
 @media (hover: hover) {
@@ -699,6 +719,11 @@
     padding: 8px 6px 8px 10px;
   }
 
+  /* The phone's chat header holds only the shield and Mute, as the design draws it. */
+  .chat-search-toggle {
+    display: none;
+  }
+
   .composer {
     padding: 8px 10px max(14px, env(safe-area-inset-bottom));
   }
@@ -707,4 +732,11 @@
   .reactions {
     max-width: 85%;
   }
+}
+
+/* The new chat dialog's people, in a bordered list as the design draws them. */
+.people-list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }

@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
-import { Divider } from '@astryxdesign/core/Divider';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
@@ -174,13 +173,15 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
             onClick={() => void setMuted(conversation.id, !conversation.muted)}
             icon={conversation.muted ? <BellOffIcon /> : <BellIcon />}
           />
-          <IconButton
-            variant="ghost"
-            label="Search this chat"
-            tooltip="Search this chat"
-            onClick={() => setQuery((q) => (q === null ? '' : null))}
-            icon={<SearchIcon />}
-          />
+          <span className="chat-search-toggle">
+            <IconButton
+              variant="ghost"
+              label="Search this chat"
+              tooltip="Search this chat"
+              onClick={() => setQuery((q) => (q === null ? '' : null))}
+              icon={<SearchIcon />}
+            />
+          </span>
           <IconButton
             variant="ghost"
             label={allVerified ? 'Verified. Encryption and security codes' : 'Encryption and security codes'}
@@ -240,6 +241,8 @@ interface MessageListProps {
 function MessageList({ conversation, filter, onShowCodes, onReply }: MessageListProps) {
   const meId = useAppState((s) => s.me?.id);
   const users = useAppState((s) => s.users);
+  const otherId = otherMemberId(conversation, meId);
+  const readers = otherId !== undefined ? `you and ${senderName(users, otherId).split(' ')[0]}` : 'the people in this chat';
   const messages = useAppState((s) => s.messages[conversation.id] ?? EMPTY);
   const reactions = useAppState((s) => s.reactions[conversation.id] ?? NO_REACTIONS);
   const complete = useAppState((s) => s.historyComplete[conversation.id] ?? false);
@@ -343,12 +346,12 @@ function MessageList({ conversation, filter, onShowCodes, onReply }: MessageList
         if (trayFor !== null && !(e.target as Element).closest('.reaction-tray, .message-tools, .bubble')) setTrayFor(null);
       }}
     >
-      {/* The header's lock opens this in every chat; the notice shows only before the first message, or over unencrypted history. */}
-      {(!conversation.keyId || (messages.length === 0 && complete)) && (
-        <button className="encryption-notice" onClick={onShowCodes}>
+      {/* It heads every chat, as the design draws it, and opens the security codes. */}
+      {(complete || !conversation.keyId) && (
+        <button className={`encryption-notice ${conversation.keyId ? '' : 'is-unencrypted'}`} onClick={onShowCodes}>
           <LockIcon width={14} height={14} />
           {conversation.keyId
-            ? 'Messages are end-to-end encrypted. No one outside this chat, not even the server, can read them.'
+            ? `Messages are end-to-end encrypted. Only ${readers} can read them.`
             : 'Messages you send here will be end-to-end encrypted. Earlier ones were sent before encryption.'}
         </button>
       )}
@@ -386,7 +389,7 @@ function MessageList({ conversation, filter, onShowCodes, onReply }: MessageList
         ].join(' ');
         return (
           <Fragment key={message.clientId ?? message.id}>
-            {newDay && <Divider label={dayLabel(message.createdAt)} />}
+            {newDay && <div className="day-pill">{dayLabel(message.createdAt)}</div>}
             <div className={rowClass} id={message.id > 0 ? `message-${message.id}` : undefined}>
               <div className="bubble-line">
                 <div

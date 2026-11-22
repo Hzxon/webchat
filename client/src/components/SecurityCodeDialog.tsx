@@ -63,7 +63,28 @@ export function SecurityCodeDialog({ conversation, onClose }: { conversation: Ch
   const single = rows.length === 1 ? rows[0] : null;
 
   return (
-    <Dialog title={single ? `Security code with ${single.name}` : 'Security codes'} onClose={onClose}>
+    <Dialog
+      title={single ? `Security code with ${single.name}` : 'Security codes'}
+      onClose={onClose}
+      footer={
+        single?.code && (
+          <>
+            {verified[single.userId] && <VerifiedBadge />}
+            <Button label="Close" onClick={onClose} />
+            {!verified[single.userId] && (
+              <Button
+                variant="primary"
+                label="Mark as verified"
+                onClick={() => {
+                  verify(single);
+                  onClose();
+                }}
+              />
+            )}
+          </>
+        )
+      }
+    >
       <Text as="p">
         {single
           ? `Compare this code with the one on ${single.name.split(' ')[0]}’s phone, in person or on a call. If they match, nobody is reading in between.`
@@ -97,22 +118,6 @@ export function SecurityCodeDialog({ conversation, onClose }: { conversation: Ch
           )}
         </Stack>
       ))}
-      {single?.code && (
-        <Stack direction="horizontal" gap={2} hAlign="end" vAlign="center">
-          {verified[single.userId] && <VerifiedBadge />}
-          <Button label="Close" onClick={onClose} />
-          {!verified[single.userId] && (
-            <Button
-              variant="primary"
-              label="Mark as verified"
-              onClick={() => {
-                verify(single);
-                onClose();
-              }}
-            />
-          )}
-        </Stack>
-      )}
     </Dialog>
   );
 }

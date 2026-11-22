@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { List } from '@astryxdesign/core/List';
-import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { LIMITS } from '../../../shared/types';
@@ -20,6 +19,7 @@ export type NewChatMode = 'person' | 'group' | 'project';
 /** People and groups start from one list: pick one person or several. A project starts from the same list with a name. */
 export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode?: NewChatMode; onClose: () => void }) {
   const users = useAppState((s) => s.users);
+  const projects = useAppState((s) => s.projects);
   const project = initialMode === 'project';
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<Set<number>>(new Set());
@@ -67,8 +67,27 @@ export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode
     });
   }
 
+  // A person reads by a project the user shares with them, as the design shows; else by when they were last here.
+  const about = (userId: number) => Object.values(projects).find((p) => p.memberIds.includes(userId))?.name;
+
   return (
-    <Dialog title={project ? 'New project' : 'New chat'} onClose={onClose}>
+    <Dialog
+      title={project ? 'New project' : 'New chat'}
+      onClose={onClose}
+      footer={
+        project ? (
+          <Button
+            variant="primary"
+            onClick={() => void startProject()}
+            isLoading={busy}
+            isDisabled={!groupName.trim()}
+            label="Create project"
+          />
+        ) : (
+          <Button variant="primary" onClick={() => void startChat()} isLoading={busy} isDisabled={picked.size === 0} label="Start chat" />
+        )
+      }
+    >
       {(project || picked.size > 1) && (
         <TextInput
           label={project ? 'Project name' : 'Group name'}
@@ -89,19 +108,24 @@ export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode
         hasAutoFocus={!project}
       />
 
-      <List edge="flush">
-        {people.map((user) => (
-          <PickItem
-            key={user.id}
-            label={user.displayName}
-            description={user.keys ? presenceText(user) : NO_KEYS}
-            start={<Avatar name={user.displayName} seed={user.id} size={32} online={user.online} />}
-            checked={picked.has(user.id)}
-            onChange={() => toggle(user.id)}
-            isDisabled={busy || !user.keys}
-          />
-        ))}
-      </List>
+      {people.length > 0 && (
+        <div className="people-list">
+          <List hasDividers>
+            {people.map((user) => (
+              <PickItem
+                key={user.id}
+                label={user.displayName}
+                description={user.keys ? (about(user.id) ?? presenceText(user)) : NO_KEYS}
+                start={<Avatar name={user.displayName} seed={user.id} size={32} online={user.online} />}
+                checked={picked.has(user.id)}
+                onChange={() => toggle(user.id)}
+                isDisabled={busy || !user.keys}
+                isCheckboxEnd
+              />
+            ))}
+          </List>
+        </div>
+      )}
       {people.length === 0 && (
         <Text as="p" color="secondary">
           {query ? 'Nobody matches.' : 'No one else has joined yet. Share the site address and the invite code.'}
@@ -109,19 +133,6 @@ export function NewChatDialog({ initialMode = 'person', onClose }: { initialMode
       )}
 
       {error && <Banner status="error" title={error} />}
-      <Stack direction="horizontal" hAlign="end">
-        {project ? (
-          <Button
-            variant="primary"
-            onClick={() => void startProject()}
-            isLoading={busy}
-            isDisabled={!groupName.trim()}
-            label="Create project"
-          />
-        ) : (
-          <Button variant="primary" onClick={() => void startChat()} isLoading={busy} isDisabled={picked.size === 0} label="Start chat" />
-        )}
-      </Stack>
     </Dialog>
   );
 }
