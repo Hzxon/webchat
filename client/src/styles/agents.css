@@ -1,10 +1,4 @@
-/* The Coding agents pane (D-103) */
-
-.agents-ask {
-  margin-bottom: 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
+/* The Coding agents window (D-103) */
 
 .agents-repo {
   display: flex;
@@ -31,15 +25,6 @@
   border-radius: var(--radius);
   background: var(--panel);
   color: var(--text);
-}
-
-.agents-project {
-  margin-bottom: 16px;
-}
-
-.agents-project-head {
-  margin: 0 0 6px;
-  font-size: 14px;
 }
 
 .agents-empty {
@@ -154,7 +139,7 @@
 }
 
 /* Answers hold code, so they take more of the width, and a long line scrolls inside its block. */
-.agents-pane .bubble-line,
+.agents-window .bubble-line,
 .card-peek-run .bubble-line {
   max-width: min(92%, 760px);
 }
@@ -200,15 +185,6 @@
 .run-step-time {
   color: var(--muted);
   font-size: 0.6875rem;
-}
-
-/* The header holds Put to sleep, Settings and Connect: the button keeps one line, and on a phone the
-   pane's icon makes room for them. */
-
-@media (max-width: 480px) {
-  .agents-pane .chat-header > .github-mark {
-    display: none;
-  }
 }
 
 .bubble .markdown,
@@ -270,4 +246,978 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
+}
+
+/* The window: its own sidebar beside the open conversation or a new question. */
+.agents-window {
+  flex-direction: row;
+  position: relative;
+}
+
+.agents-side {
+  position: relative;
+  flex: none;
+  width: 300px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--sidebar);
+}
+
+.agents-side-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 10px 8px 14px;
+}
+
+.agents-side-title {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  padding: 4px;
+}
+
+.agents-side-title strong {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.agents-side-title span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agents-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.agents-dot.is-on {
+  background: var(--ok);
+}
+
+.agents-dot.is-going {
+  background: var(--warn);
+}
+
+/* The gear holds the foot's actions on a phone only. */
+.agents-gear-wrap {
+  position: relative;
+  display: none;
+}
+
+.agents-side-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 8px 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.agents-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agents-row[aria-current] {
+  background: var(--sidebar-hover);
+}
+
+.agents-row:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.agents-row.is-nested {
+  gap: 8px;
+  min-height: 34px;
+  padding-left: 36px;
+  font-size: 13px;
+}
+
+.agents-row.is-note {
+  color: var(--muted);
+  cursor: default;
+}
+
+.agents-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-row-end {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.agents-row-end.is-warn,
+.agents-sleep-text .is-warn {
+  color: var(--warn);
+}
+
+.agents-side-h {
+  margin: 18px 8px 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.agents-side-h-row {
+  display: flex;
+  align-items: center;
+  margin: 12px 0 2px 8px;
+}
+
+.agents-side-h-row h3 {
+  flex: 1;
+  margin: 0;
+  font: inherit;
+}
+
+/* A run's pull request: dashed while a draft, solid once ready, the merge mark once merged. */
+.agents-pr {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agents-side-foot {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.agents-popover {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.agents-popover-h {
+  padding: 6px 8px 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agents-popover-note {
+  margin: 6px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agents-popover-note code {
+  font-family: var(--mono);
+}
+
+.agents-popover hr {
+  width: calc(100% - 20px);
+  margin: 6px 10px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.agents-gear-menu {
+  top: calc(100% + 4px);
+  right: 0;
+  width: 250px;
+}
+
+.agents-folder {
+  top: 150px;
+  left: calc(100% - 36px);
+  width: 340px;
+}
+
+.agents-folder-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -6px -6px 4px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.agents-folder-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+
+.agents-sleep-row,
+.agents-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 4px 8px;
+}
+
+.agents-sleep-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+}
+
+.agents-sleep-text strong {
+  font-weight: 500;
+}
+
+.agents-sleep-text span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Above the foot's three rows. */
+.agents-sleep {
+  right: 8px;
+  bottom: 136px;
+  left: 8px;
+}
+
+.agents-sheet-backdrop {
+  display: none;
+}
+
+.agents-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--chat-bg);
+}
+
+.agents-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 60px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.agents-head-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+}
+
+.agents-head-text strong,
+.agents-head-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-head-text strong {
+  font-size: 15px;
+}
+
+.agents-head-text span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.agents-back,
+.agents-new-head {
+  display: none;
+}
+
+.agents-new {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.agents-new-body,
+.agents-new:not(:has(.agents-new-body)) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 48px 16px;
+}
+
+.agents-new h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.agents-new-form {
+  width: 100%;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agents-new-sessions {
+  align-self: flex-start;
+}
+
+.agents-new-form .agents-hint {
+  padding: 0 12px;
+}
+
+.agents-window .composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The pill box: the text, the model button and the round button on one line. */
+.composer-row.agents-pill {
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 7px 7px 7px 16px;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: var(--panel);
+}
+
+.composer-row.agents-pill:focus-within {
+  border-color: var(--accent);
+}
+
+.composer-row.agents-pill textarea,
+.composer-row.agents-pill textarea:focus {
+  min-width: 0;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.agents-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agents-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 14px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+/* Where a session runs, under its box. */
+.agents-where {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.agents-where > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 32px;
+}
+
+.agents-where > .is-own,
+.agents-mode.is-own {
+  color: var(--warn);
+}
+
+.agents-where select {
+  field-sizing: content;
+  max-width: 180px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+}
+
+.agents-where-gap {
+  flex: 1;
+}
+
+.agents-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.agents-mode:disabled {
+  cursor: default;
+}
+
+.agents-ring {
+  display: inline-grid;
+  place-items: center;
+}
+
+/* The model button in the box, and the picker it opens. */
+.model-button {
+  position: relative;
+  flex: none;
+}
+
+.model-button > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.model-button > button[aria-expanded='true'] {
+  background: var(--hover);
+}
+
+.model-button-mode {
+  color: var(--muted);
+}
+
+.model-picker {
+  position: absolute;
+  top: calc(100% + 16px);
+  right: -54px;
+  z-index: 40;
+  display: flex;
+  width: 560px;
+  height: 400px;
+  max-width: calc(100vw - 32px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.model-button.is-up .model-picker {
+  top: auto;
+  bottom: calc(100% + 16px);
+}
+
+.model-picker-tabs {
+  flex: 0 0 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border-right: 1px solid var(--line);
+}
+
+.model-picker-tabs button {
+  width: 40px;
+  height: 40px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.model-picker-tabs button[aria-selected='true'] {
+  background: var(--hover);
+  box-shadow: inset -3px 0 0 var(--accent);
+}
+
+.model-picker-tabs button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.model-picker-models {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  border-right: 1px solid var(--line);
+}
+
+.model-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 8px;
+  border-bottom: 2px solid var(--accent);
+  color: var(--muted);
+}
+
+.model-picker-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  outline: none;
+}
+
+.model-picker-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 6px;
+  overflow-y: auto;
+}
+
+.model-picker-list button,
+.model-picker-modes button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-picker-list button > span {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+}
+
+.model-picker-list button[aria-pressed='true'] {
+  background: var(--hover);
+}
+
+.model-picker-list button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.model-picker-list kbd {
+  padding: 2px 6px;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+}
+
+.model-picker-list p,
+.model-picker-modes p {
+  margin: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.model-picker-modes {
+  flex: 0 0 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+}
+
+.model-picker-head {
+  margin-bottom: 4px;
+  padding: 8px 4px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.model-picker-modes button[aria-checked='true'] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.harness-logo {
+  display: block;
+  border-radius: var(--radius);
+}
+
+.harness-letter {
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* The agent's question, numbered like Claude's own question card. */
+.qcard {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.qcard.is-done {
+  padding: 10px 14px;
+}
+
+.qhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.qhead b {
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  background: var(--hover);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.qgap {
+  flex: 1;
+}
+
+.qtext {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.qopts {
+  display: grid;
+  gap: 6px;
+}
+
+.qopt {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.qopt[aria-checked='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.qnum {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--radius);
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.qopt[aria-checked='true'] .qnum {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.qopt strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.qopt small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.qfoot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qhint {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* The number keys need a keyboard. */
+@media (hover: none) {
+  .qhint {
+    display: none;
+  }
+}
+
+@media (hover: hover) {
+  .agents-row:not(:disabled, .is-note):hover,
+  .agents-chip:hover {
+    background: var(--sidebar-hover);
+  }
+
+  .model-button > button:hover,
+  .model-picker-tabs button:not(:disabled):hover,
+  .model-picker-list button:not(:disabled):hover,
+  .model-picker-modes button:hover,
+  .agents-mode:not(:disabled):hover {
+    background: var(--hover);
+  }
+
+  .qopt[aria-checked='false']:hover {
+    background: var(--hover);
+  }
+}
+
+/* A phone: the list, a conversation and a new question each take the whole screen, with no scroll
+   bar and nothing that moves sideways. */
+@media (max-width: 760px) {
+  .agents-window * {
+    scrollbar-width: none;
+  }
+
+  .agents-window *::-webkit-scrollbar {
+    display: none;
+  }
+
+  .agents-side {
+    width: 100%;
+    border-right: 0;
+  }
+
+  .agents-window.is-main .agents-side,
+  .agents-window:not(.is-main) .agents-main {
+    display: none;
+  }
+
+  .agents-side-foot {
+    display: none;
+  }
+
+  .agents-gear-wrap,
+  .agents-back {
+    display: inline-flex;
+  }
+
+  .agents-new-head {
+    display: flex;
+  }
+
+  .agents-head {
+    padding: 8px 12px 8px 4px;
+  }
+
+  .agents-row {
+    min-height: 44px;
+    font-size: 15px;
+  }
+
+  .agents-row.is-nested {
+    padding-left: 42px;
+    font-size: 14px;
+  }
+
+  .agents-new-body {
+    justify-content: space-between;
+    gap: 16px;
+    padding: 24px 10px 16px;
+  }
+
+  .agents-new h1 {
+    margin: auto 0;
+    font-size: 24px;
+    line-height: 1.25;
+  }
+
+  .agents-folder {
+    position: fixed;
+    top: 64px;
+    right: 8px;
+    left: 8px;
+    width: auto;
+  }
+
+  /* Put to sleep is a sheet from the bottom. */
+  .agents-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 29;
+    display: block;
+    border: 0;
+    background: var(--backdrop);
+  }
+
+  .agents-sleep {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    padding: 12px 12px max(16px, env(safe-area-inset-bottom));
+    border-radius: var(--radius) var(--radius) 0 0;
+  }
+
+  .model-picker,
+  .model-button.is-up .model-picker {
+    position: fixed;
+    top: auto;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    width: auto;
+    max-width: none;
+    height: min(400px, 70dvh);
+  }
+
+  .model-picker-modes {
+    flex-basis: 128px;
+  }
+
+  .agents-where select {
+    max-width: 120px;
+  }
+
+  /* On a phone, where a new question runs reads as chips. */
+  .agents-new-where > span,
+  .agents-new-where > .agents-mode {
+    min-height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--panel);
+    font-size: 13px;
+  }
+
+  /* The list shows no pick while it has the screen. */
+  .agents-window:not(.is-main) .agents-row[aria-current] {
+    background: transparent;
+  }
+}
+
+/* Agent settings: long help behind a ?. */
+.setup-help {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+.setup-help-mark {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.setup-help-mark[aria-expanded='true'] {
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }

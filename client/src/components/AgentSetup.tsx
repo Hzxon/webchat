@@ -225,7 +225,7 @@ function SetupForm({ agent }: { agent: UserDTO }) {
             {h.knobs.includes('noAttribution') && (
               <PickItem
                 label="No AI attribution in commits and pull requests"
-                description={`No “Co-Authored-By” or “Generated with ${h.name}” lines.`}
+                description={<Help text={`No “Co-Authored-By” or “Generated with ${h.name}” lines.`} />}
                 checked={choice.noAttribution}
                 onChange={() => setEdit({ ...choice, noAttribution: !choice.noAttribution })}
               />
@@ -234,7 +234,7 @@ function SetupForm({ agent }: { agent: UserDTO }) {
               <PickItem
                 label="Use my own setup in sessions I start"
                 // A Text, not a string, so the warning wraps instead of being cut to one line.
-                description={<Text color="secondary">{OWN_WARNING}</Text>}
+                description={<Help text={OWN_WARNING} />}
                 checked={!!choice.own?.includes(h.name)}
                 onChange={() => setEdit({ ...choice, own: flip(choice.own ?? [], h.name) })}
               />
@@ -242,7 +242,7 @@ function SetupForm({ agent }: { agent: UserDTO }) {
             {h.knobs.includes('noPlan') && (
               <PickItem
                 label="Show me the plan before any code"
-                description="A card run waits for your go after its check."
+                description={<Help text="A card run waits for your go after its check." />}
                 checked={!choice.noPlan}
                 onChange={() => setEdit({ ...choice, noPlan: !choice.noPlan })}
               />
@@ -255,7 +255,7 @@ function SetupForm({ agent }: { agent: UserDTO }) {
                   <PickItem
                     key={s.name}
                     label={s.name}
-                    description={s.description}
+                    description={<Help text={s.description} />}
                     checked={choice.skills.includes(s.name)}
                     onChange={() => setEdit({ ...choice, skills: flip(choice.skills, s.name) })}
                   />
@@ -281,5 +281,29 @@ function SetupForm({ agent }: { agent: UserDTO }) {
       )}
       {late && <Banner status="error" title={`Your agent did not answer. ${WAKE}`} />}
     </Stack>
+  );
+}
+
+/** Help that fits on one line shows under its option; longer help waits behind a ? that opens on click. */
+function Help({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  if (text.length <= 80) return <Text color="secondary">{text}</Text>;
+  return (
+    <span className="setup-help">
+      <button
+        type="button"
+        className="setup-help-mark"
+        aria-label="What this does"
+        aria-expanded={open}
+        // The row toggles its box on a click; the ? only opens its help.
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(!open);
+        }}
+      >
+        ?
+      </button>
+      {open && <Text color="secondary">{text}</Text>}
+    </span>
   );
 }
