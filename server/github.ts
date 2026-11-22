@@ -11,7 +11,9 @@ import { describeGithubEvent } from '../shared/github.js';
 import {
   LIMITS,
   showsEveryPush,
+  type BranchChoiceDTO,
   type GithubDTO,
+  type OpenPullInput,
   type GithubEventDTO,
   type GithubEventKind,
   type PullChecks,
@@ -34,6 +36,11 @@ const MANUAL_POLL_INTERVAL_MS = 10_000;
 /** Scheduled runs poll accounts slightly early, so a run that starts a moment soon does not skip one. */
 const SCHEDULED_POLL_INTERVAL_MS = POLL_INTERVAL_MS - 5_000;
 const PULLS_PER_LIST = 30;
+/** The All view searches at most this many linked repositories, to keep the search query short. */
+const TEAM_REPOS = 10;
+/** The Open a pull request dialog looks at this many repositories, and this many newest branches of each. */
+const BRANCH_REPOS = 6;
+const BRANCHES_PER_REPO = 20;
 /** More changes than this in one poll still show in the activity list, but only the newest are pushed. */
 const MAX_PUSHES_PER_POLL = 3;
 /**
@@ -78,6 +85,9 @@ fragment Pull on PullRequest {
   url
   isDraft
   updatedAt
+  mergedAt
+  closed
+  headRefName
   additions
   deletions
   reviewDecision
@@ -90,15 +100,52 @@ fragment Pull on PullRequest {
     nodes { requestedReviewer { ... on User { login } ... on Bot { login } ... on Mannequin { login } } }
   }
   assignees(first: ${LIMITS.pullPeople}) { nodes { login } }
+  latestReviews(first: ${LIMITS.pullPeople}) { nodes { state author { login } } }
 }`;
 
 const PULLS_QUERY = `
-query Pulls($reviewQuery: String!, $authoredQuery: String!, $first: Int!) {
+query Pulls($reviewQuery: String!, $authoredQuery: String!, $mergedQuery: String!, $teamQuery: String!, $team: Boolean!, $first: Int!) {
   viewer { login }
   reviewRequested: search(type: ISSUE, query: $reviewQuery, first: $first) { nodes { ...Pull } }
   authored: search(type: ISSUE, query: $authoredQuery, first: $first) { nodes { ...Pull } }
+  merged: search(type: ISSUE, query: $mergedQuery, first: $first) { nodes { ...Pull } }
+  team: search(type: ISSUE, query: $teamQuery, first: $first) @include(if: $team) { nodes { ...Pull } }
 }
 ${PULL_FIELDS}`;
+
+/**
+ * The newest branches of each repository, with whether a pull request was ever opened from them.
+ * The repositories come in as aliases, since GraphQL takes no list of them.
+ */
+const branchesQuery = (count: number) => `
+query Branches(${Array.from({ length: count }, (_, i) => `$o${i}: String!, $n${i}: String!`).join(', ')}) {
+${Array.from(
+  { length: count },
+  (_, i) => `  r${i}: repository(owner: $o${i}, name: $n${i}) {
+    nameWithOwner
+    defaultBranchRef { name }
+    refs(refPrefix: "refs/heads/", first: ${BRANCHES_PER_REPO}, orderBy: { field: TAG_COMMIT_DATE, direction: DESC }) {
+      nodes {
+        name
+        associatedPullRequests(first: 1) { totalCount }
+        target { ... on Commit { messageHeadline committedDate } }
+      }
+    }
+  }`,
+).join('\n')}
+}`;
+
+interface BranchesRepo {
+  nameWithOwner: string;
+  defaultBranchRef: { name: string } | null;
+  refs: {
+    nodes: Array<{
+      name: string;
+      associatedPullRequests: { totalCount: number };
+      target: { messageHeadline?: string; committedDate?: string } | null;
+    } | null> | null;
+  } | null;
+}
 
 /** Finds out what happened to pull requests that left the open list. */
 const STATES_QUERY = `
@@ -113,6 +160,9 @@ interface PullNode {
   url: string;
   isDraft: boolean;
   updatedAt: string;
+  mergedAt: string | null;
+  closed: boolean;
+  headRefName: string;
   additions: number;
   deletions: number;
   reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
@@ -129,12 +179,15 @@ interface PullNode {
     nodes: Array<{ requestedReviewer: { login?: string } | null } | null> | null;
   } | null;
   assignees: { nodes: Array<{ login: string } | null> | null } | null;
+  latestReviews: { nodes: Array<{ state: string; author: { login: string } | null } | null> | null } | null;
 }
 
 interface PullsResult {
   viewer: { login: string };
   reviewRequested: { nodes: Array<PullNode | null> | null } | null;
   authored: { nodes: Array<PullNode | null> | null } | null;
+  merged: { nodes: Array<PullNode | null> | null } | null;
+  team?: { nodes: Array<PullNode | null> | null } | null;
 }
 
 interface StatesResult {
@@ -204,6 +257,12 @@ function toPulls(list: { nodes: Array<PullNode | null> | null } | null): PullReq
           return name ? [name] : [];
         }),
         assignees: (node.assignees?.nodes ?? []).flatMap((user) => (user ? [user.login] : [])),
+        approvedBy: (node.latestReviews?.nodes ?? []).flatMap((review) =>
+          review?.state === 'APPROVED' && review.author ? [review.author.login] : [],
+        ),
+        branch: node.headRefName,
+        mergedAt: node.mergedAt ? Date.parse(node.mergedAt) : null,
+        closed: node.closed,
       },
     ];
   });
@@ -288,17 +347,32 @@ export function createGithub(db: Db, push: Push, config: Config) {
   const configured = Boolean(clientId && clientSecret);
   const tokens = clientSecret ? tokenCipher(clientSecret) : null;
 
-  async function rest<T>(token: string, path: string): Promise<T> {
+  /** The user's account and token, for a request they make themselves. */
+  async function tokenOf(userId: number) {
+    const account = tokens ? await db.githubAccount(userId) : undefined;
+    const token = account && tokens!.open(account.token, userId);
+    if (!token) throw new GithubError('Connect GitHub first.');
+    return { account: account!, token };
+  }
+
+  async function rest<T>(token: string, path: string, body?: unknown): Promise<T> {
     const res = await fetch(`${config.githubApiUrl}${path}`, {
+      ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
       headers: {
         accept: 'application/vnd.github+json',
         authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
         'user-agent': 'WebChat',
         'x-github-api-version': REST_API_VERSION,
       },
       signal: AbortSignal.timeout(10_000),
     });
     if (res.status === 401) throw new GithubError('GitHub no longer accepts this connection. Connect GitHub again.', true);
+    if (res.status >= 400 && res.status < 500) {
+      // GitHub says why it refused, such as a pull request that already exists, and asking again will not help.
+      const detail = (await res.json().catch(() => ({}))) as { errors?: Array<{ message?: string }>; message?: string };
+      throw new GithubError(`GitHub refused it: ${detail.errors?.[0]?.message ?? detail.message ?? res.status}.`);
+    }
     if (!res.ok) throw new GithubError(`GitHub answered ${res.status}. Try again in a few minutes.`);
     return (await res.json()) as T;
   }
@@ -322,16 +396,22 @@ export function createGithub(db: Db, push: Push, config: Config) {
     return { data: body.data, errors: body.errors ?? [] };
   }
 
-  async function fetchPulls(token: string, login: string) {
+  async function fetchPulls(token: string, login: string, teamRepos: string[]) {
     const scope = 'is:pr is:open archived:false sort:updated-desc';
+    const repos = teamRepos.slice(0, TEAM_REPOS);
     const { data, errors } = await graphql<PullsResult>(token, PULLS_QUERY, {
       reviewQuery: `${scope} review-requested:${login}`,
       authoredQuery: `${scope} author:${login}`,
+      mergedQuery: `is:pr is:merged sort:updated-desc author:${login}`,
+      teamQuery: `is:pr archived:false sort:updated-desc ${repos.map((r) => `repo:${r}`).join(' ')}`,
+      team: repos.length > 0,
       first: PULLS_PER_LIST,
     });
     const pulls: PullListsDTO = {
       reviewRequested: toPulls(data.reviewRequested),
       authored: toPulls(data.authored),
+      merged: toPulls(data.merged),
+      team: toPulls(data.team ?? null),
       hiddenOrganizations: hiddenOrganizations(errors),
     };
     return { login: data.viewer.login, pulls };
@@ -399,8 +479,11 @@ export function createGithub(db: Db, push: Push, config: Config) {
       return;
     }
     try {
-      const { login, pulls } = await fetchPulls(token, account.login);
       const before = account.pulls ? (JSON.parse(account.pulls) as PullListsDTO) : null;
+      // All shows the repositories of the user's projects, and those their own pull requests were in last time.
+      const ownRepos = [...(before?.authored ?? []), ...(before?.reviewRequested ?? [])].map((p) => p.repo);
+      const teamRepos = [...new Set([...(await db.githubTeamRepos(userId)), ...ownRepos])];
+      const { login, pulls } = await fetchPulls(token, account.login, teamRepos);
       const events: NewGithubEvent[] = [];
       if (before) {
         const changes = comparePulls(before, pulls, login);
@@ -534,6 +617,57 @@ export function createGithub(db: Db, push: Push, config: Config) {
     },
 
     setNotify: (userId: number, notify: boolean) => db.setGithubNotify(userId, notify),
+
+    /**
+     * The branches the user could open a pull request from: the newest ones without any pull
+     * request, other than the default branch, in the repositories of their pull requests and projects.
+     */
+    async branches(userId: number): Promise<BranchChoiceDTO[]> {
+      const [{ account, token }, teamRepos] = await Promise.all([tokenOf(userId), db.githubTeamRepos(userId)]);
+      const lists = account.pulls ? (JSON.parse(account.pulls) as PullListsDTO) : null;
+      const repos = [...new Set([...teamRepos, ...(lists?.authored ?? []).map((p) => p.repo)])].slice(0, BRANCH_REPOS);
+      if (repos.length === 0) return [];
+      const variables = Object.fromEntries(
+        repos.flatMap((repo, i) => {
+          const [owner, name] = repo.split('/');
+          return [
+            [`o${i}`, owner],
+            [`n${i}`, name],
+          ];
+        }),
+      );
+      const { data } = await graphql<Record<string, BranchesRepo | null>>(token, branchesQuery(repos.length), variables);
+      return Object.values(data)
+        .flatMap((repo) =>
+          (repo?.refs?.nodes ?? []).flatMap((ref) =>
+            ref && repo!.defaultBranchRef && ref.name !== repo!.defaultBranchRef.name && ref.associatedPullRequests.totalCount === 0
+              ? [
+                  {
+                    repo: repo!.nameWithOwner,
+                    base: repo!.defaultBranchRef!.name,
+                    branch: ref.name,
+                    title: ref.target?.messageHeadline || ref.name,
+                    updatedAt: Date.parse(ref.target?.committedDate ?? '') || 0,
+                  },
+                ]
+              : [],
+          ),
+        )
+        .sort((a, b) => b.updatedAt - a.updatedAt);
+    },
+
+    /** Opens a draft pull request, then polls so the pane shows it. */
+    async openPull(userId: number, input: OpenPullInput): Promise<{ url: string }> {
+      const { token } = await tokenOf(userId);
+      const pull = await rest<{ html_url: string }>(token, `/repos/${input.repo}/pulls`, {
+        title: input.title,
+        head: input.branch,
+        base: input.base,
+        draft: true,
+      });
+      await poll(userId, MANUAL_POLL_INTERVAL_MS);
+      return { url: pull.html_url };
+    },
 
     /** Unlinks the account here, and deletes the app's grant on GitHub so the token stops working. */
     async disconnect(userId: number) {

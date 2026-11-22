@@ -161,7 +161,14 @@ export class Plugin {
 
   /** Serves while it holds the watch, waits while it cannot, and waits again after the agent goes to sleep. */
   async serve() {
-    while (await this.start()) await this.loop();
+    try {
+      while (await this.start()) await this.loop();
+    } catch (error) {
+      // A removed account is refused on every try. A service that exits on it restarts every 10
+      // seconds, and its failed sign-ins use up the address's limit, which the next pairing needs.
+      if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      this.problem = 'WebChat refused this agent’s sign-in: it was removed, or paired again. Run `webchat-agent setup` with a new code.';
+    }
   }
 
   /**
@@ -401,8 +408,11 @@ export class Plugin {
       if (this.busy().length) this.lastWork = Date.now();
       return checkInEvery(Date.now() - this.lastWork);
     };
-    for await (const message of this.client!.watch(this.stop.signal, every)) this.handle(message);
-    timers.forEach(clearInterval);
+    try {
+      for await (const message of this.client!.watch(this.stop.signal, every)) this.handle(message);
+    } finally {
+      timers.forEach(clearInterval);
+    }
   }
 
   /**
@@ -415,7 +425,7 @@ export class Plugin {
     const own = this.linkedHarnesses().some((h) => h.offers.knobs.includes('own')) ? AGENT_LEVEL.own : 0;
     // A terminal's session goes on only in the owner's own setup, so the adapters that run it list them.
     const sessions = own ? AGENT_LEVEL.sessions : 0;
-    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | AGENT_LEVEL.events | AGENT_LEVEL.controls | asks | own | sessions | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
+    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | AGENT_LEVEL.events | AGENT_LEVEL.controls | AGENT_LEVEL.anywhere | asks | own | sessions | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
   }
 
   /** The work that keeps an agent awake while it goes to sleep: its running cards and questions. */
@@ -836,6 +846,7 @@ export class Plugin {
     if (run?.kind === 'fix') return this.go(message, run).catch(log);
     if (run?.kind === 'clone' || prompt?.kind === 'clone') return this.clone(message).catch(log);
     if (message.content?.forget) return this.forget(message).catch(log);
+    if (message.content?.pick) return this.pickOnWord(message).catch(log);
     if (message.content?.sleep) return this.sleepOnWord(message).catch(log);
     if (message.content?.setup) return this.setupOnWord(message).catch(log);
     if (message.content?.sessions) return this.listSessions(message).catch(log);
@@ -991,6 +1002,22 @@ export class Plugin {
     if (!folder || !this.fromOwner(message, forget.sentAt)) return;
     await fs.rm(markOf(this.options.dataDir, folder.repo), { force: true });
     await this.scan();
+  }
+
+  /**
+   * Opens a folder window on the laptop on its owner's word in the pane, and asks them to connect the
+   * folder they pick, as `webchat-agent connect` does: the pick itself marks nothing (docs/decisions/connect-approval.md).
+   */
+  private async pickOnWord(message: OpenedMessage) {
+    if (!this.fromOwner(message, message.content!.pick!.sentAt)) return;
+    const say = (text: string) => this.client!.send(message.conversationId, { text });
+    const dir = await this.bench.pickFolder().catch(async (error: unknown) => void (await say(`I could not open a folder window: ${messageOf(error)}`)));
+    if (!dir) return;
+    const { repo } = await this.bench.checkout(dir);
+    if (!repo) return void (await say(`${shown(dir)} is not a copy of a GitHub repository. Pick a folder that is.`));
+    if ((await fs.readFile(markOf(this.options.dataDir, repo), 'utf8').catch(() => '')) === dir) return void (await say(`${repo} is connected to this folder already.`));
+    await this.fileAsk({ kind: 'connect', repo, dir });
+    await this.sendAsks();
   }
 
   /** Whether a project that holds both the owner and this agent links the repository, in lower case (D-050, D-108). */
@@ -1315,7 +1342,8 @@ export class Plugin {
     // Sessions outside WebChat claim with draft pull requests, which the sandboxed shell cannot list (R-041).
     const listing = folder && openPulls(folder.repo);
     const board = await this.board(conversation.project);
-    if (!folder && !board) throw new Error('I am not in that project, so I cannot read its board. Add me to it, then ask again.');
+    // A prompt with neither a project nor a repository runs in an empty folder, with no board.
+    if (!folder && conversation.project !== undefined && !board) throw new Error('I am not in that project, so I cannot read its board. Add me to it, then ask again.');
     // Every turn fetches, so a reply after a merge reads the merged code, not the first turn's. In
     // their own setup the turn works in their folder as it stands, which nothing here moves.
     const base = folder && !own ? await this.fetchBase(folder).catch(() => {

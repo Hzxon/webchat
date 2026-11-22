@@ -6,12 +6,13 @@
 // agent, it prints the fix.
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync } from 'node:fs';
+import { existsSync, openSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
+import tty from 'node:tty';
 import { promisify } from 'node:util';
 import pkg from '../package.json' with { type: 'json' };
 import { HARNESS_ROW_WORDS, HARNESS_WARNING, harnessRow, type ConfigDTO, type HarnessState, type PairingPick, type SetupChoice } from '../shared/types.ts';
@@ -23,7 +24,7 @@ import { GH_VERSION, ghAsset, pinnedArchive } from './gh.ts';
 import { harnessFinder, SUPPORTED, supported } from './harnesses.ts';
 import { sha256 } from './keep.ts';
 import {
-  bootstrap, createPlan, foldersPlan, browserPlan, freeIds, ghOf, ghPlan, idsOf, inspectRoom, layoutFor, loginPlan, pairPlan, programOf, programPlan, quoted, realRoot, refusals, RELEASE, runAll, servicePlan, signedInPlan, socketOf, stopUpdaterPlan, uninstallPlan, updaterPlan, xml,
+  bootstrap, createPlan, foldersPlan, browserPlan, freeIds, ghOf, ghPlan, idsOf, inspectRoom, layoutFor, loginPlan, pairPlan, programOf, programPlan, quoted, realRoot, refusals, RELEASE, runAll, servicePlan, signedInPlan, socketOf, stopUpdaterPlan, uninstallPlan, updateConfigOf, updaterPlan, xml,
   type Layout, type Read, type Root,
 } from './lockroom.ts';
 import { finishMove, moveAccount, newest, sources } from './move.ts';
@@ -297,12 +298,24 @@ async function rootOwned(file: string, layout: Layout) {
 /** Read-only commands, which need no sudo: `dscl` and `getent` list accounts to anyone. */
 export const read: Read = (argv) => run(argv[0]!, argv.slice(1)).then((out) => out, () => undefined);
 
+/** Whether macOS turned a service off under Login Items, by its plist, in the output of `sfltool dumpbtm`, which needs no sudo. */
+export const turnedOff = (dump: string, plist: string) => dump.split(/^\s*UUID:/m).some((item) => item.includes(`URL: ${plist}\n`) && /Disposition: \[disabled/.test(item));
+
 /** The keyholder's service as the system says it, without sudo. */
-async function keyholderState(layout: Layout): Promise<'running' | 'stopped' | 'missing'> {
+async function keyholderState(layout: Layout): Promise<'running' | 'stopped' | 'unloaded' | 'missing'> {
   if (!existsSync(layout.unit)) return 'missing';
-  const said = mac() ? await run('launchctl', ['print', `system/${layout.label}`]).catch(() => '') : await run('systemctl', ['is-active', layout.label]).catch(() => '');
-  return (mac() ? /state = running/.test(said) : said.trim() === 'active') ? 'running' : 'stopped';
+  if (!mac()) return (await run('systemctl', ['is-active', layout.label]).catch(() => '')).trim() === 'active' ? 'running' : 'stopped';
+  const said = await run('launchctl', ['print', `system/${layout.label}`]).catch(() => undefined);
+  return said === undefined ? 'unloaded' : /state = running/.test(said) ? 'running' : 'stopped';
 }
+
+/** Why a service of the room does not run on macOS. Unloaded is what `launchctl bootout` leaves, and setup loads it again. */
+async function stoppedFix(plist: string, loaded: boolean, log: string) {
+  if (turnedOff(await run('sfltool', ['dumpbtm']).catch(() => ''), plist)) return `macOS turned it off: turn it on under System Settings > General > Login Items > Allow in the Background. ${log}`;
+  return loaded ? `It stops after it starts. ${log}` : `It was stopped, as \`launchctl bootout\` does. Run \`webchat-agent setup\` to start it again. ${log}`;
+}
+
+const keyholderFix = (layout: Layout, state: 'stopped' | 'unloaded') => (mac() ? stoppedFix(layout.unit, state === 'stopped', keyholderLog(layout)) : keyholderLog(layout));
 
 /** Whether the updater's job is loaded, as the system says it without sudo: a loaded LaunchDaemon, or an active timer. */
 async function updaterLoaded(layout: Layout) {
@@ -315,7 +328,7 @@ const updaterLog = (layout: Layout) => (mac() ? `Its log is ${layout.updaterLog}
 /** The updater: installed, loaded, and what its last check found, from the state file that root writes and anyone reads. */
 async function updaterRow(layout: Layout): Promise<Row> {
   if (!existsSync(layout.updaterUnit)) return { level: 'todo', text: 'Updater: not installed. Setup installs it.' };
-  if (!(await updaterLoaded(layout))) return { level: 'warn', text: 'Updater: installed, but not loaded.', fix: mac() ? `macOS may have turned it off: look under System Settings > General > Login Items > Allow in the Background. ${updaterLog(layout)}` : updaterLog(layout) };
+  if (!(await updaterLoaded(layout))) return { level: 'warn', text: 'Updater: installed, but not loaded.', fix: mac() ? await stoppedFix(layout.updaterUnit, false, updaterLog(layout)) : updaterLog(layout) };
   const state = await readState(layout);
   if (!state) return ok('Updater: installed, and has not checked yet');
   const now = Date.now();
@@ -342,7 +355,7 @@ async function roomRows(layout: Layout, home: string, said?: RoomStatus): Promis
   // A room built before R-046 lacks it: runs then have no browser, and setup installs it.
   if (mac() && !(await rootOwned(path.join(layout.programDir, 'chrome-devtools-mcp', 'package.json'), layout))) rows.push({ level: 'todo', text: `Browser: chrome-devtools-mcp is missing in ${layout.programDir}, so runs cannot check their work in a browser.` });
   const state = await keyholderState(layout);
-  rows.push(state === 'running' ? ok(`Keyholder service: running${said ? (said.runner ? ', the runner is connected' : ', no runner connected') : ''}`) : { level: state === 'missing' ? 'todo' : 'warn', text: `Keyholder service: ${state === 'missing' ? 'not installed' : 'installed, but not running'}.`, ...(state === 'stopped' && { fix: mac() ? `macOS may have turned it off: look under System Settings > General > Login Items > Allow in the Background. Its log is ${layout.log}.` : `Its log is in \`journalctl -u ${layout.label}\`.` }) });
+  rows.push(state === 'running' ? ok(`Keyholder service: running${said ? (said.runner ? ', the runner is connected' : ', no runner connected') : ''}`) : { level: state === 'missing' ? 'todo' : 'warn', text: `Keyholder service: ${state === 'missing' ? 'not installed' : 'installed, but not running'}.`, ...((state === 'stopped' || state === 'unloaded') && { fix: await keyholderFix(layout, state) }) });
   rows.push(await updaterRow(layout));
   if (!found.members.includes(owner)) rows.push({ level: 'todo', text: `Group: you are not in ${layout.ipcGroup}, which opens the agent’s socket.` });
   else if (!(await run('id', ['-Gn']).catch(() => '')).split(/\s+/).includes(layout.ipcGroup)) rows.push({ level: 'warn', text: `Group: you are in ${layout.ipcGroup}, but this session started before that.`, fix: 'Log out and log in again, so the commands and the runner can reach the keyholder.' });
@@ -364,7 +377,8 @@ async function checks(home: string, layout: Layout, server?: string) {
     gitRow(packager, layout),
     mac() ? [] : sandboxRows(packager),
     diskRow(),
-    networkRow(server ?? said?.server),
+    // A stopped keyholder names no server; the updater's config holds the one setup paired with.
+    networkRow(server ?? said?.server ?? (await fs.readFile(updateConfigOf(layout), 'utf8').then((text) => (JSON.parse(text) as { server?: string }).server, () => undefined))),
     harnessRows(home, said),
     roomRows(layout, home, said),
   ]);
@@ -419,12 +433,18 @@ async function waitForTools() {
  * Asks on the terminal, not on stdin: the line runs under `curl … | sh`, where stdin is the script.
  * Returns the line typed.
  */
-async function askLine(question: string) {
-  const input = createReadStream('/dev/tty');
-  await new Promise((resolve, reject) => input.once('open', resolve).once('error', reject)).catch(() => {
+export async function askLine(question: string) {
+  let fd: number;
+  try {
+    fd = openSync('/dev/tty', 'r');
+  } catch {
     throw new Error('Setup asks a question, so run it in a terminal.');
-  });
-  const lines = readline.createInterface({ input, output: process.stdout });
+  }
+  // A file stream reads the terminal on a worker thread, and closing it leaves that read waiting, so
+  // it took the next line typed and the next question never got it. A tty stream leaves none behind.
+  const input = new tty.ReadStream(fd);
+  // Not a terminal interface: the terminal keeps echoing and Ctrl+C still stops setup.
+  const lines = readline.createInterface({ input, output: process.stdout, terminal: false });
   const answer = await lines.question(question);
   lines.close();
   input.destroy();
@@ -624,7 +644,7 @@ export async function doctor(home: string, layout = defaultLayout()) {
 
 export async function status(home: string, layout = defaultLayout()) {
   const [keyholder, login, account] = [await keyholderState(layout), await serviceState(), await readAccount(home)];
-  console.log(`Keyholder service: ${{ running: 'running', stopped: `installed, but not running. ${keyholderLog(layout)}`, missing: 'not installed. Run `webchat-agent setup <code>`.' }[keyholder]}`);
+  console.log(`Keyholder service: ${keyholder === 'running' ? 'running' : keyholder === 'missing' ? 'not installed. Run `webchat-agent setup <code>`.' : `installed, but not running. ${await keyholderFix(layout, keyholder)}`}`);
   console.log(`Runner service: ${{ running: 'running', stopped: `installed, but not running. ${logHint(home)}`, missing: 'not installed. Run `webchat-agent setup`.' }[login]}`);
   const updater = await updaterRow(layout);
   console.log(updater.text + (updater.fix ? `\n${updater.fix.replace(/^/gm, '  ')}` : ''));

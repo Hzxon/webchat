@@ -1,10 +1,10 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
-import { Divider } from '@astryxdesign/core/Divider';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
+import { TextInput } from '@astryxdesign/core/TextInput';
 import type { QuotedMessage } from '../../../shared/e2ee';
 import { githubCardEvent } from '../../../shared/github';
 import { FILE_EXTENSIONS, FILE_TYPE_LIST, isPhotoType, LIMITS, RUN_PICKUP_MS, type CardNoteDTO, type FileDTO, type GithubCardDTO, type PullCardDTO, type PullEvent, type RunReport, type RunRequest } from '../../../shared/types';
@@ -19,10 +19,10 @@ import { Avatar, nameColor } from './Avatar';
 import { chatText, dayLabel, formatTime, presenceText } from './format';
 import {
   AlertIcon,
+  ArrowUpIcon,
   BackIcon,
   BellIcon,
   BellOffIcon,
-  BellRingIcon,
   ClockIcon,
   CloseIcon,
   CopyIcon,
@@ -30,10 +30,11 @@ import {
   FileIcon,
   LockIcon,
   LockOpenIcon,
-  PaperclipIcon,
+  PlusIcon,
   PullRequestIcon,
   ReplyIcon,
-  SendIcon,
+  SearchIcon,
+  ShieldIcon,
   SmilePlusIcon,
   Ticks,
   UserPlusIcon,
@@ -86,8 +87,12 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
   const meId = me?.id;
   const users = useAppState((s) => s.users);
   const warnings = useAppState((s) => s.keyWarnings);
+  const verified = useAppState((s) => s.verified);
   const project = useAppState((s) => (conversation.projectId === null ? undefined : s.projects[conversation.projectId]));
   const [showCodes, setShowCodes] = useState(false);
+  /** The words searched for in this chat's loaded messages; null while search is closed. */
+  const [query, setQuery] = useState<string | null>(null);
+  useEffect(() => setQuery(null), [conversation.id]);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [dropped, setDropped] = useState<File | null>(null);
 
@@ -102,6 +107,9 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
       : conversation.members
           .map((m) => (m.userId === meId ? 'You' : (users[m.userId]?.displayName ?? 'Unknown')))
           .join(', ');
+  const others = conversation.members.filter((m) => m.userId !== meId);
+  // The shield turns green once the user has compared the code with everyone else here.
+  const allVerified = others.length > 0 && others.every((m) => verified[m.userId]);
   const changed = conversation.members
     .filter((m) => warnings[m.userId])
     .map((m) => users[m.userId]?.displayName ?? 'Someone');
@@ -133,9 +141,9 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
           icon={<BackIcon />}
         />
         {isChannel ? (
-          <Avatar name={project?.name ?? '#'} seed={(project?.id ?? 0) + 5} size={40} square />
+          <Avatar name={project?.name ?? '#'} seed={(project?.id ?? 0) + 5} size={36} square />
         ) : (
-          <Avatar name={title} seed={otherId ?? conversation.id + 3} size={40} online={otherId ? users[otherId]?.online : false} />
+          <Avatar name={title} seed={otherId ?? conversation.id + 3} size={36} online={otherId ? users[otherId]?.online : false} />
         )}
         <Stack gap={0} className="chat-header-text">
           <Text weight="semibold" maxLines={1}>
@@ -165,12 +173,21 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
             onClick={() => void setMuted(conversation.id, !conversation.muted)}
             icon={conversation.muted ? <BellOffIcon /> : <BellIcon />}
           />
+          <span className="chat-search-toggle">
+            <IconButton
+              variant="ghost"
+              label="Search this chat"
+              tooltip="Search this chat"
+              onClick={() => setQuery((q) => (q === null ? '' : null))}
+              icon={<SearchIcon />}
+            />
+          </span>
           <IconButton
             variant="ghost"
-            label="Encryption and security codes"
-            tooltip="Encryption and security codes"
+            label={allVerified ? 'Verified. Encryption and security codes' : 'Encryption and security codes'}
+            tooltip={allVerified ? 'Verified. Encryption and security codes' : 'Encryption and security codes'}
             onClick={() => setShowCodes(true)}
-            icon={<LockIcon />}
+            icon={<ShieldIcon className={allVerified ? 'shield-verified' : undefined} />}
           />
         </Stack>
       </header>
@@ -182,9 +199,27 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
           endContent={<Button size="sm" label="Check" onClick={() => setShowCodes(true)} />}
         />
       )}
-      <MessageList conversation={conversation} onShowCodes={() => setShowCodes(true)} onReply={setReplyTo} />
+      {query !== null && (
+        <Stack direction="horizontal" gap={1} vAlign="center" className="chat-search">
+          <TextInput
+            type="search"
+            label="Search this chat"
+            isLabelHidden
+            placeholder="Search this chat"
+            startIcon={SearchIcon}
+            hasAutoFocus
+            width="100%"
+            value={query}
+            onChange={setQuery}
+            onKeyDown={(e) => e.key === 'Escape' && setQuery(null)}
+          />
+          <IconButton variant="ghost" label="Close search" onClick={() => setQuery(null)} icon={<CloseIcon />} />
+        </Stack>
+      )}
+      <MessageList conversation={conversation} filter={query?.trim().toLowerCase() ?? ''} onShowCodes={() => setShowCodes(true)} onReply={setReplyTo} />
       <Composer
         conversationId={conversation.id}
+        addressee={otherId !== undefined ? title.split(' ')[0] : title}
         blockedReason={sendBlockedReason(conversation, { me, users })}
         replyTo={replyTo}
         onCancelReply={() => setReplyTo(null)}
@@ -197,13 +232,17 @@ export function ChatView({ conversation, onAddPeople, onMembers }: ChatViewProps
 
 interface MessageListProps {
   conversation: ChatConversation;
+  /** Lowercase words a loaded message's text must hold to show; empty shows them all. */
+  filter: string;
   onShowCodes: () => void;
   onReply: (message: ChatMessage) => void;
 }
 
-function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
+function MessageList({ conversation, filter, onShowCodes, onReply }: MessageListProps) {
   const meId = useAppState((s) => s.me?.id);
   const users = useAppState((s) => s.users);
+  const otherId = otherMemberId(conversation, meId);
+  const readers = otherId !== undefined ? `you and ${senderName(users, otherId).split(' ')[0]}` : 'the people in this chat';
   const messages = useAppState((s) => s.messages[conversation.id] ?? EMPTY);
   const reactions = useAppState((s) => s.reactions[conversation.id] ?? NO_REACTIONS);
   const complete = useAppState((s) => s.historyComplete[conversation.id] ?? false);
@@ -230,8 +269,8 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
       if (report && request?.kind === 'request' && request.runtime === m.senderId) reports.set(report.request, report);
       else shown.push(m);
     }
-    return { reports, shown };
-  }, [messages, byId]);
+    return { reports, shown: filter ? shown.filter((m) => m.text.toLowerCase().includes(filter)) : shown };
+  }, [messages, byId, filter]);
 
   useEffect(() => {
     if (trayFor === null) return;
@@ -307,18 +346,23 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
         if (trayFor !== null && !(e.target as Element).closest('.reaction-tray, .message-tools, .bubble')) setTrayFor(null);
       }}
     >
-      {/* The header's lock opens this in every chat; the notice shows only before the first message, or over unencrypted history. */}
-      {(!conversation.keyId || (messages.length === 0 && complete)) && (
-        <button className="encryption-notice" onClick={onShowCodes}>
+      {/* It heads every chat, as the design draws it, and opens the security codes. */}
+      {(complete || !conversation.keyId) && (
+        <button className={`encryption-notice ${conversation.keyId ? '' : 'is-unencrypted'}`} onClick={onShowCodes}>
           <LockIcon width={14} height={14} />
           {conversation.keyId
-            ? 'Messages are end-to-end encrypted. No one outside this chat, not even the server, can read them.'
+            ? `Messages are end-to-end encrypted. Only ${readers} can read them.`
             : 'Messages you send here will be end-to-end encrypted. Earlier ones were sent before encryption.'}
         </button>
       )}
       {loaded && !complete && (
         <Stack hAlign="center">
           <Button variant="ghost" size="sm" onClick={() => void showOlder()} isLoading={loadingOlder} label="Show earlier messages" />
+        </Stack>
+      )}
+      {filter && shown.length === 0 && (
+        <Stack padding={10} hAlign="center">
+          <Text color="secondary">No loaded message matches.</Text>
         </Stack>
       )}
       {messages.length === 0 && complete && (
@@ -345,7 +389,7 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
         ].join(' ');
         return (
           <Fragment key={message.clientId ?? message.id}>
-            {newDay && <Divider label={dayLabel(message.createdAt)} />}
+            {newDay && <div className="day-pill">{dayLabel(message.createdAt)}</div>}
             <div className={rowClass} id={message.id > 0 ? `message-${message.id}` : undefined}>
               <div className="bubble-line">
                 <div
@@ -357,11 +401,7 @@ function MessageList({ conversation, onShowCodes, onReply }: MessageListProps) {
                       {senderName(users, message.senderId, 'Unknown')}
                     </span>
                   )}
-                  {message.urgent && (
-                    <span className="bubble-urgent-label">
-                      <BellRingIcon width={13} height={13} /> URGENT
-                    </span>
-                  )}
+                  {message.urgent && <span className="bubble-urgent-label">Urgent</span>}
                   {message.replyTo && (
                     <Quote quote={message.replyTo} original={byId.get(message.replyTo.id)} onJump={() => jumpTo(message.replyTo!.id)} />
                   )}
@@ -760,6 +800,8 @@ function ReactionChips({ marks, target, onToggle }: { marks: MessageReactions; t
 
 interface ComposerProps {
   conversationId: number;
+  /** Who the box's placeholder addresses: a first name, a group or a channel. */
+  addressee: string;
   blockedReason: string | null;
   replyTo: ChatMessage | null;
   onCancelReply: () => void;
@@ -808,7 +850,7 @@ export function useDraft(name: number | string) {
   return [text, edit] as const;
 }
 
-function Composer({ conversationId, blockedReason, replyTo, onCancelReply, dropped }: ComposerProps) {
+function Composer({ conversationId, addressee, blockedReason, replyTo, onCancelReply, dropped }: ComposerProps) {
   const [text, edit] = useDraft(conversationId);
   const [urgent, setUrgent] = useState(false);
   const filesOn = useAppState((s) => s.files);
@@ -871,18 +913,13 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply, dropp
   }
 
   return (
-    <footer className={`composer ${urgent ? 'is-urgent' : ''}`}>
+    <footer className="composer">
       {blockedReason && <Banner status="warning" title={blockedReason} />}
       {replyTo && (
         <div className="composer-reply">
           <Quote quote={quoteOf(replyTo)} original={replyTo} />
           <IconButton variant="ghost" label="Cancel reply" tooltip="Cancel reply" onClick={onCancelReply} icon={<CloseIcon width={18} height={18} />} />
         </div>
-      )}
-      {urgent && (
-        <Text as="p" type="supporting" color="secondary">
-          Urgent: their device keeps ringing until they see it.
-        </Text>
       )}
       {fileProblem && (
         <Text as="p" type="supporting" color="secondary">
@@ -899,25 +936,29 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply, dropp
           <IconButton variant="ghost" label="Remove file" tooltip="Remove file" onClick={() => setAttachment(null)} icon={<CloseIcon width={18} height={18} />} />
         </div>
       )}
+      <button
+        type="button"
+        className="urgent-toggle"
+        aria-pressed={urgent}
+        title="Send as urgent: their device keeps ringing until they see it, even in a muted chat"
+        onClick={() => setUrgent((u) => !u)}
+      >
+        <BellIcon width={16} height={16} />
+        {urgent ? 'Urgent' : 'Mark as urgent'}
+      </button>
       <div className="composer-row">
-        <IconButton
-          variant={urgent ? 'destructive' : 'ghost'}
-          aria-pressed={urgent}
-          label="Mark as urgent"
-          tooltip="Mark as urgent"
-          onClick={() => setUrgent((u) => !u)}
-          icon={<BellRingIcon />}
-        />
         {filesOn && (
           <>
-            <IconButton
-              variant="ghost"
-              label="Attach a photo or file"
-              tooltip="Attach a photo or file"
-              isDisabled={blockedReason !== null}
+            <button
+              type="button"
+              className="composer-attach"
+              aria-label="Attach a photo or file"
+              title="Attach a photo or file"
+              disabled={blockedReason !== null}
               onClick={() => picker.current?.click()}
-              icon={<PaperclipIcon />}
-            />
+            >
+              <PlusIcon width={18} height={18} />
+            </button>
             <input
               ref={picker}
               type="file"
@@ -935,7 +976,8 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply, dropp
           rows={1}
           value={text}
           maxLength={LIMITS.messageLength}
-          placeholder={urgent ? 'Urgent message' : 'Type a message'}
+          aria-label="Message"
+          placeholder={`Message ${addressee}`}
           onChange={(e) => edit(e.target.value)}
           onKeyDown={onKeyDown}
           onPaste={(e) => {
@@ -946,14 +988,16 @@ function Composer({ conversationId, blockedReason, replyTo, onCancelReply, dropp
             void pick(file);
           }}
         />
-        <IconButton
-          variant={urgent ? 'destructive' : 'primary'}
-          size="lg"
-          label="Send"
+        <button
+          type="button"
+          className="composer-send"
+          aria-label="Send"
+          title="Send"
           onClick={submit}
-          isDisabled={(!text.trim() && !attachment) || blockedReason !== null}
-          icon={<SendIcon />}
-        />
+          disabled={(!text.trim() && !attachment) || blockedReason !== null}
+        >
+          <ArrowUpIcon width={18} height={18} />
+        </button>
       </div>
     </footer>
   );

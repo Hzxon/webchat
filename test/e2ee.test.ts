@@ -368,6 +368,8 @@ describe('end-to-end encryption', () => {
     assert.equal(((await open({ text: 'x', run: { ...run, asks: 'yes' } })).run as { asks?: true }).asks, undefined);
     const prompt = { kind: 'prompt', project: 2, sentAt: 1, asks: true };
     assert.deepEqual((await open({ text: 'x', prompt })).prompt, prompt);
+    // A prompt with neither a project nor a repository asks in an empty folder.
+    assert.deepEqual((await open({ text: 'x', prompt: { kind: 'prompt', sentAt: 1 } })).prompt, { kind: 'prompt', sentAt: 1 });
     // A lock screen shows no word of what the agent asks.
     assert.equal(previewOf({ text: 'Your agent asks your permission to run a command:\nnpm test', permit: question }), 'Your agent asks your permission');
   });

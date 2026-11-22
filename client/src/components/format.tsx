@@ -45,15 +45,15 @@ export function dayLabel(ts: number): string {
 
 export function presenceText(user: UserDTO | undefined): string {
   if (!user) return '';
-  if (user.online) return 'online';
-  if (!user.lastSeen) return 'offline';
+  if (user.online) return 'Online';
+  if (!user.lastSeen) return 'Offline';
   const days = Math.round((startOfDay(Date.now()) - startOfDay(user.lastSeen)) / DAY);
   const time = formatTime(user.lastSeen);
   const minutes = Math.floor((Date.now() - user.lastSeen) / 60_000);
-  if (minutes < 60) return `active ${Math.max(minutes, 1)} min ago`;
-  if (days === 0) return `last seen today at ${time}`;
-  if (days === 1) return `last seen yesterday at ${time}`;
-  return `last seen ${new Date(user.lastSeen).toLocaleDateString()}`;
+  if (minutes < 60) return `Active ${Math.max(minutes, 1)} min ago`;
+  if (days === 0) return `Last seen today at ${time}`;
+  if (days === 1) return `Last seen yesterday at ${time}`;
+  return `Last seen ${new Date(user.lastSeen).toLocaleDateString()}`;
 }
 
 const URL_PATTERN = /(https?:\/\/[^\s<]+[^\s<.,:;"')\]!?])/g;

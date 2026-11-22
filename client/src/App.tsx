@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { flushSync } from 'react-dom';
 import { Button } from '@astryxdesign/core/Button';
 import { Center } from '@astryxdesign/core/Center';
 import { Stack } from '@astryxdesign/core/Stack';
@@ -21,7 +20,7 @@ import { MembersDialog, type MembersTarget } from './components/MembersDialog';
 import { NewChatDialog, type NewChatMode } from './components/NewChatDialog';
 import { NotificationDialog } from './components/NotificationDialog';
 import { AddPeopleDialog, NewChannelDialog, NewDocDialog, ProjectReposDialog } from './components/ProjectDialogs';
-import { Sidebar, SidebarRail } from './components/Sidebar';
+import { clampSide, Rail, Sidebar, SidebarResizer } from './components/Sidebar';
 import { UnlockScreen } from './components/UnlockScreen';
 import { fitToVisualViewport } from './viewport';
 import { runSignature } from './agents';
@@ -94,13 +93,13 @@ type OpenDialog =
   | { kind: 'add-people'; target: MembersTarget }
   | { kind: 'members'; target: MembersTarget };
 
-const COLLAPSED_KEY = 'webchat.sidebarCollapsed';
+const WIDTH_KEY = 'webchat.sidebarWidth';
 
-function rememberedCollapsed() {
+function rememberedWidth() {
   try {
-    return localStorage.getItem(COLLAPSED_KEY) === '1';
+    return clampSide(Number(localStorage.getItem(WIDTH_KEY)) || 300);
   } catch {
-    return false;
+    return 300;
   }
 }
 
@@ -156,76 +155,75 @@ function ChatLayout() {
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const addPeople = (target: MembersTarget) => setDialog({ kind: 'add-people', target });
   const showMembers = (target: MembersTarget) => setDialog({ kind: 'members', target });
-  const [collapsed, setCollapsed] = useState(rememberedCollapsed);
-  const collapse = (value: boolean) => {
-    setCollapsed(value);
+  const [sideWidth, setSideWidth] = useState(rememberedWidth);
+  const resize = (width: number) => {
+    setSideWidth(width);
     try {
-      localStorage.setItem(COLLAPSED_KEY, value ? '1' : '0');
+      localStorage.setItem(WIDTH_KEY, String(width));
     } catch {
-      // A private window keeps the sidebar open on the next load.
+      // A private window starts at the default width on the next load.
     }
   };
 
   useEffect(fitToVisualViewport, []);
   useEffect(followHash, []);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() !== 'k' || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
-      event.preventDefault();
-      // A collapsed sidebar hides the field, which takes focus only once it shows.
-      flushSync(() => collapse(false));
-      document.querySelector<HTMLInputElement>('aside.sidebar input[type="search"]')?.focus();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
   // A card's status line follows its run from any page of its owner's (D-105).
   const runs = useAppState(runSignature);
   useEffect(() => void followRuns().catch(() => undefined), [runs]);
 
   return (
     <div
-      className={`layout ${activeId !== null || githubOpen || agentsOpen || doc || board ? 'has-active' : ''} ${collapsed ? 'sidebar-collapsed' : ''}`}
+      className={`layout ${activeId !== null || githubOpen || agentsOpen || doc || board ? 'has-active' : ''} ${agentsOpen ? 'agents-open' : ''}`}
+      style={{ '--side-width': `${sideWidth}px` } as React.CSSProperties}
     >
-      <SidebarRail onExpand={() => collapse(false)} onNotifications={() => setDialog({ kind: 'notifications' })} />
-      <Sidebar
-        onCollapse={() => collapse(true)}
-        onNewChat={() => setDialog({ kind: 'new-chat', mode: 'person' })}
-        onNewProject={() => setDialog({ kind: 'new-chat', mode: 'project' })}
-        onNewChannel={(projectId) => setDialog({ kind: 'new-channel', projectId })}
-        onAddPeople={(projectId) => addPeople({ kind: 'project', projectId })}
-        onMembers={(projectId) => showMembers({ kind: 'project', projectId })}
-        onRepos={(projectId) => actions.setReposFor(projectId)}
-        onNewDoc={(projectId) => setDialog({ kind: 'new-doc', projectId })}
-        onRenameDoc={(doc) => setDialog({ kind: 'rename-doc', doc })}
-        onNotifications={() => setDialog({ kind: 'notifications' })}
-      />
-      {githubOpen ? (
-        <GithubView />
-      ) : agentsOpen ? (
-        <AgentsView />
-      ) : doc ? (
-        <DocView key={doc.id} doc={doc} />
-      ) : board ? (
-        <BoardView key={board.id} project={board} />
-      ) : active ? (
-        <ChatView key={active.id} conversation={active} onAddPeople={addPeople} onMembers={showMembers} />
-      ) : (
-        <section className="chat chat-empty">
-          <Stack gap={3} hAlign="center" maxWidth={420} className="chat-empty-card">
-            <Text as="p" color="secondary" justify="center">
-              End-to-end encrypted chats, project channels and boards. Pick one from the sidebar to start.
-            </Text>
-          </Stack>
-        </section>
-      )}
+      <Rail onNotifications={() => setDialog({ kind: 'notifications' })} />
+      <div className="frame">
+        {/* Coding agents brings its own sidebar (D-103). */}
+        {!agentsOpen && (
+          <>
+            <Sidebar
+              onNewChat={() => setDialog({ kind: 'new-chat', mode: 'person' })}
+              onNewProject={() => setDialog({ kind: 'new-chat', mode: 'project' })}
+              onNewChannel={(projectId) => setDialog({ kind: 'new-channel', projectId })}
+              onAddPeople={(projectId) => addPeople({ kind: 'project', projectId })}
+              onMembers={(projectId) => showMembers({ kind: 'project', projectId })}
+              onRepos={(projectId) => actions.setReposFor(projectId)}
+              onNewDoc={(projectId) => setDialog({ kind: 'new-doc', projectId })}
+              onRenameDoc={(doc) => setDialog({ kind: 'rename-doc', doc })}
+              onNotifications={() => setDialog({ kind: 'notifications' })}
+            />
+            <SidebarResizer width={sideWidth} onChange={resize} />
+          </>
+        )}
+        {githubOpen ? (
+          <GithubView />
+        ) : agentsOpen ? (
+          <AgentsView />
+        ) : doc ? (
+          <DocView key={doc.id} doc={doc} />
+        ) : board ? (
+          <BoardView key={board.id} project={board} />
+        ) : active ? (
+          <ChatView key={active.id} conversation={active} onAddPeople={addPeople} onMembers={showMembers} />
+        ) : (
+          <section className="chat chat-empty">
+            <Stack gap={3} hAlign="center" maxWidth={420} className="chat-empty-card">
+              <Text as="p" color="secondary" justify="center">
+                End-to-end encrypted chats, project channels and boards. Pick one from the sidebar to start.
+              </Text>
+            </Stack>
+          </section>
+        )}
+      </div>
       {dialog?.kind === 'new-chat' && <NewChatDialog initialMode={dialog.mode} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'notifications' && <NotificationDialog onClose={() => setDialog(null)} />}
       {dialog?.kind === 'new-channel' && <NewChannelDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'new-doc' && <NewDocDialog projectId={dialog.projectId} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'rename-doc' && <RenameDialog doc={dialog.doc} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'add-people' && <AddPeopleDialog target={dialog.target} onClose={() => setDialog(null)} />}
-      {dialog?.kind === 'members' && <MembersDialog target={dialog.target} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'members' && (
+        <MembersDialog target={dialog.target} onAdd={() => addPeople(dialog.target)} onClose={() => setDialog(null)} />
+      )}
       {reposFor !== null && <ProjectReposDialog projectId={reposFor} onClose={() => actions.setReposFor(null)} />}
       <UrgentAlert />
       <Toasts />

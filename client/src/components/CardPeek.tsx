@@ -1,24 +1,21 @@
-import { Fragment, useSyncExternalStore, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
+import { Button } from '@astryxdesign/core/Button';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
-import { Divider } from '@astryxdesign/core/Divider';
-import { Heading } from '@astryxdesign/core/Heading';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { Stack, StackItem } from '@astryxdesign/core/Stack';
+import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { Text } from '@astryxdesign/core/Text';
-import { DownIcon, UpIcon } from './icons';
+import { BoardMenu, DotsIcon, useNarrow } from './BoardParts';
+import { CloseIcon } from './icons';
 
-// The width of the narrow layout in styles.css. Astryx's dialog takes its variant as a prop, not by breakpoint.
-const narrow = matchMedia('(max-width: 760px)');
-const onNarrow = (changed: () => void) => {
-  narrow.addEventListener('change', changed);
-  return () => narrow.removeEventListener('change', changed);
-};
+/** One of the card's own buttons in the peek's header, such as History or Delete. */
+export type PeekTool = { label: string; icon: ReactNode; onClick: () => void; isDisabled?: boolean };
 
 /**
- * A board card opened over the board, wide enough to read and, at phone width, the whole page.
- * Its arrows step to the card above or below it in its lane or list. Purpose "form" keeps a
- * backdrop click from closing it once a field was used. A card's run of the user's own sits beside
- * the card, or under it at phone width (the card-run-in-peek decision, proposed in #259).
+ * A board card opened over the board, with two panes: the card on the left, and on the right the
+ * agent's panel, which holds the user's own run of the card or says no agent works on it (the
+ * card-run-in-peek decision, proposed in #259). At phone width the peek fills the screen, the run
+ * goes under the card, the agent's question stays pinned at the foot, and the card's tools sit
+ * behind ⋯ in a sheet. Purpose "form" keeps a backdrop click from closing it once a field was used.
  *
  * A card that names its `id` reads as a page: the id and the tools in the header, then its title,
  * its facts as a list of names and values, and its text under a line.
@@ -26,97 +23,124 @@ const onNarrow = (changed: () => void) => {
 export function CardPeek({
   title,
   id,
-  tools,
+  tools = [],
   facts,
-  prev,
-  next,
-  onOpen,
   onClose,
   run,
-  runFirst,
+  onRun,
+  runLabel = 'Run with your agent',
+  isEditing,
+  onEditing,
+  editOff,
   children,
 }: {
   title: string;
   /** The card's id, such as R-12, which moves the title into the page. */
   id?: string;
-  /** The card's own buttons, beside the arrows. */
-  tools?: ReactNode;
+  /** The card's own buttons, before Close. */
+  tools?: PeekTool[];
   /** What the card says about itself, each a name and its value; an empty value is left out. */
   facts?: Array<[string, ReactNode]>;
-  prev?: string;
-  next?: string;
-  onOpen: (id: string) => void;
   onClose: () => void;
+  /** The agent's panel; with none, it says no agent works on the card. */
   run?: ReactNode;
-  /** The run before the card, as the new card form shows the session that drafts it (R-071). */
-  runFirst?: boolean;
+  /** The button in the empty agent's panel, such as starting a run. */
+  onRun?: () => void;
+  runLabel?: string;
+  isEditing: boolean;
+  onEditing?: (on: boolean) => void;
+  /** Why the card cannot switch to its editor now, which disables the switch. */
+  editOff?: string;
   children: ReactNode;
 }) {
-  const phone = useSyncExternalStore(onNarrow, () => narrow.matches);
+  const phone = useNarrow();
+  const [more, setMore] = useState(false);
   const close = (open: boolean) => {
     if (!open) onClose();
   };
+  const closeButton = (
+    <IconButton variant="ghost" size="sm" label="Close" tooltip="Close" icon={<CloseIcon width={18} height={18} />} onClick={onClose} />
+  );
+  const moreButton = tools.length > 0 && (
+    <IconButton variant="ghost" size="sm" label="More" tooltip="More" icon={<DotsIcon />} onClick={() => setMore(true)} />
+  );
+  const toolButtons = tools.map((tool) => (
+    <IconButton
+      key={tool.label}
+      variant="ghost"
+      size="sm"
+      label={tool.label}
+      tooltip={tool.label}
+      icon={tool.icon}
+      isDisabled={tool.isDisabled}
+      onClick={tool.onClick}
+    />
+  ));
   return (
-    <Dialog
-      isOpen
-      onOpenChange={close}
-      purpose="form"
-      width={run ? 1200 : 900}
-      maxHeight="90dvh"
-      variant={phone ? 'fullscreen' : 'standard'}
-    >
+    <Dialog isOpen onOpenChange={close} purpose="form" width={1120} maxHeight="90dvh" padding={0} variant={phone ? 'fullscreen' : 'standard'}>
       <DialogHeader
-        title={id ? <Text type="label" color="secondary">{id}</Text> : title}
-        onOpenChange={close}
+        title={<Text type="label" color="secondary">{id ?? title}</Text>}
+        startContent={phone ? closeButton : undefined}
         endContent={
-          <>
-            {tools}
-            <IconButton
-              variant="ghost"
-              size="sm"
-              label="Previous card"
-              tooltip="Previous card"
-              icon={<UpIcon />}
-              isDisabled={!prev}
-              onClick={() => onOpen(prev!)}
-            />
-            <IconButton
-              variant="ghost"
-              size="sm"
-              label="Next card"
-              tooltip="Next card"
-              icon={<DownIcon />}
-              isDisabled={!next}
-              onClick={() => onOpen(next!)}
-            />
-          </>
+          phone ? (
+            moreButton
+          ) : (
+            <>
+              {toolButtons}
+              {tools.length > 0 && <span className="peek-sep" aria-hidden="true" />}
+              {closeButton}
+            </>
+          )
         }
       />
-      {/* Each column scrolls on its own, so the run's newest message and its box stay in view. */}
-      <Stack direction="horizontal" className="card-peek">
-        {run && runFirst && <Stack className="card-peek-run is-first">{run}</Stack>}
-        <StackItem size="fill" isScrollable>
-          {/* The card's tools sit right under the header's line, so the top pads less than the sides. */}
-          <Stack gap={4} padding={5} paddingBlockStart={2}>
-            {id && <Heading level={2}>{title}</Heading>}
-            {facts && (
-              <dl className="card-facts">
-                {facts
-                  .filter(([, value]) => value)
-                  .map(([name, value]) => (
-                    <Fragment key={name}>
-                      <dt>{name}</dt>
-                      <dd>{value}</dd>
-                    </Fragment>
-                  ))}
-              </dl>
-            )}
-            {id && <Divider />}
-            {children}
-          </Stack>
-        </StackItem>
-        {run && !runFirst && <Stack className="card-peek-run">{run}</Stack>}
-      </Stack>
+      {more && (
+        <BoardMenu
+          label="Card"
+          entries={tools.filter((t) => !t.isDisabled).map((t) => ({ label: t.label, onSelect: t.onClick }))}
+          onClose={() => setMore(false)}
+        />
+      )}
+      {/* Each pane scrolls on its own, so the run's newest step and its question stay in view; on a phone the whole peek scrolls. */}
+      <div className="peek-body">
+        <article className="peek-card">
+          <div className="peek-switch">
+            <SegmentedControl
+              label="Show the card as"
+              size="sm"
+              value={isEditing ? 'edit' : 'preview'}
+              onChange={(v) => onEditing?.(v === 'edit')}
+              isDisabled={!!editOff}
+              disabledMessage={editOff}
+            >
+              <SegmentedControlItem value="preview" label="Preview" />
+              <SegmentedControlItem value="edit" label="Edit" />
+            </SegmentedControl>
+          </div>
+          {id && !isEditing && <h2 className="peek-title">{title}</h2>}
+          {facts && !isEditing && (
+            <dl className="card-facts">
+              {facts
+                .filter(([, value]) => value)
+                .map(([name, value]) => (
+                  <Fragment key={name}>
+                    <dt>{name}</dt>
+                    <dd>{value}</dd>
+                  </Fragment>
+                ))}
+            </dl>
+          )}
+          {id && !isEditing && <hr className="peek-line" />}
+          {children}
+        </article>
+        <aside className="peek-run" aria-label="The agent’s run">
+          {run ?? (
+            <div className="peek-no-run">
+              <p>No agent works on this card.</p>
+              {onRun && <Button variant="primary" size="sm" label={runLabel} onClick={onRun} />}
+            </div>
+          )}
+        </aside>
+      </div>
     </Dialog>
   );
 }

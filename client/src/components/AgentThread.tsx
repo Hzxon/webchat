@@ -4,9 +4,8 @@ import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { List, ListItem } from '@astryxdesign/core/List';
-import { Selector } from '@astryxdesign/core/Selector';
 import { Text } from '@astryxdesign/core/Text';
-import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { LIMITS, takesControls, type PermissionMode, type RunRequest, type SessionEventDTO } from '../../../shared/types';
 import { blockedBy, THREAD_STATE, threadProject, WAKE, type Seat, type Thread } from '../agents';
 import { answerPermit, askClone, askFix, cancelRun, discardMessage, loadSteps, retryMessage, saveDraft, tellAgent } from '../chat';
@@ -17,7 +16,8 @@ import { formatAgo, formatTime } from './format';
 import { AlertIcon, SendIcon, StopIcon } from './icons';
 import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
-import { Tag } from './PullTags';
+import { QuestionCard } from './AgentAsks';
+import { RunAsk, RunPanel, RunStep } from './RunPanel';
 import { Controls, Summary } from './SessionControls';
 import { SessionDetails } from './SessionDetails';
 import { SessionSteps } from './SessionSteps';
@@ -34,8 +34,11 @@ export function Box(props: {
   stop?: { stopping: boolean; onStop: () => void };
   /** The harness's own commands and skills, offered after a slash (R-072). */
   commands?: string[];
+  /** The model button, between the text and the round button, in the pane's pill box. */
+  model?: ReactNode;
+  pill?: boolean;
 }) {
-  const { name, placeholder, canSend, onSend, stop, commands } = props;
+  const { name, placeholder, canSend, onSend, stop, commands, model, pill } = props;
   const [text, edit] = useDraft(name);
   const input = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(input, text);
@@ -63,7 +66,7 @@ export function Box(props: {
         ))}
       </List>
     )}
-    <div className="composer-row">
+    <div className={pill ? 'composer-row agents-pill' : 'composer-row'}>
       <textarea
         ref={input}
         rows={1}
@@ -73,8 +76,20 @@ export function Box(props: {
         onChange={(e) => edit(e.target.value)}
         onKeyDown={onKeyDown}
       />
+      {model}
       {/* One round button: it stops a running turn while the box is empty, and sends otherwise (R-072). */}
-      {stop && !text.trim() ? (
+      {pill ? (
+        // The pill box's round button, in the text color, as the design draws it.
+        stop && !text.trim() ? (
+          <button type="button" className="agents-send" aria-label="Stop" title="Stop" disabled={stop.stopping} onClick={stop.onStop}>
+            <StopIcon width={14} height={14} />
+          </button>
+        ) : (
+          <button type="button" className="agents-send" aria-label="Send" disabled={!text.trim() || !canSend} onClick={send}>
+            <ArrowUpIcon />
+          </button>
+        )
+      ) : stop && !text.trim() ? (
         <IconButton variant="primary" label="Stop" icon={<StopIcon />} isDisabled={stop.stopping} onClick={stop.onStop} />
       ) : (
         <IconButton
@@ -103,7 +118,8 @@ export function AgentThread({
   thread: Thread;
   seat: Seat | undefined;
   agentId: number;
-  inForm?: boolean;
+  /** In the new card form, its box asks for the draft with the form's fields as they stand (R-071). */
+  inForm?: (text: string) => Promise<unknown>;
   /** Shows what the session runs with beside it, as the pane does (R-072). */
   details?: boolean;
   /** Reads as a run's panel beside its card: a heading with where it stands, and each message as a step, not a bubble (R-047). */
@@ -138,8 +154,9 @@ export function AgentThread({
   const controls = thread.kind === 'question' && !inForm && !!seat && takesControls(seat.protocol);
   const [choice, setChoice] = useState<{ model?: string; mode?: PermissionMode }>({});
   // Make a card: the session drafts one of the kind picked, into the board's new card form (R-071).
-  const [cardKind, setCardKind] = useState<'R' | 'K' | 'D'>('R');
-  const makeCard = () => {
+  const [kinds, setKinds] = useState(false);
+  const makeCard = (cardKind: 'R' | 'K' | 'D') => {
+    setKinds(false);
     const projectId = thread.project;
     if (projectId === undefined) return;
     actions.openNewCard({ projectId, kind: cardKind, session: thread.root });
@@ -153,6 +170,7 @@ export function AgentThread({
   };
   // A turn can take long, so the time it has taken shows, a minute at a time.
   const [now, setNow] = useState(Date.now);
+  const askDays = thread.ask ? Math.max(1, Math.round((thread.ask.message.permit.expires - now) / 86_400_000)) : 0;
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
@@ -200,27 +218,8 @@ export function AgentThread({
     waiting = `${minutes > 0 ? `Working… ${minutes} min` : 'Working…'}${doing ? ` · ${doing}` : ''}`;
   }
 
-  return (
+  const rows = (
     <>
-      {panel && (
-        <header className="run-head">
-          <Text weight="semibold">Run</Text>
-          <Text color="secondary">Started {formatAgo(thread.messages[0]!.createdAt)}</Text>
-          <Tag tone={THREAD_STATE[thread.state].tone}>{THREAD_STATE[thread.state].label}</Tag>
-        </header>
-      )}
-      <div className="agents-session">
-      {/* On a phone the details hide behind a button, which shows only there. */}
-      {rail && (
-        <Button
-          className="agents-details-toggle"
-          size="sm"
-          variant="ghost"
-          label={showDetails ? 'Hide details' : 'Details'}
-          onClick={() => setShowDetails(!showDetails)}
-        />
-      )}
-      <div className={`messages${panel ? ' is-panel' : ''}`} ref={list}>
         {thread.messages.map((message, i) => {
           const status = message.clientId ? pending[message.clientId] : undefined;
           const unsent = status === 'failed' && (
@@ -251,14 +250,8 @@ export function AgentThread({
             message.run?.kind === 'stale' || message.run?.kind === 'decision' || message.run?.kind === 'draft'
               ? message.run.card
               : undefined;
-          return (
-            <Fragment key={message.clientId ?? message.id}>
-            {stepsBefore(i)}
-            <div className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}>
-              <div className="bubble-line">
-                <div
-                  className={`${panel ? 'step' : 'bubble'} ${message.prompt?.kind === 'failed' || message.run?.kind === 'failed' ? 'agents-failed' : ''}`}
-                >
+          const body = (
+            <>
                   {/* A review is teammates' text that would run with the owner's login, so nothing of it hides in Markdown. */}
                   {mine || message.run?.kind === 'review' || message.permit?.kind === 'question' ? (
                     <span className="bubble-text">{message.text}</span>
@@ -291,11 +284,12 @@ export function AgentThread({
                       Open the draft on GitHub
                     </a>
                   )}
-                  <span className="bubble-meta">
-                    {status === 'sending' ? 'Sending…' : formatTime(message.createdAt)}
-                  </span>
-                </div>
-              </div>
+            </>
+          );
+          const time = status === 'sending' ? 'Sending…' : formatTime(message.createdAt);
+          const failed = message.prompt?.kind === 'failed' || message.run?.kind === 'failed';
+          const after = (
+            <>
               {message === review && !notNow && (
                 <div className="agents-draft-actions">
                   <Button
@@ -340,7 +334,29 @@ export function AgentThread({
                 </div>
               )}
               {unsent}
-            </div>
+            </>
+          );
+          return (
+            <Fragment key={message.clientId ?? message.id}>
+              {stepsBefore(i)}
+              {panel ? (
+                <>
+                  <RunStep time={time} isMine={mine} isFailed={failed}>
+                    {body}
+                  </RunStep>
+                  {after}
+                </>
+              ) : (
+                <div className={`bubble-row ${mine ? 'mine' : 'theirs'} ${first ? 'first' : ''}`}>
+                  <div className="bubble-line">
+                    <div className={`bubble ${failed ? 'agents-failed' : ''}`}>
+                      {body}
+                      <span className="bubble-meta">{time}</span>
+                    </div>
+                  </div>
+                  {after}
+                </div>
+              )}
             </Fragment>
           );
         })}
@@ -350,14 +366,10 @@ export function AgentThread({
             {waiting}
           </Text>
         )}
-      </div>
-      {rail && (
-        <aside className={`agents-rail${showDetails ? ' is-open' : ''}`}>
-          <SessionDetails thread={thread} />
-        </aside>
-      )}
-      </div>
-      <footer className="composer">
+    </>
+  );
+  const foot = (
+    <>
         {/* A proposal is the repository's: it waits for Add or Update, and takes no reply (R-040). */}
         {thread.kind === 'proposal' ? null : thread.state === 'ended' ? (
           <div className="agents-ended">
@@ -415,78 +427,223 @@ export function AgentThread({
           <>
             {!working && blocked && <Banner status="warning" title={blocked} />}
             {/* The question docks above the box until it is answered; it stays in the timeline as plain text (R-072). */}
-            {thread.ask && (
-              <div className="agents-dock">
-                <Text as="p" weight="semibold">
-                  {thread.ask.message.text}
-                </Text>
-                <div className="agents-draft-actions">
-                  <Button
-                    variant="primary"
-                    label="Allow"
-                    isDisabled={!!blocked || thread.ask.answered}
-                    onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'once')}
-                  />
-                  <Button
-                    label="Allow for this run"
-                    isDisabled={!!blocked || thread.ask.answered}
-                    onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'run')}
-                  />
-                  <Button
-                    label="Deny"
-                    isDisabled={!!blocked || thread.ask.answered}
-                    onClick={() => void answerPermit(thread.conversationId, thread.ask!.message, 'deny')}
-                  />
-                </div>
-                <Text as="p" color="secondary">
-                  It waits for you, and ends in{' '}
-                  {Math.max(1, Math.round((thread.ask.message.permit.expires - now) / 86_400_000))} days if you do not
-                  answer.
-                </Text>
-              </div>
-            )}
-            {/* In the new card form, the form's own box asks for the draft. */}
-            {thread.kind === 'question' && thread.project !== undefined && !inForm && !working && !asking && !blocked && (
-              <div className="agents-draft-actions">
-                <Selector
-                  label="Kind of card"
-                  isLabelHidden
-                  value={cardKind}
-                  onChange={(v) => setCardKind(v as 'R' | 'K' | 'D')}
-                  options={[
-                    { value: 'R', label: 'Idea' },
-                    { value: 'K', label: 'Issue' },
-                    { value: 'D', label: 'Decision' },
-                  ]}
+            {thread.ask &&
+              (panel ? (
+                <RunAsk
+                  text={thread.ask.message.text}
+                  days={askDays}
+                  isDisabled={!!blocked || thread.ask.answered}
+                  onAnswer={(decision) => void answerPermit(thread.conversationId, thread.ask!.message, decision)}
                 />
-                <Button label="Make a card" onClick={makeCard} />
+              ) : (
+                <QuestionCard
+                  key={thread.ask.message.clientId}
+                  text={thread.ask.message.text}
+                  days={askDays}
+                  answered={thread.ask.answered}
+                  isDisabled={!!blocked}
+                  onAnswer={(decision) => void answerPermit(thread.conversationId, thread.ask!.message, decision)}
+                />
+              ))}
+            {/* A session with no card yet can become one, of the kind picked (R-071); in the new card form it already drafts one. */}
+            {thread.kind === 'question' && thread.project !== undefined && !inForm && !working && !asking && !blocked && (
+              <div className="agents-chip-row">
+                <button type="button" className="agents-chip" aria-expanded={kinds} onClick={() => setKinds(!kinds)}>
+                  <CardPlusIcon />
+                  Make a card
+                </button>
+                {kinds &&
+                  CARD_KINDS.map(([kind, label]) => (
+                    <button key={kind} type="button" className="agents-chip" onClick={() => makeCard(kind)}>
+                      {label}
+                    </button>
+                  ))}
               </div>
-            )}
-            {controls && (
-              <Controls
-                thread={thread}
-                agent={seat!.agent}
-                choice={choice}
-                onChoice={setChoice}
-                isDisabled={!!blocked || working || asking}
-              />
             )}
             <Box
               name={`agents:${thread.root}`}
-              placeholder={request ? 'Ask for changes to the draft' : 'Reply'}
+              placeholder={
+                panel
+                  ? request
+                    ? 'Ask for changes to the draft'
+                    : 'Reply'
+                  : // In the window, the box says what a reply does now, as the design words it.
+                    asking
+                    ? 'Answer your agent'
+                    : working
+                      ? 'Tell your agent something'
+                      : request
+                        ? 'Ask for a change'
+                        : 'Ask a follow-up'
+              }
               canSend={!blocked && !working && !asking}
               // While a review waits, a reply is the go for it too, unless the owner said Not now.
               onSend={(text) =>
                 request
                   ? askFix(thread.conversationId, request.id, text, notNow ? undefined : review?.id)
-                  : tellAgent(thread.conversationId, thread.root, 'reply', text, choice)
+                  : inForm
+                    ? inForm(text)
+                    : tellAgent(thread.conversationId, thread.root, 'reply', text, choice)
               }
               stop={working || asking ? { stopping, onStop: stop } : undefined}
               commands={thread.about?.commands}
+              pill={!panel}
+              model={
+                controls && (
+                  <Controls
+                    thread={thread}
+                    agent={seat!.agent}
+                    choice={choice}
+                    onChoice={setChoice}
+                    isDisabled={!!blocked || working || asking}
+                  />
+                )
+              }
             />
+            {!panel && <WhereItRuns thread={thread} seat={seat} />}
           </>
         )}
+    </>
+  );
+  if (panel)
+    return (
+      <RunPanel started={formatAgo(thread.messages[0]!.createdAt)} state={THREAD_STATE[thread.state]} listRef={list} footer={foot}>
+        {rows}
+      </RunPanel>
+    );
+  return (
+    <>
+      <div className="agents-session">
+      {/* On a phone the details hide behind a button, which shows only there. */}
+      {rail && (
+        <Button
+          className="agents-details-toggle"
+          size="sm"
+          variant="ghost"
+          label={showDetails ? 'Hide details' : 'Details'}
+          onClick={() => setShowDetails(!showDetails)}
+        />
+      )}
+      <div className="messages" ref={list}>
+        {rows}
+      </div>
+      {rail && (
+        <aside className={`agents-rail${showDetails ? ' is-open' : ''}`}>
+          <SessionDetails thread={thread} />
+        </aside>
+      )}
+      </div>
+      <footer className="composer">
+        {foot}
       </footer>
     </>
   );
 }
+
+const CARD_KINDS = [
+  ['R', 'Idea'],
+  ['K', 'Issue'],
+  ['D', 'Decision'],
+] as const;
+
+const ArrowUpIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <line x1="12" y1="19" x2="12" y2="5" />
+    <polyline points="5 12 12 5 19 12" />
+  </svg>
+);
+
+const CardPlusIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <line x1="12" y1="9" x2="12" y2="15" />
+    <line x1="9" y1="12" x2="15" y2="12" />
+  </svg>
+);
+
+/** About 200k tokens, the context most of these models start from; the ring is a guide, not a limit. */
+const CONTEXT_GUIDE = 200_000;
+
+/**
+ * Where a session runs, under its box: its branch, its laptop, whether it runs in the user's own
+ * setup or restricted by WebChat, and how much context its newest turn sent (R-072). A session's
+ * setup is fixed when it starts (D-157), so the mode reads, it does not switch.
+ */
+function WhereItRuns({ thread, seat }: { thread: Thread; seat: Seat | undefined }) {
+  const about = thread.about ?? {};
+  // A card's branch is the one its run left, which its done report names.
+  const done = thread.messages.findLast((m) => m.run && 'branch' in m.run && m.run.branch)?.run;
+  const name = about.branch ?? (done && 'branch' in done ? done.branch : undefined);
+  const own = about.own ?? false;
+  const k = about.context === undefined ? undefined : Math.round(about.context / 1000);
+  const used = about.context === undefined ? undefined : Math.min(100, Math.round((about.context / CONTEXT_GUIDE) * 100));
+  return (
+    <div className="agents-where">
+      {name && (
+        <span title="Its branch">
+          <BranchIcon />
+          {name}
+        </span>
+      )}
+      {seat && (
+        <span title="Its laptop">
+          <LaptopIcon />
+          {seat.agent.displayName}
+        </span>
+      )}
+      {(thread.kind === 'card' || about.own !== undefined) && (
+        <span
+          className={own ? 'is-own' : undefined}
+          title={
+            own
+              ? 'Runs in your folder with your own settings, hooks, plugins, MCP servers and permission rules, and no sandbox of WebChat’s.'
+              : 'Runs in WebChat’s sandbox: it changes only its own branch, and never reads your settings or secrets.'
+          }
+        >
+          <ShieldIcon own={own} />
+          {own ? 'Your own setup' : 'Restricted by WebChat'}
+        </span>
+      )}
+      <span className="agents-where-gap" />
+      {used !== undefined && (
+        <span className="agents-ring" role="img" aria-label={`${k}k tokens sent in the newest turn, about ${used}% of a 200k context`} title={`${k}k tokens in the newest turn`}>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="8" stroke="var(--line)" strokeWidth="3" />
+            <circle cx="12" cy="12" r="8" stroke={used > 80 ? 'var(--warn)' : 'var(--muted)'} strokeWidth="3" strokeLinecap="round" pathLength={100} strokeDasharray={`${used} 100`} transform="rotate(-90 12 12)" />
+          </svg>
+        </span>
+      )}
+    </div>
+  );
+}
+
+export const BranchIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="6" cy="5" r="2" />
+    <circle cx="6" cy="19" r="2" />
+    <circle cx="18" cy="7" r="2" />
+    <path d="M6 7v10" />
+    <path d="M18 9c0 5-6 4-11 8" />
+  </svg>
+);
+
+export const LaptopIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="4" y="5" width="16" height="11" rx="1" />
+    <line x1="2" y1="19" x2="22" y2="19" />
+  </svg>
+);
+
+export const ShieldIcon = ({ own }: { own: boolean }) => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" />
+    {own ? (
+      <>
+        <line x1="12" y1="8" x2="12" y2="12.5" />
+        <circle cx="12" cy="15.5" r=".6" fill="currentColor" />
+      </>
+    ) : (
+      <polyline points="9 12 11 14 15 10" />
+    )}
+  </svg>
+);

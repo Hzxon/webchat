@@ -157,6 +157,7 @@ function checkRecipients(members: Array<{ id: number; name: string; keys: Public
   }
 }
 let pins: Record<number, string> | null = null;
+let verified: Record<number, string> | null = null;
 
 export const keyring = {
   myKeys: (): PublicKeysDTO => keys!.self.identity.publicKeys,
@@ -180,6 +181,7 @@ export const keyring = {
     await keystore.setIdentity({ userId, identity });
     keys = new Keyring({ id: userId, identity }, {}, saveReplaced, chatKeyStore);
     pins = null;
+    verified = null;
   },
 
   createSecrets: () => createIdentity(),
@@ -188,6 +190,7 @@ export const keyring = {
   async forget() {
     keys = null;
     pins = null;
+    verified = null;
     opened.clear();
     held.clear();
     openedDocs.clear();
@@ -215,6 +218,23 @@ export const keyring = {
     pins ??= (await keystore.getPins().catch(() => undefined)) ?? {};
     pins[user.id] = await keyFingerprint(user.keys);
     await keystore.setPins(pins);
+  },
+
+  /** Marks a person's current keys verified, once the user compared the security code with them. */
+  async verify(user: UserDTO) {
+    if (!user.keys) return;
+    verified ??= (await keystore.getVerified().catch(() => undefined)) ?? {};
+    verified[user.id] = await keyFingerprint(user.keys);
+    await keystore.setVerified(verified);
+  },
+
+  /** The people whose keys are still the ones the user marked verified; new keys need a new check. */
+  async verifiedOf(users: UserDTO[]): Promise<Set<number>> {
+    verified ??= (await keystore.getVerified().catch(() => undefined)) ?? {};
+    const marks = verified;
+    const ids = new Set<number>();
+    for (const user of users) if (user.keys && marks[user.id] && marks[user.id] === (await keyFingerprint(user.keys))) ids.add(user.id);
+    return ids;
   },
 
   /** Opens this user's copy of a chat key, after checking that a member of the chat created it. */

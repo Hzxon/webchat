@@ -17,8 +17,9 @@
   --read: #2563eb;
   --ok: #1a7a59;
   --ok-soft: #dcefe6;
-  --danger: #c42a51;
-  --danger-soft: #fbe4ea;
+  --danger: #b91c1c;
+  --danger-fill: #b91c1c;
+  --danger-soft: #fdeaea;
   --warn: #b54708;
   --warn-soft: #fbf0dc;
   --sidebar: #f2f1ed;
@@ -53,8 +54,9 @@
   --read: #60a5fa;
   --ok: #3fbf8f;
   --ok-soft: #132a20;
-  --danger: #f0577b;
-  --danger-soft: #3a1720;
+  --danger: #f87171;
+  --danger-fill: #dc2626;
+  --danger-soft: #3a1616;
   --warn: #fdb022;
   --warn-soft: #33260c;
   --sidebar: #1b1913;
@@ -161,4 +163,104 @@ button:disabled {
 
 a {
   color: var(--read);
+}
+
+/* One button set for every screen not drawn by Astryx: primary for the one action, secondary for the
+   way back, quiet and icon-only for the rest, and danger. */
+.btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  transition:
+    background-color 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+}
+
+.btn.sm {
+  height: 32px;
+  padding: 0 10px;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.btn-secondary {
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.btn-danger {
+  background: var(--danger-fill);
+  color: #fff;
+}
+
+.btn-quiet {
+  height: 32px;
+  padding: 0 8px;
+  color: var(--muted);
+}
+
+.btn-danger-quiet {
+  height: 32px;
+  padding: 0 10px;
+  color: var(--danger);
+}
+
+.btn-icon {
+  width: 36px;
+  padding: 0;
+  color: var(--muted);
+}
+
+.btn-icon.sm {
+  width: 32px;
+  padding: 0;
+}
+
+.btn > svg {
+  flex: none;
+}
+
+@media (hover: hover) {
+  .btn-primary:hover {
+    background: var(--accent-strong);
+  }
+
+  .btn-danger:hover {
+    filter: brightness(0.92);
+  }
+
+  .btn-secondary:hover,
+  .btn-quiet:hover,
+  .btn-icon:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+
+  .btn-danger-quiet:hover {
+    background: var(--danger-soft);
+  }
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.45;
 }

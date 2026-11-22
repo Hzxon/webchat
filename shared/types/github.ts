@@ -34,6 +34,14 @@ export interface PullRequestDTO {
   reviewers?: string[];
   /** GitHub logins of the people assigned. Absent in lists stored before WebChat read it. */
   assignees?: string[];
+  /** GitHub logins of the people whose newest review approves it. Absent in lists stored before WebChat read it. */
+  approvedBy?: string[];
+  /** The branch it merges from. Absent in lists stored before WebChat read it. */
+  branch?: string;
+  /** When it was merged, or null while it is not. Absent in lists stored before WebChat read it. */
+  mergedAt?: number | null;
+  /** True once it was closed or merged. Absent in lists stored before WebChat read it. */
+  closed?: boolean;
 }
 
 /**
@@ -109,6 +117,13 @@ export interface PullListsDTO {
   reviewRequested: PullRequestDTO[];
   /** Open pull requests this user opened. */
   authored: PullRequestDTO[];
+  /** This user's newest merged pull requests. Absent in lists stored before WebChat read it. */
+  merged?: PullRequestDTO[];
+  /**
+   * The newest pull requests, open or not, whoever opened them, in the repositories linked to the
+   * user's projects and those of their own open pull requests: the pane's All view. Absent in lists stored before WebChat read it.
+   */
+  team?: PullRequestDTO[];
   /**
    * Organizations that restrict OAuth Apps and have not approved WebChat. GitHub leaves their pull
    * requests out of the lists above, so the pane names them instead (K-6). Absent in lists stored
@@ -170,6 +185,20 @@ export interface GithubDTO {
    */
   alertsWhileClosed: boolean;
 }
+
+/** A branch the user may open a pull request from: it has none yet. */
+export interface BranchChoiceDTO {
+  repo: string;
+  /** The repository's default branch, which the pull request merges into. */
+  base: string;
+  branch: string;
+  /** The headline of its newest commit, which becomes the pull request's title. */
+  title: string;
+  updatedAt: number;
+}
+
+/** Opens a draft pull request from a branch into its repository's default branch. */
+export type OpenPullInput = Pick<BranchChoiceDTO, 'repo' | 'base' | 'branch' | 'title'>;
 
 /** A GitHub repository as "owner/name". GitHub refuses "." and ".." as names, and the agent joins the name onto its clone folder, so they are refused here too. */
 export const isRepoName = (name: string) => name.length <= 200 && /^(?!\.\.?\/)[\w.-]+\/(?!\.\.?$)[\w.-]+$/.test(name);

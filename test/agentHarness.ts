@@ -113,6 +113,36 @@ test('answers through Codex app-server, one process for a session, and resumes i
   }
 });
 
+test("lists Codex's models, runs the one picked, and runs the owner's own setup with none of WebChat's arguments (D-157, R-072)", async () => {
+  const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-codex-own-')));
+  const program = path.join(dir, 'codex');
+  const log = path.join(dir, 'codex.log');
+  await fs.writeFile(program, FAKE_CODEX, { mode: 0o755 });
+  const restore = setEnv({ FAKE_CODEX_LOG: log, CODEX_HOME: path.join(dir, 'home') });
+  const harness = codexHarness(program, dir);
+  try {
+    await harness.found();
+    assert.deepEqual(harness.offers().models, ['gpt-5.5-codex', 'gpt-5.5-mini'], 'a hidden model stays out');
+    assert.ok(harness.offers().knobs.includes('own'));
+    const schema = { type: 'object', properties: { reply: { type: 'string' } }, required: ['reply'] };
+    const turn = (session: string, extra: Partial<Turn>) => harness.turn({ cwd: dir, session, resume: false, message: 'Hi', schema, setup: {}, signal: new AbortController().signal, ...extra });
+    await turn('s-restricted', { model: 'gpt-5.5-mini' });
+    await turn('s-own', { own: true, model: 'gpt-5.5-codex' });
+    await turn('s-plan', { own: true, mode: 'plan' });
+    const [restricted, own, plan] = (await fs.readFile(log, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as { method?: string; args?: string[]; params?: Record<string, unknown> }).filter((e) => e.method === 'thread/start');
+    assert.equal(restricted!.params!.model, 'gpt-5.5-mini');
+    assert.equal(restricted!.params!.sandbox, 'workspace-write');
+    assert.ok(restricted!.args!.includes('features.hooks=false'));
+    assert.deepEqual(own!.args, ['app-server'], 'their config, hooks, MCP servers and environment load');
+    assert.deepEqual(own!.params, { cwd: dir, model: 'gpt-5.5-codex' }, 'their config sets the sandbox and when to ask');
+    assert.equal(plan!.params!.sandbox, 'read-only', 'Plan first only reads');
+  } finally {
+    restore();
+    await harness.end?.();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('asks through Claude Code\'s permission prompt tool, one process for a session, and no rule outlives the turn (docs/decisions/harness-approvals.md)', async () => {
   const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'webchat-claude-ask-')));
   const program = path.join(dir, 'claude');
@@ -372,4 +402,32 @@ test('a login service from before the room that still runs `serve` is told to ru
     child.kill();
     await ended;
   }
+});
+
+// Python's pty gives setup a real terminal, which is where a second question lost its answer.
+const PTY_DRIVER = `
+import os, pty, select, sys, time
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+out = b''
+def until(text):
+    global out
+    end = time.time() + 10
+    while text not in out and time.time() < end:
+        if select.select([fd], [], [], 0.2)[0]:
+            try: out += os.read(fd, 4096)
+            except OSError: return
+for prompt, answer in ((b'one? ', b'a'), (b'two? ', b'b')):
+    until(prompt)
+    time.sleep(0.3)
+    os.write(fd, answer + b'\\n')
+until(b'DONE')
+sys.stdout.write(out.decode(errors='replace'))
+`;
+
+test('setup reads the answer to each of its questions on the terminal, the second one too', { timeout: 30_000 }, async () => {
+  const script = "const { askLine } = await import('./agent/setup.ts'); const a = await askLine('one? '); const b = await askLine('two? '); console.log('DONE', JSON.stringify([a, b])); process.exit(0)";
+  const { stdout } = await sh('python3', ['-I', '-c', PTY_DRIVER, process.execPath, '--import', 'tsx', '-e', script], { timeout: 25_000 });
+  assert.match(stdout, /DONE \["a","b"\]/, stdout);
 });

@@ -1,11 +1,11 @@
 import { keyFingerprint, openPicks, pairingId, pairingProof, permitHash } from '../../../shared/e2ee';
-import { LIMITS, type CardNoteDTO, type PullCardDTO, type PullRequestDTO, type AskDTO, type CardAskDTO, type PromptDTO, type PermitDTO, type PairingPick, type PublicKeysDTO, type RunDTO, type RunRequest, type SetupChoice, type UserDTO } from '../../../shared/types';
+import { LIMITS, type CardNoteDTO, type PullCardDTO, type PullRequestDTO, type AskDTO, type CardAskDTO, type PromptDTO, type PermitDTO, type PairingPick, type PermissionMode, type PublicKeysDTO, type RunDTO, type RunRequest, type SetupChoice, type UserDTO } from '../../../shared/types';
 import { api } from '../api';
 import { keyring, type ChatMessage } from '../e2ee/keyring';
 import type { Card } from '../../../shared/board';
 import { ownAgents } from '../agents';
 import { actions, senderName, store } from '../store';
-import { currentLookup, meId, newClientId, reloadAll, sendContent, startDirectChat, syncNow } from './core';
+import { checkKeys, currentLookup, meId, newClientId, reloadAll, sendContent, startDirectChat, syncNow } from './core';
 import { addProjectMembers } from './members';
 
 /**
@@ -45,18 +45,18 @@ export function askClone(conversationId: number, repo: string, waiting: { reques
 }
 
 /**
- * Asks one of the user's coding agents in a project (D-102, R-038): a message in their direct chat
- * with it, whose `prompt` field names the project, whose board alone goes in the brief (D-104), and
- * one of its repositories, or none for a project that links none, and the harness picked, or none
+ * Asks one of the user's coding agents (D-102, R-038): a message in their direct chat with it, whose
+ * `prompt` field names the project, whose board alone goes in the brief (D-104), or none for a chat
+ * outside every project; one repository, or none for a project that links none; and the harness picked, or none
  * for the laptop's host harness. `own` says the user typed it, so it may run in their own setup
  * (D-157); `card` asks for one draft from the new card form (R-071); `resume` goes on with a
- * terminal's session (R-072). The agent's laptop answers. Returns the conversation, by the prompt's client id.
+ * terminal's session (R-072), with the model and permission mode the ask box picked. The agent's laptop answers. Returns the conversation, by the prompt's client id.
  */
-export async function askAgent(agentId: number, project: number, repo: string | undefined, question: string, { harness, own, card, resume }: { harness?: string; own?: true; card?: CardAskDTO; resume?: string } = {}) {
+export async function askAgent(agentId: number, project: number | undefined, repo: string | undefined, question: string, { harness, own, card, resume, model, mode }: { harness?: string; own?: true; card?: CardAskDTO; resume?: string; model?: string; mode?: PermissionMode } = {}) {
   const conversationId = await startDirectChat(agentId);
   const clientId = newClientId();
   // The message shows as sending at once, so the pane can open its conversation.
-  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), project, asks: true, events: true, ...(repo && { repo }), ...(harness && { harness }), ...(own && { own }), ...(card && { card }), ...(resume && { resume }) } }, false, clientId);
+  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), asks: true, events: true, ...(project && { project }), ...(repo && { repo }), ...(harness && { harness }), ...(own && { own }), ...(card && { card }), ...(resume && { resume }), ...(model && { model }), ...(mode && { mode }) } }, false, clientId);
   return clientId;
 }
 
@@ -113,6 +113,11 @@ export async function askLink(agentId: number, project: number, repo: string) {
 /** Has the user's agent forget its folder of a repository: the mark goes, never the files (R-038, D-101). */
 export async function forgetFolder(agentId: number, repo: string) {
   await sendContent(await startDirectChat(agentId), { text: `Forget the folder of ${repo}`, forget: { repo, sentAt: Date.now() } }, false);
+}
+
+/** Has the user's agent open a folder window on its laptop, for Add folder; the folder picked comes back as a connect request to approve. */
+export async function pickFolder(agentId: number) {
+  await sendContent(await startDirectChat(agentId), { text: 'Choose a folder on this laptop', pick: { sentAt: Date.now() } }, false);
 }
 
 /** Replies in a conversation with an agent, or stops its turn. Both name the prompt's client id (D-102). */
@@ -210,9 +215,15 @@ export function sharePull(conversationId: number, pull: PullRequestDTO) {
 }
 
 /** Accepts a person's changed keys after the user compared security codes with them. */
+/** Marks a person verified after the user compared the security code, and trusts their keys. */
+export async function verifyKeys(user: UserDTO) {
+  await keyring.verify(user);
+  await trustKeys(user);
+}
+
 export async function trustKeys(user: UserDTO) {
   await keyring.trust(user);
-  actions.setKeyWarnings(await keyring.checkKeys(Object.values(store.get().users)));
+  await checkKeys(Object.values(store.get().users));
   // What failed under the unchecked keys opens now, without a reload. It never alerts again.
   for (const message of await keyring.reopen(store.get().conversations, currentLookup())) actions.addMessage(message, false);
   // The user's agents pin the same keys, or a card's brief would hash differently there (K-57, D-110).

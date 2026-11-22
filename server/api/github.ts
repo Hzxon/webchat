@@ -3,7 +3,17 @@ import { type Request, type Response } from 'express';
 import { parseCookies, safeEqual } from '../auth.js';
 import { GithubError } from '../github.js';
 import { notifyNewMessage, ringUrgent } from '../notify.js';
-import { type GithubDTO } from '../../shared/types.js';
+import { isRepoName, type GithubDTO, type OpenPullInput } from '../../shared/types.js';
+
+/** Shows GitHub's refusal to the user as a 502 with its words. */
+async function asGithubError<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof GithubError) throw new HttpError(502, error.message);
+    throw error;
+  }
+}
 import { GITHUB_APP_COOKIE, GITHUB_STATE_COOKIE, HttpError, currentUser, inBackground, queryOf } from './helpers.js';
 import type { Context } from './context.js';
 
@@ -75,6 +85,27 @@ export function githubRoutes(router: Router, { db, push, github, githubApp, conf
     if (typeof notify !== 'boolean') throw new HttpError(400, 'notify must be true or false.');
     await github.setNotify(me.id, notify);
     res.json(await githubView(me.id));
+  });
+
+  /** The branches the user could open a pull request from. */
+  router.get('/github/branches', requireAuth, async (_req, res) => {
+    const me = currentUser(res);
+    res.json(await asGithubError(() => github.branches(me.id)));
+  });
+
+  /** Opens a draft pull request on GitHub with the user's token, which never leaves the server (D-033). */
+  router.post('/github/pulls', requireAuth, async (req, res) => {
+    const me = currentUser(res);
+    const { repo, base, branch, title } = (req.body ?? {}) as Partial<OpenPullInput>;
+    if (typeof repo !== 'string' || !isRepoName(repo)) throw new HttpError(400, 'Name the repository as owner/name.');
+    // GitHub checks the branch names itself and says why it refuses one.
+    const isBranch = (name: unknown): name is string => typeof name === 'string' && name.length > 0 && name.length <= 250;
+    if (!isBranch(branch) || !isBranch(base)) throw new HttpError(400, 'Name the branch and the branch it merges into.');
+    if (typeof title !== 'string' || !title.trim() || title.length > 256) throw new HttpError(400, 'Give it a title of at most 256 characters.');
+    if (!(await db.takeRateLimit(`github-pull:${me.id}`, 20, 15 * 60_000))) {
+      throw new HttpError(429, 'You opened many pull requests just now. Try again in a few minutes.');
+    }
+    res.json(await asGithubError(() => github.openPull(me.id, { repo, base, branch, title: title.trim() })));
   });
 
   router.delete('/github', requireAuth, async (_req, res) => {

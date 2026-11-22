@@ -67,6 +67,12 @@ export const SendIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const ArrowUpIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 19V5" />
+    <path d="m5 12 7-7 7 7" />
+  </Icon>
+);
 export const BackIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="m15 18-6-6 6-6" />
@@ -148,6 +154,12 @@ export const LockIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const ShieldIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" />
+    <path d="m9 12 2 2 4-4" />
+  </Icon>
+);
 export const LockOpenIcon = (p: IconProps) => (
   <Icon {...p}>
     <rect x="4" y="11" width="16" height="10" rx="2" />
@@ -240,15 +252,18 @@ export const FileIcon = (p: IconProps) => (
   </Icon>
 );
 
-export const PaperclipIcon = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-  </Icon>
-);
 
 export const DownloadIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+  </Icon>
+);
+
+/** New chat, as the design draws it: a pencil writing on a page. */
+export const NewChatIcon = (p: IconProps) => (
+  <Icon strokeWidth="1.8" {...p}>
+    <path d="M12 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
+    <path d="M17.5 3.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" />
   </Icon>
 );
 

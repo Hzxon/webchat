@@ -393,6 +393,8 @@ export interface MessageContent {
   trust?: { user: number; fingerprint: string; sentAt: number };
   /** The owner puts their agent to sleep from the pane; only `webchat-agent wake` on the laptop wakes it (K-66, D-113). */
   sleep?: { sentAt: number };
+  /** The owner has their agent open a folder window on its laptop; the folder picked becomes a connect request they approve (docs/decisions/connect-approval.md). */
+  pick?: { sentAt: number };
   /**
    * The owner asks their agent what its runs load from their Claude setup, and with a choice,
    * changes it (R-039, D-115). The agent answers with `setupState`, in their direct chat.
@@ -580,9 +582,9 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
 /** A conversation's message, if it has the right shape. */
 export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO | undefined {
   if (raw?.kind === 'prompt') {
-    // A project with no repository asks about its board alone (R-038).
+    // A project with no repository asks about its board alone (R-038); with neither, it asks in an empty folder.
     const repo = typeof raw.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
-    if ((raw.repo !== undefined && !repo) || (!repo && !isId(raw.project)) || !isId(raw.sentAt)) return;
+    if ((raw.repo !== undefined && !repo) || !isId(raw.sentAt)) return;
     const harness = short(raw.harness, LIMITS.harnessFieldLength);
     return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }), ...(raw.own === true && { own: true as const }), ...(raw.events === true && { events: true as const }), ...readCardAsk(raw.card), ...readControls(raw), ...(typeof raw.resume === 'string' && SESSION_ID.test(raw.resume) && { resume: raw.resume }) };
   }
@@ -848,6 +850,7 @@ function readContent(value: unknown): MessageContent {
     forget?: { repo?: unknown; sentAt?: unknown };
     trust?: { user?: unknown; fingerprint?: unknown; sentAt?: unknown };
     sleep?: { sentAt?: unknown };
+    pick?: { sentAt?: unknown };
     setup?: { sentAt?: unknown; choice?: unknown };
     setupState?: Record<string, unknown>;
     board?: Record<string, unknown>;
@@ -884,6 +887,7 @@ function readContent(value: unknown): MessageContent {
   const fingerprint = short(raw.trust?.fingerprint, 64);
   if (isId(raw.trust?.user) && fingerprint && isId(raw.trust.sentAt)) content.trust = { user: raw.trust.user, fingerprint, sentAt: raw.trust.sentAt };
   if (isId(raw.sleep?.sentAt)) content.sleep = { sentAt: raw.sleep.sentAt };
+  if (isId(raw.pick?.sentAt)) content.pick = { sentAt: raw.pick.sentAt };
   if (isId(raw.setup?.sentAt)) {
     // A choice of the wrong shape asks only, so it changes nothing.
     const choice = readChoice(raw.setup.choice);

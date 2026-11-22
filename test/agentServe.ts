@@ -280,7 +280,7 @@ export function serveTests(w: World) {
         const { harnesses, ...shown } = (await setup(w.alice, direct))[0]!;
         assert.deepEqual({ ...shown, applied: { ...shown.applied, at: 0 } }, { ...offer, choice: { claudeMd: false, skills: [], noAttribution: false, linked: ['Claude Code', 'Codex'], noPlan: true }, applied: { claudeMd: false, skills: [], noAttribution: false, at: 0 } });
         const claudeCode = { name: 'Claude Code', path: path.join(bin, 'claude'), linked: true, attention: undefined, version: '2.1.300', signedIn: true, answers: undefined, refusal: undefined, instructions: path.join(claudeDir, 'CLAUDE.md'), skills: path.join(claudeDir, 'skills'), knobs: ['noAttribution', 'noPlan', 'own'], models: ['opus', 'sonnet', 'haiku'] };
-        const codexState = { name: 'Codex', path: path.join(bin, 'codex'), linked: true, attention: undefined, version: '0.58.0', signedIn: true, answers: undefined, refusal: undefined, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: [] };
+        const codexState = { name: 'Codex', path: path.join(bin, 'codex'), linked: true, attention: undefined, version: '0.58.0', signedIn: true, answers: undefined, refusal: undefined, instructions: '~/.codex/AGENTS.md', skills: '~/.agents/skills', knobs: ['own'], models: ['gpt-5.5-codex', 'gpt-5.5-mini'] };
         assert.deepEqual(harnesses, [claudeCode, codexState], 'the pane learns each harness the laptop has, the knobs it honors');
         // Turned off, Claude Code leaves the linked harnesses, and only Codex is left; a page from before the list keeps it off.
         const [{ harnesses: offHarnesses }] = await setup(w.alice, direct, { claudeMd: false, skills: [], noAttribution: false, off: ['Claude Code'] });
@@ -316,18 +316,18 @@ export function serveTests(w: World) {
         const lkNotLinked = (name: string) => [`I could not answer. You have not linked ${name}, so I start nothing with it. Link it in my settings under Coding agents.`];
         const [lkOnlyClaude] = await lkLink('Claude Code');
         assert.deepEqual(lkOnlyClaude!.harnesses!.map((h) => [h.name, harnessRow(h)]), [['Claude Code', 'linked'], ['Codex', 'found']]);
-        assert.equal(plugin.client!.protocol, 255, 'Claude Code linked, and gh signed in: cards, it asks, it runs own setups, sends steps, takes controls and lists sessions');
+        assert.equal(plugin.client!.protocol, 511, 'Claude Code linked, and gh signed in: cards, it asks, it runs own setups, sends steps, takes controls, lists sessions and asks anywhere');
         await lkCodexPrompt();
         assert.deepEqual(await lkFailures(), lkNotLinked('Codex'));
         assert.equal(await lkHarnessOf(await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, lkPlain)), 'Claude Code', 'Claude Code still runs');
         await lkLink('Codex', 'Claude Code');
-        assert.equal(plugin.client!.protocol, 255);
+        assert.equal(plugin.client!.protocol, 511);
         assert.equal(await lkHarnessOf(await lkPlain()), 'Codex', 'a prompt that names none runs on the first she linked');
         const [lkOnlyCodex] = await lkLink('Codex');
-        assert.equal(plugin.client!.protocol, 111, 'Codex takes cards now, and it asks, but runs no own setup');
+        assert.equal(plugin.client!.protocol, 511, 'Codex takes cards, asks and runs own setups too');
         assert.deepEqual(lkOnlyCodex!.harnesses!.map((h) => harnessRow(h)), ['found', 'linked']);
         await lkLink();
-        assert.equal(plugin.client!.protocol, 101, 'with none linked the agent still answers settings');
+        assert.equal(plugin.client!.protocol, 357, 'with none linked the agent still answers settings');
         assert.match((await plugin.status()).text, /Every card fails at once: You have linked no coding agent[\s\S]*Linked: none\./);
         await lkPlain();
         assert.deepEqual(await lkFailures(), ['I could not answer. You have linked no coding agent on this laptop, so I start nothing. Link one in my settings under Coding agents.']);
@@ -367,7 +367,7 @@ export function serveTests(w: World) {
         // Her approve links the harness the laptop recorded, whatever name the message adds, and says so.
         const lkHeard = await lkAnswer(w.alice, direct, 'approve', lkAsked!, { harness: 'Claude Code' });
         assert.deepEqual(await lkLinked(), ['Claude Code', 'Codex']);
-        assert.equal(plugin.client!.protocol, 255);
+        assert.equal(plugin.client!.protocol, 511);
         assert.ok((await lkAsks()).some((c) => c.ask?.step === 'done'), 'the laptop says it linked it');
         // The same message again, or another that names the same request, changes nothing.
         await lkLink('Claude Code');
@@ -485,6 +485,13 @@ export function serveTests(w: World) {
         assert.deepEqual(await fs.readdir(boardTurn!.cwd), [], 'an empty folder, with no code');
         assert.ok(boardTurn!.input.includes('It links no code') && boardTurn!.input.includes('### K-7: Sums are off by one'), 'the brief holds the board');
         assert.deepEqual(await answers(), ['From the board.']);
+        // With neither a project nor a repository, it runs in an empty folder with no board, and the check-in says it can.
+        assert.equal(plugin.client!.protocol & 256, 256);
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Anything."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', sentAt: Date.now() }, 'What is a monad?'));
+        const [looseTurn] = (await turns()).slice(-1);
+        assert.deepEqual(await fs.readdir(looseTurn!.cwd), [], 'an empty folder, with no code');
+        assert.ok(looseTurn!.input.includes('about no project and no code') && !looseTurn!.input.includes('### K-7'), 'no board in the brief');
+        assert.deepEqual((await answers()).slice(-1), ['Anything.']);
 
         // Her own setup (D-157) is off at first, so a question she typed runs restricted all the same.
         const ownPrompt = (own?: true) => withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Mine."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, asks: true, ...(own && { own }) }, 'What does sum.js do?'));
