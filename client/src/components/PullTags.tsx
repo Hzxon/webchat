@@ -63,7 +63,7 @@ export const svg = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
 export function PullMark({ state }: { state: 'draft' | 'ready' | 'approved' | 'merged' }) {
   if (state === 'merged')
     return (
-      <svg {...svg} width={16} height={16} className="pull-mark tone-ok">
+      <svg {...svg} width={16} height={16} className="pulls-mark tone-ok">
         <circle cx="18" cy="18" r="3" />
         <circle cx="6" cy="6" r="3" />
         <path d="M6 21V9a9 9 0 0 0 9 9" />
@@ -74,7 +74,7 @@ export function PullMark({ state }: { state: 'draft' | 'ready' | 'approved' | 'm
       {...svg}
       width={16}
       height={16}
-      className={`pull-mark ${state === 'approved' ? 'tone-ok' : ''}`}
+      className={`pulls-mark ${state === 'approved' ? 'tone-ok' : ''}`}
       strokeDasharray={state === 'draft' ? '3 2.5' : undefined}
     >
       <path d="M6 3v12" />

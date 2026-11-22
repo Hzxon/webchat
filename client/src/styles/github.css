@@ -201,20 +201,20 @@
   color: var(--text);
 }
 
-.pull-mark {
+.pulls-mark {
   flex: none;
   color: var(--muted);
 }
 
-.tone-ok {
+.github-pane .tone-ok {
   color: var(--ok);
 }
 
-.tone-danger {
+.github-pane .tone-danger {
   color: var(--danger);
 }
 
-.tone-warn {
+.github-pane .tone-warn {
   color: var(--warn);
 }
 
