@@ -25,7 +25,7 @@ import { addProjectMembers, askAgent, forgetFolder, loadChat, loadOlder, putToSl
 import type { ChatConversation } from '../e2ee/keyring';
 import { useLinkedRepos } from '../linkedRepos';
 import { actions, useAppState } from '../store';
-import { BackIcon, CloseIcon, FolderIcon, PlusIcon, SearchIcon } from './icons';
+import { BackIcon, BellIcon, CloseIcon, FolderIcon, PlusIcon, SearchIcon } from './icons';
 import { AgentBrief } from './AgentBrief';
 import { AgentDialog } from './AgentDialog';
 import { AgentAsks } from './AgentAsks';
@@ -80,9 +80,23 @@ export function AgentsView() {
     actions.setAgentsOpen(true);
   };
   const shown = thread ? 'thread' : brief ? 'brief' : composing ? 'new' : null;
+  const [width, setWidth] = useState(300);
+  const resize = (w: number) => setWidth(Math.max(220, Math.min(480, w)));
+  const drag = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const x0 = e.clientX;
+    const w0 = width;
+    const move = (ev: PointerEvent) => resize(w0 + ev.clientX - x0);
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
 
   return (
-    <section className={`chat agents-window${shown ? ' is-main' : ''}`}>
+    <section className={`chat agents-window${shown ? ' is-main' : ''}`} style={{ '--agents-side': `${width}px` } as React.CSSProperties}>
       <AgentsSidebar
         threads={threads}
         chats={chats}
@@ -94,6 +108,24 @@ export function AgentsView() {
         }}
         onConnect={() => setDialog('connect')}
         onSettings={() => setDialog('settings')}
+      />
+      <div
+        className="agents-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        aria-valuemin={220}
+        aria-valuemax={480}
+        aria-valuenow={width}
+        tabIndex={0}
+        onPointerDown={drag}
+        onKeyDown={(e) => {
+          const d = e.key === 'ArrowLeft' ? -16 : e.key === 'ArrowRight' ? 16 : 0;
+          if (d) {
+            e.preventDefault();
+            resize(width + d);
+          }
+        }}
       />
       <div className="agents-main">
         {thread ? (
@@ -151,11 +183,7 @@ function ThreadHead({ thread, agent, onBack }: { thread: Thread; agent: UserDTO 
       <span className="agents-back"><IconButton variant="ghost" label="Back to the list" icon={<BackIcon />} onClick={onBack} /></span>
       <div className="agents-head-text">
         <strong>{titleOf(thread)}</strong>
-        <span>
-          {where}
-          {where && ' · '}
-          {THREAD_STATE[thread.state].label}
-        </span>
+        <span>{where}</span>
       </div>
       {card && <Button label="Open card" onClick={() => actions.setBoardOpen(card.projectId, card.section)} />}
     </header>
@@ -209,7 +237,7 @@ function PullMark({ pull }: { pull: { number: number; state: 'draft' | 'ready' |
  * agents' own actions; on a phone they drop from the gear in its head instead.
  */
 function AgentsSidebar({
-  threads,
+  threads: all,
   chats,
   agents,
   selected,
@@ -233,6 +261,10 @@ function AgentsSidebar({
   const partial = useAppState((s) => chats.filter((c) => s.messages[c.id] && !s.historyComplete[c.id]).map((c) => c.id).join());
   const pullOf = usePullOf();
   const [closed, setClosed] = useState<Record<number, boolean>>({});
+  // Searching narrows every list to the chats whose title holds the words.
+  const [query, setQuery] = useState<string | null>(null);
+  const q = query?.trim().toLowerCase();
+  const shown = useMemo(() => (q ? all.filter((t) => titleOf(t).toLowerCase().includes(q)) : all), [all, q]);
   const [menu, setMenu] = useState<'folder' | 'sleep' | 'gear' | null>(null);
   const toggle = (m: NonNullable<typeof menu>) => setMenu(menu === m ? null : m);
   const mine = useMemo(
@@ -246,7 +278,7 @@ function AgentsSidebar({
   const { byProject, loose } = useMemo(() => {
     const byProject = new Map<number, Thread[]>();
     const loose: Thread[] = [];
-    for (const t of threads) {
+    for (const t of shown) {
       const id = threadProject(t, docs, conversations);
       if (id == null || !mine.some((p) => p.id === id)) {
         loose.push(t);
@@ -255,12 +287,13 @@ function AgentsSidebar({
       byProject.set(id, [...(byProject.get(id) ?? []), t]);
     }
     return { byProject, loose };
-  }, [threads, docs, conversations, mine]);
-  const waiting = threads.filter((t) => WAITS.has(t.state));
+  }, [shown, docs, conversations, mine]);
+  const waiting = shown.filter((t) => WAITS.has(t.state));
+  const waitingAll = all.filter((t) => WAITS.has(t.state));
 
   const awake = agents.some((a) => a.online);
   // An agent runs several cards at once, so the head says how many go (R-037).
-  const running = threads.filter((t) => t.kind === 'card' && t.state === 'working').length;
+  const running = all.filter((t) => t.kind === 'card' && t.state === 'working').length;
   const status =
     agents.length === 0
       ? 'No agent connected'
@@ -317,6 +350,24 @@ function AgentsSidebar({
             {status}
           </span>
         </div>
+        {/* The bell opens the oldest chat that waits for the user. */}
+        <span className="agents-bell">
+          <IconButton
+            variant="ghost"
+            label={`What waits for you, ${waitingAll.length}`}
+            icon={<BellIcon width={18} height={18} />}
+            isDisabled={waitingAll.length === 0}
+            onClick={() => actions.setAgentsOpen(true, waitingAll.at(-1)!.root)}
+          />
+          {waitingAll.length > 0 && <span className="agents-bell-dot" aria-hidden="true" />}
+        </span>
+        <IconButton
+          variant="ghost"
+          label="Search chats"
+          aria-expanded={query !== null}
+          icon={<SearchIcon width={18} height={18} />}
+          onClick={() => setQuery(query === null ? '' : null)}
+        />
         <span className="agents-gear-wrap">
           <IconButton
             variant="ghost"
@@ -333,6 +384,20 @@ function AgentsSidebar({
           )}
         </span>
       </header>
+      {query !== null && (
+        <label className="agents-folder-search agents-side-search">
+          <SearchIcon width={16} height={16} />
+          <input
+            type="search"
+            autoFocus
+            value={query}
+            placeholder="Search chats"
+            aria-label="Search chats"
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Escape' && setQuery(null)}
+          />
+        </label>
+      )}
       <div className="agents-side-list">
         <button type="button" className="agents-row" aria-current={selected === 'new' || undefined} onClick={onNew}>
           <NewChatIcon />
@@ -404,7 +469,7 @@ function AgentsSidebar({
       <footer className="agents-side-foot">{own()}</footer>
       {/* Outside the list, whose scrolling would cut them. */}
       {menu === 'folder' && <AddFolder agents={agents} onClose={() => setMenu(null)} />}
-      {menu === 'sleep' && <SleepPanel agents={agents} threads={threads} onClose={() => setMenu(null)} />}
+      {menu === 'sleep' && <SleepPanel agents={agents} threads={all} onClose={() => setMenu(null)} />}
     </aside>
   );
 }
@@ -626,6 +691,38 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
     }
   }
 
+  const modelButton = harness && list && (
+    <ModelButton
+      list={list}
+      value={{ harness, model }}
+      own={own}
+      mode={mode}
+      onMode={setMode}
+      onPick={(p) => {
+        pick(p.harness);
+        setModel(p.model);
+      }}
+    />
+  );
+  const modeButton = (
+    <button
+      type="button"
+      className={`agents-mode${own ? ' is-own' : ''}`}
+      disabled={!canOwn}
+      onClick={() => setRestricted(!restricted)}
+      title={
+        !canOwn
+          ? `Turn on your own setup for ${harness ?? 'a coding agent'} in Agent settings to run a chat there.`
+          : own
+            ? 'Runs in your folder with your own settings, hooks, plugins, MCP servers and permission rules, and no sandbox of WebChat’s.'
+            : 'Runs in WebChat’s sandbox and never reads your settings or secrets.'
+      }
+    >
+      <ShieldIcon own={own} />
+      {own ? 'Your own setup' : 'Restricted by WebChat'}
+    </button>
+  );
+
   return (
     <div className="agents-new">
       <header className="agents-head agents-new-head">
@@ -645,6 +742,10 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
             </div>
           )}
           {blocked && <Banner status="warning" title={blocked} />}
+          <div className="agents-new-chips">
+            {modelButton}
+            {modeButton}
+          </div>
           <div className="agents-new-box">
             <Box
               name="agents:ask"
@@ -652,22 +753,7 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
               placeholder={code ? 'Ask about your code' : 'Ask about your project'}
               canSend={!blocked && !loading}
               onSend={ask}
-              model={
-                harness &&
-                list && (
-                  <ModelButton
-                    list={list}
-                    value={{ harness, model }}
-                    own={own}
-                    mode={mode}
-                    onMode={setMode}
-                    onPick={(p) => {
-                      pick(p.harness);
-                      setModel(p.model);
-                    }}
-                  />
-                )
-              }
+              model={modelButton}
             />
           </div>
           {project && (
@@ -698,29 +784,9 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
                   {agent.displayName}
                 </span>
               )}
-              <button
-                type="button"
-                className={`agents-mode${own ? ' is-own' : ''}`}
-                disabled={!canOwn}
-                onClick={() => setRestricted(!restricted)}
-                title={
-                  !canOwn
-                    ? `Turn on your own setup for ${harness ?? 'a coding agent'} in Agent settings to run a chat there.`
-                    : own
-                      ? 'Runs in your folder with your own settings, hooks, plugins, MCP servers and permission rules, and no sandbox of WebChat’s.'
-                      : 'Runs in WebChat’s sandbox and never reads your settings or secrets.'
-                }
-              >
-                <ShieldIcon own={own} />
-                {own ? 'Your own setup' : 'Restricted by WebChat'}
-              </button>
+              {modeButton}
             </div>
           )}
-          <p className="agents-hint">
-            {code
-              ? 'It reads your team’s code as it is on GitHub, and catches up on each reply.'
-              : 'Your agent answers from the project’s board alone: its decisions and cards.'}
-          </p>
         </div>
       </div>
     </div>

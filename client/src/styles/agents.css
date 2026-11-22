@@ -257,7 +257,7 @@
 .agents-side {
   position: relative;
   flex: none;
-  width: 300px;
+  width: var(--agents-side, 300px);
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -306,6 +306,45 @@
 
 .agents-dot.is-going {
   background: var(--warn);
+}
+
+/* Drag, or focus and press the arrow keys, to resize the sidebar. */
+.agents-resizer {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  width: 8px;
+  margin: 0 -4px;
+  cursor: col-resize;
+}
+
+.agents-resizer:focus-visible {
+  outline: 0;
+  background: linear-gradient(var(--accent), var(--accent)) center / 2px 100% no-repeat;
+}
+
+.agents-bell {
+  position: relative;
+  display: inline-flex;
+}
+
+.agents-bell-dot {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  pointer-events: none;
+}
+
+.agents-folder-search.agents-side-search {
+  margin: 0 10px 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
 }
 
 /* The gear holds the foot's actions on a phone only. */
@@ -619,6 +658,40 @@
   gap: 8px;
 }
 
+/* The model and setup chips that stand above the box on a phone. */
+.agents-new-chips {
+  display: none;
+}
+
+/* The pill box's round button, in the text color. */
+.agents-send {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--text);
+  color: var(--panel);
+  cursor: pointer;
+}
+
+.agents-send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The agent's answers read as bordered panels, the user's words on the accent's soft tint. */
+.agents-window .bubble-row.theirs .bubble {
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.agents-window .bubble-row.mine .bubble {
+  background: var(--accent-soft);
+}
+
 /* The pill box: the text, the model button and the round button on one line. */
 .composer-row.agents-pill {
   align-items: center;
@@ -802,6 +875,12 @@
 .model-picker-tabs button[aria-selected='true'] {
   background: var(--hover);
   box-shadow: inset -3px 0 0 var(--accent);
+}
+
+.model-picker-sep {
+  width: 28px;
+  height: 1px;
+  background: var(--line);
 }
 
 .model-picker-tabs button:disabled {
@@ -1187,6 +1266,63 @@
     border-radius: 16px;
     background: var(--panel);
     font-size: 13px;
+  }
+
+  /* New chat: the question, where it runs as chips under it, then the model and setup chips over
+     the box. */
+  .agents-new-form {
+    display: contents;
+  }
+
+  .agents-new-body > *,
+  .agents-new-form > * {
+    order: 3;
+  }
+
+  .agents-new-body > h1 {
+    order: 1;
+    margin: auto 0 0;
+  }
+
+  .agents-new-form > .agents-new-where {
+    order: 2;
+    justify-content: center;
+    margin-bottom: auto;
+  }
+
+  .agents-new-form > .agents-new-chips {
+    order: 4;
+    display: flex;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .agents-new-form > .agents-new-box {
+    order: 5;
+    width: 100%;
+  }
+
+  .agents-new-body {
+    align-items: stretch;
+  }
+
+  .agents-new-box .model-button,
+  .agents-new-where .agents-mode {
+    display: none;
+  }
+
+  .agents-new-chips .model-button > button,
+  .agents-new-chips .agents-mode {
+    min-height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--panel);
+    font-size: 13px;
+  }
+
+  .agents-resizer {
+    display: none;
   }
 
   /* The list shows no pick while it has the screen. */

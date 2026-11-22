@@ -78,7 +78,18 @@ export function Box(props: {
       />
       {model}
       {/* One round button: it stops a running turn while the box is empty, and sends otherwise (R-072). */}
-      {stop && !text.trim() ? (
+      {pill ? (
+        // The pill box's round button, in the text color, as the design draws it.
+        stop && !text.trim() ? (
+          <button type="button" className="agents-send" aria-label="Stop" title="Stop" disabled={stop.stopping} onClick={stop.onStop}>
+            <StopIcon width={14} height={14} />
+          </button>
+        ) : (
+          <button type="button" className="agents-send" aria-label="Send" disabled={!text.trim() || !canSend} onClick={send}>
+            <ArrowUpIcon />
+          </button>
+        )
+      ) : stop && !text.trim() ? (
         <IconButton variant="primary" label="Stop" icon={<StopIcon />} isDisabled={stop.stopping} onClick={stop.onStop} />
       ) : (
         <IconButton
@@ -521,6 +532,13 @@ const CARD_KINDS = [
   ['K', 'Issue'],
   ['D', 'Decision'],
 ] as const;
+
+const ArrowUpIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <line x1="12" y1="19" x2="12" y2="5" />
+    <polyline points="5 12 12 5 19 12" />
+  </svg>
+);
 
 const CardPlusIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

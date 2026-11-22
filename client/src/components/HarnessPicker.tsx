@@ -204,7 +204,7 @@ export function ModelPicker({
   return (
     <div className="model-picker" role="dialog" aria-label="Harness, model and permissions" ref={box} onKeyDown={onKeyDown}>
       <div className="model-picker-tabs" role="tablist" aria-label="Harness" aria-orientation="vertical">
-        {['', ...list.map((h) => h.name)].map((name) => (
+        {['', ...list.map((h) => h.name)].map((name) => [
           <button
             key={name || 'favorites'}
             type="button"
@@ -219,8 +219,10 @@ export function ModelPicker({
             }}
           >
             {name ? <HarnessLogo name={name} /> : <StarIcon />}
-          </button>
-        ))}
+          </button>,
+          // A line sets Favorites apart from the harnesses.
+          !name && <span key="sep" className="model-picker-sep" aria-hidden="true" />,
+        ])}
       </div>
       <div className="model-picker-models">
         <label className="model-picker-search">
