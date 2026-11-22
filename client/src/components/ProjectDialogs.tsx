@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
+import { Dialog as AstryxDialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { RadioList, RadioListItem } from '@astryxdesign/core/RadioList';
 import { Selector } from '@astryxdesign/core/Selector';
@@ -15,8 +16,7 @@ import { createDoc } from '../docs';
 import { actions, useAppState } from '../store';
 import { Avatar } from './Avatar';
 import { Dialog } from './Dialog';
-import { PickItem } from './PickItem';
-import { GithubIcon, HashIcon } from './icons';
+import { GithubIcon, HashIcon, SearchIcon } from './icons';
 import type { MembersTarget } from './MembersDialog';
 
 /** A project or group from the store, with its members' ids in the order they joined. */
@@ -312,43 +312,53 @@ export function ProjectReposDialog({ projectId, onClose }: { projectId: number; 
 
 const NO_KEYS = 'Must sign in again to turn on encryption';
 
-/** Adds people to a project or a group. Any member can, and the people added read the history. */
+/**
+ * Adds people to a project or a group, one Add at a time. Any member can, and the people added read
+ * the history. With no search it offers the people from the user's chats.
+ */
 export function AddPeopleDialog({ target, onClose }: { target: MembersTarget; onClose: () => void }) {
   const chat = useTarget(target);
   const users = useAppState((s) => s.users);
-  const names = useMemberNames(chat?.memberIds ?? NO_MEMBERS);
+  const conversations = useAppState((s) => s.conversations);
+  const meId = useAppState((s) => s.me?.id);
   const [query, setQuery] = useState('');
-  const [picked, setPicked] = useState<Set<number>>(new Set());
+  // Those added here stay listed, marked Added, rather than vanish as they become members.
+  const [added, setAdded] = useState<Set<number>>(new Set());
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  /** Where the user and each person share a chat: a group's name, or their direct chat. */
+  const sharedChat = useMemo(() => {
+    const where = new Map<number, string>();
+    for (const c of Object.values(conversations)) {
+      if (c.type === 'channel') continue;
+      for (const m of c.members) {
+        if (m.userId !== meId && !where.has(m.userId))
+          where.set(m.userId, c.type === 'direct' ? 'Direct chat' : `In ${c.title ?? 'a group'}`);
+      }
+    }
+    return where;
+  }, [conversations, meId]);
 
   const people = useMemo(() => {
     const q = query.trim().toLowerCase();
     const members = new Set(chat?.memberIds ?? []);
     return Object.values(users)
-      .filter((u) => !members.has(u.id) && !u.deleted)
-      .filter((u) => !q || u.displayName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q))
+      .filter((u) => u.id !== meId && !u.deleted && (added.has(u.id) || !members.has(u.id)))
+      .filter((u) =>
+        q ? u.displayName.toLowerCase().includes(q) || u.username.toLowerCase().includes(q) : sharedChat.has(u.id),
+      )
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
-  }, [users, chat, query]);
+  }, [users, chat, query, added, sharedChat, meId]);
 
-  function toggle(id: number) {
-    setPicked((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  async function add() {
+  async function add(id: number) {
     setBusy(true);
     setError('');
     try {
-      const ids = [...picked];
       await (target.kind === 'project'
-        ? addProjectMembers(target.projectId, ids)
-        : addGroupMembers(target.conversationId, ids));
-      onClose();
+        ? addProjectMembers(target.projectId, [id])
+        : addGroupMembers(target.conversationId, [id]));
+      setAdded((current) => new Set(current).add(id));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -357,54 +367,67 @@ export function AddPeopleDialog({ target, onClose }: { target: MembersTarget; on
   }
 
   if (!chat) return null;
-  const noun = target.kind;
-  const tooMany = picked.size > LIMITS.addMembersAtOnce;
   return (
-    <Dialog title={`Add people to ${chat.name}`} onClose={onClose}>
-      <Text as="p" color="secondary">
-        In this {noun}: {names.join(', ')}.
-      </Text>
-      <Text as="p" color="secondary">
-        {target.kind === 'project'
-          ? 'People you add join every channel and can read earlier messages too. You can add people only while you can open every channel yourself.'
-          : 'People you add can read earlier messages too. Your browser shares the group’s key with them.'}
-      </Text>
-      <TextInput
-        label="Search people"
-        isLabelHidden
-        placeholder="Search people"
-        type="search"
-        value={query}
-        onChange={setQuery}
-        hasAutoFocus
-      />
-      <List edge="flush">
-        {people.map((user) => (
-          <PickItem
-            key={user.id}
-            label={user.displayName}
-            description={user.keys ? `@${user.username}` : NO_KEYS}
-            start={<Avatar name={user.displayName} seed={user.id} size={38} online={user.online} />}
-            checked={picked.has(user.id)}
-            onChange={() => toggle(user.id)}
-            isDisabled={!user.keys}
+    <AstryxDialog
+      isOpen
+      onOpenChange={(open) => !open && onClose()}
+      width={460}
+      maxHeight="min(680px, 90dvh)"
+      padding={0}
+    >
+      <div className="mhead">
+        <DialogHeader title="Add Member" onOpenChange={(open) => !open && onClose()} />
+      </div>
+      <div className="mbody">
+        <label className="side-search">
+          <SearchIcon width={16} height={16} />
+          <input
+            type="search"
+            placeholder="Search by name or username"
+            aria-label="Search by name or username"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            autoFocus
           />
-        ))}
-      </List>
-      {people.length === 0 && (
-        <Text as="p" color="secondary">
-          {query ? 'Nobody matches.' : 'Everyone who has joined the site is already here.'}
-        </Text>
-      )}
-      {tooMany && <Banner status="error" title={`Add up to ${LIMITS.addMembersAtOnce} people at a time.`} />}
-      {error && <Banner status="error" title={error} />}
-      <Button
-        variant="primary"
-        onClick={() => void add()}
-        isLoading={busy}
-        isDisabled={picked.size === 0 || tooMany}
-        label={picked.size > 1 ? `Add ${picked.size} people` : `Add to ${noun}`}
-      />
-    </Dialog>
+        </label>
+        <section>
+          <h3 className="mlbl">{query.trim() ? 'People' : 'From your chats'}</h3>
+          {people.length > 0 ? (
+            <div className="mlist">
+              {people.map((user) => (
+                <div key={user.id} className="mrow">
+                  <Avatar name={user.displayName} seed={user.id} size={32} />
+                  <span className="mrow-who">
+                    {user.displayName}
+                    <small>{user.keys ? (sharedChat.get(user.id) ?? `@${user.username}`) : NO_KEYS}</small>
+                  </span>
+                  {added.has(user.id) ? (
+                    <span className="mrow-role">Added</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-secondary sm"
+                      aria-label={`Add ${user.displayName}`}
+                      onClick={() => void add(user.id)}
+                      disabled={!user.keys || busy}
+                    >
+                      Add
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mnote">{query.trim() ? 'Nobody matches.' : 'Search for anyone who has joined the site.'}</p>
+          )}
+        </section>
+        {error && <Banner status="error" title={error} />}
+      </div>
+      <footer className="mfoot">
+        <button type="button" className="btn btn-primary mfoot-done" onClick={onClose}>
+          Done
+        </button>
+      </footer>
+    </AstryxDialog>
   );
 }
