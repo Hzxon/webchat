@@ -55,3 +55,66 @@ export function PullTags({ pull }: { pull: Pick<PullCardDTO, 'draft' | 'checks' 
     </>
   );
 }
+
+/** The look of the pane's small stroked icons. */
+export const svg = { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true } as const;
+
+/** A pull request's mark: Draft dashed, Ready solid, Merged as the merge icon. */
+export function PullMark({ state }: { state: 'draft' | 'ready' | 'approved' | 'merged' }) {
+  if (state === 'merged')
+    return (
+      <svg {...svg} width={16} height={16} className="pull-mark tone-ok">
+        <circle cx="18" cy="18" r="3" />
+        <circle cx="6" cy="6" r="3" />
+        <path d="M6 21V9a9 9 0 0 0 9 9" />
+      </svg>
+    );
+  return (
+    <svg
+      {...svg}
+      width={16}
+      height={16}
+      className={`pull-mark ${state === 'approved' ? 'tone-ok' : ''}`}
+      strokeDasharray={state === 'draft' ? '3 2.5' : undefined}
+    >
+      <path d="M6 3v12" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="18" cy="18" r="3" />
+      <path d="M18 15V8a2 2 0 0 0-2-2h-5" />
+      <polyline points="13 3 10 6 13 9" />
+    </svg>
+  );
+}
+
+/** A grey chip whose small icon carries the colour, so a lane of cards stays quiet. */
+export function StateChip({ tone, children }: { tone: Tone; children: string }) {
+  return (
+    <span className="pull-chip">
+      <svg {...svg} width={13} height={13} className={`tone-${tone}`}>
+        {tone === 'ok' ? (
+          <polyline points="5 12.5 10 17 19 7" />
+        ) : tone === 'warn' ? (
+          <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
+        ) : (
+          <>
+            <line x1="6" y1="6" x2="18" y2="18" />
+            <line x1="18" y1="6" x2="6" y2="18" />
+          </>
+        )}
+      </svg>
+      {children}
+    </span>
+  );
+}
+
+/** The chips of a pull request on the Pull requests pane: its checks, a requested change and conflicts. */
+export function PullChips({ pull }: { pull: Pick<PullCardDTO, 'checks' | 'review' | 'conflicts'> }) {
+  const checks = pull.checks && CHECKS[pull.checks];
+  return (
+    <>
+      {checks && <StateChip tone={checks[0]}>{checks[1]}</StateChip>}
+      {pull.review === 'changes_requested' && <StateChip tone="danger">Changes requested</StateChip>}
+      {pull.conflicts && <StateChip tone="danger">Conflicts</StateChip>}
+    </>
+  );
+}

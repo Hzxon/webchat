@@ -20,6 +20,16 @@ export function githubQueries(sql: Sql, _helpers: Helpers) {
           );
         }
       }),
+    /** The repositories linked to any project the user is in, for the pane's All view. */
+    githubTeamRepos: async (userId: number): Promise<string[]> =>
+      (
+        await sql.query<{ repo: string }>(
+          `SELECT DISTINCT r.repo FROM webchat.project_repos r
+           JOIN webchat.project_members m ON m.project_id = r.project_id
+           WHERE m.user_id = $1 ORDER BY r.repo`,
+          [userId],
+        )
+      ).map((row) => row.repo),
     /** The repositories someone may link now, without the ones this project links already. */
     githubChoices: async (userId: number, projectId: number): Promise<RepoChoiceDTO[]> =>
       (
