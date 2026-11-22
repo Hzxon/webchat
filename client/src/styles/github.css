@@ -88,63 +88,6 @@
   font-weight: 600;
 }
 
-.github-count {
-  min-width: 22px;
-  padding: 0 6px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
-  color: var(--muted);
-  font-size: 12.5px;
-  line-height: 18px;
-  text-align: center;
-}
-
-.github-empty {
-  margin: 0;
-  padding: 4px 2px;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.pull-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
-  overflow: hidden;
-}
-
-.pull-list li + li {
-  border-top: 1px solid var(--line);
-}
-
-.pull {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px 14px;
-  color: inherit;
-  text-decoration: none;
-}
-
-.pull-row {
-  display: flex;
-  align-items: flex-start;
-}
-
-.pull-row .pull {
-  flex: 1;
-  min-width: 0;
-}
-
-.pull-share {
-  flex: none;
-  margin: 8px 6px 0 0;
-}
-
 .share-mark {
   display: inline-flex;
   flex: none;
@@ -155,4 +98,751 @@
   border-radius: var(--radius);
   background: var(--panel-2);
   color: var(--muted);
+}
+
+/* The pane as lanes of pull requests, in the board's look: tinted lanes, light cards, one accent. */
+
+/* Lanes and cards take the board's --lane and --card (board.css), so both screens look alike. */
+.github-pane {
+  position: relative;
+  background: var(--panel);
+}
+
+.pulls-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-height: 60px;
+  padding: 10px 12px 10px 16px;
+}
+
+.pulls-header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.pulls-gap {
+  flex: 1;
+}
+
+.pulls-n {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.pulls-seg,
+.pulls-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--hover);
+}
+
+.pulls-seg button,
+.pulls-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pulls-layout button {
+  width: 32px;
+  padding: 0;
+}
+
+.pulls-seg button[aria-pressed='true'],
+.pulls-tabs button[aria-pressed='true'] {
+  background: var(--card);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+
+.pulls-quiet,
+.pulls-fold-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pulls-quiet[aria-pressed='true'] {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* A folded lane is a dashed chip in the header, so it takes no lane width; a click unfolds it. */
+.pulls-fold-chip {
+  border: 1px dashed var(--line);
+  border-radius: 16px;
+  color: var(--text);
+}
+
+.pulls-mark {
+  flex: none;
+  color: var(--muted);
+}
+
+.github-pane .tone-ok {
+  color: var(--ok);
+}
+
+.github-pane .tone-danger {
+  color: var(--danger);
+}
+
+.github-pane .tone-warn {
+  color: var(--warn);
+}
+
+.pulls-stack {
+  display: inline-flex;
+  align-items: center;
+}
+
+.pulls-stack .pulls-face + .pulls-face {
+  margin-left: -6px;
+}
+
+.pulls-stack .pulls-face {
+  width: 26px;
+  height: 26px;
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+.pulls-face {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* Soft tints as the design's faces: a person's colour from the four the palette has. */
+.tint-0 {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.tint-1 {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.tint-2 {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.tint-3 {
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+/* The lanes' + and ⋯: quiet icons that darken on hover. */
+.pulls-icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.pulls-phone-more,
+.pulls-tabs {
+  display: none;
+}
+
+.pulls-loading {
+  padding: 16px;
+}
+
+.pulls-board {
+  display: flex;
+  flex: 1;
+  gap: 10px;
+  min-height: 0;
+  padding: 4px 12px 12px;
+  overflow-x: auto;
+}
+
+.pulls-lane {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 200px;
+  max-width: 320px;
+  min-height: 0;
+  border-radius: 12px;
+  background: var(--lane);
+}
+
+.pulls-lane-head,
+.pulls-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pulls-lane-head {
+  padding: 8px 4px 4px 12px;
+}
+
+.pulls-lane-head .pulls-n {
+  margin-left: auto;
+}
+
+.pulls-cards {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 4px 8px 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.pulls-empty {
+  margin: 4px 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pulls-card {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.pulls-open {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.pulls-open:hover {
+  color: var(--text);
+}
+
+.pulls-open small {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pulls-open strong {
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.pulls-open code {
+  overflow: hidden;
+  color: var(--muted);
+  font: 12px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pulls-foot-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.pulls-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Sharing floats in the card's corner and waits behind a hover on a pointer, so the card reads as the design. */
+.pulls-share {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.pulls-row {
+  position: relative;
+}
+
+.pulls-row .pulls-share {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.pulls-lane.is-merged .pulls-open strong {
+  font-weight: 500;
+}
+
+/* A grey chip; only its icon carries a colour. "Your review" is the one chip with a colour of its own. */
+.pull-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.pull-chip.is-yours {
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* The List view: the same lanes as groups of one-line rows. */
+.pulls-list {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 12px 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.pulls-group {
+  position: relative;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.pulls-group-head {
+  padding: 4px 4px 4px 14px;
+  border-radius: 12px 12px 0 0;
+  background: var(--lane);
+}
+
+.pulls-group .pulls-menu {
+  top: 44px;
+}
+
+.pulls-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 46px;
+  padding: 0 14px;
+  border-top: 1px solid var(--line);
+}
+
+.pulls-row .pulls-open {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.pulls-row .pulls-open small {
+  flex: none;
+  min-width: 44px;
+}
+
+.pulls-row .pulls-open strong {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pulls-row .pulls-foot-row {
+  flex: none;
+  flex-wrap: nowrap;
+}
+
+.pulls-row .pulls-end {
+  justify-content: flex-end;
+  min-width: 56px;
+}
+
+/* A lane's menu: how the lane is sorted and whose pull requests it shows, and folding it. */
+.pulls-menu-back {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  border: 0;
+  background: transparent;
+}
+
+.pulls-menu {
+  position: absolute;
+  top: 40px;
+  right: 6px;
+  z-index: 5;
+  display: grid;
+  gap: 1px;
+  width: 220px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.pulls-menu-label {
+  padding: 6px 8px 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pulls-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pulls-menu hr {
+  margin: 5px 2px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.pulls-check {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  color: var(--accent);
+  visibility: hidden;
+}
+
+.pulls-menu [aria-checked='true'] .pulls-check {
+  visibility: visible;
+}
+
+.pulls-fold {
+  display: grid;
+}
+
+.pulls-fold svg {
+  color: var(--muted);
+}
+
+.pulls-grab {
+  display: none;
+}
+
+.pulls-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 4px 12px calc(4px + env(safe-area-inset-bottom)) 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.pulls-who,
+.pulls-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pulls-note {
+  color: var(--text);
+}
+
+.pulls-branches {
+  display: grid;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.pulls-branch {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.pulls-branch input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.pulls-branch span {
+  display: grid;
+  min-width: 0;
+}
+
+.pulls-branch span {
+  overflow-wrap: anywhere;
+}
+
+.pulls-branch small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.pulls-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (hover: hover) {
+  .pulls-seg button:hover,
+  .pulls-tabs button:hover {
+    color: var(--text);
+  }
+
+  .pulls-quiet:hover,
+  .pulls-icon:hover,
+  .pulls-menu button:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+
+  .pulls-fold-chip:hover {
+    border-style: solid;
+    background: var(--hover);
+  }
+
+  .pulls-card:hover {
+    border-color: var(--muted);
+  }
+
+  .pulls-row:hover {
+    background: var(--hover);
+  }
+
+  .pulls-share {
+    visibility: hidden;
+  }
+
+  .pulls-card:hover .pulls-share,
+  .pulls-row:hover .pulls-share,
+  .pulls-share:focus-within {
+    visibility: visible;
+  }
+}
+
+@media (min-width: 761px) {
+  .pulls-lane.is-folded {
+    display: none;
+  }
+}
+
+/* A phone shows one lane at a time behind tabs; the lane menu opens as a sheet from the bottom. */
+@media (max-width: 760px) {
+  .github-pane,
+  .github-pane * {
+    scrollbar-width: none;
+  }
+
+  .github-pane *::-webkit-scrollbar {
+    display: none;
+  }
+
+  .pulls-header {
+    gap: 6px;
+    padding: 8px 6px 8px 10px;
+  }
+
+  .pulls-header h1 {
+    flex: 1;
+    order: 1;
+    font-size: 20px;
+  }
+
+  .pulls-header .back-button {
+    order: 0;
+  }
+
+  .pulls-phone-more {
+    display: inline-grid;
+    order: 2;
+  }
+
+  /* For you, All and Merged move to a row of their own under the title. */
+  .pulls-header::after {
+    content: '';
+    flex-basis: 100%;
+    order: 3;
+  }
+
+  .github-pane {
+    background: var(--sidebar);
+  }
+
+  .pulls-seg,
+  .pulls-gap,
+  .pulls-quiet,
+  .pulls-layout {
+    order: 4;
+  }
+
+  .pulls-fold-chip,
+  .pulls-stack,
+  .pulls-fold,
+  .pulls-lane-head {
+    display: none;
+  }
+
+  .pulls-tabs {
+    display: flex;
+    margin: 0 10px 8px;
+    border-radius: 10px;
+  }
+
+  .pulls-tabs button {
+    flex: 1;
+    min-width: 0;
+    height: 36px;
+    padding: 0 4px;
+    white-space: nowrap;
+  }
+
+  .pulls-tabs small {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 400;
+  }
+
+  .pulls-board {
+    padding: 0 10px 10px;
+    overflow-x: hidden;
+  }
+
+  .pulls-lane {
+    display: none;
+    max-width: none;
+  }
+
+  .pulls-lane.is-current {
+    display: flex;
+  }
+
+  .pulls-cards {
+    padding: 8px;
+  }
+
+  .pulls-list {
+    padding: 0 10px 10px;
+  }
+
+  .pulls-row {
+    display: grid;
+    gap: 6px;
+    padding: 10px 14px;
+  }
+
+  .pulls-row .pulls-open {
+    display: grid;
+    gap: 2px;
+    padding: 0;
+  }
+
+  .pulls-row .pulls-foot-row {
+    flex-wrap: wrap;
+  }
+
+  .pulls-menu-back {
+    z-index: 20;
+    background: var(--backdrop);
+  }
+
+  .pulls-menu,
+  .pulls-group .pulls-menu {
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 21;
+    width: auto;
+    padding: 8px 10px calc(28px + env(safe-area-inset-bottom));
+    border-radius: 16px 16px 0 0;
+  }
+
+  .pulls-menu button {
+    height: 44px;
+    font-size: 15px;
+  }
+
+  .pulls-grab {
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: 0 auto 6px;
+    border-radius: 2px;
+    background: var(--line);
+  }
+}
+
+.pulls-show-all {
+  align-self: center;
 }

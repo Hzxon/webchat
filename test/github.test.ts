@@ -11,6 +11,7 @@ import { comparePulls } from '../server/github.ts';
 import type {
   BootstrapDTO,
   GithubCardDTO,
+  BranchChoiceDTO,
   GithubDTO,
   MessageDTO,
   ProjectReposDTO,
@@ -80,6 +81,8 @@ async function startFakeGithub() {
     endings: new Map<string, { state: 'OPEN' | 'CLOSED' | 'MERGED'; mergedBy?: string }>(),
     searches: [] as string[],
     revoked: [] as Array<{ authorization: string | undefined; body: unknown }>,
+    /** Pull requests opened through POST /repos/:owner/:name/pulls. */
+    opened: [] as unknown[],
   };
 
   const toNode = (p: FakePull) => ({
@@ -180,6 +183,28 @@ async function startFakeGithub() {
           };
           return json(200, errors.length > 0 ? { data, errors } : { data });
         }
+        if (query.includes('query Branches')) {
+          const ref = (name: string, pulls: number, date: string) => ({
+            name,
+            associatedPullRequests: { totalCount: pulls },
+            target: { messageHeadline: `Work on ${name}`, committedDate: date },
+          });
+          return json(200, {
+            data: {
+              r0: {
+                nameWithOwner: `${body.variables.o0}/${body.variables.n0}`,
+                defaultBranchRef: { name: 'main' },
+                refs: {
+                  nodes: [
+                    ref('main', 0, '2026-11-20T10:00:00Z'),
+                    ref('dana/old', 1, '2026-11-19T10:00:00Z'),
+                    ref('dana/new', 0, '2026-11-21T10:00:00Z'),
+                  ],
+                },
+              },
+            },
+          });
+        }
         if (query.includes('query States')) {
           const nodes = (body.variables.ids as string[]).map((id) => {
             const ending = state.endings.get(id);
@@ -187,6 +212,11 @@ async function startFakeGithub() {
           });
           return json(200, { data: { nodes } });
         }
+      }
+      if (req.method === 'POST' && path === '/repos/acme/app/pulls') {
+        if (!authorized) return json(401, {});
+        state.opened.push(body);
+        return json(201, { html_url: 'https://github.com/acme/app/pull/9', number: 9 });
       }
       if (req.method === 'DELETE' && req.url === `/applications/${CLIENT_ID}/grant`) {
         state.revoked.push({ authorization: req.headers.authorization, body });
@@ -828,6 +858,24 @@ describe('GitHub connector', () => {
     await request('GET', '/github');
     assert.equal(github.state.searches.length, searches, 'no more polls with a refused token');
     github.state.validToken = TOKEN;
+  });
+
+  test('a branch with no pull request yet opens as a draft into the default branch, through the server', async () => {
+    const { data: branches } = await request<BranchChoiceDTO[]>('GET', '/github/branches');
+    assert.deepEqual(
+      branches.map((b) => [b.repo, b.branch, b.title]),
+      [['acme/app', 'dana/new', 'Work on dana/new']],
+      'neither the default branch nor one with a pull request is offered',
+    );
+    const bad = await request('POST', '/github/pulls', { body: { repo: 'acme/app', base: 'main', branch: '', title: 'Hi' } });
+    assert.equal(bad.res.status, 400);
+    const { res, data } = await request<{ url: string }>('POST', '/github/pulls', {
+      body: { repo: 'acme/app', base: 'main', branch: 'dana/new', title: 'Work on dana/new' },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(data.url, 'https://github.com/acme/app/pull/9');
+    assert.deepEqual(github.state.opened, [{ title: 'Work on dana/new', head: 'dana/new', base: 'main', draft: true }]);
+    assert.ok(!JSON.stringify([branches, data]).includes(TOKEN), 'the token never reaches the browser');
   });
 
   test('disconnecting deletes the token and revokes the grant on GitHub', async () => {
