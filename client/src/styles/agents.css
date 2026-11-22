@@ -1357,3 +1357,438 @@
   border-color: var(--accent);
   color: var(--accent-strong);
 }
+
+/* The agents' dialogs run edge to edge, so their head keeps its own padding. */
+.agents-dialog-head {
+  padding: 14px 16px 12px 20px;
+}
+
+/* Agent settings: the harnesses in a list beside the one picked, and Apply in a foot. */
+.setup-agent,
+.setup-wait {
+  padding: 0 20px 12px;
+}
+
+.setup {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: min(600px, 80dvh);
+  border-top: 1px solid var(--line);
+}
+
+.setup-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.setup-nav {
+  flex: 0 0 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 8px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  background: var(--sidebar);
+}
+
+.setup-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.setup-nav-row[aria-current] {
+  background: var(--sidebar-hover);
+}
+
+/* A harness that takes no runs shows by its fade alone. */
+.setup-nav-row.is-found,
+.setup-nav-row.is-missing {
+  opacity: 0.45;
+}
+
+.setup-nav-row.is-found[aria-current],
+.setup-nav-row.is-missing[aria-current] {
+  opacity: 0.75;
+}
+
+.setup-logo {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.setup-nav-text,
+.setup-title-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.setup-nav-text strong {
+  font-weight: 500;
+}
+
+.setup-nav-text span,
+.setup-where .is-warn,
+.connect-harness .is-warn {
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.setup-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 24px 24px;
+  overflow-y: auto;
+}
+
+.setup-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.setup-title-text strong {
+  font-size: 18px;
+}
+
+.setup-title-text strong span {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.setup-where {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.setup-help-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+
+.setup-help-box code,
+.setup-help-box li code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.setup-help-box ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+}
+
+.setup-help-box li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.setup-step-n {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.setup-step-text {
+  display: grid;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.setup-help-h {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.setup-help-h span {
+  font-weight: 400;
+}
+
+.setup-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.setup-knobs {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.setup-knob {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 8px 14px;
+}
+
+.setup-knob + .setup-knob {
+  border-top: 1px solid var(--line);
+}
+
+.setup-knob-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.setup-knob-text strong {
+  font-weight: 500;
+}
+
+.setup-foot,
+.connect-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 12px 16px 12px 20px;
+  border-top: 1px solid var(--line);
+}
+
+.setup-foot > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Connect agent: its three steps, then the step itself. */
+.connect-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0 20px 14px;
+  border-bottom: 1px solid var(--line);
+  list-style: none;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.connect-steps li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 2px solid var(--line);
+}
+
+.connect-steps li.is-on,
+.connect-steps li.is-done {
+  border-color: var(--accent);
+}
+
+.connect-steps li.is-on {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.connect-step-n {
+  width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.is-on > .connect-step-n,
+.is-done > .connect-step-n {
+  background: var(--accent);
+  box-shadow: none;
+  color: var(--on-accent);
+}
+
+.connect-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: 18px 20px 20px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.connect-h {
+  margin: 0;
+  font-size: 14px;
+}
+
+.connect-h.is-title {
+  font-size: 18px;
+}
+
+.connect-wait {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+
+.connect-wait strong {
+  flex: 1;
+  font-weight: 500;
+}
+
+.connect-wait span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.connect-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.connect-summary {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.connect-summary dt,
+.connect-summary dd {
+  margin: 0;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.connect-summary dt:first-of-type,
+.connect-summary dt:first-of-type + dd {
+  border-top: 0;
+}
+
+.connect-summary dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.connect-summary dd {
+  display: grid;
+  gap: 6px;
+}
+
+.connect-harness {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (hover: hover) {
+  .setup-nav-row:hover {
+    background: var(--sidebar-hover);
+  }
+}
+
+/* A phone: the harnesses become a row of chips above the one picked. */
+@media (max-width: 760px) {
+  .setup {
+    height: auto;
+    flex: 1;
+  }
+
+  .setup-body {
+    flex-direction: column;
+  }
+
+  .setup-nav {
+    flex: none;
+    flex-direction: row;
+    gap: 6px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    scrollbar-width: none;
+  }
+
+  .setup-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .setup-nav-row {
+    flex: none;
+    width: auto;
+    min-height: 36px;
+    padding: 4px 12px 4px 4px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--panel);
+  }
+
+  .setup-nav-row .setup-logo {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+  }
+
+  .setup-nav-text span {
+    display: none;
+  }
+
+  .setup-main {
+    padding: 16px;
+  }
+
+  .setup-title {
+    flex-wrap: wrap;
+  }
+}

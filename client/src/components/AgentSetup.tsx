@@ -1,14 +1,15 @@
-// The agent's settings (R-039, D-115): each harness on its laptop, and what its runs and answers
-// load from the owner's setup there. Opening them asks the agent, which answers in the owner's
+// The agent's settings (R-039, D-115): each harness on its laptop in a list beside the one picked,
+// and what its runs and answers load from the owner's setup there. On a phone the list is a row of
+// chips above it. Opening them asks the agent, which answers in the owner's
 // direct chat with the harnesses it found, what the laptop offers, the choice it keeps and what its
 // last run loaded. Save sends a new choice, and the agent's answer to it confirms it. Nothing of it
 // reaches the server unsealed.
 import { useEffect, useMemo, useState } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
-import { List, ListItem } from '@astryxdesign/core/List';
+import { Dialog as AstryxDialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { List } from '@astryxdesign/core/List';
 import { Selector } from '@astryxdesign/core/Selector';
-import { Stack } from '@astryxdesign/core/Stack';
 import { Switch } from '@astryxdesign/core/Switch';
 import { Text } from '@astryxdesign/core/Text';
 import {
@@ -27,10 +28,9 @@ import { blockedBy, ownAgents, useAgentChat, WAKE } from '../agents';
 import { askSetup } from '../chat';
 import { useAppState } from '../store';
 import { AgentAsks } from './AgentAsks';
-import { Dialog } from './Dialog';
-import { formatAgo } from './format';
+import { usePhone } from './AgentDialog';
+import { HarnessLogo } from './HarnessPicker';
 import { PickItem } from './PickItem';
-import { Tag, type Tone } from './PullTags';
 
 /** How long the dialog waits for the agent's answer before it says none came. */
 const ANSWER_MS = 60_000;
@@ -50,8 +50,6 @@ const same = (a: SetupChoice, b: SetupChoice) =>
 const OWN_WARNING =
   'A question you type in the Coding agents pane runs in your folder with your own settings, hooks, plugins, MCP servers and permission rules, and no sandbox of WebChat’s. The board’s cards in its brief can steer it, and it can change your working tree. Card runs and Check again stay restricted.';
 
-const ROW_TONE: Record<HarnessRow, Tone> = { linked: 'ok', attention: 'warn', found: 'info', missing: 'muted' };
-
 /** What a plugin from before the harness list runs: Claude Code alone, with no toggle, since it ignores `off`. */
 const OLD_PLUGIN: HarnessState = {
   name: 'Claude Code',
@@ -66,19 +64,34 @@ export function AgentSetup({ onClose }: { onClose: () => void }) {
   const agents = useMemo(() => ownAgents(users, meId), [users, meId]);
   const [picked, setPicked] = useState(agents[0]?.id);
   const agent = agents.find((a) => a.id === picked) ?? agents[0];
+  const phone = usePhone();
+  const close = (open: boolean) => !open && onClose();
   return (
-    <Dialog title="Agent settings" onClose={onClose}>
+    <AstryxDialog
+      isOpen
+      onOpenChange={close}
+      purpose="form"
+      width={900}
+      maxHeight="min(680px, 90dvh)"
+      variant={phone ? 'fullscreen' : 'standard'}
+      padding={0}
+    >
+      <div className="agents-dialog-head">
+        <DialogHeader title="Agent settings" onOpenChange={close} />
+      </div>
       {agents.length > 1 && (
-        <Selector
-          label="Agent"
-          isLabelHidden
-          value={String(agent?.id)}
-          onChange={(v) => setPicked(Number(v))}
-          options={agents.map((a) => ({ value: String(a.id), label: a.displayName }))}
-        />
+        <div className="setup-agent">
+          <Selector
+            label="Agent"
+            isLabelHidden
+            value={String(agent?.id)}
+            onChange={(v) => setPicked(Number(v))}
+            options={agents.map((a) => ({ value: String(a.id), label: a.displayName }))}
+          />
+        </div>
       )}
       {agent && <SetupForm key={agent.id} agent={agent} />}
-    </Dialog>
+    </AstryxDialog>
   );
 }
 
@@ -113,17 +126,23 @@ function SetupForm({ agent }: { agent: UserDTO }) {
     return () => clearTimeout(timer);
   }, [asks.length, waiting]);
 
+  // The harness picked in the list.
+  const [sel, setSel] = useState('');
   if (blocked)
     return (
-      <Text as="p" color="secondary">
-        {blocked}
-      </Text>
+      <div className="setup-wait">
+        <Text as="p" color="secondary">
+          {blocked}
+        </Text>
+      </div>
     );
   if (!answer)
     return (
-      <Text as="p" color="secondary">
-        {late ? `Your agent did not answer. ${WAKE}` : 'Asking your agent what it can load…'}
-      </Text>
+      <div className="setup-wait">
+        <Text as="p" color="secondary">
+          {late ? `Your agent did not answer. ${WAKE}` : 'Asking your agent what it can load…'}
+        </Text>
+      </div>
     );
   // An agent that knows linking keeps the list and the off list itself: Link and Unlink send them at once, so an unsaved edit never carries stale ones.
   const links = answer.harnesses?.some((h) => h.linked !== undefined);
@@ -148,140 +167,204 @@ function SetupForm({ agent }: { agent: UserDTO }) {
     });
   };
 
+  const harnesses = answer.harnesses ?? [OLD_PLUGIN];
+  const h = harnesses.find((x) => x.name === sel) ?? harnesses[0]!;
+  // A plugin from before linking keeps its on and off switch; one from before the list has neither.
+  const row: HarnessRow = h.linked === undefined ? 'linked' : harnessRow(h);
+  const help = row === 'linked' ? undefined : helpFor(h, row);
+  const loads = row === 'linked' || row === 'attention';
+  const knob = (label: string, text: string, value: boolean, onChange: () => void, isDisabled?: boolean) => (
+    <div className="setup-knob" key={label}>
+      <span className="setup-knob-text">
+        <strong>{label}</strong>
+        <Help text={text} />
+      </span>
+      <Switch label={label} isLabelHidden value={value} isDisabled={isDisabled} onChange={onChange} />
+    </div>
+  );
+
   return (
-    <Stack
-      as="form"
-      gap={4}
-      onSubmit={(e: React.FormEvent) => {
+    <form
+      className="setup"
+      onSubmit={(e) => {
         e.preventDefault();
         void ask(choice);
       }}
     >
-      <Text as="p" color="secondary">
-        Each coding agent on your agent’s laptop, and what its runs and answers load from your setup there. Your
-        settings, hooks, MCP servers and plugins stay off in card runs, since a run follows cards your teammates wrote.{' '}
-        {takesAsks(agent.protocol)
-          ? 'It asks you in the Coding agents pane before an action its coding agent would ask about.'
-          : 'Update your agent to be asked before such an action; until then it refuses it.'}
-      </Text>
-      <AgentAsks />
-      {(answer.harnesses ?? [OLD_PLUGIN]).map((h) => (
-        <Stack key={h.name} as="section" gap={2}>
-          {h.linked !== undefined ? (
-            <ListItem
-              label={[h.name, h.version].filter(Boolean).join(' ')}
-              description={
-                <Stack gap={0.5}>
-                  {h.path && <Text color="secondary">{h.path}</Text>}
-                  <Text color="secondary">
-                    {h.attention ??
-                      (h.linked ? (h.refusal ?? 'Takes cards') : h.path ? HARNESS_WARNING[h.name] : h.refusal)}
-                  </Text>
-                </Stack>
-              }
-              endContent={
-                <Stack direction="horizontal" gap={2} vAlign="center">
-                  <Tag tone={ROW_TONE[harnessRow(h)]}>{HARNESS_ROW_WORDS[harnessRow(h)]}</Tag>
-                  <Button
-                    size="sm"
-                    isDisabled={busy || (!h.linked && !h.path)}
-                    onClick={() => relink(h)}
-                    label={h.linked ? 'Unlink' : 'Link'}
-                  />
-                </Stack>
-              }
-            />
-          ) : answer.harnesses ? (
-            <Switch
-              label={[h.name, h.version].filter(Boolean).join(' ')}
-              description={[
-                h.signedIn !== undefined && (h.signedIn ? 'Signed in' : 'Not signed in'),
-                h.refusal ?? 'Takes cards',
-              ]
-                .filter(Boolean)
-                .join('. ')}
-              value={!off.includes(h.name)}
-              onChange={() => setEdit({ ...choice, off: flip(off, h.name) })}
-            />
-          ) : (
-            <ListItem
-              label={[h.name, h.version].filter(Boolean).join(' ')}
-              description={[h.signedIn !== undefined && (h.signedIn ? 'Signed in' : 'Not signed in'), h.refusal]
-                .filter(Boolean)
-                .join('. ')}
-            />
-          )}
-          <List edge="flush">
-            {h.instructions && (
-              <PickItem
-                label={`Follow my ${h.instructions.split('/').pop()}`}
-                description={answer.claudeMd ? h.instructions : 'Not on the laptop'}
-                checked={choice.claudeMd}
-                isDisabled={!answer.claudeMd && !choice.claudeMd}
-                onChange={() => setEdit({ ...choice, claudeMd: !choice.claudeMd })}
-              />
+      <div className="setup-body">
+        <nav className="setup-nav" aria-label="Harnesses">
+          {harnesses.map((x) => {
+            const r = x.linked === undefined ? 'linked' : harnessRow(x);
+            return (
+              <button
+                key={x.name}
+                type="button"
+                className={`setup-nav-row is-${r}`}
+                aria-current={x === h || undefined}
+                title={`${x.name}: ${HARNESS_ROW_WORDS[r]}`}
+                onClick={() => setSel(x.name)}
+              >
+                <span className="setup-logo">
+                  <HarnessLogo name={x.name} size={16} />
+                </span>
+                <span className="setup-nav-text">
+                  <strong>{x.name}</strong>
+                  {/* Only a linked harness that cannot run says why; the rest show by their fade alone. */}
+                  {r === 'attention' && <span>{x.signedIn === false ? 'Not signed in' : 'Needs attention'}</span>}
+                </span>
+              </button>
+            );
+          })}
+        </nav>
+        <div className="setup-main">
+          <AgentAsks />
+          <div className="setup-title">
+            <span className="setup-title-text">
+              <strong>
+                {h.name} {h.version && <span>{h.version}</span>}
+              </strong>
+              <span className="setup-where">
+                <span>{h.path ? agent.displayName : `Not on ${agent.displayName}`}</span>
+                {h.signedIn !== undefined && (
+                  <span className={h.signedIn ? undefined : 'is-warn'}>{h.signedIn ? 'Signed in' : 'Not signed in'}</span>
+                )}
+              </span>
+            </span>
+            {/* Unlink takes effect at once, as its own signed choice, apart from Apply. */}
+            {h.linked && (
+              <Button size="sm" variant="destructive" label="Unlink" aria-label={`Unlink ${h.name}`} isDisabled={busy} onClick={() => relink(h)} />
             )}
-            {/* A knob this page does not know yet stays as it is. */}
-            {h.knobs.includes('noAttribution') && (
-              <PickItem
-                label="No AI attribution in commits and pull requests"
-                description={<Help text={`No “Co-Authored-By” or “Generated with ${h.name}” lines.`} />}
-                checked={choice.noAttribution}
-                onChange={() => setEdit({ ...choice, noAttribution: !choice.noAttribution })}
-              />
-            )}
-            {h.knobs.includes('own') && takesOwn(agent.protocol) && (
-              <PickItem
-                label="Use my own setup in sessions I start"
-                // A Text, not a string, so the warning wraps instead of being cut to one line.
-                description={<Help text={OWN_WARNING} />}
-                checked={!!choice.own?.includes(h.name)}
-                onChange={() => setEdit({ ...choice, own: flip(choice.own ?? [], h.name) })}
-              />
-            )}
-            {h.knobs.includes('noPlan') && (
-              <PickItem
-                label="Show me the plan before any code"
-                description={<Help text="A card run waits for your go after its check." />}
-                checked={!choice.noPlan}
-                onChange={() => setEdit({ ...choice, noPlan: !choice.noPlan })}
-              />
-            )}
-          </List>
-          {h.skills &&
-            (skills.length > 0 ? (
-              <List edge="flush" header={`Skills of ${h.name}`}>
-                {skills.map((s) => (
-                  <PickItem
-                    key={s.name}
-                    label={s.name}
-                    description={<Help text={s.description} />}
-                    checked={choice.skills.includes(s.name)}
-                    onChange={() => setEdit({ ...choice, skills: flip(choice.skills, s.name) })}
-                  />
+          </div>
+          {help && (
+            <section className="setup-help-box" aria-label={help.problem}>
+              <strong>{help.problem}</strong>
+              {h.path && <code>{h.path}</code>}
+              {row === 'found' && HARNESS_WARNING[h.name] && (
+                <Banner status="warning" title="Before you link it" description={HARNESS_WARNING[h.name]} />
+              )}
+              <span className="setup-help-h">How to connect it</span>
+              <ol>
+                {help.steps.map(([text, cmd], i) => (
+                  <li key={i}>
+                    <span className="setup-step-n" aria-hidden="true">
+                      {i + 1}
+                    </span>
+                    <span className="setup-step-text">
+                      <span>{text}</span>
+                      {cmd && <code>{cmd}</code>}
+                    </span>
+                  </li>
                 ))}
-              </List>
-            ) : (
-              <Text as="p" color="secondary">
-                No skills in {h.skills} on the laptop.
-              </Text>
-            ))}
-        </Stack>
-      ))}
-      {answer.applied && (
-        <Text as="p" color="secondary">
-          Its last run, {formatAgo(answer.applied.at)}, loaded {setupWords(answer.applied)}.
+              </ol>
+              {row === 'found' && (
+                <span>
+                  <Button variant="primary" label={`Link ${h.name}`} isDisabled={busy} onClick={() => relink(h)} />
+                </span>
+              )}
+            </section>
+          )}
+          {loads && (
+            <section className="setup-section">
+              <span className="setup-help-h">What its runs and answers load</span>
+              <div className="setup-knobs">
+                {h.linked === undefined &&
+                  answer.harnesses &&
+                  knob('Use it', h.refusal ?? 'Takes cards', !off.includes(h.name), () => setEdit({ ...choice, off: flip(off, h.name) }))}
+                {h.instructions &&
+                  knob(
+                    `Follow my ${h.instructions.split('/').pop()}`,
+                    answer.claudeMd ? h.instructions : 'Not on the laptop',
+                    choice.claudeMd,
+                    () => setEdit({ ...choice, claudeMd: !choice.claudeMd }),
+                    !answer.claudeMd && !choice.claudeMd,
+                  )}
+                {/* A knob this page does not know yet stays as it is. */}
+                {h.knobs.includes('noAttribution') &&
+                  knob('No AI attribution', `No “Co-Authored-By” or “Generated with ${h.name}” lines.`, choice.noAttribution, () =>
+                    setEdit({ ...choice, noAttribution: !choice.noAttribution }),
+                  )}
+                {h.knobs.includes('own') &&
+                  takesOwn(agent.protocol) &&
+                  knob('Use my own setup in sessions I start', OWN_WARNING, !!choice.own?.includes(h.name), () =>
+                    setEdit({ ...choice, own: flip(choice.own ?? [], h.name) }),
+                  )}
+                {h.knobs.includes('noPlan') &&
+                  knob('Show me the plan before any code', 'A card run waits for your go after its check.', !choice.noPlan, () =>
+                    setEdit({ ...choice, noPlan: !choice.noPlan }),
+                  )}
+              </div>
+            </section>
+          )}
+          {h.skills && loads && (
+            <section className="setup-section">
+              <span className="setup-help-h">
+                Skills of {h.name}
+                <span>
+                  {choice.skills.length} of {skills.length} on
+                </span>
+              </span>
+              {skills.length > 0 ? (
+                <List edge="flush">
+                  {skills.map((s) => (
+                    <PickItem
+                      key={s.name}
+                      label={s.name}
+                      description={<Help text={s.description} />}
+                      checked={choice.skills.includes(s.name)}
+                      onChange={() => setEdit({ ...choice, skills: flip(choice.skills, s.name) })}
+                    />
+                  ))}
+                </List>
+              ) : (
+                <Text as="p" color="secondary">
+                  No skills in {h.skills} on the laptop.
+                </Text>
+              )}
+            </section>
+          )}
+          {/* An older agent refuses what its harness would ask about, so the owner learns to update it. */}
+          {!takesAsks(agent.protocol) && (
+            <Text as="p" color="secondary">
+              Update your agent to be asked before an action its harness would ask about; until then it refuses it.
+            </Text>
+          )}
+          {late && <Banner status="error" title={`Your agent did not answer. ${WAKE}`} />}
+        </div>
+      </div>
+      <footer className="setup-foot">
+        {/* The foot holds Apply alone, and once the agent confirms, what the next run loads. */}
+        <Text color="secondary">
+          {saving && !waiting && same(choice, answer.choice) ? `Saved. The next run and answer load ${setupWords(answer.choice)}.` : ''}
         </Text>
-      )}
-      <Button variant="primary" type="submit" isLoading={busy} isDisabled={same(choice, answer.choice)} label="Save" />
-      {saving && !waiting && same(choice, answer.choice) && (
-        <Text as="p" weight="semibold">
-          Saved. The next run and answer load {setupWords(answer.choice)}.
-        </Text>
-      )}
-      {late && <Banner status="error" title={`Your agent did not answer. ${WAKE}`} />}
-    </Stack>
+        <Button variant="primary" type="submit" isLoading={busy} isDisabled={same(choice, answer.choice)} label="Apply" />
+      </footer>
+    </form>
   );
+}
+
+type Steps = Array<[string, string?]>;
+
+/** What a harness that takes no runs yet needs, and the steps to connect it. */
+function helpFor(h: HarnessState, row: Exclude<HarnessRow, 'linked'>): { problem: string; steps: Steps } {
+  if (row === 'found')
+    return {
+      problem: `${h.name} is on your laptop, but not linked`,
+      steps: [
+        [`Read what ${h.name} can reach${HARNESS_WARNING[h.name] ? ', above' : ''}.`],
+        [`Make sure ${h.name} works on the laptop. Run it once in a terminal and sign in if it asks.`, h.path],
+        [`Press Link ${h.name}. Your agent links it and confirms here.`],
+        ['Choose what its runs load. The switches show here once it is linked.'],
+      ],
+    };
+  if (row === 'attention')
+    return {
+      problem: h.attention ?? `${h.name} is linked, but needs attention`,
+      steps: [['On the laptop, fix what it says above.'], ['Open these settings again. It shows as linked once it can run.']],
+    };
+  return {
+    problem: `${h.name} is not on your laptop`,
+    steps: [[`Install ${h.name} on the laptop.`], ['Restart your agent. It looks for harnesses each time it starts.'], ['Come back here and press Link.']],
+  };
 }
 
 /** Help that fits on one line shows under its option; longer help waits behind a ? that opens on click. */
