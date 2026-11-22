@@ -316,15 +316,15 @@ export function serveTests(w: World) {
         const lkNotLinked = (name: string) => [`I could not answer. You have not linked ${name}, so I start nothing with it. Link it in my settings under Coding agents.`];
         const [lkOnlyClaude] = await lkLink('Claude Code');
         assert.deepEqual(lkOnlyClaude!.harnesses!.map((h) => [h.name, harnessRow(h)]), [['Claude Code', 'linked'], ['Codex', 'found']]);
-        assert.equal(plugin.client!.protocol, 511, 'Claude Code linked, and gh signed in: cards, it asks, it runs own setups, sends steps, takes controls, lists sessions and asks anywhere');
+        assert.equal(plugin.client!.protocol, 1023, 'Claude Code linked, and gh signed in: cards, it asks, it runs own setups, sends steps, takes controls, lists sessions, asks anywhere and switches setups');
         await lkCodexPrompt();
         assert.deepEqual(await lkFailures(), lkNotLinked('Codex'));
         assert.equal(await lkHarnessOf(await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"It adds."}' }, lkPlain)), 'Claude Code', 'Claude Code still runs');
         await lkLink('Codex', 'Claude Code');
-        assert.equal(plugin.client!.protocol, 511);
+        assert.equal(plugin.client!.protocol, 1023);
         assert.equal(await lkHarnessOf(await lkPlain()), 'Codex', 'a prompt that names none runs on the first she linked');
         const [lkOnlyCodex] = await lkLink('Codex');
-        assert.equal(plugin.client!.protocol, 511, 'Codex takes cards, asks and runs own setups too');
+        assert.equal(plugin.client!.protocol, 1023, 'Codex takes cards, asks and runs own setups too');
         assert.deepEqual(lkOnlyCodex!.harnesses!.map((h) => harnessRow(h)), ['found', 'linked']);
         await lkLink();
         assert.equal(plugin.client!.protocol, 357, 'with none linked the agent still answers settings');
@@ -367,7 +367,7 @@ export function serveTests(w: World) {
         // Her approve links the harness the laptop recorded, whatever name the message adds, and says so.
         const lkHeard = await lkAnswer(w.alice, direct, 'approve', lkAsked!, { harness: 'Claude Code' });
         assert.deepEqual(await lkLinked(), ['Claude Code', 'Codex']);
-        assert.equal(plugin.client!.protocol, 511);
+        assert.equal(plugin.client!.protocol, 1023);
         assert.ok((await lkAsks()).some((c) => c.ask?.step === 'done'), 'the laptop says it linked it');
         // The same message again, or another that names the same request, changes nothing.
         await lkLink('Claude Code');
@@ -571,6 +571,22 @@ export function serveTests(w: World) {
         assert.ok(handed[0]!.input!.includes('Edited by Alice.'), 'from the summary as she edited it');
         const keptAfter = JSON.parse(await fs.readFile(path.join(dataDir, 'laptop', 'conversations.json'), 'utf8')) as Array<{ root: string; harness?: string }>;
         assert.equal(keptAfter.find((c) => c.root === controlled)?.harness, 'Codex', 'replies go to Codex now');
+        await w.alice.sync();
+
+        // A setup switch is a hand over to the same harness in the other setup (docs/decisions/new-setup-switch.md).
+        await w.instance.sql.query("DELETE FROM webchat.rate_limits WHERE key LIKE 'send:%'");
+        const switching = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Sure."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, harness: 'Claude Code' }, 'Look at sums.'));
+        const restrictedFirst = await lastTurn();
+        assert.ok(restrictedFirst.args.includes('--restricted'), 'it starts restricted');
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Goal: sums."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'reply', to: switching, sentAt: Date.now(), handover: { harness: 'Claude Code', own: true } }, 'Switch to your own setup'));
+        assert.ok((await lastTurn()).input.includes('a new session of Claude Code in their own setup'), 'the restricted session writes the summary');
+        await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Going on."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'reply', to: switching, sentAt: Date.now(), mode: 'auto', handover: { harness: 'Claude Code', summary: 'Goal: sums.', own: true } }, 'Hand over'));
+        const ownAfter = await lastTurn();
+        assert.deepEqual([ownAfter.cwd, ownAfter.args.includes('--restricted'), flagOf(ownAfter.args, '--permission-mode'), !!flagOf(ownAfter.args, '--session-id')], [await fs.realpath(project), false, 'auto', true], 'a new session in her folder, in her own setup, in Auto');
+        assert.ok(ownAfter.input.includes('Goal: sums.'), 'from the summary');
+        await tell({ kind: 'reply', to: switching, sentAt: Date.now(), handover: { harness: 'Claude Code', summary: 'Goal: sums, back.', own: false } }, 'Hand over');
+        const backAgain = await lastTurn();
+        assert.ok(backAgain.args.includes('--restricted') && backAgain.cwd !== ownAfter.cwd, 'and back to a restricted session in a scratch copy');
         await w.alice.sync();
 
         // A terminal's session, continued (R-072): the agent lists her Claude Code sessions in the connected folder, and goes on with one in her own setup.

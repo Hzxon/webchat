@@ -423,8 +423,9 @@ export class Plugin {
   private async updateLevel() {
     const asks = this.linkedHarnesses().some((h) => h.asks) ? AGENT_LEVEL.asks : 0;
     const own = this.linkedHarnesses().some((h) => h.offers.knobs.includes('own')) ? AGENT_LEVEL.own : 0;
-    // A terminal's session goes on only in the owner's own setup, so the adapters that run it list them.
-    const sessions = own ? AGENT_LEVEL.sessions : 0;
+    // A terminal's session goes on only in the owner's own setup, so the adapters that run it list
+    // them, and a session switches into it and out (docs/decisions/new-setup-switch.md).
+    const sessions = own ? AGENT_LEVEL.sessions | AGENT_LEVEL.switches : 0;
     this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | AGENT_LEVEL.events | AGENT_LEVEL.controls | AGENT_LEVEL.anywhere | asks | own | sessions | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
   }
 
@@ -1317,7 +1318,7 @@ export class Plugin {
     // A terminal's session goes on only where it started: in their own setup, in their folder (R-072).
     if (conversation.resumed && !(own && conversation.repo)) throw new Error(`I go on with a session from your terminal only in your own setup for ${harness.name}. Turn it on in my settings under Coding agents.`);
     // A session cannot move between a scratch copy and the owner's folder, nor between setups.
-    if (resume && own !== !!conversation.ownSetup) throw new Error(`You turned your own setup ${own ? 'on' : 'off'} for ${harness.name} since this conversation started. Start a new one.`);
+    if (resume && own !== !!conversation.ownSetup) throw new Error(`You turned your own setup ${own ? 'on' : 'off'} for ${harness.name} since this conversation started. Switch it under the shield below the box, or start a new one.`);
     conversation.ownSetup = own;
     // A project that links no repository asks about its board alone, in an empty folder (R-038).
     const { repo } = conversation;

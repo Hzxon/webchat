@@ -589,10 +589,11 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
   const to = short(raw?.to, 64);
   if (!raw || !to) return;
   if (raw.kind === 'reply') {
-    const handover = raw.handover as { harness?: unknown; summary?: unknown } | undefined;
+    const handover = raw.handover as { harness?: unknown; summary?: unknown; own?: unknown } | undefined;
     const harness = short(handover?.harness, LIMITS.harnessFieldLength);
     const summary = short(handover?.summary, LIMITS.messageLength);
-    return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt, ...readCardAsk(raw.card), ...readControls(raw), ...(harness && { handover: { harness, ...(summary !== undefined && { summary }) } }) } : undefined;
+    const own = typeof handover?.own === 'boolean' ? handover.own : undefined;
+    return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt, ...readCardAsk(raw.card), ...readControls(raw), ...(harness && { handover: { harness, ...(summary !== undefined && { summary }), ...(own !== undefined && { own }) } }) } : undefined;
   }
   if (raw.kind === 'summary') {
     const harness = short(raw.harness, LIMITS.harnessFieldLength);
