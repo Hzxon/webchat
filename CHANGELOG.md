@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.18.0](https://github.com/Hzxon/webchat/compare/v0.17.0...v0.18.0) (2026-11-22)
+
+
+### Features
+
+* **agents:** Choose a folder in Finder ([#311](https://github.com/Hzxon/webchat/issues/311)) ([341bd3f](https://github.com/Hzxon/webchat/commit/341bd3ffb4dc3f2cd33dbbad4718b911286dc4c3))
+* **agents:** Pick a session's effort per model ([#316](https://github.com/Hzxon/webchat/issues/316)) ([31b5045](https://github.com/Hzxon/webchat/commit/31b5045731daf2efcece15d1b676bc6ce4a81954))
+* **agents:** Shrink the ask box and its options ([#315](https://github.com/Hzxon/webchat/issues/315)) ([1bdc635](https://github.com/Hzxon/webchat/commit/1bdc6350bc58b47c13670c2f895cd9e74b51e7fd))
+* **agents:** Switch setup mid-session ([#312](https://github.com/Hzxon/webchat/issues/312)) ([5cbb4f5](https://github.com/Hzxon/webchat/commit/5cbb4f54f7fa28b25ae0cd50445938ce8ecbf9af))
+
 ## [0.17.0](https://github.com/Hzxon/webchat/compare/v0.16.0...v0.17.0) (2026-11-22)
 
 
