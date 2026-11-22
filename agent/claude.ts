@@ -70,9 +70,10 @@ export function claudeSettings({ secrets, npmCache, env, noAttribution }: { secr
  * the config file of the approval endpoint, an action Claude Code would ask about is asked of the
  * owner; without it, it is refused.
  */
-export function claudeArgs({ settings, session, resume, schema, claudeMd, skills, mcp, own, model, mode }: { settings: string; session: string; resume: boolean; schema: object; claudeMd?: string; skills?: string; mcp?: string; own?: boolean; model?: string; mode?: PermissionMode }) {
+export function claudeArgs({ settings, session, resume, schema, claudeMd, skills, mcp, own, model, effort, mode }: { settings: string; session: string; resume: boolean; schema: object; claudeMd?: string; skills?: string; mcp?: string; own?: boolean; model?: string; effort?: string; mode?: PermissionMode }) {
   const tail = [
     ...(model ? ['--model', model] : []),
+    ...(effort ? ['--effort', effort] : []),
     '--output-format',
     'stream-json',
     '--verbose',
@@ -329,6 +330,10 @@ export const claudeSecrets = (dataDir: string) => [...secretDirs(dataDir), path.
 /** The models a session may pick, as aliases `claude --model` takes, so a new release's model needs no change here (R-072). */
 export const CLAUDE_MODELS = ['opus', 'sonnet', 'haiku'];
 
+/** The levels `claude --effort` takes, which every model `CLAUDE_MODELS` names takes too, as Claude Code's own model table says. */
+const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const CLAUDE_EFFORTS = Object.fromEntries(['', ...CLAUDE_MODELS].map((model) => [model, LEVELS]));
+
 /** The first release with `--permission-prompts`, which a turn with no way to ask passes (claude.ts `claudeArgs`; Claude Code's changelog, 2.1.259). */
 export const CLAUDE_MIN_VERSION = '2.1.259';
 
@@ -381,7 +386,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
         })
       : undefined;
     // The skills' copies load as a plugin, which holds only `skills/`.
-    const args = claudeArgs({ settings, session: t.session, resume: t.resume, schema, claudeMd: t.setup.instructions, skills: t.setup.skills && path.dirname(t.setup.skills), mcp: live.approver?.file, own: t.own, model: t.model, mode: t.own ? t.mode : undefined });
+    const args = claudeArgs({ settings, session: t.session, resume: t.resume, schema, claudeMd: t.setup.instructions, skills: t.setup.skills && path.dirname(t.setup.skills), mcp: live.approver?.file, own: t.own, model: t.model, effort: t.effort, mode: t.own ? t.mode : undefined });
     const child = (live.child = spawn(program, args, { cwd: t.cwd, stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, ...(live.approver && { MCP_TOOL_TIMEOUT: String(TOOL_TIMEOUT_MS) }) } }));
     keep(child);
     // A process that exits before it reads closes the pipe; its exit says why.
@@ -463,7 +468,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
     // Nothing to check before the first `apply` writes the file.
     warning: async () => ((await fs.access(settings).then(() => true, () => false)) ? sandboxProblem(path.join(os.homedir(), 'WebChat'), secrets, restrictedSettings(settings)) : undefined),
     sandboxed: async () => !(await sandboxProblem(path.join(os.homedir(), 'WebChat'), secrets, restrictedSettings(settings))),
-    offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['noAttribution', 'noPlan', 'own'], models: CLAUDE_MODELS }),
+    offers: () => ({ instructions: path.join(claudeHome(), 'CLAUDE.md'), skills: path.join(claudeHome(), 'skills'), knobs: ['claudeMd', 'skills', 'noAttribution', 'noPlan', 'own'], models: CLAUDE_MODELS, efforts: CLAUDE_EFFORTS }),
     async found() {
       if (!program) return {};
       // `auth status` prints its JSON and exits 1 when signed out.
@@ -484,7 +489,7 @@ export function claudeHarness(program: string, dataDir: string): Harness {
       // A restricted run loads none of the owner's hooks (D-097); their own setup loads theirs.
       t.about?.({ hooks: t.own ? await hookCount(t.cwd) : 0 });
       const schema = mergeSchemas((t.schemas ?? [t.schema]) as Schema[]);
-      const key = JSON.stringify([t.cwd, !!t.ask, t.setup, schema, t.lab?.proxy, !!t.own, t.model, t.mode]);
+      const key = JSON.stringify([t.cwd, !!t.ask, t.setup, schema, t.lab?.proxy, !!t.own, t.model, t.effort, t.mode]);
       let live = lives.get(t.session);
       if (live?.turn) throw new Error('a turn of this session is running already.');
       // A session that starts over, or needs other arguments, cannot keep its process.

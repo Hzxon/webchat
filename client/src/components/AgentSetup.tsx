@@ -55,7 +55,7 @@ const OLD_PLUGIN: HarnessState = {
   name: 'Claude Code',
   instructions: '~/.claude/CLAUDE.md',
   skills: '~/.claude/skills',
-  knobs: ['noAttribution'],
+  knobs: ['claudeMd', 'skills', 'noAttribution'],
 };
 
 export function AgentSetup({ onClose }: { onClose: () => void }) {
@@ -173,6 +173,8 @@ function SetupForm({ agent }: { agent: UserDTO }) {
   const row: HarnessRow = h.linked === undefined ? 'linked' : harnessRow(h);
   const help = row === 'linked' ? undefined : helpFor(h, row);
   const loads = row === 'linked' || row === 'attention';
+  // Only what its adapter honors shows; an agent from before `claudeMd` was a knob shows every one, as it did.
+  const honors = (knob: string) => h.knobs.includes(knob) || !harnesses.some((x) => x.knobs.includes('claudeMd'));
   const knob = (label: string, text: string, value: boolean, onChange: () => void, isDisabled?: boolean) => (
     <div className="setup-knob" key={label}>
       <span className="setup-knob-text">
@@ -271,6 +273,7 @@ function SetupForm({ agent }: { agent: UserDTO }) {
                   answer.harnesses &&
                   knob('Use it', h.refusal ?? 'Takes cards', !off.includes(h.name), () => setEdit({ ...choice, off: flip(off, h.name) }))}
                 {h.instructions &&
+                  honors('claudeMd') &&
                   knob(
                     `Follow my ${h.instructions.split('/').pop()}`,
                     answer.claudeMd ? h.instructions : 'Not on the laptop',
@@ -295,7 +298,7 @@ function SetupForm({ agent }: { agent: UserDTO }) {
               </div>
             </section>
           )}
-          {h.skills && loads && (
+          {h.skills && honors('skills') && loads && (
             <section className="setup-section">
               <span className="setup-help-h">
                 Skills of {h.name}

@@ -908,11 +908,11 @@ export class Plugin {
    * so a page from before linking greys it.
    */
   private async stateOf(harness: HarnessInfo): Promise<HarnessState> {
-    const { instructions, skills, knobs, models } = harness.offers;
+    const { instructions, skills, knobs, models, efforts } = harness.offers;
     const linked = this.isLinked(harness);
     const [own, refused] = await Promise.all([this.bench.refusal(harness.name), this.harnessRefusal(harness)]);
     const attention = linked ? own ?? (harness.signedIn === false ? `${harness.name} is not signed in.` : harness.warning) : undefined;
-    return { name: harness.name, ...(harness.version && { version: harness.version }), ...(harness.signedIn !== undefined && { signedIn: harness.signedIn }), ...(harness.path && { path: shown(harness.path) }), linked, ...(attention && { attention }), answers: refused, refusal: refused, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs, ...(models && { models }) };
+    return { name: harness.name, ...(harness.version && { version: harness.version }), ...(harness.signedIn !== undefined && { signedIn: harness.signedIn }), ...(harness.path && { path: shown(harness.path) }), linked, ...(attention && { attention }), answers: refused, refusal: refused, instructions: instructions && shown(instructions), skills: skills && shown(skills), knobs, ...(models && { models }), ...(efforts && { efforts }) };
   }
 
   /** Keeps the setup on disk, and hands each harness its choice. */
@@ -1290,13 +1290,13 @@ export class Plugin {
       : undefined;
     // One process takes every turn of a session, so it gets every schema the session's turns use.
     const schemas = schema === CHECK || schema === ANSWER ? [CHECK, ANSWER] : [schema];
-    // A conversation's own setup and controls: a model, and a permission mode only in own setup (D-157, R-072).
+    // A conversation's own setup and controls: a model, an effort, and a permission mode only in own setup (D-157, R-072).
     const talk = 'taken' in who ? undefined : who;
     const own = !!talk?.own;
-    const { model, mode } = talk ?? {};
+    const { model, effort, mode } = talk ?? {};
     // Only a page that shows the steps asks for them; an older one would show each batch as a message (R-072).
     const steps = talk?.events ? this.steps(talk.chat, talk.to, { own, ...(talk.branch && { branch: talk.branch }) }) : undefined;
-    const { answer, applied } = await this.bench.turn({ harness: harness.name, cwd, session, resume, message, schema, schemas, setup: this.setup.choice, ...(own && { own }), ...(model && { model }), ...(own && mode && { mode }) }, { signal, progress: progress?.line, events: steps?.add, about: steps?.about, permit }).finally(async () => {
+    const { answer, applied } = await this.bench.turn({ harness: harness.name, cwd, session, resume, message, schema, schemas, setup: this.setup.choice, ...(own && { own }), ...(model && { model }), ...(effort && { effort }), ...(own && mode && { mode }) }, { signal, progress: progress?.line, events: steps?.add, about: steps?.about, permit }).finally(async () => {
       // Before the answer, so the timeline is whole when it ends.
       await steps?.end();
       progress?.end();
@@ -1382,7 +1382,7 @@ export class Plugin {
     const asked = card ? `${message}\n\n${cardAsk(card)}` : message;
     // Never the owner's folder as `scratch`, which an ended conversation removes.
     const cwd = own && folder ? folder.dir : scratch!;
-    const answer = (await this.ask(cwd, conversation.session, resume, asked, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks, own, events: conversation.events, ...(base && { branch: base.ref.replace(/^origin\//, '') }), model: conversation.model, mode: conversation.mode })) as { reply?: unknown; drafts?: unknown };
+    const answer = (await this.ask(cwd, conversation.session, resume, asked, REPLY, signal, harness, { chat: conversation.chat, to: conversation.root, asks: conversation.asks, own, events: conversation.events, ...(base && { branch: base.ref.replace(/^origin\//, '') }), model: conversation.model, effort: conversation.effort, mode: conversation.mode })) as { reply?: unknown; drafts?: unknown };
     // Only once the turn read them, so a turn cut short tells the next one again.
     conversation.seen = seen;
     conversation.pulls = listed;

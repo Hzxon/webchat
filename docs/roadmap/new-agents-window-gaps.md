@@ -3,7 +3,7 @@
 Status: Idea. Proposed 2026-11-22 with the agents window redesign (#298).
 
 Why: the agents window design (the Claude Design canvas, artboards Main and ModelPicker) shows
-four controls that the page cannot drive today. The agent has no message for them, so #298 left
+controls that the page could not drive. The agent has no message for them, so #298 left
 them out instead of showing controls that do nothing.
 
 Scope:
@@ -15,10 +15,12 @@ Scope:
 - New folder by cloning: the owner clones a project's repository on a laptop from Add folder,
   without a run or a question waiting for it. Today `askClone` needs one.
 - Effort for a session's model, as the picker's third column shows it: a signed `effort` field
-  on `prompt` and `reply`, which the harness adapters pass on where the harness takes one. The
-  permission mode moved to the shield under the ask box (docs/decisions/new-setup-switch.md).
+  on `prompt` and `reply`, which the harness adapters pass on where the harness takes one. Done:
+  Claude Code takes `--effort`, Codex each model's efforts as it lists them, and the picker shows
+  only the picked model's. The permission mode moved to the shield under the ask box
+  (docs/decisions/new-setup-switch.md).
 - Switching a running session between the owner's own setup and restricted: done by a hand over
   to the same harness (docs/decisions/new-setup-switch.md).
 
-Done when: each of the four works from the window, signed where it changes what runs, and the
+Done when: each of these works from the window, signed where it changes what runs, and the
 rules files name the new fields.

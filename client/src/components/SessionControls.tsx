@@ -1,8 +1,8 @@
-// A session's controls (R-072): one picker for the harness and its model, the shield that picks
-// where it runs and its permission mode in the user's own setup, and the summary that hands the
-// session to another harness or setup (D-156, docs/decisions/new-setup-switch.md). The model and
-// mode go with the next reply; picking another harness or setup asks the session for a summary,
-// which the user reads and may edit before the new session starts from it.
+// A session's controls (R-072): one picker for the harness, its model and its effort, the shield
+// that picks where it runs and its permission mode in the user's own setup, and the summary that
+// hands the session to another harness or setup (D-156, docs/decisions/new-setup-switch.md). The
+// model, effort and mode go with the next reply; picking another harness or setup asks the session
+// for a summary, which the user reads and may edit before the new session starts from it.
 import { Button } from '@astryxdesign/core/Button';
 import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
@@ -12,13 +12,13 @@ import { LIMITS, type PermissionMode, type UserDTO } from '../../../shared/types
 import type { Thread } from '../agents';
 import { tellAgent } from '../chat';
 import type { ChatMessage } from '../e2ee/keyring';
-import { ModelButton, useHarnessPick } from './HarnessPicker';
+import { effortsOf, ModelButton, useHarnessPick } from './HarnessPicker';
 
-type Choice = { model?: string; mode?: PermissionMode };
+export type Choice = { model?: string; effort?: string; mode?: PermissionMode };
 
 /**
- * The ask box's model button for a session: its harness and model, and in the user's own setup its
- * permission mode. Picking another harness asks the one that ran it for a summary first (D-156).
+ * The ask box's model button for a session: its harness, model and effort. Picking another harness
+ * asks the one that ran it for a summary first (D-156).
  */
 export function Controls({
   thread,
@@ -40,9 +40,12 @@ export function Controls({
       up
       list={list}
       value={{ harness: thread.harness, model: choice.model ?? thread.about?.model }}
+      effort={choice.effort}
       locked={isDisabled}
+      onEffort={(effort) => onChoice({ ...choice, effort })}
       onPick={({ harness, model }) => {
-        if (harness === thread.harness) return onChoice({ ...choice, model });
+        // Another model may not take the effort picked.
+        if (harness === thread.harness) return onChoice({ ...choice, model, ...(!effortsOf(list, { harness, model }).includes(choice.effort ?? '') && { effort: undefined }) });
         void tellAgent(thread.conversationId, thread.root, 'reply', `Hand over to ${harness}`, { handover: { harness } });
       }}
     />

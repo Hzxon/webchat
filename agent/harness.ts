@@ -38,6 +38,8 @@ export interface Turn {
   own?: boolean;
   /** The model the session's controls picked, by a name `offers().models` lists (R-072). */
   model?: string;
+  /** The effort level the session's controls picked, by a name `offers().efforts` lists for its model. */
+  effort?: string;
   /** The permission mode the session's controls picked, set only with `own`: a restricted run keeps its own (D-115). */
   mode?: PermissionMode;
   signal: AbortSignal;
@@ -85,7 +87,7 @@ export interface Harness {
    * only when it honors it without running code outside the sandbox and without changing
    * permission or sandbox mode (D-115), except `own`, which says it can run `Turn.own` (D-157).
    */
-  offers(): { instructions?: string; skills?: string; knobs: string[]; models?: string[] };
+  offers(): { instructions?: string; skills?: string; knobs: string[]; models?: string[]; efforts?: Record<string, string[]> };
   /** What the laptop has of it: where it is, its version, and whether it is signed in, each left out when it cannot tell. */
   found(): Promise<{ path?: string; version?: string; signedIn?: boolean }>;
   /** Takes the owner's choice for its knobs: before any proof or turn, and again whenever it changes. */

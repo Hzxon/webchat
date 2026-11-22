@@ -119,8 +119,9 @@ export interface TurnJob {
   setup: SetupChoice;
   /** Runs in the owner's own setup (D-157); the plugin sets it only for a conversation its owner started in their words. */
   own?: boolean;
-  /** The session's controls (R-072): a model the harness offers, and a permission mode, which counts only with `own`. */
+  /** The session's controls (R-072): a model, and an effort the harness offers for it, and a permission mode, which counts only with `own`. */
   model?: string;
+  effort?: string;
   mode?: PermissionMode;
 }
 
@@ -352,11 +353,12 @@ export class LocalBench implements Bench {
     return { instructions, skills: skills.length ? folder : undefined, applied: { claudeMd: !!instructions, skills, noAttribution: choice.noAttribution } };
   }
 
-  async turn({ harness: name, cwd, session, resume, message, schema, schemas, setup: choice, own, model: picked, mode }: TurnJob, { signal, progress, events, about, permit }: Parameters<Bench['turn']>[1]) {
+  async turn({ harness: name, cwd, session, resume, message, schema, schemas, setup: choice, own, model: picked, effort: wanted, mode }: TurnJob, { signal, progress, events, about, permit }: Parameters<Bench['turn']>[1]) {
     const harness = this.harness(name);
     // Only a model the harness offers, as data from the keyholder (R-072).
     const model = picked && harness.offers().models?.includes(picked) ? picked : undefined;
-    const common = { cwd, session, resume, message, schema, schemas, model, signal, progress, events, about };
+    const effort = wanted && harness.offers().efforts?.[model ?? '']?.includes(wanted) ? wanted : undefined;
+    const common = { cwd, session, resume, message, schema, schemas, model, effort, signal, progress, events, about };
     if (own) {
       if (!harness.offers().knobs.includes('own')) throw new Error(`${name} cannot run in your own setup.`);
       // Their own rules decide; what they would ask about goes to the owner as it is, with no rulebook (D-157).

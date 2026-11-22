@@ -21,6 +21,8 @@ export interface HarnessChoice {
   reason?: string;
   /** The models a session can pick for it (R-072). */
   models?: string[];
+  /** The effort levels a session can pick for it, by model, `''` for its default model. */
+  efforts?: Record<string, string[]>;
 }
 
 /**
@@ -46,6 +48,7 @@ export function useHarnessPick(agent: UserDTO | undefined, questions = false) {
   const list = state?.harnesses?.map((h): HarnessChoice => ({
     name: h.name,
     models: h.models,
+    efforts: h.efforts,
     reason:
       questions && h.linked !== undefined
         ? h.answers
@@ -119,7 +122,7 @@ export function HarnessLogo({ name, size = 18 }: { name: string; size?: number }
 }
 
 const FAVS_KEY = 'webchat.modelFavorites';
-type Pick = { harness: string; model?: string };
+export type Pick = { harness: string; model?: string };
 const pickKey = (p: Pick) => `${p.harness}|${p.model ?? ''}`;
 
 function favorites(): Pick[] {
@@ -139,22 +142,37 @@ function remember(favs: Pick[], p: Pick) {
   }
 }
 
+/** The effort levels of a pick's model, or of the harness's default model when it lists none for that one. */
+export function effortsOf(list: HarnessChoice[] | undefined, p: Pick) {
+  const efforts = list?.find((h) => h.name === p.harness)?.efforts;
+  return efforts?.[p.model ?? ''] ?? efforts?.[''] ?? [];
+}
+
+/** An effort level as the picker shows it, such as `xhigh` as Extra high. */
+export const effortWord = (effort: string) => (effort === 'xhigh' ? 'Extra high' : effort.charAt(0).toUpperCase() + effort.slice(1));
+
 /**
- * The harness and model picker that the ask box's model button opens: a rail of harnesses and the
- * models of the one picked. A harness that cannot take the question is greyed; `locked` keeps a
- * running session on its harness. The permission mode is the shield's (docs/decisions/new-setup-switch.md).
+ * The harness, model and effort picker that the ask box's model button opens: a rail of harnesses,
+ * the models of the one picked, and the efforts its picked model takes. A harness that cannot take
+ * the question is greyed; `locked` keeps a running session on its harness. The permission mode is
+ * the shield's (docs/decisions/new-setup-switch.md).
  */
 export function ModelPicker({
   list,
   value,
+  effort,
   locked,
   onPick,
+  onEffort,
   onClose,
 }: {
   list: HarnessChoice[];
   value: Pick;
+  /** The effort picked, or nothing for the harness's default. */
+  effort?: string;
   locked?: boolean;
   onPick: (pick: Pick) => void;
+  onEffort: (effort: string | undefined) => void;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState(value.harness || list[0]?.name || '');
@@ -167,6 +185,7 @@ export function ModelPicker({
       ? favs.filter((f) => list.some((h) => h.name === f.harness))
       : (list.find((h) => h.name === tab)?.models ?? [undefined]).map((model) => ({ harness: tab, model }));
   const q = query.trim().toLowerCase();
+  const efforts = effortsOf(list, value);
   const shown = entries.filter((e) => !q || (e.model ?? 'default').toLowerCase().includes(q));
   const choose = (p: Pick) => {
     if (!can(p.harness)) return;
@@ -189,7 +208,7 @@ export function ModelPicker({
     }
   };
   return (
-    <div className="model-picker" role="dialog" aria-label="Harness and model" ref={box} onKeyDown={onKeyDown}>
+    <div className="model-picker" role="dialog" aria-label="Harness, model and effort" ref={box} onKeyDown={onKeyDown}>
       <div className="model-picker-tabs" role="tablist" aria-label="Harness" aria-orientation="vertical">
         {['', ...list.map((h) => h.name)].map((name) => [
           <button
@@ -227,6 +246,18 @@ export function ModelPicker({
           {shown.length === 0 && <p>{tab === '' && !q ? 'Models you pick show here.' : 'No model matches.'}</p>}
         </div>
       </div>
+      <div className="model-picker-efforts" role="radiogroup" aria-label="Effort">
+        <span className="model-picker-head">Effort</span>
+        {efforts.length ? (
+          [undefined, ...efforts].map((e) => (
+            <button key={e ?? ''} type="button" role="radio" aria-checked={e === effort} onClick={() => onEffort(e)}>
+              {e ? effortWord(e) : 'Default'}
+            </button>
+          ))
+        ) : (
+          <p>{value.harness} sets its own effort.</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -237,10 +268,10 @@ const StarIcon = () => (
   </svg>
 );
 
-/** The ask box's model button: the harness's mark and the model; it opens the picker above or below. */
+/** The ask box's model button: the harness's mark, the model and the effort; it opens the picker above or below. */
 export function ModelButton(props: Omit<Parameters<typeof ModelPicker>[0], 'onClose'> & { up?: boolean }) {
   const [open, setOpen] = useState(false);
-  const { value, up } = props;
+  const { value, effort, up } = props;
   if (!props.list.length) return null;
   return (
     <span className={`model-button${up ? ' is-up' : ''}`}>
@@ -252,6 +283,7 @@ export function ModelButton(props: Omit<Parameters<typeof ModelPicker>[0], 'onCl
       >
         <HarnessLogo name={value.harness} />
         <span>{value.model ?? 'Default'}</span>
+        {effort && <span className="model-button-mode">{effortWord(effort)}</span>}
       </button>
       {open && (
         <ModelPicker

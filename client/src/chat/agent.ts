@@ -50,13 +50,13 @@ export function askClone(conversationId: number, repo: string, waiting: { reques
  * outside every project; one repository, or none for a project that links none; and the harness picked, or none
  * for the laptop's host harness. `own` says the user typed it, so it may run in their own setup
  * (D-157); `card` asks for one draft from the new card form (R-071); `resume` goes on with a
- * terminal's session (R-072), with the model and permission mode the ask box picked. The agent's laptop answers. Returns the conversation, by the prompt's client id.
+ * terminal's session (R-072), with the model, effort and permission mode the ask box picked. The agent's laptop answers. Returns the conversation, by the prompt's client id.
  */
-export async function askAgent(agentId: number, project: number | undefined, repo: string | undefined, question: string, { harness, own, card, resume, model, mode }: { harness?: string; own?: true; card?: CardAskDTO; resume?: string; model?: string; mode?: PermissionMode } = {}) {
+export async function askAgent(agentId: number, project: number | undefined, repo: string | undefined, question: string, { harness, own, card, resume, model, effort, mode }: { harness?: string; own?: true; card?: CardAskDTO; resume?: string; model?: string; effort?: string; mode?: PermissionMode } = {}) {
   const conversationId = await startDirectChat(agentId);
   const clientId = newClientId();
   // The message shows as sending at once, so the pane can open its conversation.
-  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), asks: true, events: true, ...(project && { project }), ...(repo && { repo }), ...(harness && { harness }), ...(own && { own }), ...(card && { card }), ...(resume && { resume }), ...(model && { model }), ...(mode && { mode }) } }, false, clientId);
+  void sendContent(conversationId, { text: question.trim(), prompt: { kind: 'prompt', sentAt: Date.now(), asks: true, events: true, ...(project && { project }), ...(repo && { repo }), ...(harness && { harness }), ...(own && { own }), ...(card && { card }), ...(resume && { resume }), ...(model && { model }), ...(effort && { effort }), ...(mode && { mode }) } }, false, clientId);
   return clientId;
 }
 
@@ -123,13 +123,13 @@ export async function pickFolder(agentId: number) {
 /** Replies in a conversation with an agent, or stops its turn. Both name the prompt's client id (D-102). */
 export function tellAgent(conversationId: number, to: string, kind: 'reply' | 'cancel', text: string, extra: ReplyExtra = {}) {
   // A reply from the new card form carries its fields as they stand, so the draft builds on the user's edits (R-071);
-  // one from the session's controls, a model, a mode or a hand over (R-072, D-156).
+  // one from the session's controls, a model, an effort, a mode or a hand over (R-072, D-156).
   const prompt: PromptDTO = kind === 'reply' ? { kind, to, sentAt: Date.now(), ...extra } : { kind, to, sentAt: Date.now() };
   return sendContent(conversationId, { text: text.trim(), prompt }, false);
 }
 
 /** What a reply may carry besides the words (R-071, R-072, D-156). */
-export type ReplyExtra = Partial<Pick<Extract<PromptDTO, { kind: 'reply' }>, 'card' | 'model' | 'mode' | 'handover'>>;
+export type ReplyExtra = Partial<Pick<Extract<PromptDTO, { kind: 'reply' }>, 'card' | 'model' | 'effort' | 'mode' | 'handover'>>;
 
 /** Tells the user's other devices that their page put an agent's card draft on the board (D-104). The agent ignores it. */
 export function noteAdded(conversationId: number, to: string, draft: string, card: string) {

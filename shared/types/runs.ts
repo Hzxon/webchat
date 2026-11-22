@@ -138,15 +138,15 @@ export type PromptDTO =
   // `own` says the owner typed it, so it may run in their own setup; Check again never sets it (D-157).
   // `events` says the page shows the session's steps, which an older page would show as messages (R-072).
   // `card` asks for one checked draft of that kind, from the new card form's fields as they stand (R-071).
-  // `model` and `mode` are the session's controls (R-072); a mode counts only in the user's own setup.
+  // `model`, `effort` and `mode` are the session's controls (R-072); a mode counts only in the user's own setup.
   // `resume` goes on with a session a terminal started in the folder, by its id (R-072).
-  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true; own?: true; events?: true; card?: CardAskDTO; model?: string; mode?: PermissionMode; resume?: string }
+  | { kind: 'prompt'; repo?: string; sentAt: number; project?: number; harness?: string; asks?: true; own?: true; events?: true; card?: CardAskDTO; model?: string; effort?: string; mode?: PermissionMode; resume?: string }
   // A batch of the session's steps, in a message of kind `events` (R-072).
   | { kind: 'events'; to: string; events: SessionEventDTO[]; about?: SessionAboutDTO }
   // `handover` asks for a summary to hand the session to another harness, or, with the summary as
   // the user saw and edited it, hands it over (D-156). With `own`, the new session runs in the
   // user's own setup or restricted, so the same harness can switch setup (docs/decisions/new-setup-switch.md).
-  | { kind: 'reply'; to: string; sentAt: number; card?: CardAskDTO; model?: string; mode?: PermissionMode; handover?: { harness: string; summary?: string; own?: boolean } }
+  | { kind: 'reply'; to: string; sentAt: number; card?: CardAskDTO; model?: string; effort?: string; mode?: PermissionMode; handover?: { harness: string; summary?: string; own?: boolean } }
   // The summary a harness wrote for handing its session over, which the user reads and may edit (D-156).
   // `own` names the setup a switch hands over to (docs/decisions/new-setup-switch.md).
   | { kind: 'summary'; to: string; harness: string; own?: boolean }
