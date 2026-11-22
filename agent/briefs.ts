@@ -90,7 +90,7 @@ export async function seenOf(board: Board | undefined) {
   return { items, seen };
 }
 
-/** A conversation's first brief: about a repository's code, or with none, about its project's board alone (R-038). */
+/** A conversation's first brief: about a repository's code, or with none, about its project's board alone (R-038), or with neither, about anything. */
 export function promptBrief(input: string, board: Board | undefined, repo: string | undefined, pulls: string, own = false) {
   const decisions = (board?.decisions ?? []).map((d) => d.text);
   return [
@@ -107,9 +107,14 @@ export function promptBrief(input: string, board: Board | undefined, repo: strin
           'board runs otherwise: in a worktree of their copy, after which their laptop pushes its branch and',
           'opens a draft pull request. Say so when they ask what you can do, so they do not think cards give nothing.',
         ]
-      : [
-          `Your owner asks you this through WebChat, about their project ${board!.project}. It links no code, so you`,
+      : board
+      ? [
+          `Your owner asks you this through WebChat, about their project ${board.project}. It links no code, so you`,
           'are in an empty folder: answer from its board below, and search the web and read pages where it helps.',
+        ]
+      : [
+          'Your owner asks you this through WebChat, about no project and no code, so you are in an empty folder:',
+          'answer from what you know, and search the web and read pages where it helps.',
         ]),
     'Put your answer, in Markdown, in reply. Only when your owner asks you to draft a card or a decision for the',
     'board, or a change to one, also fill in drafts, grounded in what you read: they add them themselves.',
