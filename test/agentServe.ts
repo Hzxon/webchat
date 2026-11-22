@@ -580,6 +580,8 @@ export function serveTests(w: World) {
         assert.ok(restrictedFirst.args.includes('--restricted'), 'it starts restricted');
         await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Goal: sums."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'reply', to: switching, sentAt: Date.now(), handover: { harness: 'Claude Code', own: true } }, 'Switch to your own setup'));
         assert.ok((await lastTurn()).input.includes('a new session of Claude Code in their own setup'), 'the restricted session writes the summary');
+        const switchSummary = (await w.alice.sync()).find((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'summary');
+        assert.deepEqual(switchSummary?.content?.prompt, { kind: 'summary', to: switching, harness: 'Claude Code', own: true }, 'the summary names the setup it switches to');
         await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Going on."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'reply', to: switching, sentAt: Date.now(), mode: 'auto', handover: { harness: 'Claude Code', summary: 'Goal: sums.', own: true } }, 'Hand over'));
         const ownAfter = await lastTurn();
         assert.deepEqual([ownAfter.cwd, ownAfter.args.includes('--restricted'), flagOf(ownAfter.args, '--permission-mode'), !!flagOf(ownAfter.args, '--session-id')], [await fs.realpath(project), false, 'auto', true], 'a new session in her folder, in her own setup, in Auto');

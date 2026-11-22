@@ -599,7 +599,7 @@ export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO 
   }
   if (raw.kind === 'summary') {
     const harness = short(raw.harness, LIMITS.harnessFieldLength);
-    return harness ? { kind: 'summary', to, harness } : undefined;
+    return harness ? { kind: 'summary', to, harness, ...(typeof raw.own === 'boolean' && { own: raw.own }) } : undefined;
   }
   if (raw.kind === 'cancel') return isId(raw.sentAt) ? { kind: raw.kind, to, sentAt: raw.sentAt } : undefined;
   if (raw.kind === 'failed' || raw.kind === 'nocopy' || raw.kind === 'note') return { kind: raw.kind, to };

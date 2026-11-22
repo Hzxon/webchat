@@ -7,7 +7,7 @@ import { Button } from '@astryxdesign/core/Button';
 import { Stack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { TextArea } from '@astryxdesign/core/TextArea';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { LIMITS, type PermissionMode, type UserDTO } from '../../../shared/types';
 import type { Thread } from '../agents';
 import { tellAgent } from '../chat';
@@ -52,10 +52,9 @@ export function Controls({
 /** A session's shield: where it runs, and switching it to the other setup by a hand over (docs/decisions/new-setup-switch.md). */
 export function ThreadSetup({ thread, agent, choice, onChoice, isDisabled }: { thread: Thread; agent: UserDTO; choice: Choice; onChoice: (choice: Choice) => void; isDisabled: boolean }) {
   const { own: owns } = useHarnessPick(agent, true);
-  // What the session says it runs with, else what the newest switch or the prompt asked for.
-  const switched = thread.messages.findLast((m) => m.prompt?.kind === 'reply' && m.prompt.handover?.summary !== undefined && m.prompt.handover.own !== undefined)?.prompt;
+  // What the session says it runs with, else what its prompt asked for.
   const first = thread.messages[0]?.prompt;
-  const own = thread.about?.own ?? (switched?.kind === 'reply' ? !!switched.handover?.own : first?.kind === 'prompt' && !!first.own);
+  const own = thread.about?.own ?? (first?.kind === 'prompt' && !!first.own);
   // The mode the session runs with: the newest one sent, which the agent keeps for the turns after.
   const sent = thread.messages.findLast((m) => (m.prompt?.kind === 'prompt' || m.prompt?.kind === 'reply') && m.prompt.mode)?.prompt;
   const mode = choice.mode ?? (sent && 'mode' in sent ? sent.mode : undefined) ?? 'default';
@@ -109,28 +108,13 @@ export function SetupButton({
   onMode: (mode: PermissionMode) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const button = useRef<HTMLButtonElement>(null);
-  const menu = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    // A click outside or Escape closes it, as a menu does.
-    const away = (e: PointerEvent) => !menu.current?.contains(e.target as Node) && !button.current?.contains(e.target as Node) && setOpen(false);
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
-    document.addEventListener('pointerdown', away);
-    document.addEventListener('keydown', esc);
-    return () => {
-      document.removeEventListener('pointerdown', away);
-      document.removeEventListener('keydown', esc);
-    };
-  }, [open]);
-  const runIn = (to: boolean) => {
+  const pick = (act: () => void) => {
     setOpen(false);
-    if (to !== own) onOwn(to);
+    act();
   };
   return (
     <>
       <button
-        ref={button}
         type="button"
         className={`agents-mode${own ? ' is-own' : ''}`}
         aria-expanded={open}
@@ -143,10 +127,10 @@ export function SetupButton({
         {own && <span className="model-button-mode">{MODE_WORDS[mode][0]}</span>}
       </button>
       {open && (
-        <div ref={menu} className="setup-menu" role="dialog" aria-label="Where it runs and permissions">
+        <Popover className="setup-menu" label="Where it runs and permissions" onClose={() => setOpen(false)}>
           <div role="radiogroup" aria-label="Runs in">
             <span className="model-picker-head">Runs in</span>
-            <button type="button" role="radio" aria-checked={!own} title={RESTRICTED_TITLE} onClick={() => runIn(false)}>
+            <button type="button" role="radio" aria-checked={!own} title={RESTRICTED_TITLE} onClick={() => pick(() => own && onOwn(false))}>
               Restricted by WebChat
             </button>
             <button
@@ -155,7 +139,7 @@ export function SetupButton({
               aria-checked={own}
               disabled={!canOwn}
               title={canOwn ? OWN_TITLE : `Turn on your own setup for ${harness ?? 'a coding agent'} in Agent settings to run a chat there.`}
-              onClick={() => runIn(true)}
+              onClick={() => pick(() => !own && onOwn(true))}
             >
               Your own setup
             </button>
@@ -170,10 +154,7 @@ export function SetupButton({
                   role="radio"
                   aria-checked={m === mode}
                   title={MODE_WORDS[m][1]}
-                  onClick={() => {
-                    setOpen(false);
-                    onMode(m);
-                  }}
+                  onClick={() => pick(() => onMode(m))}
                 >
                   {MODE_WORDS[m][0]}
                 </button>
@@ -182,11 +163,48 @@ export function SetupButton({
               <p>WebChat sets them in a restricted session.</p>
             )}
           </div>
-        </div>
+        </Popover>
       )}
     </>
   );
 }
+
+/** A small panel that closes on a click outside it or on Escape. */
+export function Popover({
+  className,
+  role = 'dialog',
+  label,
+  onClose,
+  children,
+}: {
+  className: string;
+  role?: 'dialog' | 'menu';
+  label: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const away = (e: PointerEvent) => {
+      const target = e.target as Element;
+      // The button that opened it toggles it itself.
+      if (!box.current?.contains(target) && !target.closest('[aria-expanded]')) onClose();
+    };
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('pointerdown', away);
+      document.removeEventListener('keydown', esc);
+    };
+  }, []);
+  return (
+    <div ref={box} className={`agents-popover ${className}`} role={role} aria-label={label}>
+      {children}
+    </div>
+  );
+}
+
 
 export const ShieldIcon = ({ own }: { own: boolean }) => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -205,9 +223,8 @@ export const ShieldIcon = ({ own }: { own: boolean }) => (
 /** The summary for a hand over, as plain text the user may edit, and the button that hands it over (D-156). */
 export function Summary({ thread, message }: { thread: Thread; message: ChatMessage }) {
   const harness = message.prompt?.kind === 'summary' ? message.prompt.harness : '';
-  // The setup the reply that asked for it switches to, if it did (docs/decisions/new-setup-switch.md).
-  const asked = thread.messages.findLast((m) => m.id < message.id && m.prompt?.kind === 'reply' && m.prompt.handover && m.prompt.handover.summary === undefined)?.prompt;
-  const own = asked?.kind === 'reply' ? asked.handover?.own : undefined;
+  // The setup it switches to, if it does (docs/decisions/new-setup-switch.md).
+  const own = message.prompt?.kind === 'summary' ? message.prompt.own : undefined;
   const to = own === undefined ? harness : `${harness} ${own ? 'in your own setup' : 'restricted by WebChat'}`;
   // Once handed over, the summary as the user sent it, edits and all.
   const sent = thread.messages.find((m) => m.id > message.id && m.prompt?.kind === 'reply' && m.prompt.handover?.summary !== undefined)?.prompt;

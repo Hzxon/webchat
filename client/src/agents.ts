@@ -247,7 +247,8 @@ export function threadsOf(messages: ChatMessage[], meId: number, agentId: number
     // A hand over moves the session to the other harness, which says anew what it runs with (D-156).
     if (prompt.kind === 'reply' && prompt.handover?.summary !== undefined) {
       thread.harness = prompt.handover.harness;
-      delete thread.about;
+      // Until the new session says what it runs with, the setup the switch asked for (docs/decisions/new-setup-switch.md).
+      thread.about = prompt.handover.own === undefined ? undefined : { own: prompt.handover.own };
     }
     // A cancel changes nothing until the agent says it stopped.
     if (prompt.kind === 'reply' || prompt.kind === 'clone') thread.state = pending[message.clientId ?? ''] === 'failed' ? 'unsent' : 'working';

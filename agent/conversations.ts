@@ -61,14 +61,14 @@ export interface Conversation {
 /** One turn: the owner's words in, the answer out, with drafts when they asked for them. Where the background Claude runs. */
 export type Answerer = (job: { conversation: Conversation; input: string; resume: boolean; signal: AbortSignal; card?: CardAskDTO }) => Promise<{ reply: string; drafts?: CardDraftDTO[] }>;
 
+type Handover = { harness: string; own?: boolean };
+
 /** What the harness that ran a session writes before another session takes it over: another harness, or the same in the other setup (D-156). */
 const summaryAsk = ({ harness, own }: Handover) =>
   `Your owner hands this session over to ${own === undefined ? harness : `a new session of ${harness} ${own ? 'in their own setup' : 'in WebChat’s sandbox'}`}, which knows only what you write now and the files. In reply, write the summary it starts from: the goal, what is done, what is next, and anything it must not redo. Plain words, no drafts.`;
 
 /** How the next session starts: the summary, which its owner read and may have edited, as their words (D-156). */
 const handoverBrief = (summary: string) => `Your owner handed this session over to you from another session, with this summary of it. Go on from it.\n\n${summary.trim()}`;
-
-type Handover = { harness: string; own?: boolean };
 
 export class Conversations {
   private list: Conversation[] = [];
@@ -186,7 +186,7 @@ export class Conversations {
         conversation.answered = true;
         delete conversation.prompt;
         if (handover) {
-          await this.client.send(conversation.chat, { text: reply.slice(0, LIMITS.messageLength), prompt: { kind: 'summary', to: conversation.root, harness: handover.harness } });
+          await this.client.send(conversation.chat, { text: reply.slice(0, LIMITS.messageLength), prompt: { kind: 'summary', to: conversation.root, harness: handover.harness, ...(handover.own !== undefined && { own: handover.own }) } });
           return;
         }
         for (const part of parts(reply)) await this.say(conversation, 'answer', part);

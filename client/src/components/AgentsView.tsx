@@ -6,7 +6,7 @@
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AGENT_LEVEL, asksAnywhere, listsSessions, type PermissionMode, type UserDTO } from '../../../shared/types';
 import {
   asleep,
@@ -33,7 +33,7 @@ import { AgentSetup } from './AgentSetup';
 import { AgentThread, Box, LaptopIcon, BranchIcon } from './AgentThread';
 import { TerminalSessions } from './TerminalSessions';
 import { ModelButton, useHarnessPick } from './HarnessPicker';
-import { SetupButton } from './SessionControls';
+import { Popover, SetupButton } from './SessionControls';
 
 /** Where the agent stands on a folder it has, as Add folder lists it (R-038). */
 function folderState(seat: Seat | undefined): [string, boolean?] {
@@ -456,42 +456,6 @@ function AgentsSidebar({
       {menu === 'folder' && <AddFolder agents={agents} onClose={() => setMenu(null)} />}
       {menu === 'sleep' && <SleepPanel agents={agents} threads={all} onClose={() => setMenu(null)} />}
     </aside>
-  );
-}
-
-/** A small panel that closes on a click outside it or on Escape. */
-function Popover({
-  className,
-  role = 'dialog',
-  label,
-  onClose,
-  children,
-}: {
-  className: string;
-  role?: 'dialog' | 'menu';
-  label: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const away = (e: PointerEvent) => {
-      const target = e.target as Element;
-      // The button that opened it toggles it itself.
-      if (!box.current?.contains(target) && !target.closest('[aria-expanded]')) onClose();
-    };
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    document.addEventListener('pointerdown', away);
-    document.addEventListener('keydown', esc);
-    return () => {
-      document.removeEventListener('pointerdown', away);
-      document.removeEventListener('keydown', esc);
-    };
-  }, []);
-  return (
-    <div ref={box} className={`agents-popover ${className}`} role={role} aria-label={label}>
-      {children}
-    </div>
   );
 }
 

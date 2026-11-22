@@ -148,7 +148,8 @@ export type PromptDTO =
   // user's own setup or restricted, so the same harness can switch setup (docs/decisions/new-setup-switch.md).
   | { kind: 'reply'; to: string; sentAt: number; card?: CardAskDTO; model?: string; mode?: PermissionMode; handover?: { harness: string; summary?: string; own?: boolean } }
   // The summary a harness wrote for handing its session over, which the user reads and may edit (D-156).
-  | { kind: 'summary'; to: string; harness: string }
+  // `own` names the setup a switch hands over to (docs/decisions/new-setup-switch.md).
+  | { kind: 'summary'; to: string; harness: string; own?: boolean }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }
   | { kind: 'failed'; to: string }
