@@ -43,6 +43,7 @@ import {
   HashIcon,
   LogoutIcon,
   MoreIcon,
+  NewChatIcon,
   PencilIcon,
   PlusIcon,
   PullRequestIcon,
@@ -343,7 +344,7 @@ function ChatsSide({ query, search, banners, onSearch, onNewChat, onNotification
         <h1 className="side-title">Chats</h1>
         <SearchButton label="Search chats" onClick={onSearch} />
         <button type="button" className="btn btn-icon" aria-label="New chat" title="New chat" onClick={onNewChat}>
-          <PencilIcon width={18} height={18} />
+          <NewChatIcon width={18} height={18} />
         </button>
         <AccountMenu className="phone-account" onNotifications={onNotifications} />
       </header>
