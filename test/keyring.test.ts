@@ -67,6 +67,9 @@ interface Keyring {
   adopt: (userId: number, secrets: IdentitySecrets) => Promise<void>;
   checkKeys: (users: UserDTO[]) => Promise<Set<number>>;
   trust: (user: UserDTO) => Promise<void>;
+  verify: (user: UserDTO) => Promise<void>;
+  verifiedOf: (users: UserDTO[]) => Promise<Set<number>>;
+  forget: () => Promise<void>;
   chatKey: (conversation: Conversation, keysOf: KeyLookup) => Promise<CryptoKey> | null;
   remember: (conversationId: number, keyId: string, key: CryptoKey) => Promise<void>;
   open: (message: MessageDTO, conversation: ConversationDTO, keysOf: KeyLookup) => Promise<Opened>;
@@ -181,6 +184,20 @@ describe('The keyring in client/src/e2ee/keyring.ts, after a key change nobody c
     const opened = await keyring.open(message, conversation, keysOf);
     assert.equal(opened.security, 'encrypted');
     assert.equal(opened.text, 'hello');
+  });
+
+  test('keeps a person verified only while their keys are the ones the user compared', async () => {
+    assert.deepEqual(await keyring.verifiedOf([user(OTHER, real.publicKeys)]), new Set());
+    await keyring.verify(user(OTHER, real.publicKeys));
+    assert.deepEqual(await keyring.verifiedOf([user(OTHER, real.publicKeys)]), new Set([OTHER]));
+    assert.deepEqual(await keyring.verifiedOf([user(OTHER, swapped.publicKeys)]), new Set());
+  });
+
+  test('forgets whom the user verified when the account leaves the device', async () => {
+    await keyring.verify(user(OTHER, real.publicKeys));
+    await keyring.forget();
+    await keyring.adopt(ME, mine);
+    assert.deepEqual(await keyring.verifiedOf([user(OTHER, real.publicKeys)]), new Set());
   });
 
   test('opens nothing it held back while the code is still unchecked', async () => {

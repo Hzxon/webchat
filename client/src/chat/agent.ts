@@ -5,7 +5,7 @@ import { keyring, type ChatMessage } from '../e2ee/keyring';
 import type { Card } from '../../../shared/board';
 import { ownAgents } from '../agents';
 import { actions, senderName, store } from '../store';
-import { currentLookup, meId, newClientId, reloadAll, sendContent, startDirectChat, syncNow } from './core';
+import { checkKeys, currentLookup, meId, newClientId, reloadAll, sendContent, startDirectChat, syncNow } from './core';
 import { addProjectMembers } from './members';
 
 /**
@@ -210,9 +210,15 @@ export function sharePull(conversationId: number, pull: PullRequestDTO) {
 }
 
 /** Accepts a person's changed keys after the user compared security codes with them. */
+/** Marks a person verified after the user compared the security code, and trusts their keys. */
+export async function verifyKeys(user: UserDTO) {
+  await keyring.verify(user);
+  await trustKeys(user);
+}
+
 export async function trustKeys(user: UserDTO) {
   await keyring.trust(user);
-  actions.setKeyWarnings(await keyring.checkKeys(Object.values(store.get().users)));
+  await checkKeys(Object.values(store.get().users));
   // What failed under the unchecked keys opens now, without a reload. It never alerts again.
   for (const message of await keyring.reopen(store.get().conversations, currentLookup())) actions.addMessage(message, false);
   // The user's agents pin the same keys, or a card's brief would hash differently there (K-57, D-110).

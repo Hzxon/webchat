@@ -11,14 +11,20 @@
 .chat-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 56px;
-  padding: 8px 16px;
-  background: var(--chat-bg);
+  gap: 10px;
+  min-height: 60px;
+  padding: 10px 12px 10px 16px;
+  background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
 
+/* People are round here, as in the design; a channel's project stays square. */
+.chat-header .avatar:not(.avatar-square) {
+  border-radius: 50%;
+}
+
 .chat-header-text {
+  flex: 1;
   display: grid;
   min-width: 0;
 }
@@ -33,6 +39,22 @@
 .chat-header-text span {
   color: var(--muted);
   font-size: 13px;
+}
+
+/* A day between messages, as a small pill. */
+.day-pill {
+  width: fit-content;
+  margin: 8px auto;
+  padding: 2px 10px;
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.shield-verified {
+  color: var(--ok);
 }
 
 .messages {
@@ -70,13 +92,14 @@
   max-width: min(75%, 640px);
 }
 
+/* The time floats at the end of the text's last line, so a short message stays one line. */
 .bubble {
   position: relative;
-  display: grid;
+  display: block;
   min-width: 0;
   max-width: 100%;
-  padding: 7px 11px 8px;
-  border-radius: var(--radius);
+  padding: 7px 10px 6px;
+  border-radius: 12px;
   background: var(--bubble-in);
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -87,11 +110,11 @@
 }
 
 .mine.first .bubble {
-  border-top-right-radius: 2px;
+  border-top-right-radius: 4px;
 }
 
 .theirs.first .bubble {
-  border-top-left-radius: 2px;
+  border-top-left-radius: 4px;
 }
 
 .bubble-urgent {
@@ -100,16 +123,15 @@
 }
 
 .bubble-urgent-label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  display: block;
+  margin-bottom: 2px;
   color: var(--danger);
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .bubble-sender {
+  display: block;
   font-size: 13px;
   font-weight: 600;
 }
@@ -119,12 +141,11 @@
 }
 
 .bubble-meta {
+  float: right;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 3px;
-  margin-top: -2px;
-  margin-left: 24px;
+  gap: 4px;
+  margin: 6px 0 0 10px;
   color: var(--muted);
   font-size: 11px;
   /* The bubble breaks long words anywhere, and Safari broke the time in two when the ticks changed. */
@@ -374,23 +395,46 @@
   color: var(--muted);
 }
 
-/* Composer */
+/* Composer: the urgent pill above a rounded box with attach, the message and a round Send. */
 
 .composer {
   /* The same reading width as the messages above it. */
-  padding: 8px max(16px, calc((100% - 860px) / 2)) max(12px, env(safe-area-inset-bottom));
+  padding: 8px max(16px, calc((100% - 860px) / 2)) max(14px, env(safe-area-inset-bottom));
   background: var(--chat-bg);
 }
 
-.composer.is-urgent {
+.urgent-toggle {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  margin-bottom: 8px;
+  padding: 0 14px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+}
+
+@media (hover: hover) {
+  .urgent-toggle:hover {
+    background: var(--hover);
+  }
+}
+
+.urgent-toggle[aria-pressed='true'] {
+  border-color: var(--danger);
   background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .composer-reply {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin: 0 0 8px 48px;
+  margin: 0 0 8px;
 }
 
 .composer-reply .quote {
@@ -401,31 +445,76 @@
 .composer-row {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 10px;
+  min-height: 56px;
+  padding: 7px 7px 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: var(--panel);
+  transition: border-color 0.12s;
 }
 
-.composer textarea,
+.composer-attach,
+.composer-send {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+}
+
+.composer-attach {
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+.composer-send {
+  background: var(--text);
+  color: var(--panel);
+}
+
+.composer-attach:disabled {
+  opacity: 0.45;
+}
+
+/* Send keeps its full color while the box is empty, as the design draws it. */
+.composer-send:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .composer-attach:not(:disabled):hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+}
+
 .composer-row textarea {
   flex: 1;
+  min-width: 0;
   min-height: 40px;
   max-height: 150px;
-  padding: 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel-2);
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  /* 16px keeps iOS from zooming in on the box. */
+  font: inherit;
+  font-size: 16px;
+  line-height: 24px;
   resize: none;
   outline: none;
-  transition: border-color 0.12s, background-color 0.12s;
 }
 
-.composer textarea:focus,
-.composer-row textarea:focus {
-  border-color: var(--accent);
+/* Search in a chat: a field under the header that narrows the loaded messages. */
+
+.chat-search {
+  padding: 6px 8px 6px 16px;
+  border-bottom: 1px solid var(--line);
   background: var(--panel);
-}
-
-.composer.is-urgent textarea {
-  border-color: var(--danger);
 }
 
 /* Empty chat pane */
@@ -625,8 +714,29 @@
     padding: 12px 10px;
   }
 
+  .chat-header {
+    gap: 8px;
+    padding: 8px 6px 8px 10px;
+  }
+
+  /* The phone's chat header holds only the shield and Mute, as the design draws it. */
+  .chat-search-toggle {
+    display: none;
+  }
+
+  .composer {
+    padding: 8px 10px max(14px, env(safe-area-inset-bottom));
+  }
+
   .bubble-line,
   .reactions {
     max-width: 85%;
   }
+}
+
+/* The new chat dialog's people, in a bordered list as the design draws them. */
+.people-list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
