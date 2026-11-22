@@ -4,139 +4,31 @@ This file is a copy of the Roadmap column of the project's board in WebChat, whi
 
 ## Running
 
-### R-044: Make and number a card from the terminal
+### Q-6: How does a pull request get tested on the main it lands on?
 
-Status: In review: Hzxon/webchat#225.
+Status: Running. Raised 2026-11-17 from the parallel work design. The owner chose the second way that day, and #262 set it in main's ruleset. The day's measurement is still open.
 
-Why: a session in the owner's own harness that starts from an idea has no card to claim. Today it
-writes a proposal file, the file must reach main, the agent hands it to the owner as a draft, and
-the owner adds it on the board, which numbers it (D-117). Only then can `scripts/claim.sh` name the
-card. That is one merge and one visit to the board before any work, so the owner skips the card,
-and the board never learns of the work. On 2026-11-13 main held 37 proposal files that waited this
-way.
+CI checks a pull request against the main it started from, and nothing checks it again after main
+moves (D-076). The overlap gate (docs/roadmap/new-overlap-gate.md) and the wait edge
+(docs/roadmap/new-after-edge.md) keep runs apart, but nothing proves they did: two pull requests
+that clash in a way neither sees still pass and both merge. D-076 records that GitHub's merge
+queue needs a repository an organization owns.
 
-Scope: one command of the agent, such as `webchat-agent card docs/roadmap/new-bark-banner.md`,
-that sends the file as a card draft to the owner's page, the way an answer's drafts go (D-104).
-The owner presses the draft's button, on any device, and the board numbers the card under its lock
-(D-116). The command waits, then prints the number, so the session claims it with
-`scripts/claim.sh` right away. The draft goes through the agent's check first, as every draft does
-(D-116). A decision goes the same way. The proposal file stays the way for a session that has no
-agent, such as a teammate's. Nothing new reaches the server: the draft is a sealed message.
+The ways to answer it:
 
-Not in scope: showing a card run's diff and turns in the pane. A card run stays the way to work
-while away from the laptop.
+- Move the repository to an organization and turn on the merge queue. Which plans offer the queue,
+  and for which repositories, is not checked.
+- Protect main with "require branches to be up to date". Each pull request then merges main and
+  runs CI again before it lands, one at a time. Which plans offer this for a private repository is
+  not checked.
+- The agent lands cards in a row: before a card's pull request merges, its own run merges main,
+  runs the checks again and retakes its screenshots if client files changed, and only that commit
+  merges. This needs no GitHub plan, and holds only for cards the agent runs.
 
-The terminal never adds a card itself. The owner approves every draft with its button, so the agent
-gets no way to write the board and nothing lands unseen (D-104).
-
-Done when: in a linked repository, a session with no card runs the command, the owner adds the
-draft, the command prints the new number, `scripts/claim.sh` claims it, and the board shows the
-card Running, with no pull request merged in between.
-
-### R-045: The Coding agents row's name says nothing of board work
-
-Status: In review: Hzxon/webchat#227.
-
-Checked: 2026-11-13. Read K-72 and its fix on this branch (waitingProposals, BoardView), AgentsView.tsx thread subtitles, D-103, D-104 and D-117, and the cards K-69, K-70, K-71 and R-044 at 8f66355. Open pull requests not read: gh cannot run in this sandbox.
-
-Why: proposal drafts from a linked repository (D-117) sit in threads under Chats, in the row "Coding agents", named `Proposed in <repo>: <file>`. An owner who looks for board work does not think of that row. K-72 points the owner's board at the drafts, but the row itself still reads as chats with an agent only.
-
-Scope: make the row's subtitle, or its badge, say when proposals wait, such as "3 proposals wait", using the same count the board shows (`waitingProposals` in `client/src/agents.ts`). Nothing new reaches the server.
-
-Done when: with a proposal draft not yet added, the Coding agents row says so, and it stops once the draft is added.
-
-### K-1: The iOS 16.4 banner stays after Bark is linked
-
-Status: In review: Hzxon/webchat#159.
-
-Checked: 2026-11-09. Read the board's K-1, docs/roadmap/K-1.md and two-status-lines.md on main at 6a95ad6, CHANGELOG 0.9.0, and cardText in client/src/board.ts. No open pull requests.
-
-Found by the owner on an iPhone before iOS 16.4. #159 fixed it and was reverted in #169, so the card is open again. Set its status line to `Open` by hand: a draft can't change it.
-
-On iOS before 16.4 the sidebar always shows "Notifications on iPhone need iOS 16.4. Tap to get alerts through the Bark app instead." It stays after the user links Bark and their alerts already arrive through it. A warning that never goes away teaches people to ignore the banner, and it suggests that their alerts are broken when they are not.
-
-Cause: `AlertSetupBanner` in `client/src/components/Sidebar.tsx` shows the warning while `push.permission !== 'granted'`. That can never change on these phones, which have no Web Push (`oldIos` in `client/src/push.ts`). The page never asks whether Bark is linked. Only `NotificationDialog` fetches `GET /api/bark` (`BarkDTO`), and only while the dialog is open (D-054).
-
-Fix: on iOS before 16.4, the page fetches the Bark state, or keeps the dialog's answer in the store, and hides the warning once `link.devices` has at least one phone. While Bark is linked but no phone has registered, the warning stays, since nothing reaches the user yet. Other browsers keep their banner, and the alert sound banner is unchanged. Find out why #169 reverted #159 before taking it again.
-
-Done when: an iOS 15 user agent with a linked Bark device shows no notification warning, one without a link or device still shows it, and a test proves both.
-
-### K-70: The pane says "No copy yet" for a repository the agent works in
-
-Status: In review: Hzxon/webchat#223.
-
-Under Coding agents, the project WebChat Server showed `webchat` with the tag "No copy yet", while
-the agent was online. On the same laptop `webchat-agent status` said "Working in Hzxon/webchat in
-its folder", and the agent sent that repository's proposal drafts minutes
-later. The tag tells the owner the agent must clone first, which is false, and it made the board's
-sync look dead.
-
-What is known: `repoState` in `client/src/components/AgentsView.tsx` shows the tag when `seatFor`
-in `client/src/agents.ts` finds no seat for the repository that is online, on an agent that is. A
-seat is a row of `agent_repos`, which each check-in of the agent names and which counts as online
-for 2 minutes (`server/db.ts`). So either the check-ins did not name the repository, or the page
-held an older list. The second fits rule 4 if a new or renewed row does not change `db.stamp`: check
-that first.
-
-Done when: the cause is found and has a test, and a page that is open while the agent connects a
-folder shows "Ready" for it without a reload.
-
-### K-71: A backlog of proposal files hits the send limit, and a new install sends them all again
-
-Status: In review: Hzxon/webchat#224.
-
-`sendProposals` in `agent/plugin.ts` sends one message for each proposal file, in a loop with no
-pause. The server takes 30 sends per 10 seconds from one account and answers the next with 429
-"Slow down a little." On 2026-11-13 main held 37 files, and `/Library/Logs/WebChat/keyholder.log`
-got that line twice at 22:16. The round saves what it sent, so the rest follow 5 minutes later, but
-the failed round also skips the claims and the copy that come after the proposals.
-
-The agent knows a file was sent only from `copies` in its own data folder. A new install starts
-with none, so it sends every file on main again, also one whose card the owner already added,
-since the file stays until the next copy is merged. A new card's draft is not compared with the
-board, so the owner can add the same card twice.
-
-Fix: pace the sends below the server's limit, and let a round that hits the limit go on to the
-claims and the copy. Before it drafts a new card, the agent skips a file whose title a card on the
-board already has.
-
-Done when: a test with 40 proposal files sends them all with no 429, and the same round still reads
-the claims; and an agent with an empty record sends no draft for a file whose card the board has.
-
-### K-72: The board does not show the proposals that wait for it
-
-Status: In review: Hzxon/webchat#222.
-
-A proposal file on main reaches the owner as a card draft (D-117). The draft and its button sit in a
-thread under Chats, in the row "Coding agents", named `Proposed in <repo>: <file>`. The board says
-nothing about them. On 2026-11-13 main held 37 such files, and the linked board showed Ready 4,
-Running 0 and In review 1, with no sign that 37 cards and changes waited for the owner's go. The
-board is the source (D-117), so an owner looks there first, finds nothing, and takes the board for
-stale. The row's name also says nothing of board work.
-
-Fix: the board of a linked repository shows how many proposals wait, such as "37 proposals wait",
-to the owner only, since only they hold the drafts. A click opens the agent pane on those threads.
-The owner still approves each draft with its button (D-104). Nothing new reaches the server: the
-page counts the threads it already has.
-
-Done when: with a proposal draft not yet added, the owner's board shows the count and a click opens
-its thread; the count drops when the draft is added; a teammate's board shows no count; and a board
-with no linked repository shows none.
+Answered when one way is chosen, its cost on the self-hosted runners is measured for a day with
+ten open pull requests, and a card or a settings change carries it out.
 
 ## Ready
-
-### R-005: Photos and files
-
-Status: Planned.
-
-Why: students share drafts, slides and screenshots. WebChat sends text only.
-
-Scope: the browser encrypts each file with a key of its own and uploads only the ciphertext. The
-message carries the file's address and key inside its envelope.
-
-Constraints: Vercel Functions accept request bodies of at most 4.5 MB, so files go from the browser
-straight to a storage service, such as Vercel Blob with private access. The Content Security Policy
-allows connections only to the site itself, so it must also allow the storage service (D-009).
 
 ### R-014: Cards for pasted pull request links
 
@@ -168,28 +60,6 @@ user's own (`comparePulls` only looks at the last commenter).
 
 Done when: a comment-only review on the fake GitHub becomes an event, and a test proves it.
 
-### R-029: Hand a card to a teammate's agent
-
-Status: Planned. Set aside from K-45 (D-089) on 2026-11-05.
-
-Why: since D-089 an agent runs only the cards its owner hands it. A team with one agent and
-a teammate who has none cannot share it, and a student who runs an agent cannot let a teammate
-start a run while they are away.
-
-Scope:
-
-- The play button also lists teammates' agents that are online, named by owner, such as
-  "Bob's claude-code", and only those whose owner lets the viewer use them.
-- The owner lets a teammate in from the daemon, which stores the teammate's user id with their
-  pinned keys and prints the security code to compare (D-018). The check K-42 asked for holds: a
-  username alone never lets anyone in.
-- Decide what a teammate's request may put in the prompt: the card as the teammate saw it, pinned
-  by a hash in the signed request, and the decisions.
-- Maybe: the daemon writes the branch into the card's status line, and posts sparse progress notes.
-
-Done when: a teammate's request runs on the owner's machine only after the owner let them in, and a
-test covers a request from someone who was not let in.
-
 ## Ideas
 
 ### R-004: Private channels
@@ -199,6 +69,52 @@ Status: Idea.
 Every project member is in every channel (D-024). A private channel needs its own member list, keys
 wrapped only for that list, and a new rule for adding people to a project without adding them to
 every channel (D-025).
+
+### R-005: Photos and files
+
+Status: Blocked. #236 and #238 merged on 2026-11-14. The Vercel path waits for a private Blob store, and CORS on it is still unconfirmed.
+
+Why: students share drafts, slides and screenshots. WebChat sends text only.
+
+Scope:
+
+- The message box takes a photo or a file of an allowed type: JPEG, PNG, WebP, GIF, PDF, Word, PowerPoint, Excel, plain text and zip. No programs, scripts, HTML or SVG.
+- The page resizes a photo to at most 1600 pixels and encodes it again before upload, which also removes its GPS position and device details. Any other file is at most 10 MB (`LIMITS`, D-011).
+- The browser encrypts the file with a random AES-256-GCM key of its own and uploads only the ciphertext.
+- The message is an ordinary message of kind "message" whose sealed content carries a `file` field: the file's id, key, name, type and size, and for a photo its width, height and a tiny blurred preview. Its text says the same in words, so an older page, a push and the chat list show something, as with `pull` (D-042). The signature covers it (D-016), and the server never sees the name, the key or the preview.
+- The page asks the server for an upload address, uploads, then sends the message. To show a file it asks for a download address, which the server gives only to a member of the file's chat.
+- The receiving page checks every file after it decrypts it: the type must be on the list, and the file's first bytes must match the type its name claims. It refuses any other file with a note, whatever the sender's page did.
+- A photo shows inline through `<img>`. Every other file shows as its name and size with a download button, and is never opened inside the page.
+- The server drops a file 7 days after it was sent. The message stays: it shows the name, the size and the preview with "No longer on the server". The page tells from the message's time and asks for nothing. The message box says "Kept for 7 days" when a file is attached.
+- A photo whose upload or send failed stays on the device with the unsent message, for a retry (D-051).
+- Deleting a chat, a channel, a project or an account also deletes the stored ciphertext of its files (D-039, D-088, D-096). An upload that no message followed is deleted after an hour.
+
+Constraints:
+
+- Vercel Functions accept request bodies of at most 4.5 MB, so on Vercel the ciphertext goes from the browser straight to a private Vercel Blob store through a presigned URL, which enforces the size. A self-hosted server takes the upload on a route of its own and keeps the ciphertext on disk. The page uploads to whatever address the server answers (D-005).
+- Free hosting (D-003): Hobby includes 1 GB of storage, 2,000 uploads and 10 GB of downloads a month, shared with the rest of the project, and a store that goes over is blocked for 30 days. The server counts uploads and stored bytes and refuses a new upload before either limit.
+- No scheduler: the server refuses a download address for a file older than 7 days, and deletes expired ciphertext when it next gives an upload address.
+- No scan on the server: it holds only ciphertext (D-014). The README says that nobody scans files and that the checks above catch a wrong type, not malware inside an allowed one.
+- The Content Security Policy must allow the storage hosts in `connect-src` and `blob:` in `img-src`, in `vercel.json` and `server/app.ts` together (D-009).
+- The server learns who uploaded a file, to which chat, when and how large, and the storage service holds the ciphertext. D-020 and the README list that.
+- A new `files` table ties each file to its chat, in a new migration (D-010). The upload does not go through `request`, whose timer would cut a slow upload after a minute (D-077).
+- Tests run against a fake storage service and check that no plain text and no key reaches it (D-036).
+
+Needs D-123.
+
+Not yet confirmed: that a browser can fetch a presigned Blob URL from the page's origin (CORS), and which host a presigned upload goes to. Try both in a short spike before the rest. #236 found from the SDK's source (`@vercel/blob` 2.9.0) that an upload goes to `https://vercel.com/api/blob/` and a download to `https://<store>.private.blob.vercel-storage.com`. CORS is still unconfirmed: there is no store to try it against.
+
+Done when, with two accounts that share a chat, one sending and the other receiving:
+
+1. Alice sends a photo and a PDF, and Bob opens both. This works on Vercel and on a self-hosted server.
+2. The uploaded photo is at most 1600 pixels and carries no GPS data.
+3. The storage and the database hold no plain text, file name or key, and a test proves it.
+4. A file over the size limit, or of a type off the list, is refused before it uploads.
+5. A program renamed to `.pdf` that got past the sender's check is refused on Bob's page, and a test proves it.
+6. Someone outside the chat gets no download address.
+7. A file older than 7 days gets no download address either. Its ciphertext is gone after the next upload, and its message still shows the name and the preview.
+8. Deleting the chat deletes its stored files.
+9. The README and D-020 list what the server and the storage service see, and say that nobody scans files.
 
 ### R-006: Mentions
 
@@ -231,14 +147,6 @@ Status: Idea.
 Replies quote a message (D-029) but do not open a side conversation like a Slack thread. Find out
 whether quotes are enough for students before building threads.
 
-### R-010: Deadline reminders
-
-Status: Idea. Depends on R-001, which was dropped for R-021.
-
-Reminders need a scheduler, because Vercel Hobby cron jobs run once a day. Reuse the `CRON_SECRET`
-approach of the GitHub connector (D-034). A reminder that shows a task's title must be decrypted on
-the device, like a message (D-017).
-
 ### R-011: Typing indicators and instant presence
 
 Status: Blocked on Q-1.
@@ -263,45 +171,71 @@ D-043). The other members see it only in the member count and the member list. W
 list would tell everyone who can read along. The server already knows when each member joined, so
 the notes would show it nothing new. They should not count as unread.
 
-### R-043: Run cards through a harness adapter, picked per session
+### R-056: A session cites a proposed decision before the board numbers it
 
-Status: Idea.
+Status: Idea. Found on 2026-11-09 in the review of the board as the source of truth (R-040).
 
-Checked: 2026-11-09. Read docs/roadmap/new-harness-adapter.md, agent/harness.ts, agent/claude.ts, agent/codex.ts and CHANGELOG 0.9.0 (#176, #179) on main at 6a95ad6, and the board's cards and decisions. No open pull requests.
+Why: a session that makes a decision waits for the owner, who adds it on the board, which numbers it
+(D-117). Several sessions run at once and all wait on one person. Before the board, a session
+reserved a number and went on (D-076).
 
-Shipped in #174 (the seam), #176 (the sealed per-harness state and the Settings rows) and #179 (the harness named in each signed request). Proposed 2026-11-09 from the harness audit.
+Scope: code comments, rules lines and the pull request name a proposed decision by its file, such
+as `docs/decisions/agent-board-auto-merge.md`. When the board numbers it, the agent's next copy
+replaces that path with the number everywhere on `agent/board`. This changes D-117, so the owner
+decides it first.
 
-Why: the agent's turn, its isolation proof and the setup it loads were Claude Code's command line, settings files and hook format, in `agent/claude.ts` and `agent/plugin.ts`. The sealed protocol, `Runs`, `Conversations` and the workflow in the plugin know no harness. A student whose team uses Codex or OpenCode could not run an agent at all.
+Done when: a session finishes a change that makes a decision without waiting for a number, and
+main never shows a file path where a number should be.
 
-Scope:
+### R-070: The board's copy merges without the owner
 
-- One `Harness` interface in `agent/harness.ts`. `turn` runs one turn in a folder with the brief on stdin and a JSON answer for a schema. `refusal` says why this laptop cannot run cards with it. `offers` names the instructions file, the skills folder and the few knobs it can honor. The Claude adapter is the old code moved behind it, so a Claude Code owner sees no change.
-- Each harness the laptop found goes to the owner sealed in `SetupState`, with its state and knobs. Settings shows one row per harness with an enable toggle.
-- The owner names the harness, signed, in each card run and each conversation, as the repository is named (D-093). A session keeps the harness that started it. Turns nobody picked for run on the host harness.
-- The seam's pull request rewrote the "background Claude" lines of `.claude/rules/projects.md` to "the harness's turn": an adapter owns the turn, the isolation proof and the setup it offers, and `plugin.ts` never names a harness.
+Status: Idea. Found on 2026-11-09 in the review of the board as the source of truth (R-040).
 
-Constraints: a knob is offered only when the adapter honors it without running code outside the sandbox and without changing permission or sandbox mode. Model, caps, the instructions file, skills and attribution pass. Permission mode, plugins, hooks and MCP servers never do, for any harness (D-097, D-115). The server learns nothing new: per-harness state is sealed to the owner, and `claudeMd` keeps its wire name. A request from an old page names no harness and runs on the host harness. A request naming a harness that is not enabled fails with the reason. No switching mid-session. `test/agent.test.ts` has a fixture per adapter.
+Why: main lags the board until the owner merges the `agent/board` pull request (D-117). Each sync
+is one more chore for the owner. Sessions read the repository's copy, so a late merge sends them to
+stale cards. The first copy (#170) changed 2,300 lines of `docs/decisions.md`, too much to review
+by eye, so a review adds little.
 
-Done when: a Claude Code agent behaves as before and the tests pass; Settings lists the harnesses the laptop has, each with its state and knobs; a card run and a conversation each show the harness the owner picked; a request from an old page runs on the host harness; a request naming a harness that is not enabled fails with the reason.
+Scope: the agent asks GitHub to merge `agent/board` once its checks pass, with
+`gh pr merge --auto --squash`. CI already fails a pull request whose copy anyone else edits, and the
+branch changes only the two copies and the proposal files the owner added. The owner can switch it
+off on the board. This changes D-117, so the owner decides it first.
+
+Done when: a board change reaches main with no click from the owner, and a pull request that
+touches anything else on `agent/board` waits for them.
 
 ## Known issues
 
-### K-69: An agent's board messages buzz the owner's phone and count as unread
+### K-80: A reverted run's card stays Done
 
-Status: Open. Found on 2026-11-07 in the review of #167 (R-040).
+Status: Open. Found on 2026-11-09 in the review of the board as the source of truth (R-040).
 
-Seen: when the owner links a board, their agent sends the repository's entries in several messages.
-It also sends one each time the cards that open pull requests claim change. Each is an ordinary
-message in the owner's direct chat with the agent. The server pushes it and counts it as unread, so
-the Coding agents row shows a badge, and a phone whose tabs are closed buzzes. The page only keeps
-them from raising a toast (`shouldAlert` in `client/src/chat.ts`).
+Seen: #159 fixed K-1 and #169 reverted it. Nothing tells the board. Once a run's draft merges, the
+card says `Done in repo#N` or `Fixed in repo#N`, and the plugin stops watching (D-118). A revert
+then leaves a finished card for work that main no longer has. The team only learns of it by hand.
 
-Cause: the server knows the message kinds message, reaction and github, and only a reaction stays
-quiet (`server/notify.ts`, and the unread counts in `server/db.ts`).
+Fix: the owner's agent already lists open pull requests for a linked board (`sendClaims` in
+`agent/plugin.ts`). It also looks at merged ones whose body says `Reverts` or `This reverts commit`
+of a pull request a finished card names. The owner's page then sets that card back to `Open` with a
+line that names the revert, under its lock, as it does for other moves.
 
-Fix: a quiet message kind, such as `sync`, that the server pushes and counts as it does a reaction,
-and that the agent sends its entries and claims with. A message's kind is signed into its envelope,
-so rule 2 of AGENTS.md holds.
+Done when: a merged revert of a card's pull request reopens the card, and a test proves it.
+
+### K-81: A conversation's scratch copy keeps its git folder where the model writes
+
+Status: Open. Raised 2026-11-10 by the security audit in #185.
+
+A conversation's turn runs in a scratch repository in the temp folder (D-102). Its `.git` folder
+sits inside the folder the harness's shell may write. Between turns the plugin runs `git fetch`
+there with hooks on, and `git checkout -f` with hooks off, outside the sandbox. Both read that
+repository's config, so a `core.fsmonitor` or a hook the model wrote there would run as the owner.
+Claude Code's sandbox appears to protect `.git/config` and `.git/hooks`, which the audit did not
+confirm, so this is defense in depth.
+
+Done when the scratch copy's git folder lives outside the shell's writable area, such as in the
+plugin's data folder, and the plugin runs git there with `--git-dir` and `--work-tree`, as
+`worktreeGit` does for a card's worktree. A test plants a config in the scratch folder and shows
+that nothing runs.
 
 ## Open questions
 
@@ -321,17 +255,6 @@ Everyone on a deployment can see everyone else (D-002). A student in several cla
 separate spaces. Projects already group people. Is that enough, or should one deployment host
 several communities?
 
-### Q-3: Should the Pull requests pane move to the GitHub App too?
-
-Status: Open.
-
-Projects link repositories through a GitHub App since #17 (D-050). Each person's pane still uses
-the OAuth App (D-032), with its polling, its scheduler and the `repo` scope (D-033, D-034). The
-pane could use the same app: its webhooks would bring review requests at once, and it reads pull
-requests only. Cost: the app only sees repositories it is installed on, so the pane would show
-nothing from the others, such as a course repository whose organization never installed it. The
-owner decided on 2026-11-01 to keep the OAuth App for the pane.
-
 ### Q-4: When does WebChat reach 1.0.0?
 
 Status: Open.
@@ -340,20 +263,19 @@ WebChat stays at 0.y.z while it is in early development (D-055). Version 1.0.0 w
 no upgrade within 1.x needs a step from the person who runs it. Decide what must hold first, for
 example an upgrade path that people who self-host can trust.
 
-### Q-5: Does a resumed Claude Code session hear the plugin's doorbell?
-
-Status: Answered in #117. The doorbell and the monitor are gone. A resumed session starts the plugin's server again, which takes runs as any session does.
-
-The plugin's monitor tails the doorbell for as long as the session runs (R-030). Claude Code's docs
-say a resumed session does not restore background tasks, and do not say whether a plugin's monitor
-starts again. Try `claude --resume` on a session with the plugin, and hand it a card. If the monitor
-is gone, a run fails after 30 minutes (D-094), so the README should say to start a new session.
-
 ## Dropped
 
 ### R-001: Task board for projects, like Jira
 
 Status: Dropped on 2026-11-04, replaced by R-021. The owner chose a board of decisions and roadmap cards, like this repository's own documents, over a Jira-style task board.
+
+### R-010: Deadline reminders
+
+Status: Dropped on 2026-11-22. It depended on R-001, the task board, which was dropped for R-021, so no tasks with deadlines exist to remind anyone of.
+
+Reminders need a scheduler, because Vercel Hobby cron jobs run once a day. Reuse the `CRON_SECRET`
+approach of the GitHub connector (D-034). A reminder that shows a task's title must be decrypted on
+the device, like a message (D-017).
 
 ### R-023: Rebrand, step 2: a linear message feed instead of bubbles
 
@@ -361,6 +283,73 @@ Status: Dropped on 2026-11-05. #78 built it and reached main, and the owner reve
 
 R-024 to R-026, the rest of the rebrand, were dropped on 2026-11-05. The owner does not want
 project-first navigation, new wording or a new name. The numbers stay taken.
+
+### R-029: Hand a card to a teammate's agent
+
+Status: Dropped on 2026-11-13. The owner no longer wants a teammate to run a card on someone else's agent. Since D-089 an agent runs only the cards its owner hands it, and that stays. The number stays taken.
+
+### R-061: Run cards through a harness adapter, picked per session
+
+Status: Dropped 2026-11-18: a duplicate of R-043, added from an old draft of docs/roadmap/new-harness-adapter.md.
+
+Order: first. Three pull requests in a row, each merged before the next is claimed: the seam
+alone, as a `refactor` with no change in behavior; then the sealed per-harness state and the
+Settings rows; then the harness named in each signed request, with the pickers and the host
+harness for unprompted turns. The seam's pull request also rewrites the "background Claude"
+lines of `.claude/rules/projects.md` to "the harness's turn" and adds one line: an adapter owns
+the turn, the isolation proof and the setup it offers, and `plugin.ts` never names a harness.
+Every other card waits for the seam. The daemon host may start beside the second pull request.
+
+Why: the agent's turn, its isolation proof and the setup it loads are Claude Code's command
+line, settings files and hook format, in `agent/claude.ts` and `agent/plugin.ts`. The sealed
+protocol, `Runs`, `Conversations` and the workflow in the plugin know no harness. A student
+whose team uses Codex or OpenCode cannot run an agent at all.
+
+Scope: one `Harness` interface in `agent/harness.ts` with three methods: `turn` runs one turn in
+a folder with the brief on stdin and a JSON answer for a schema, `refusal` says why this laptop
+cannot run cards with it, and `offers` names the instructions file, the skills folder and the
+few knobs it can honor. The Claude adapter is today's code moved behind it, so a Claude Code
+owner sees no change. Each harness the laptop found goes to the owner sealed in `SetupState`,
+with its state and knobs, and Settings shows one row per harness with an enable toggle instead
+of three hard-coded checkboxes. The owner names the harness, signed, in each card run and each
+conversation, as the repository is named today (D-093): a second line in the card's play menu
+and a picker beside the repository in the composer. No stored default; the page remembers the
+last pick in the browser only. A session keeps the harness that started it, so fix rounds and
+replies resume with the right one. Turns nobody picked for, "Check again" (D-116) and proposal
+drafts (D-117), run on the host harness: Claude Code when the plugin hosts, the first enabled
+harness when the daemon does. The check-in's level becomes the union over enabled harnesses.
+
+Constraints: a knob is offered only when the adapter honors it without running code outside
+the sandbox and without changing permission or sandbox mode; model, caps, the instructions
+file, skills and attribution pass, and permission mode, plugins, hooks and MCP servers never do,
+for any harness (D-097, D-115). The server learns nothing new: per-harness state is sealed to
+the owner, and `claudeMd` keeps its wire name so old pages and plugins agree. A request from an
+old page names no harness and runs on the host harness. A request naming a harness the laptop
+has not enabled fails with the reason. No switching mid-session: another harness is a new
+conversation. `test/agent.test.ts` gets a fixture per adapter, as `FAKE_CLAUDE` is one today.
+
+Done when: a Claude Code agent behaves as before and the tests pass; Settings lists the
+harnesses the laptop has, each with its state and knobs; a card run and a conversation each
+show the harness the owner picked; a request from an old page runs on the host harness; a
+request naming a harness that is not enabled fails with the reason.
+
+### K-77: picomatch has a ReDoS advisory with no patched release
+
+Status: Dropped on 2026-11-22. GitHub withdrew GHSA-fc5q-39xc-vjpf on 2026-11-18, and `npm audit` on main now reports 0 vulnerabilities with picomatch still at 4.0.7. Nothing to change.
+
+Why: `npm audit` reports GHSA-fc5q-39xc-vjpf (high): picomatch can take very long on a glob with
+repeated single-branch extglobs. Every version up to 4.0.7, the newest, is affected, so no update
+or override fixes it. A red audit hides new advisories that do matter.
+
+Scope: picomatch comes in only through devDependencies: `vite` (directly and through
+`tinyglobby` and `fdir`) and `@astryxdesign/cli` (through `jscodeshift`). `npm ls picomatch
+--omit=dev` is empty, so neither the server nor the client bundle holds it. The patterns come from
+our own build config, not from users, so nobody outside can reach it. Dependabot opened no alert.
+
+Fix: when picomatch publishes a patched version, update the lockfile so every path resolves to it.
+Do not run `npm audit fix --force`: it downgrades vite to 6.2.7, a breaking change.
+
+Done when: `npm audit` reports no picomatch advisory.
 
 ## Done
 
@@ -426,6 +415,7 @@ project-first navigation, new wording or a new name. The numbers stay taken.
 | R-035: A Coding agents pane where the owner talks with their agents (D-097, D-101 to D-105) | #114, #117, #119, #120, #121, #122 |
 | K-51: A second request for a running card is refused (D-099) | #115 |
 | K-52: A card shows its latest run, and Run waits while it goes (D-100) | #116 |
+| Q-5: Does a resumed Claude Code session hear the plugin's doorbell? | #117 |
 | K-53: The plugin refuses runs until the sandbox denies the keychain and session-env and fails if unavailable; the guard resolves links as the kernel does | #118 |
 | K-58: The plugin unwatches a draft from before D-105 that the pane cannot show | #127 |
 | R-037: An agent runs several cards at once (D-085, D-086, D-099) | #130 |
@@ -449,3 +439,48 @@ project-first navigation, new wording or a new name. The numbers stay taken.
 | R-041: The agent checks a new card, and the board numbers it | #166 |
 | R-040: The board is the source of truth, and the repository follows it | #167, #159 |
 | R-042: A card run follows the repository's workflow | #168 |
+| K-79: An agent's draft can give a card two status lines | #171 |
+| K-84: A card stays In review after its run's draft is closed unmerged | #171 |
+| R-043: Run cards through a harness adapter, picked per session | #174, #176, #179 |
+| R-062: Serve the agent from a daemon as well as from the plugin | #177 |
+| R-057: Pause a run and redirect it | #178, #181, #182, #174 |
+| R-064: A Codex adapter, and a sandbox WebChat owns | #180, #204, #209 |
+| R-065: The roadmap as lanes, with a card owner who holds its gates | #188, #189, #190 |
+| Q-7: Should a card run stop needing the owner's gh token? | #193 |
+| K-82: The flipped-ciphertext test fails about once in 4,000 runs | #194 |
+| K-83: A linked repository's copy shows a status that does not stand | #195 |
+| K-86: An editor in the board's hidden tab loses its lock unseen | #196 |
+| K-85: A hand edit of a card can drop or revive a review line | #197 |
+| K-69: An agent's board messages buzz the owner's phone and count as unread | #198, #167 |
+| R-068: Ship the agent as one file per OS from GitHub releases | #199 |
+| R-066: Set up the agent with one command | #200 |
+| R-059: Link harnesses from the list WebChat supports | #201 |
+| R-063: Connect a folder only on the owner's approval in WebChat | #202 |
+| R-069: Run ACP agents from a shipped list through one adapter | #203 |
+| R-060: Approve a harness's actions from WebChat | #204 |
+| R-058: Keep the agent's secrets in a locked room | #206, #207, #208, #209 |
+| R-067: The agent updates itself to its server's release | #210 |
+| K-72: The board does not show the proposals that wait for it | #222 |
+| K-70: The pane says "No copy yet" for a repository the agent works in | #223 |
+| K-71: A backlog of proposal files hits the send limit, and a new install sends them all again | #224 |
+| R-044: Make and number a card from the terminal | #225 |
+| R-045: R-045: The Coding agents row's name says nothing of board work | #227 |
+| K-1: The iOS 16.4 banner stays after Bark is linked | #228 |
+| K-73: The owner is asked about shell commands the sandbox already holds | #233 |
+| R-046: A run checks its work in a browser that reaches only its own dev server | #235, #240 |
+| R-055: Support Hermes as a harness | #243 |
+| R-054: Support Antigravity as a harness | #244 |
+| R-052: Try the Astryx design system on the sign-in screen | #247 |
+| R-053: Move every screen to Astryx | #248, #252 |
+| R-047: A card opens as a peek that holds its run | #257, #259, #272, #274 |
+| R-051: CI fails a pull request that overlaps an earlier open one | #260 |
+| R-050: Split the files that every card edits | #261, #263, #270 |
+| K-75: Two claims seconds apart both get the item | #271 |
+| R-049: A run waits when its files overlap a running card's | #276 |
+| R-048: A card waits for the cards it names | #277 |
+| K-76: Older copies of a proposal wait on the board for good | #280 |
+| K-78: A proposal draft older than the newest 50 messages never reaches the board | #283 |
+| R-072: The member's own harness, with its whole session shown, in WebChat | #284, #285, #287, #288, #289 |
+| R-071: A card from a harness session, and a prompt box in the new card form | #286 |
+| K-74: An agent's card draft loses everything past 4,000 characters | Fixed |
+| Q-3: Should the Pull requests pane move to the GitHub App too? | Done. Answered on 2026-11-01: the owner keeps the OAuth App for the pane |
