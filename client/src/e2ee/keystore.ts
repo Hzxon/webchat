@@ -90,6 +90,10 @@ export const keystore = {
   getPins: () => get<Record<number, string>>('pins'),
   setPins: (pins: Record<number, string>) => set('pins', pins),
 
+  /** By person, the key fingerprint the user marked verified after comparing the security code. */
+  getVerified: () => get<Record<number, string>>('verified'),
+  setVerified: (verified: Record<number, string>) => set('verified', verified),
+
   /** By chat id, or by "doc:<doc id>:<section>" for a doc section someone is editing. */
   getDraft: (name: number | string) => get<StoredDraft>(`draft:${name}`),
   setDraft: (name: number | string, draft: StoredDraft) => set(`draft:${name}`, draft),
@@ -109,7 +113,7 @@ export const keystore = {
   setDismissed: (ids: number[]) => set('dismissed', ids),
 
   /**
-   * Removes the account's keys, drafts, unsent messages and dismissed alerts from this device, as on
+   * Removes the account's keys, drafts, unsent messages, dismissed alerts and verified marks from this device, as on
    * sign-out or when an account signs in. The pins stay: they hold only other people's public key
    * fingerprints, and keeping them is what lets a later sign-in notice keys that changed in between
    * (D-018).

@@ -57,6 +57,8 @@ export interface State {
   files: boolean;
   /** People whose encryption keys differ from the ones this device saw first. */
   keyWarnings: Record<number, true>;
+  /** People whose current keys the user marked verified on this device. */
+  verified: Record<number, true>;
   /** The GitHub connector's state; null until loaded. */
   github: GithubDTO | null;
   /** The pull requests pane is showing instead of a chat. */
@@ -100,6 +102,7 @@ const initialState: State = {
   bark: null,
   files: false,
   keyWarnings: {},
+  verified: {},
   github: null,
   githubOpen: false,
   reposFor: null,
@@ -224,6 +227,12 @@ function editChats(update: (current: State) => State) {
 }
 
 let toastId = 0;
+
+/** Sets a map of people's flags, keeping the state as it is when the set did not change. */
+function withFlags(s: State, field: 'keyWarnings' | 'verified', ids: Set<number>): State {
+  const same = ids.size === Object.keys(s[field]).length && [...ids].every((id) => s[field][id]);
+  return same ? s : { ...s, [field]: Object.fromEntries([...ids].map((id) => [id, true as const])) };
+}
 
 export const actions = {
   reset: () => store.set(() => initialState),
@@ -407,11 +416,8 @@ export const actions = {
   setBark: (bark: BarkDTO) => store.set((s) => ({ ...s, bark })),
   setFiles: (files: boolean) => store.set((s) => ({ ...s, files })),
 
-  setKeyWarnings: (ids: Set<number>) =>
-    store.set((s) => {
-      const same = ids.size === Object.keys(s.keyWarnings).length && [...ids].every((id) => s.keyWarnings[id]);
-      return same ? s : { ...s, keyWarnings: Object.fromEntries([...ids].map((id) => [id, true as const])) };
-    }),
+  setKeyWarnings: (ids: Set<number>) => store.set((s) => withFlags(s, 'keyWarnings', ids)),
+  setVerified: (ids: Set<number>) => store.set((s) => withFlags(s, 'verified', ids)),
 
   setActive: (activeId: number | null) => store.set((s) => (activeId === null ? { ...s, activeId } : show(s, { activeId }))),
 
