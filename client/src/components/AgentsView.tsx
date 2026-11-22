@@ -25,7 +25,7 @@ import { addProjectMembers, askAgent, forgetFolder, loadChat, loadOlder, putToSl
 import type { ChatConversation } from '../e2ee/keyring';
 import { useLinkedRepos } from '../linkedRepos';
 import { actions, useAppState } from '../store';
-import { BackIcon, BellIcon, CloseIcon, FolderIcon, PlusIcon, SearchIcon } from './icons';
+import { BackIcon, BellIcon, CloseIcon, FolderIcon, NewChatIcon, PlusIcon, SearchIcon } from './icons';
 import { AgentBrief } from './AgentBrief';
 import { AgentDialog } from './AgentDialog';
 import { AgentAsks } from './AgentAsks';
@@ -400,7 +400,7 @@ function AgentsSidebar({
       )}
       <div className="agents-side-list">
         <button type="button" className="agents-row" aria-current={selected === 'new' || undefined} onClick={onNew}>
-          <NewChatIcon />
+          <NewChatIcon width={18} height={18} />
           New chat
         </button>
         {waiting.length > 0 && (
@@ -798,13 +798,6 @@ const icon = (children: ReactNode) => (
     {children}
   </svg>
 );
-const NewChatIcon = () =>
-  icon(
-    <>
-      <path d="M12 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
-      <path d="M17.5 3.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" />
-    </>,
-  );
 const AskIcon = () =>
   icon(
     <>

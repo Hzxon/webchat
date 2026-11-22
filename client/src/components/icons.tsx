@@ -259,6 +259,14 @@ export const DownloadIcon = (p: IconProps) => (
   </Icon>
 );
 
+/** New chat, as the design draws it: a pencil writing on a page. */
+export const NewChatIcon = (p: IconProps) => (
+  <Icon strokeWidth="1.8" {...p}>
+    <path d="M12 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7" />
+    <path d="M17.5 3.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" />
+  </Icon>
+);
+
 export const PencilIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z" />
