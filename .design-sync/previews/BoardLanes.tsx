@@ -1,29 +1,31 @@
-import { BoardLane, BoardLanes, Button, CardFace } from '@webchat/board-kit';
+import { BoardLane, BoardLanes, CardFace } from '@webchat/board-kit';
 
 const ann = { name: 'Ann Lee', seed: 1 };
-const bo = { name: 'Bo Tan', seed: 2 };
-const cy = { name: 'Cy Moreno', seed: 5 };
+const rafi = { name: 'Rafi Hart', seed: 3 };
 const open = () => undefined;
+const add = [{ label: 'New idea', onSelect: open }];
+const menu = [{ label: 'Fold lane', onSelect: open }];
+const pick = (
+  <button type="button" className="board-small-button" onClick={open}>
+    Pick
+  </button>
+);
 
-// The Roadmap's three lanes, side by side.
+// The Roadmap's four lanes, side by side.
 export const Roadmap = () => (
-  <div style={{ width: 900 }}>
+  <div style={{ display: 'flex', flexDirection: 'column', width: 1040, height: 420 }}>
     <BoardLanes>
-      <BoardLane name="Ready" count={2}>
-        <CardFace title="Export a chat as a file" owner={ann} action={<Button size="sm" label="Pick" onClick={open} />} onOpen={open} />
-        <CardFace title="Push fails on iOS 15" owner={bo} action={<Button size="sm" label="Pick" onClick={open} />} onOpen={open} />
+      <BoardLane name="Idea" kind="idea" count={1} add={add} menu={menu}>
+        <CardFace id="R-44" title="Voice notes in chats" text="Hold to record. The note is encrypted in the browser like text." owner={null} onOpen={open} />
       </BoardLane>
-      <BoardLane name="Running" count={2}>
-        <CardFace title="Search in channels" owner={ann} status="Ann's agent" tag={{ tone: 'warn', label: 'Asking you' }} isWaiting onOpen={open} />
-        <CardFace title="Read receipts" owner={cy} status="Cy" onOpen={open} />
+      <BoardLane name="Ready" kind="ready" count={1} add={add} menu={menu}>
+        <CardFace id="R-40" title="Export a chat as a file" text="Download a chat as Markdown, decrypted in the browser." owner={null} action={pick} onOpen={open} />
       </BoardLane>
-      <BoardLane name="In review" count={1}>
-        <CardFace
-          title="Draft cut short at 4,000 characters"
-          owner={bo}
-          reviewers={[{ ...ann, tone: 'ok', label: 'Approved' }]}
-          onOpen={open}
-        />
+      <BoardLane name="Running" kind="running" count={1} menu={menu}>
+        <CardFace id="K-12" title="Drop bad push keys" text="A 410 from the push service drops the key." owner={ann} chips={[{ tone: 'warn', label: 'Asking you' }]} pull={{ number: 214, state: 'draft' }} isWaiting onOpen={open} />
+      </BoardLane>
+      <BoardLane name="In review" kind="review" count={1} menu={menu}>
+        <CardFace id="R-31" title="Pin messages in channels" text="Pins are encrypted like messages." owner={rafi} pull={{ number: 205, state: 'review' }} onOpen={open} />
       </BoardLane>
     </BoardLanes>
   </div>
