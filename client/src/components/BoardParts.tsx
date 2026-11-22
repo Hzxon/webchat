@@ -1,7 +1,6 @@
 // The board's parts: tinted lanes of white cards, the same lanes as groups of rows, a lane's menu,
 // and a proposal's face. Each takes plain values; BoardView fills them from the board's docs.
 import { useState, useSyncExternalStore, type ReactNode, type SVGProps } from 'react';
-import { Avatar } from './Avatar';
 import { CloseIcon, FileIcon, PlusIcon, PullRequestIcon } from './icons';
 import type { Tone } from './PullTags';
 
@@ -93,7 +92,8 @@ const CheckIcon = () => (
 
 const PULL_TITLES = { draft: 'Draft', review: 'Ready for review', merged: 'Merged' };
 /** A pull request's mark and number: dashed while a draft, solid in review, in the success color once merged. */
-export function PullNumber({ pull }: { pull: PullMark }) {
+/** `title` follows the number, as the peek's facts name it. */
+export function PullNumber({ pull, title }: { pull: PullMark; title?: string }) {
   const icon = (
     <span className={`pull-mark is-${pull.state}`} title={PULL_TITLES[pull.state]}>
       {pull.state === 'merged' ? (
@@ -113,9 +113,10 @@ export function PullNumber({ pull }: { pull: PullMark }) {
       {pull.href ? (
         <a href={pull.href} target="_blank" rel="noopener noreferrer">
           #{pull.number}
+          {title && ` ${title}`}
         </a>
       ) : (
-        `#${pull.number}`
+        `#${pull.number}${title ? ` ${title}` : ''}`
       )}
     </span>
   );
@@ -124,12 +125,30 @@ export function PullNumber({ pull }: { pull: PullMark }) {
 /** A state chip, such as "Asking you". */
 export const StateChip = ({ chip }: { chip: Chip }) => <span className={`board-chip is-${chip.tone}`}>{chip.label}</span>;
 
+// A person's face on the board: their initials in a soft tint, the tint following their seed.
+const TINTS = ['accent', 'warn', 'ok', 'muted'];
+const initials = (name: string) => {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  return (words.length > 1 ? words[0]![0]! + words.at(-1)![0]! : (words[0] ?? '?').slice(0, 2)).toUpperCase();
+};
+
+/** A person as a round face with their initials, as the board, its header and the peek's facts show them. */
+export const Face = ({ person, size = 22 }: { person: Person; size?: number }) => (
+  <span
+    className={`board-face is-${TINTS[person.seed % TINTS.length]}`}
+    role="img"
+    title={person.name}
+    aria-label={person.name}
+    style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}
+  >
+    {initials(person.name)}
+  </span>
+);
+
 /** A card's owner, or a dashed circle for a card nobody owns yet. */
 const Owner = ({ owner }: { owner: Person | null }) =>
   owner ? (
-    <span role="img" title={owner.name} aria-label={owner.name}>
-      <Avatar name={owner.name} seed={owner.seed} size={22} />
-    </span>
+    <Face person={owner} />
   ) : (
     <span className="board-no-owner" role="img" title="No owner" aria-label="No owner" />
   );

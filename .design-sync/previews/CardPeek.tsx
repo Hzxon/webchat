@@ -1,4 +1,4 @@
-import { Avatar, Button, CardPeek, HistoryIcon, Markdown, RunAsk, RunPanel, RunStep, StateChip, TrashIcon } from '@webchat/board-kit';
+import { Button, Face, CardPeek, HistoryIcon, Markdown, RunAsk, RunPanel, RunStep, StateChip, TrashIcon } from '@webchat/board-kit';
 
 const act = () => undefined;
 const BODY = `**Why:** a push key that the push service rejects stays in the database. Every new message tries it again and logs an error.
@@ -16,7 +16,7 @@ const tools = [
 ];
 const owner = (
   <>
-    <Avatar name="Ann Lee" seed={1} size={20} /> Ann Lee
+    <Face person={{ name: 'Ann Lee', seed: 0 }} size={20} /> Ann Lee
   </>
 );
 

@@ -57,7 +57,7 @@ never nest a second `BoardTheme` to make one region dark.
   card, and `onRun` adds a button (`runLabel` names it).
 - At phone width the peek fills the screen: Close at the left, the tools behind ⋯ in a sheet, the
   run under the card and the question pinned at the foot.
-- People: `Avatar` (`size` 20 in a fact, 22 on a face). Icons: `HistoryIcon`, `TrashIcon`,
+- People: `Face` with `person` (`{ name, seed }`) and `size` (20 in a fact, 22 on a card, 26 in the header): initials on a soft tint, round. Icons: `HistoryIcon`, `TrashIcon`,
   `PencilIcon`, `PlayIcon`, `StopIcon`, `FileIcon`, each with `width` and `height`.
 
 `CardPeek` is a modal dialog: it covers the page while it is rendered, so render it only for the

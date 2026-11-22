@@ -13,6 +13,7 @@ export {
   BoardMenu,
   CardFace,
   CardRow,
+  Face,
   FoldChip,
   ProposalFace,
   PullNumber,

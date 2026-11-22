@@ -84,7 +84,6 @@ import { Selector } from '@astryxdesign/core/Selector';
 import { Stack, StackItem } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
-import { Avatar } from './Avatar';
 import { AgentDraft } from './AgentDraft';
 import { AgentThread, Box } from './AgentThread';
 import {
@@ -94,6 +93,8 @@ import {
   BoardMenu,
   CardFace,
   CardRow,
+  DotsIcon,
+  Face,
   FoldChip,
   LaneIcon,
   LanesIcon,
@@ -111,7 +112,7 @@ import {
 import { CardPeek, type PeekTool } from './CardPeek';
 import { RunAgent } from './RunPanel';
 import { SectionEditor, SectionHistory } from './DocView';
-import { BackIcon, HistoryIcon, SlidersIcon, TrashIcon } from './icons';
+import { BackIcon, HistoryIcon, PlusIcon, TrashIcon } from './icons';
 import { Markdown } from './Markdown';
 import { REVIEWS, RUN_TAGS, Tag, type Tone } from './PullTags';
 import { confirmAction } from './ConfirmHost';
@@ -447,7 +448,8 @@ function BoardColumnView({
   const phone = useNarrow();
   // How each lane sorts and whose cards it shows, by its group; the lanes folded into the header; the finished lane.
   const [views, setViews] = useState<Record<number, { sort: Sort; show: Show }>>({});
-  const [folded, setFolded] = useState<number[]>([]);
+  // The Idea lane starts folded into the header, as the design has it, so the lanes that move lead.
+  const [folded, setFolded] = useState<number[]>(column === 'roadmap' ? [3] : []);
   const [finished, setFinished] = useState(false);
   const [allFinished, setAllFinished] = useState(false);
   // The lane a phone shows, by its group, and whether its sort and show sheet is open.
@@ -573,7 +575,7 @@ function BoardColumnView({
   const whom = (id: number) => (id === meId ? 'you' : senderName(users, id));
   /** A member as a face draws them. */
   const personOf = (id: number) => ({ name: id === meId ? meName : senderName(users, id), seed: id });
-  const avatarOf = (id: number, size: number) => <Avatar {...personOf(id)} size={size} />;
+  const avatarOf = (id: number, size: number) => <Face person={personOf(id)} size={size} />;
   const titleOf = (card: Card) => (card.failed ? 'This card could not be decrypted.' : card.title || 'Untitled');
 
   /** Opens a card in the peek, or closes it, which closes its editor too: the editor saves and frees the card as it goes. */
@@ -764,7 +766,13 @@ function BoardColumnView({
         'Status',
         <>
           <LaneIcon kind={kindOf(column, card.status)} />
-          {card.status}
+          {/* The lane's name; who runs it and its pull request have rows of their own. */}
+          {card.status.startsWith('Dropped') ? card.status : [...LANES[column].lanes, LANES[column].finished].find((l) => l.group === groupOf(column, card.status))!.name}
+          {card.waits ? (
+            <StateChip chip={{ tone: 'muted', label: waitingFace(card.waits) }} />
+          ) : (
+            card.status.startsWith(WAITING) && <StateChip chip={{ tone: 'muted', label: WAITING }} />
+          )}
           {/* A run says where it stands on its own line. */}
           {need && !cardRun && <StateChip chip={{ tone: 'warn', label: NEEDS[need] }} />}
         </>,
@@ -775,9 +783,10 @@ function BoardColumnView({
       // Its note, such as a plan or why it failed, is in the run beside the card.
       ['Run', cardRun && <StateChip chip={need === 'asking' ? { tone: 'warn', label: NEEDS.asking } : { tone: RUN_STATES[cardRun.state][0], label: RUN_STATES[cardRun.state][1] }} />],
       // An agent is often named after its harness.
-      ['Runs it', cardRun && [...new Set([nameOf(cardRun.runtime), cardRun.harness])].filter(Boolean).join(' · ')],
+      // A teammate's run is only the line on the card (D-100).
+      ['Runs it', cardRun ? [...new Set([nameOf(cardRun.runtime), cardRun.harness])].filter(Boolean).join(' · ') : !pull && runnerOf(card.status)],
       ['Repository', cardRun?.repo],
-      ['Pull request', pull && <PullNumber pull={pull} />],
+      ['Pull request', pull && <PullNumber pull={pull} title={titleOf(card)} />],
       // No agent checked it against the board, the code and the open pull requests yet (R-041).
       ['Checked', column === 'roadmap' && unchecked(card) && <StateChip chip={{ tone: 'muted', label: 'Not checked by an agent yet' }} />],
       ['Editing', lock && nameOf(lock.userId)],
@@ -808,7 +817,8 @@ function BoardColumnView({
     const face = column === 'roadmap';
     const canMove = face && me && !lock;
     const inReview = face && laneOf(card.status) === 'review';
-    const pick = canMove && moved(card, 'pick', me);
+    // Pick only where it stands: a card with no owner, or the user's own (the card-owner decision).
+    const pick = canMove && (card.owner === undefined || card.owner === me.id) && moved(card, 'pick', me);
     const take = canMove && takeable(card, meName);
     const moves = canMove
       ? MOVES.filter(
@@ -1126,6 +1136,36 @@ function BoardColumnView({
     />
   );
 
+  // Decisions read as one list of rows, newest first: the id, the title and a line of the text, and where each stands.
+  const decisionName = (card: Card) => [...LANES.decisions.lanes, LANES.decisions.finished].find((l) => l.group === groupOf(column, card.status))!.name;
+  const decisionsList = () => (
+    <div className="board-list">
+      <div className="board-decisions">
+        {proposals.map(draftRow)}
+        {[...cards]
+          .sort((a, b) => (b.number ?? -1) - (a.number ?? -1))
+          .map((card) => (
+            <button key={card.id} type="button" className="board-decision" aria-haspopup="dialog" onClick={() => openCard(card.id)}>
+              <span className="board-decision-id">{card.cardId || 'D'}</span>
+              <span className="board-decision-text">
+                <strong>{titleOf(card)}</strong>
+                {!card.failed && <small>{excerpt(card.body)}</small>}
+              </span>
+              <span className="board-decision-status">{decisionName(card)}</span>
+            </button>
+          ))}
+      </div>
+    </div>
+  );
+  const newDecision = column === 'decisions' && !editorOpen && !elsewhere && (
+    <button type="button" className="board-quiet-button" onClick={() => startAdding('D')}>
+      <PlusIcon width={16} height={16} />
+      New decision
+    </button>
+  );
+  // The Roadmap's lane controls: its folded lanes, its finished lane and its layout.
+  const roadmapOnly = column === 'roadmap';
+
   return (
     <div className={`board-column board-${column}`}>
       {phone ? (
@@ -1133,15 +1173,21 @@ function BoardColumnView({
           <header className="board-head">
             {back}
             <h1 className="board-title">Board</h1>
-            {layout === 'board' && (
-              <IconButton variant="ghost" label="Sort and show" tooltip="Sort and show" icon={<SlidersIcon />} onClick={() => setSheet(true)} />
+            {roadmapOnly && layout === 'board' && (
+              <IconButton variant="ghost" label="Sort and show" tooltip="Sort and show" icon={<DotsIcon />} onClick={() => setSheet(true)} />
             )}
           </header>
           <div className="board-controls">
             {switcher}
             <span className="board-gap" />
-            {finishedButton}
-            {layoutSwitch}
+            {roadmapOnly ? (
+              <>
+                {finishedButton}
+                {layoutSwitch}
+              </>
+            ) : (
+              newDecision
+            )}
           </div>
         </>
       ) : (
@@ -1152,8 +1198,9 @@ function BoardColumnView({
           <span className="board-gap" title={linkedTo && `Copied to ${linkedTo}`}>
             {note && <span className="doc-note">{note}</span>}
           </span>
+          {newDecision}
           {lanes
-            .filter((lane) => folded.includes(lane.group))
+            .filter((lane) => roadmapOnly && folded.includes(lane.group))
             .map((lane) => (
               <FoldChip
                 key={lane.group}
@@ -1163,24 +1210,25 @@ function BoardColumnView({
                 onUnfold={() => setFolded((f) => f.filter((g) => g !== lane.group))}
               />
             ))}
-          {finishedButton}
+          {roadmapOnly && finishedButton}
           <span className="board-people" aria-label="Members">
             {people.slice(0, 3).map((p) => (
-              <span key={p.seed} role="img" title={p.name} aria-label={p.name}>
-                <Avatar name={p.name} seed={p.seed} size={26} />
-              </span>
+              <Face key={p.seed} person={p} size={26} />
             ))}
           </span>
-          {layoutSwitch}
+          {roadmapOnly && layoutSwitch}
         </header>
       )}
       {error && <Banner status="error" title={error} />}
       {!doc && !editorOpen && <p className="doc-note board-none">No {column === 'decisions' ? 'decisions' : 'ideas or issues'} yet.</p>}
-      {layout === 'list' ? (
+      {!roadmapOnly ? (
+        decisionsList()
+      ) : layout === 'list' ? (
         <div className="board-list">
-          {shownLanes.map((lane) => (
+          {/* A folded lane keeps its head here, without its rows. */}
+          {[...lanes, ...(finished ? [done] : [])].map((lane) => (
             <BoardGroup key={lane.group} name={lane.name} kind={lane.kind} count={count(lane)} add={addOf(lane)}>
-              {laneCards(lane, 'row')}
+              {!folded.includes(lane.group) && laneCards(lane, 'row')}
             </BoardGroup>
           ))}
         </div>

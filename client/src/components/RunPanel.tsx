@@ -2,7 +2,6 @@
 // started, its messages as steps, and the agent's question pinned under them. The parts take plain
 // values; AgentThread fills them from the owner's chat with their agent.
 import { createContext, useContext, type ReactNode, type Ref } from 'react';
-import { Button } from '@astryxdesign/core/Button';
 import { LaneIcon } from './BoardParts';
 import type { Tone } from './PullTags';
 
@@ -72,6 +71,12 @@ export function RunStep({
   );
 }
 
+const ANSWERS = [
+  ['once', 'Allow'],
+  ['run', 'Allow for this run'],
+  ['deny', 'Deny'],
+] as const;
+
 /** A question the agent asks before it acts, with the owner's three answers (docs/decisions/harness-approvals.md). */
 export function RunAsk({
   text,
@@ -90,9 +95,11 @@ export function RunAsk({
     <div className="run-ask">
       <p>{text}</p>
       <div className="run-ask-answers">
-        <Button size="sm" label="Allow" isDisabled={isDisabled} onClick={() => onAnswer('once')} />
-        <Button size="sm" label="Allow for this run" isDisabled={isDisabled} onClick={() => onAnswer('run')} />
-        <Button size="sm" label="Deny" isDisabled={isDisabled} onClick={() => onAnswer('deny')} />
+        {ANSWERS.map(([decision, label]) => (
+          <button key={decision} type="button" className="board-small-button" disabled={isDisabled} onClick={() => onAnswer(decision)}>
+            {label}
+          </button>
+        ))}
       </div>
       <small>It waits for you, and ends in {days} days if you do not answer.</small>
     </div>

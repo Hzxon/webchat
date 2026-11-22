@@ -155,7 +155,7 @@
   margin-left: -6px;
 }
 
-.board-people .avatar {
+.board-people .board-face {
   box-shadow: 0 0 0 2px var(--panel);
 }
 
@@ -309,6 +309,11 @@
   color: inherit;
 }
 
+.card-facts .board-pull a {
+  color: var(--text);
+  text-decoration: underline;
+}
+
 .pull-mark {
   display: inline-flex;
   color: var(--muted);
@@ -316,6 +321,36 @@
 
 .pull-mark.is-merged {
   color: var(--ok);
+}
+
+/* A person's face: initials on a soft tint, round. */
+.board-face {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.board-face.is-accent {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.board-face.is-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.board-face.is-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.board-face.is-muted {
+  background: var(--panel-2);
+  color: var(--muted);
 }
 
 .board-no-owner {
@@ -362,7 +397,7 @@
   background: var(--warn-soft);
 }
 
-.is-waiting .board-chip.is-warn {
+.board-card.is-waiting .board-chip.is-warn {
   background: var(--warn);
   color: var(--panel);
 }
@@ -463,6 +498,72 @@
 .board-row .board-card-foot {
   flex: none;
   flex-wrap: nowrap;
+}
+
+/* The pull request keeps its column in a row, so the owners line up. */
+.board-row .board-pull {
+  justify-content: flex-end;
+  min-width: 56px;
+}
+
+/* The Decisions list: each decision's id, its title and a line of its text, and where it stands. */
+.board-decisions {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.board-decisions > * + * {
+  border-top: 1px solid var(--line);
+}
+
+.board-decision {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 10px 8px 14px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-decision-id {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.board-decision-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+}
+
+.board-decision-text strong {
+  font-weight: 500;
+}
+
+.board-decision-text small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-decision-status {
+  flex: none;
+  color: var(--muted);
+  font-size: 12.5px;
 }
 
 /* A menu floats under its button; on a phone it is a sheet from the bottom. */
@@ -722,6 +823,15 @@
   gap: 6px;
 }
 
+.run-ask-answers .board-small-button {
+  height: 32px;
+}
+
+.board-small-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .run-ask small {
   color: var(--muted);
   font-size: 12.5px;
@@ -842,6 +952,15 @@
 
   .board-row .board-card-foot {
     flex-wrap: wrap;
+  }
+
+  .board-row .board-pull {
+    min-width: 0;
+  }
+
+  .run-ask-answers .board-small-button {
+    flex: 1;
+    height: 36px;
   }
 
   .board-menu-back {
