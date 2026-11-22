@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { claudeHarness, claudeSettings, pathDirs, restrictedSettings, sandboxProblem } from '../agent/claude.ts';
 import { AgentClient } from '../agent/client.ts';
 import { layoutFor, programOf, updateConfigOf, type Cmd } from '../agent/lockroom.ts';
-import { doctor, linksFrom, pairInto, setup, uninstall } from '../agent/setup.ts';
+import { doctor, linksFrom, pairInto, setup, turnedOff, uninstall } from '../agent/setup.ts';
 import { harnessFinder, supported, supportedList } from '../agent/harnesses.ts';
 import { versionAtLeast } from '../agent/harness.ts';
 import { newPairingCode } from '../shared/e2ee.ts';
@@ -203,10 +203,26 @@ export function setupTests(w: World) {
       await fs.rm(path.join(userHome, '.local', 'bin', 'codex'));
       assert.deepEqual(await doctorSays(['Codex']), ['Claude Code 2.1.300, signed in: found, not linked.', 'Codex: linked, needs attention.']);
       assert.deepEqual(await doctorSays([]), ['Claude Code 2.1.300, signed in: found, not linked.', 'Codex: not installed.']);
+      // A stopped keyholder names no server, so doctor reads the one setup gave the updater.
+      const configured = { ...noRoom, programDir: dir };
+      await fs.writeFile(updateConfigOf(configured), JSON.stringify({ server: w.baseUrl }));
+      said.length = 0;
+      await doctor(agentHome, configured);
+      process.exitCode = 0;
+      assert.ok(said.some((line) => line.includes(`Network: ${w.baseUrl} answers`)), said.join('\n'));
     } finally {
       console.log = print;
       restore();
     }
+  });
+
+  test('tells a service macOS turned off under Login Items from one stopped by hand, from `sfltool dumpbtm`', () => {
+    const item = (plist: string, disposition: string) => `  UUID: 1\n  Name: webchat-agent\n  Disposition: [${disposition}, allowed, not notified] (0x2)\n  URL: ${plist}\n`;
+    const dump = item('/Library/LaunchDaemons/com.webchat.keyholder.plist', 'disabled') + item('/Library/LaunchDaemons/com.webchat.updater.plist', 'enabled');
+    assert.equal(turnedOff(dump, '/Library/LaunchDaemons/com.webchat.keyholder.plist'), true);
+    assert.equal(turnedOff(dump, '/Library/LaunchDaemons/com.webchat.updater.plist'), false);
+    assert.equal(turnedOff(dump, '/Library/LaunchDaemons/com.webchat.keyholder'), false, 'only the whole path');
+    assert.equal(turnedOff('', '/Library/LaunchDaemons/com.webchat.keyholder.plist'), false, 'no dump, as on Linux');
   });
 
   test('reads setup\'s answer: yes takes the ticked harnesses, names take exactly those, and anything else stops it', () => {
