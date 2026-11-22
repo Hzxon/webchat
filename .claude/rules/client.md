@@ -17,7 +17,7 @@ docs/decisions.md that explains it. Encryption, GitHub and projects have their o
 - Reload a tab only when the page's `/assets/` files changed, and never while `holdReloadWhile` holds, as it does for an open section editor (K-63); a tab in use waits until hidden or idle for 30 seconds (D-040).
 - `client/src/viewport.ts` sets `--visible-height`; it runs only while the chat layout shows and leaves a pinch-zoomed page alone (D-053).
 - Every hover style sits behind `@media (hover: hover)`; opening a chat on a touch screen does not focus the message box (D-053).
-- The palette is warm neutrals plus one orange accent; success uses `--ok`, never the accent; every corner uses `--radius`, except the chat's pill-shaped composer and its 12px bubbles (docs/decisions/new-chat-composer-pills.md); no font loads from a font host; colors and shapes change in `styles.css` only, and `astryxTheme.ts` points Astryx's tokens at those variables rather than at colors of its own (D-083).
+- The palette is warm neutrals plus one orange accent; success uses `--ok`, never the accent; every corner uses `--radius`; no font loads from a font host; colors and shapes change in `styles.css` only, and `astryxTheme.ts` points Astryx's tokens at those variables rather than at colors of its own (D-083).
 - Panels are flat with a 1px line; only dialogs, toasts and the reaction tray cast a shadow (D-083).
 - A message alerts only when its id is above the loaded cursor and the user's read pointer, and it is encrypted; the urgent flag counts only when the signature checks out (D-049, D-023, D-078).
 - Drafts and unsent messages live in IndexedDB, are removed at sign-out, and a retry keeps the client id (D-051).

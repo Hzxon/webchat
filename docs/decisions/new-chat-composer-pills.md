@@ -8,5 +8,5 @@ have 12px corners, with a 4px corner where a run of messages starts, and the tim
 end of the last line. These are the only corners in the chat pane that skip the 6px `--radius` of
 D-083. A round box reads as the one place to type, as in the phone chat apps students know.
 
-Cost: an exception to "every corner uses `--radius`", which D-083 and `.claude/rules/client.md`
-now name.
+Cost: an exception to "every corner uses `--radius`", which `.claude/rules/client.md` states, so
+that line should name the composer and the bubbles once this is added.
