@@ -212,11 +212,6 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
           </>
         ) : !keys ? (
           <>
-            <Text as="p" color="secondary">
-              Your coding agent runs on your laptop, with Claude Code, Codex or another harness. It answers your
-              questions about your team’s code and works on the cards you hand it, and nobody else’s. It needs a Mac or
-              Linux for now{/windows/i.test(navigator.userAgent) ? '. On Windows, open Ubuntu on WSL2 and run it there' : ''}.
-            </Text>
             {release && (
               <>
                 <h3 className="connect-h">Run this line in a terminal on your laptop</h3>
@@ -229,8 +224,9 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
                   onCopyError={() => setNote('Select the text, then copy it.')}
                 />
                 <Text as="p" color="secondary">
-                  It installs the agent, asks before it installs anything else, and keeps it running whenever you are
-                  logged in. It needs an account that can use sudo, or an administrator on a Mac.
+                  It installs the agent and keeps it running whenever you are logged in. It needs a Mac or Linux, and an
+                  account that can use sudo.
+                  {/windows/i.test(navigator.userAgent) && ' On Windows, open Ubuntu on WSL2 and run it there.'}
                 </Text>
               </>
             )}

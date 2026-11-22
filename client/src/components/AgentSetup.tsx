@@ -30,7 +30,6 @@ import { useAppState } from '../store';
 import { AgentAsks } from './AgentAsks';
 import { usePhone } from './AgentDialog';
 import { HarnessLogo } from './HarnessPicker';
-import { formatAgo } from './format';
 import { PickItem } from './PickItem';
 
 /** How long the dialog waits for the agent's answer before it says none came. */
@@ -323,25 +322,19 @@ function SetupForm({ agent }: { agent: UserDTO }) {
               )}
             </section>
           )}
-          <Text as="p" color="secondary">
-            Your settings, hooks, MCP servers and plugins stay off in card runs, since a run follows cards your teammates
-            wrote.{' '}
-            {takesAsks(agent.protocol)
-              ? 'It asks you in Coding agents before an action its harness would ask about.'
-              : 'Update your agent to be asked before such an action; until then it refuses it.'}
-          </Text>
+          {/* An older agent refuses what its harness would ask about, so the owner learns to update it. */}
+          {!takesAsks(agent.protocol) && (
+            <Text as="p" color="secondary">
+              Update your agent to be asked before an action its harness would ask about; until then it refuses it.
+            </Text>
+          )}
           {late && <Banner status="error" title={`Your agent did not answer. ${WAKE}`} />}
         </div>
       </div>
       <footer className="setup-foot">
+        {/* The foot holds Apply alone, and once the agent confirms, what the next run loads. */}
         <Text color="secondary">
-          {saving && !waiting && same(choice, answer.choice)
-            ? `Saved. The next run and answer load ${setupWords(answer.choice)}.`
-            : !same(choice, answer.choice)
-              ? 'Unsaved changes.'
-              : answer.applied
-                ? `Its last run, ${formatAgo(answer.applied.at)}, loaded ${setupWords(answer.applied)}.`
-                : ''}
+          {saving && !waiting && same(choice, answer.choice) ? `Saved. The next run and answer load ${setupWords(answer.choice)}.` : ''}
         </Text>
         <Button variant="primary" type="submit" isLoading={busy} isDisabled={same(choice, answer.choice)} label="Apply" />
       </footer>
