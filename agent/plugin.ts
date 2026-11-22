@@ -425,7 +425,7 @@ export class Plugin {
     const own = this.linkedHarnesses().some((h) => h.offers.knobs.includes('own')) ? AGENT_LEVEL.own : 0;
     // A terminal's session goes on only in the owner's own setup, so the adapters that run it list them.
     const sessions = own ? AGENT_LEVEL.sessions : 0;
-    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | AGENT_LEVEL.events | AGENT_LEVEL.controls | asks | own | sessions | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
+    this.client!.protocol = AGENT_LEVEL.answers | AGENT_LEVEL.setup | AGENT_LEVEL.events | AGENT_LEVEL.controls | AGENT_LEVEL.anywhere | asks | own | sessions | ((await signedIn()) && !(await this.noHarness()) ? AGENT_LEVEL.cards : 0);
   }
 
   /** The work that keeps an agent awake while it goes to sleep: its running cards and questions. */
@@ -1325,7 +1325,8 @@ export class Plugin {
     // Sessions outside WebChat claim with draft pull requests, which the sandboxed shell cannot list (R-041).
     const listing = folder && openPulls(folder.repo);
     const board = await this.board(conversation.project);
-    if (!folder && !board) throw new Error('I am not in that project, so I cannot read its board. Add me to it, then ask again.');
+    // A prompt with neither a project nor a repository runs in an empty folder, with no board.
+    if (!folder && conversation.project !== undefined && !board) throw new Error('I am not in that project, so I cannot read its board. Add me to it, then ask again.');
     // Every turn fetches, so a reply after a merge reads the merged code, not the first turn's. In
     // their own setup the turn works in their folder as it stands, which nothing here moves.
     const base = folder && !own ? await this.fetchBase(folder).catch(() => {

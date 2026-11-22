@@ -7,7 +7,7 @@ import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AGENT_LEVEL, listsSessions, type PermissionMode, type UserDTO } from '../../../shared/types';
+import { AGENT_LEVEL, asksAnywhere, listsSessions, type PermissionMode, type UserDTO } from '../../../shared/types';
 import {
   asleep,
   blockedBy,
@@ -622,7 +622,7 @@ function AddFolder({ agents, onClose }: { agents: UserDTO[]; onClose: () => void
 
 /**
  * A new question (R-038): the box asks in one of the user's projects, about one of its repositories
- * or its board alone, or in No project, about one of the agent's folders, with the harness and model picked, in the user's own setup or restricted.
+ * or its board alone, or in No project, about one of the agent's folders or none, with the harness and model picked, in the user's own setup or restricted.
  */
 function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void }) {
   const users = useAppState((s) => s.users);
@@ -654,19 +654,20 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
     return repos.length && linked[projectId]?.configured !== false ? repos : [...repos, ''];
   };
   const askable = mine.filter((p) => agentIn(p.id));
-  // Outside every project, a chat runs in one of the user's agents' folders, with no board in its brief.
+  // Outside every project, a chat runs in one of the user's agents' folders, or with No folder in an
+  // empty one on the first agent's laptop, with no board in its brief.
   const folders = agents.flatMap((a) => a.agentRepos.map((s) => ({ agent: a, repo: s.repo })));
-  const outside = picked.project === 0 || (!askable.length && folders.length > 0);
+  const outside = picked.project === 0 || !askable.length;
   // The project picked, else the newest conversation's, else the first; then its repository picked, or its first.
   const project = outside
     ? undefined
     : (askable.find((p) => p.id === picked.project) ??
       askable.find((p) => threads[0] && p.id === threadProject(threads[0], docs, conversations)) ??
       askable[0]);
-  const folder = outside ? (folders.find((f) => `${f.agent.id} ${f.repo}` === picked.repo) ?? folders[0]) : undefined;
+  const folder = outside ? (folders.find((f) => `${f.agent.id} ${f.repo}` === picked.repo) ?? (picked.repo === '' ? undefined : folders[0])) : undefined;
   const repos = project ? choicesOf(project.id) : [];
-  const repo = folder?.repo ?? repos.find((r) => r === picked.repo) ?? repos[0];
-  const agent = folder?.agent ?? (project && agentIn(project.id));
+  const repo = outside ? folder?.repo : (repos.find((r) => r === picked.repo) ?? repos[0]);
+  const agent = folder?.agent ?? (outside ? agents[0] : project && agentIn(project.id));
   const { list, harness, pick, own: owns } = useHarnessPick(agent, true);
   const [model, setModel] = useState<string>();
   const [mode, setMode] = useState<PermissionMode>('default');
@@ -675,7 +676,11 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
   const canOwn = !!harness && owns.includes(harness);
   const own = canOwn && !restricted;
   // With no repository, the agent answers from the board alone, on its laptop (R-038).
-  const blocked = !agent ? 'Connect a folder on your laptop, or add your agent to one of your projects: Add it, in the list.' : blockedBy(seatFor(agent, repo ?? ''));
+  const blocked = !agent
+    ? 'Connect your agent first: Connect agent, below the list.'
+    : outside && !repo && !asksAnywhere(agent.protocol)
+      ? 'Your agent is too old to answer with no folder. Run webchat-agent setup in a terminal on your laptop to update it.'
+      : blockedBy(seatFor(agent, repo ?? ''));
   const loading = !!project && !linked[project.id];
   // Until a project's repositories load, the box speaks of code, as most questions are about it.
   const code = !!repo || loading;
@@ -755,13 +760,13 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
             <Box
               name="agents:ask"
               pill
-              placeholder={code ? 'Ask about your code' : 'Ask about your project'}
+              placeholder={code ? 'Ask about your code' : project ? 'Ask about your project' : 'Ask anything'}
               canSend={!blocked && !loading}
               onSend={ask}
               model={modelButton}
             />
           </div>
-          {(project || folder) && (
+          {(project || (outside && agent)) && (
             <div className="agents-where agents-new-where">
               <span>
                 <FolderIcon width={16} height={16} />
@@ -771,7 +776,7 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
                       {p.name}
                     </option>
                   ))}
-                  {folders.length > 0 && <option value={0}>No project</option>}
+                  <option value={0}>No project</option>
                 </select>
               </span>
               <span>
@@ -785,12 +790,13 @@ function NewChat({ threads, onClose }: { threads: Thread[]; onClose: () => void 
                     ))}
                   </select>
                 ) : (
-                  <select aria-label="Folder" value={`${agent!.id} ${repo}`} onChange={(e) => setPicked({ project: 0, repo: e.target.value })}>
+                  <select aria-label="Folder" value={folder ? `${folder.agent.id} ${folder.repo}` : ''} onChange={(e) => setPicked({ project: 0, repo: e.target.value })}>
                     {folders.map((f) => (
                       <option key={`${f.agent.id} ${f.repo}`} value={`${f.agent.id} ${f.repo}`}>
                         {short(f.repo)}
                       </option>
                     ))}
+                    <option value="">No folder</option>
                   </select>
                 )}
               </span>

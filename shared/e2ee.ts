@@ -580,9 +580,9 @@ export function readRun(raw: Record<string, unknown> | undefined): RunDTO | unde
 /** A conversation's message, if it has the right shape. */
 export function readPrompt(raw: Record<string, unknown> | undefined): PromptDTO | undefined {
   if (raw?.kind === 'prompt') {
-    // A project with no repository asks about its board alone (R-038).
+    // A project with no repository asks about its board alone (R-038); with neither, it asks in an empty folder.
     const repo = typeof raw.repo === 'string' && isRepoName(raw.repo) ? raw.repo : undefined;
-    if ((raw.repo !== undefined && !repo) || (!repo && !isId(raw.project)) || !isId(raw.sentAt)) return;
+    if ((raw.repo !== undefined && !repo) || !isId(raw.sentAt)) return;
     const harness = short(raw.harness, LIMITS.harnessFieldLength);
     return { kind: 'prompt', sentAt: raw.sentAt, ...(repo && { repo }), ...(isId(raw.project) && { project: raw.project }), ...(harness && { harness }), ...(raw.asks === true && { asks: true as const }), ...(raw.own === true && { own: true as const }), ...(raw.events === true && { events: true as const }), ...readCardAsk(raw.card), ...readControls(raw), ...(typeof raw.resume === 'string' && SESSION_ID.test(raw.resume) && { resume: raw.resume }) };
   }

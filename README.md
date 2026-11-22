@@ -529,8 +529,8 @@ Under **Coding agents**, the pane lists your projects. Each shows its repositori
 agent has them on the laptop, with **Forget** to drop a folder, which leaves its files. Then come
 the project's conversations. Ask in a project and one of its repositories. A project that links no
 repository gets answers from its board alone: its decisions and cards. To ask about a folder outside
-your projects, pick **No project** and one of your agent's connected folders. Those chats list under
-**No project** and read no board.
+your projects, pick **No project** and one of your agent's connected folders, or **No folder** to ask
+about anything in an empty folder. Those chats list under **No project** and read no board.
 
 When you ask your agent to draft a card or a decision, it first checks the draft against the
 board's cards and decisions, the code and the repository's open pull requests. The draft lists what

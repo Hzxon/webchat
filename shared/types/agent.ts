@@ -13,7 +13,7 @@ import { type PublicKeysDTO, type UserDTO } from './account.js';
  * it took one under 100 before 64, and an agent follows its server's release, so none meets an
  * older server.
  */
-export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4, asks: 8, own: 16, events: 32, controls: 64, sessions: 128 } as const;
+export const AGENT_LEVEL = { answers: 1, cards: 2, setup: 4, asks: 8, own: 16, events: 32, controls: 64, sessions: 128, anywhere: 256 } as const;
 
 /** The levels the server takes: one bit for each of 16 behaviours. */
 export const MAX_AGENT_LEVEL = 2 ** 16;
@@ -25,6 +25,8 @@ export const takesAsks = (level: number) => (level & AGENT_LEVEL.asks) !== 0;
 export const takesOwn = (level: number) => (level & AGENT_LEVEL.own) !== 0;
 export const takesControls = (level: number) => (level & AGENT_LEVEL.controls) !== 0;
 export const listsSessions = (level: number) => (level & AGENT_LEVEL.sessions) !== 0;
+/** Whether it answers a prompt that names neither a project nor a repository, in an empty folder. */
+export const asksAnywhere = (level: number) => (level & AGENT_LEVEL.anywhere) !== 0;
 
 /** A harness's session that a terminal started in a connected folder, as the pane lists it (R-072). */
 export interface TerminalSessionDTO {
