@@ -4,7 +4,7 @@
 // pick in this browser only. A harness that cannot do what is asked, a card or a question, is greyed,
 // with the reason.
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { PermissionMode, UserDTO } from '../../../shared/types';
+import type { UserDTO } from '../../../shared/types';
 import { SearchIcon } from './icons';
 import { Selector } from '@astryxdesign/core/Selector';
 import { blockedBy, useAgentChat } from '../agents';
@@ -142,12 +142,6 @@ function remember(favs: Pick[], p: Pick) {
   }
 }
 
-export const MODE_WORDS: Record<PermissionMode, [string, string]> = {
-  default: ['Asks before it acts', 'It asks you before an edit or a command.'],
-  acceptEdits: ['Accepts edits', 'It edits files without asking, and asks before a command.'],
-  plan: ['Plan first', 'It reads and plans, and changes nothing until you say go.'],
-};
-
 /** The effort levels of a pick's model, or of the harness's default model when it lists none for that one. */
 export function effortsOf(list: HarnessChoice[] | undefined, p: Pick) {
   const efforts = list?.find((h) => h.name === p.harness)?.efforts;
@@ -159,33 +153,26 @@ export const effortWord = (effort: string) => (effort === 'xhigh' ? 'Extra high'
 
 /**
  * The harness, model and effort picker that the ask box's model button opens: a rail of harnesses,
- * the models of the one picked, the efforts its picked model takes, with, in the owner's own
- * setup, how the session asks before it acts. A restricted session keeps the mode WebChat sets
- * (D-115). A harness that cannot take the question is greyed; `locked` keeps a running session on
- * its harness.
+ * the models of the one picked, and the efforts its picked model takes. A harness that cannot take
+ * the question is greyed; `locked` keeps a running session on its harness. The permission mode is
+ * the shield's (docs/decisions/new-setup-switch.md).
  */
 export function ModelPicker({
   list,
   value,
   effort,
-  mode,
-  own,
   locked,
   onPick,
   onEffort,
-  onMode,
   onClose,
 }: {
   list: HarnessChoice[];
   value: Pick;
   /** The effort picked, or nothing for the harness's default. */
   effort?: string;
-  mode: PermissionMode;
-  own: boolean;
   locked?: boolean;
   onPick: (pick: Pick) => void;
   onEffort: (effort: string | undefined) => void;
-  onMode: (mode: PermissionMode) => void;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState(value.harness || list[0]?.name || '');
@@ -259,28 +246,16 @@ export function ModelPicker({
           {shown.length === 0 && <p>{tab === '' && !q ? 'Models you pick show here.' : 'No model matches.'}</p>}
         </div>
       </div>
-      <div className="model-picker-modes">
-        <div role="radiogroup" aria-label="Effort">
-          <span className="model-picker-head">Effort</span>
-          {efforts.length ? (
-            [undefined, ...efforts].map((e) => (
-              <button key={e ?? ''} type="button" role="radio" aria-checked={e === effort} onClick={() => onEffort(e)}>
-                {e ? effortWord(e) : 'Default'}
-              </button>
-            ))
-          ) : (
-            <p>{value.harness} sets its own effort.</p>
-          )}
-        </div>
-        {own && (
-          <div role="radiogroup" aria-label="Permission mode">
-            <span className="model-picker-head">Mode</span>
-            {(Object.keys(MODE_WORDS) as PermissionMode[]).map((m) => (
-              <button key={m} type="button" role="radio" aria-checked={m === mode} title={MODE_WORDS[m][1]} onClick={() => onMode(m)}>
-                {MODE_WORDS[m][0]}
-              </button>
-            ))}
-          </div>
+      <div className="model-picker-efforts" role="radiogroup" aria-label="Effort">
+        <span className="model-picker-head">Effort</span>
+        {efforts.length ? (
+          [undefined, ...efforts].map((e) => (
+            <button key={e ?? ''} type="button" role="radio" aria-checked={e === effort} onClick={() => onEffort(e)}>
+              {e ? effortWord(e) : 'Default'}
+            </button>
+          ))
+        ) : (
+          <p>{value.harness} sets its own effort.</p>
         )}
       </div>
     </div>
@@ -293,10 +268,10 @@ const StarIcon = () => (
   </svg>
 );
 
-/** The ask box's model button: the harness's mark, the model, the effort, and the mode of an own-setup session; it opens the picker above or below. */
+/** The ask box's model button: the harness's mark, the model and the effort; it opens the picker above or below. */
 export function ModelButton(props: Omit<Parameters<typeof ModelPicker>[0], 'onClose'> & { up?: boolean }) {
   const [open, setOpen] = useState(false);
-  const { value, effort, mode, own, up } = props;
+  const { value, effort, up } = props;
   if (!props.list.length) return null;
   return (
     <span className={`model-button${up ? ' is-up' : ''}`}>
@@ -309,7 +284,6 @@ export function ModelButton(props: Omit<Parameters<typeof ModelPicker>[0], 'onCl
         <HarnessLogo name={value.harness} />
         <span>{value.model ?? 'Default'}</span>
         {effort && <span className="model-button-mode">{effortWord(effort)}</span>}
-        {own && mode !== 'default' && <span className="model-button-mode">{MODE_WORDS[mode][0]}</span>}
       </button>
       {open && (
         <ModelPicker

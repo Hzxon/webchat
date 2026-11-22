@@ -6,7 +6,7 @@ import { IconButton } from '@astryxdesign/core/IconButton';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { Text } from '@astryxdesign/core/Text';
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { LIMITS, takesControls, type RunRequest, type SessionEventDTO } from '../../../shared/types';
+import { LIMITS, switchesSetup, takesControls, type RunRequest, type SessionEventDTO } from '../../../shared/types';
 import { blockedBy, THREAD_STATE, threadProject, WAKE, type Seat, type Thread } from '../agents';
 import { answerPermit, askClone, askFix, cancelRun, discardMessage, loadSteps, retryMessage, saveDraft, tellAgent } from '../chat';
 import type { ChatMessage } from '../e2ee/keyring';
@@ -18,7 +18,7 @@ import { AgentDraft } from './AgentDraft';
 import { Markdown } from './Markdown';
 import { QuestionCard } from './AgentAsks';
 import { RunAsk, RunPanel, RunStep } from './RunPanel';
-import { Controls, Summary, type Choice } from './SessionControls';
+import { Controls, ShieldIcon, Summary, ThreadSetup, type Choice } from './SessionControls';
 import { SessionDetails } from './SessionDetails';
 import { SessionSteps } from './SessionSteps';
 
@@ -500,7 +500,17 @@ export function AgentThread({
                 )
               }
             />
-            {!panel && <WhereItRuns thread={thread} seat={seat} />}
+            {!panel && (
+              <WhereItRuns
+                thread={thread}
+                seat={seat}
+                setup={
+                  controls &&
+                  switchesSetup(seat!.protocol) &&
+                  thread.harness && <ThreadSetup thread={thread} agent={seat!.agent} choice={choice} onChoice={setChoice} isDisabled={!!blocked || working || asking} />
+                }
+              />
+            )}
           </>
         )}
     </>
@@ -569,7 +579,7 @@ const CONTEXT_GUIDE = 200_000;
  * setup or restricted by WebChat, and how much context its newest turn sent (R-072). A session's
  * setup is fixed when it starts (D-157), so the mode reads, it does not switch.
  */
-function WhereItRuns({ thread, seat }: { thread: Thread; seat: Seat | undefined }) {
+function WhereItRuns({ thread, seat, setup }: { thread: Thread; seat: Seat | undefined; setup?: ReactNode }) {
   const about = thread.about ?? {};
   // A card's branch is the one its run left, which its done report names.
   const done = thread.messages.findLast((m) => m.run && 'branch' in m.run && m.run.branch)?.run;
@@ -591,7 +601,8 @@ function WhereItRuns({ thread, seat }: { thread: Thread; seat: Seat | undefined 
           {seat.agent.displayName}
         </span>
       )}
-      {(thread.kind === 'card' || about.own !== undefined) && (
+      {setup ||
+        ((thread.kind === 'card' || about.own !== undefined) && (
         <span
           className={own ? 'is-own' : undefined}
           title={
@@ -603,7 +614,7 @@ function WhereItRuns({ thread, seat }: { thread: Thread; seat: Seat | undefined 
           <ShieldIcon own={own} />
           {own ? 'Your own setup' : 'Restricted by WebChat'}
         </span>
-      )}
+      ))}
       <span className="agents-where-gap" />
       {used !== undefined && (
         <span className="agents-ring" role="img" aria-label={`${k}k tokens sent in the newest turn, about ${used}% of a 200k context`} title={`${k}k tokens in the newest turn`}>
@@ -634,16 +645,3 @@ export const LaptopIcon = () => (
   </svg>
 );
 
-export const ShieldIcon = ({ own }: { own: boolean }) => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" />
-    {own ? (
-      <>
-        <line x1="12" y1="8" x2="12" y2="12.5" />
-        <circle cx="12" cy="15.5" r=".6" fill="currentColor" />
-      </>
-    ) : (
-      <polyline points="9 12 11 14 15 10" />
-    )}
-  </svg>
-);

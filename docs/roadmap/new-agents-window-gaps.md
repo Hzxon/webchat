@@ -16,11 +16,11 @@ Scope:
   without a run or a question waiting for it. Today `askClone` needs one.
 - Effort for a session's model, as the picker's third column shows it: a signed `effort` field
   on `prompt` and `reply`, which the harness adapters pass on where the harness takes one. Done:
-  Claude Code takes `--effort`, Codex each model's efforts as it lists them, and the picker shows only the picked model's; the permission mode of an
-  own-setup session sits under it.
-- Switching a running session between the owner's own setup and restricted. A session's setup
-  is fixed when it starts (D-157), and a card run is always restricted, so this needs a decision
-  first.
+  Claude Code takes `--effort`, Codex each model's efforts as it lists them, and the picker shows
+  only the picked model's. The permission mode moved to the shield under the ask box
+  (docs/decisions/new-setup-switch.md).
+- Switching a running session between the owner's own setup and restricted: done by a hand over
+  to the same harness (docs/decisions/new-setup-switch.md).
 
 Done when: each of these works from the window, signed where it changes what runs, and the
 rules files name the new fields.

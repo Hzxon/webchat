@@ -144,10 +144,12 @@ export type PromptDTO =
   // A batch of the session's steps, in a message of kind `events` (R-072).
   | { kind: 'events'; to: string; events: SessionEventDTO[]; about?: SessionAboutDTO }
   // `handover` asks for a summary to hand the session to another harness, or, with the summary as
-  // the user saw and edited it, hands it over (D-156).
-  | { kind: 'reply'; to: string; sentAt: number; card?: CardAskDTO; model?: string; effort?: string; mode?: PermissionMode; handover?: { harness: string; summary?: string } }
+  // the user saw and edited it, hands it over (D-156). With `own`, the new session runs in the
+  // user's own setup or restricted, so the same harness can switch setup (docs/decisions/new-setup-switch.md).
+  | { kind: 'reply'; to: string; sentAt: number; card?: CardAskDTO; model?: string; effort?: string; mode?: PermissionMode; handover?: { harness: string; summary?: string; own?: boolean } }
   // The summary a harness wrote for handing its session over, which the user reads and may edit (D-156).
-  | { kind: 'summary'; to: string; harness: string }
+  // `own` names the setup a switch hands over to (docs/decisions/new-setup-switch.md).
+  | { kind: 'summary'; to: string; harness: string; own?: boolean }
   | { kind: 'cancel'; to: string; sentAt: number }
   | { kind: 'answer'; to: string; card?: CardDraftDTO }
   | { kind: 'failed'; to: string }
@@ -158,8 +160,8 @@ export type PromptDTO =
   | { kind: 'note'; to: string };
 
 /** A session's permission mode in the user's own setup, as Claude Code names them (R-072). */
-export type PermissionMode = 'default' | 'acceptEdits' | 'plan';
-export const PERMISSION_MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan'];
+export type PermissionMode = 'auto' | 'default' | 'acceptEdits' | 'plan';
+export const PERMISSION_MODES: readonly PermissionMode[] = ['auto', 'default', 'acceptEdits', 'plan'];
 
 /** The new card form's fields as they stand, which ask the session for one draft of that kind (R-071). */
 export interface CardAskDTO {

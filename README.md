@@ -207,7 +207,8 @@ What it does not protect against:
   WebChat's sandbox and rules do not. The board's cards in its brief, which teammates write, and
   the repository's files can steer it to read or change your files, use your own `gh` login and
   change your working tree. Card runs and Check again stay restricted, and the agent's keys and
-  `gh` login stay in the locked room.
+  `gh` login stay in the locked room. A chat switches setup from the shield under its box. It goes
+  on from a summary you read first, so a restricted chat's summary can steer your own setup.
 - **Photos and files: who sent one, to which chat, when, and how large.** The browser encrypts a
   file with a key of its own before it uploads it. The key, the name, the type and the preview of a
   photo travel only inside the encrypted message. The server sees who uploaded a file, to which
