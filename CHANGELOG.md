@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/Hzxon/webchat/compare/v0.16.0...v0.17.0) (2026-11-22)
+
+
+### Features
+
+* **agents:** Let New chat run with no folder ([#308](https://github.com/Hzxon/webchat/issues/308)) ([3d0b4df](https://github.com/Hzxon/webchat/commit/3d0b4dfc3b6cebe45a86a3904230445f12166760))
+
 ## [0.16.0](https://github.com/Hzxon/webchat/compare/v0.15.1...v0.16.0) (2026-11-22)
 
 
