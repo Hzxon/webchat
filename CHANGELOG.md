@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.16.0](https://github.com/Hzxon/webchat/compare/v0.15.1...v0.16.0) (2026-11-22)
+
+
+### Features
+
+* **agents:** Let New chat run outside a project ([#307](https://github.com/Hzxon/webchat/issues/307)) ([483397c](https://github.com/Hzxon/webchat/commit/483397cded2c71b5d9b60ac3a833ecb0a35f9692))
+
+
+### Bug Fixes
+
+* **agent:** Keep setup's second answer ([#306](https://github.com/Hzxon/webchat/issues/306)) ([7c08b18](https://github.com/Hzxon/webchat/commit/7c08b18a7dd4bc5be25a0bed23108b517bdfd2e7))
+* **chat:** Draw New chat as a compose icon ([#304](https://github.com/Hzxon/webchat/issues/304)) ([808ab62](https://github.com/Hzxon/webchat/commit/808ab6287f69791ad06ca970e4c63361ae145be2))
+
 ## [0.15.1](https://github.com/Hzxon/webchat/compare/v0.15.0...v0.15.1) (2026-11-22)
 
 
