@@ -21,7 +21,7 @@ import {
   type Seat,
   type Thread,
 } from '../agents';
-import { addProjectMembers, askAgent, forgetFolder, loadChat, loadOlder, putToSleep } from '../chat';
+import { askAgent, forgetFolder, loadChat, loadOlder, pickFolder, putToSleep } from '../chat';
 import type { ChatConversation } from '../e2ee/keyring';
 import { useLinkedRepos } from '../linkedRepos';
 import { actions, useAppState } from '../store';
@@ -267,12 +267,13 @@ function AgentsSidebar({
   const shown = useMemo(() => (q ? all.filter((t) => titleOf(t).toLowerCase().includes(q)) : all), [all, q]);
   const [menu, setMenu] = useState<'folder' | 'sleep' | 'gear' | null>(null);
   const toggle = (m: NonNullable<typeof menu>) => setMenu(menu === m ? null : m);
+  // Only projects one of the user's agents is in: an agent reads a project's board only as its member (rule 5).
   const mine = useMemo(
     () =>
       Object.values(projects)
-        .filter((p) => meId !== undefined && p.memberIds.includes(meId))
+        .filter((p) => meId !== undefined && p.memberIds.includes(meId) && agents.some((a) => p.memberIds.includes(a.id)))
         .sort((a, b) => a.name.localeCompare(b.name)),
-    [projects, meId],
+    [projects, meId, agents],
   );
   // Each project's conversations, and those in none of the user's projects.
   const { byProject, loose } = useMemo(() => {
@@ -423,7 +424,6 @@ function AgentsSidebar({
         {mine.map((p) => {
           const isOpen = !closed[p.id];
           const own = byProject.get(p.id) ?? [];
-          const inIt = agents.some((a) => p.memberIds.includes(a.id));
           return (
             <div key={p.id} className="agents-project">
               <button
@@ -436,22 +436,6 @@ function AgentsSidebar({
                 <span className="agents-row-title">{p.name}</span>
               </button>
               {isOpen && own.map((t) => row(t, true))}
-              {/* An agent reads a project's board only as its member (rule 5). */}
-              {isOpen && !inIt && agents[0] && (
-                <div className="agents-row is-nested is-note">
-                  <span className="agents-row-title">Your agent is not in it</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    label="Add it"
-                    onClick={() =>
-                      void addProjectMembers(p.id, [agents[0]!.id]).catch((err: Error) =>
-                        actions.addToast({ conversationId: null, title: 'Agent not added', body: err.message }),
-                      )
-                    }
-                  />
-                </div>
-              )}
             </div>
           );
         })}
@@ -572,8 +556,8 @@ function SleepPanel({ agents, threads, onClose }: { agents: UserDTO[]; threads: 
 
 /**
  * Add folder: the folders each agent works in, with where it stands on each and Forget, which takes
- * the folder's mark only, never its files (D-101). A new folder joins from its laptop, where
- * `webchat-agent connect` asks the owner here first (docs/decisions/connect-approval.md).
+ * the folder's mark only, never its files (D-101). Choose folder opens a folder window on that laptop,
+ * and the folder picked comes back as a connect request to approve (docs/decisions/connect-approval.md).
  */
 function AddFolder({ agents, onClose }: { agents: UserDTO[]; onClose: () => void }) {
   const [query, setQuery] = useState('');
@@ -610,12 +594,22 @@ function AddFolder({ agents, onClose }: { agents: UserDTO[]; onClose: () => void
           <LaptopIcon />
           <span className="agents-row-title">{a.displayName}</span>
           <span className={`agents-dot${a.online ? ' is-on' : ''}`} aria-hidden="true" />
+          {a.online && (
+            <Button
+              size="sm"
+              label="Choose folder"
+              aria-label={`Choose a folder on ${a.displayName}`}
+              onClick={() =>
+                void pickFolder(a.id).then(
+                  () => actions.addToast({ conversationId: null, title: 'Look at that laptop', body: 'A folder window opens there. Pick a copy of a repository, then approve it here.' }),
+                  (err: Error) => actions.addToast({ conversationId: null, title: 'Folder window not opened', body: err.message }),
+                )
+              }
+            />
+          )}
         </div>
       ))}
-      <p className="agents-popover-note">
-        To add a folder, run <code>webchat-agent connect</code> in it on that laptop. Your agent asks you here before it
-        works there.
-      </p>
+      <p className="agents-popover-note">Choose folder opens a folder window on that laptop. Your agent asks you here before it works there.</p>
     </Popover>
   );
 }

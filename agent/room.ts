@@ -419,6 +419,12 @@ export class SocketBench implements Bench {
     return { exists, repo };
   }
 
+  async pickFolder() {
+    const dir = await this.call('pickFolder', {});
+    if (dir !== null && !(typeof dir === 'string' && path.isAbsolute(dir))) throw mismatch();
+    return dir;
+  }
+
   /** Sends a bundle of the keyholder's, which the runner fetches by the id it is given. */
   private async sent(file: string, send: (transfer: string) => Promise<unknown>) {
     await send(this.room.transfer(file, 'get')).catch((error: unknown) => {
@@ -552,6 +558,8 @@ export async function connectRunner({ file, bench, version }: { file: string; be
           return bench.sessions(String(params.harness), String(params.dir));
         case 'checkout':
           return bench.checkout(String(params.dir));
+        case 'pickFolder':
+          return bench.pickFolder();
         case 'take':
         case 'clone':
           return fetched(String(params.transfer), async (bundle) => {

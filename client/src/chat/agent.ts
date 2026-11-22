@@ -115,6 +115,11 @@ export async function forgetFolder(agentId: number, repo: string) {
   await sendContent(await startDirectChat(agentId), { text: `Forget the folder of ${repo}`, forget: { repo, sentAt: Date.now() } }, false);
 }
 
+/** Has the user's agent open a folder window on its laptop, for Add folder; the folder picked comes back as a connect request to approve. */
+export async function pickFolder(agentId: number) {
+  await sendContent(await startDirectChat(agentId), { text: 'Choose a folder on this laptop', pick: { sentAt: Date.now() } }, false);
+}
+
 /** Replies in a conversation with an agent, or stops its turn. Both name the prompt's client id (D-102). */
 export function tellAgent(conversationId: number, to: string, kind: 'reply' | 'cancel', text: string, extra: ReplyExtra = {}) {
   // A reply from the new card form carries its fields as they stand, so the draft builds on the user's edits (R-071);
