@@ -847,6 +847,7 @@ export class Plugin {
     if (run?.kind === 'fix') return this.go(message, run).catch(log);
     if (run?.kind === 'clone' || prompt?.kind === 'clone') return this.clone(message).catch(log);
     if (message.content?.forget) return this.forget(message).catch(log);
+    if (message.content?.pick) return this.pickOnWord(message).catch(log);
     if (message.content?.sleep) return this.sleepOnWord(message).catch(log);
     if (message.content?.setup) return this.setupOnWord(message).catch(log);
     if (message.content?.sessions) return this.listSessions(message).catch(log);
@@ -1002,6 +1003,22 @@ export class Plugin {
     if (!folder || !this.fromOwner(message, forget.sentAt)) return;
     await fs.rm(markOf(this.options.dataDir, folder.repo), { force: true });
     await this.scan();
+  }
+
+  /**
+   * Opens a folder window on the laptop on its owner's word in the pane, and asks them to connect the
+   * folder they pick, as `webchat-agent connect` does: the pick itself marks nothing (docs/decisions/connect-approval.md).
+   */
+  private async pickOnWord(message: OpenedMessage) {
+    if (!this.fromOwner(message, message.content!.pick!.sentAt)) return;
+    const say = (text: string) => this.client!.send(message.conversationId, { text });
+    const dir = await this.bench.pickFolder().catch(async (error: unknown) => void (await say(`I could not open a folder window: ${messageOf(error)}`)));
+    if (!dir) return;
+    const { repo } = await this.bench.checkout(dir);
+    if (!repo) return void (await say(`${shown(dir)} is not a copy of a GitHub repository. Pick a folder that is.`));
+    if ((await fs.readFile(markOf(this.options.dataDir, repo), 'utf8').catch(() => '')) === dir) return void (await say(`${repo} is connected to this folder already.`));
+    await this.fileAsk({ kind: 'connect', repo, dir });
+    await this.sendAsks();
   }
 
   /** Whether a project that holds both the owner and this agent links the repository, in lower case (D-050, D-108). */

@@ -523,8 +523,10 @@ Setup needs administrator rights on the laptop, so a plugin user without them ha
 Hand the agent a card, or ask it about a repository. When the laptop has no copy of the
 repository, the agent says so and offers **Clone it**. On your click it clones the repository
 into `~/WebChat/<owner>/<name>` with its own GitHub login, and goes on. It clones only a repository
-one of your projects links. To use a copy you already have instead, run `webchat-agent connect` in
-it and approve the request under **Coding agents**. **Forget** there undoes it. The files stay.
+one of your projects links. To use a copy you already have instead, open **Add folder** in the
+agents window and press **Choose folder** next to your laptop. A folder window opens on that
+laptop. Pick the copy, then approve the request under **Coding agents**. Running
+`webchat-agent connect` in the folder does the same. **Forget** there undoes it. The files stay.
 
 Under **Coding agents**, the pane lists your projects. Each shows its repositories and whether your
 agent has them on the laptop, with **Forget** to drop a folder, which leaves its files. Then come
@@ -707,8 +709,8 @@ Then:
   login stays valid on GitHub until you revoke it. Revoking "GitHub CLI" under Authorized OAuth Apps
   at github.com/settings/applications revokes every `gh` login of that GitHub account, including your own on
   your laptop: if the agent used your own account, run `gh auth login` again afterwards.
-- In a folder you already have, run `webchat-agent connect` to ask to point the agent at it instead of
-  cloning. It returns at once and changes nothing: the request shows under **Coding agents** with the
+- In a folder you already have, run `webchat-agent connect`, or pick it with **Choose folder** under
+  **Add folder**, to ask to point the agent at it instead of cloning. It returns at once and changes nothing: the request shows under **Coding agents** with the
   repository and the folder, and the folder is connected only when you approve it there, within 10
   minutes. The agent must be paired and running. `webchat-agent sleep` and `webchat-agent wake` put
   the agent to sleep and wake it.
