@@ -6,7 +6,19 @@ import '@astryxdesign/core/reset.css';
 import '@astryxdesign/core/astryx.css';
 
 export { BoardTheme } from './BoardTheme';
-export { BoardDrawer, BoardLane, BoardLanes, CardFace, NeedsRow, ProposalFace } from '../../../client/src/components/BoardParts';
+export {
+  BoardGroup,
+  BoardLane,
+  BoardLanes,
+  BoardMenu,
+  CardFace,
+  CardRow,
+  Face,
+  FoldChip,
+  ProposalFace,
+  PullNumber,
+  StateChip,
+} from '../../../client/src/components/BoardParts';
 export { CardPeek } from '../../../client/src/components/CardPeek';
 export { RunAsk, RunPanel, RunStep } from '../../../client/src/components/RunPanel';
 export { Tag } from '../../../client/src/components/PullTags';
@@ -18,7 +30,6 @@ export { Button } from '@astryxdesign/core/Button';
 export { IconButton } from '@astryxdesign/core/IconButton';
 export { Text } from '@astryxdesign/core/Text';
 export {
-  BellIcon,
   FileIcon,
   HistoryIcon,
   PencilIcon,

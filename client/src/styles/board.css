@@ -1,12 +1,18 @@
-/* Project board (R-021): two columns of cards, one at a time behind tabs. The Roadmap's lanes stack at phone width. */
+/* Project board (R-021): tinted lanes of white cards on the pane, one accent, and on a phone one lane
+   at a time behind tabs. A card opens in its peek: the card on the left, the agent's run on the right. */
+
+:root {
+  --card: #ffffff;
+  --lane: #efeee9;
+}
+
+:root:where([data-theme='dark']) {
+  --card: #211f18;
+  --lane: #1a1812;
+}
 
 .board-view {
   background: var(--panel);
-}
-
-.board-tabs {
-  display: flex;
-  margin-left: auto;
 }
 
 /* The owner's link of the board to a repository, until it is linked (R-040). */
@@ -46,117 +52,638 @@
   display: none;
 }
 
-.board-column-head {
+/* The header: the title and the Roadmap and Decisions switch, then the folded lanes, the finished lane's button, the members and the layout. */
+.board-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-height: 60px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
+  padding: 10px 12px 10px 16px;
 }
 
-/* The filter, where the column has one, and the new-card buttons at the right. */
-.board-tools {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.board-filter {
-  margin-right: auto;
-}
-
-.board-filter button {
-  padding: 5px 12px;
-  font-size: 14px;
-}
-
-.board-column-head h2 {
-  margin: 0 auto 0 0;
-  font-size: 17px;
-}
-
-.board-column-head .doc-note {
+.board-title {
   margin: 0;
+  font-size: 15px;
 }
 
-.board-new {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
-  font-size: 14px;
-}
-
-.board-cards {
+.board-gap {
   flex: 1;
-  overflow-y: auto;
-  padding: 12px 14px calc(24px + env(safe-area-inset-bottom));
-  overscroll-behavior: contain;
+  min-width: 0;
 }
 
-/* Ready, Running and In review side by side, above the Open drawer and the Done fold. */
-.board-lanes {
-  display: grid;
-  /* Lanes stack when the board is too narrow for three, as beside a wide sidebar. */
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0 12px;
-  margin-bottom: 8px;
+.board-none {
+  margin: 4px 16px 12px;
 }
 
-.board-lane h3,
-.board-group summary {
-  margin: 10px 0 6px;
+.board-count {
   color: var(--muted);
   font-size: 13px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.board-group summary {
-  cursor: pointer;
-}
-
-.board-lane small,
-.board-group small {
   font-weight: 400;
 }
 
-.board-card {
-  margin-bottom: 8px;
-  border: 1px solid var(--line);
+.lane-icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.lane-icon.is-running {
+  color: var(--accent);
+}
+
+.lane-icon.is-done {
+  color: var(--ok);
+}
+
+.board-icon-button,
+.board-quiet-button,
+.board-small-button,
+.board-fold-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
   border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.board-icon-button {
+  flex: none;
+  width: 32px;
+  height: 32px;
+}
+
+.board-quiet-button {
+  height: 32px;
+  padding: 0 8px;
+}
+
+/* The finished lane's button stays pressed while its lane shows. */
+.board-quiet-button[aria-pressed='true'] {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.board-small-button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+/* A folded lane is a dashed chip in the header, so it takes no lane width. */
+.board-fold-chip {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px dashed var(--line);
+  border-radius: 16px;
+  color: var(--text);
+}
+
+.board-people {
+  display: inline-flex;
+}
+
+.board-people > * + * {
+  margin-left: -6px;
+}
+
+.board-people .board-face {
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+/* The lanes: tinted columns, each scrolling on its own; the row scrolls sideways only when they do not fit. */
+.board-lanes {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+  padding: 4px 12px 12px;
+  overflow-x: auto;
+}
+
+.board-lane {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 200px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 12px;
+  background: var(--lane);
+}
+
+.board-lane-head,
+.board-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.board-lane-head {
+  padding: 8px 4px 4px 12px;
+}
+
+.board-lane-head .board-count {
+  margin-left: auto;
+}
+
+.board-lane-cards {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 8px 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.board-empty {
+  margin: 6px 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.board-show-all {
+  align-self: center;
+}
+
+/* A card: white on its lane, with its id, a bold title, three lines of text and a foot. */
+.board-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.board-card-open {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-card-open small,
+.board-row-open small {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.board-card-open strong {
+  font-size: 14px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.board-card.is-finished strong,
+.board-lane.is-finished .board-card-open strong {
+  font-weight: 500;
+}
+
+.board-card-text {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.board-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.board-pull,
+.board-card-action {
+  margin-left: auto;
+}
+
+.board-pull + .board-card-action {
+  margin-left: 0;
+}
+
+.board-pull {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.card-facts .board-pull {
+  margin-left: 0;
+  font-size: inherit;
+}
+
+.board-pull a {
+  color: inherit;
+}
+
+.card-facts .board-pull a {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.pull-mark {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.pull-mark.is-merged {
+  color: var(--ok);
+}
+
+/* A person's face: initials on a soft tint, round. */
+.board-face {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.board-face.is-accent {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.board-face.is-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.board-face.is-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.board-face.is-muted {
   background: var(--panel-2);
+  color: var(--muted);
+}
+
+.board-no-owner {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 1px;
+  border: 1.5px dashed var(--muted);
+  border-radius: 50%;
+}
+
+/* A state chip: muted, but for the agent's question and a failure. */
+.board-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+:root:where([data-theme='dark']) .board-chip {
+  background: var(--hover);
+}
+
+.board-chip.is-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.board-chip.is-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* A card whose agent waits for the user is tinted, so it stands out in its lane. */
+.board-card.is-waiting {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.board-card.is-waiting .board-chip.is-warn {
+  background: var(--warn);
+  color: var(--panel);
+}
+
+.board-card.is-locked,
+.board-row.is-locked {
+  box-shadow: inset 3px 0 0 var(--warn);
 }
 
 /* A proposal's draft, which is not a card until its owner adds it (R-047). */
 .board-card.is-proposal {
-  border: 1px dashed var(--muted);
-  background: none;
+  border-style: dashed;
+  border-color: var(--muted);
+  background: transparent;
 }
 
-/* Its file icon sits on the title's line, and its button stays beside the face, as Pick does. */
-.board-card.is-proposal .board-card-head svg {
+/* The List view: each lane as a group of one-line rows. */
+.board-list {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 12px 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* No overflow clip, so the head's new-card menu can hang below it. */
+.board-group {
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.board-group-head {
+  min-height: 40px;
+  padding: 4px 4px 4px 14px;
+  border-radius: 11px 11px 0 0;
+  background: var(--lane);
+}
+
+.board-group-head .board-count {
+  margin-right: auto;
+}
+
+.board-group > :last-child:not(.board-group-head) {
+  border-radius: 0 0 11px 11px;
+}
+
+.board-group > .board-empty,
+.board-group > .board-show-all {
+  margin: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.board-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 46px;
+  padding: 0 14px;
+  border-top: 1px solid var(--line);
+}
+
+.board-row.is-waiting {
+  background: var(--warn-soft);
+}
+
+.board-row-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-row-open small {
+  flex: none;
+  min-width: 44px;
+}
+
+.board-row-open strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-row .board-card-foot {
+  flex: none;
+  flex-wrap: nowrap;
+}
+
+/* The pull request keeps its column in a row, so the owners line up. */
+.board-row .board-pull {
+  justify-content: flex-end;
+  min-width: 56px;
+}
+
+/* The Decisions list: each decision's id, its title and a line of its text, and where it stands. */
+.board-decisions {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.board-decisions > * + * {
+  border-top: 1px solid var(--line);
+}
+
+.board-decision {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 10px 8px 14px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-decision-id {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.board-decision-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+}
+
+.board-decision-text strong {
+  font-weight: 500;
+}
+
+.board-decision-text small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-decision-status {
   flex: none;
   color: var(--muted);
+  font-size: 12.5px;
 }
 
-.board-card.is-proposal {
-  padding-inline-end: 0.5rem;
+/* A menu floats under its button; on a phone it is a sheet from the bottom. */
+.board-menu-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.board-menu-back {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.board-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 21;
+  display: grid;
+  gap: 1px;
+  width: 240px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  font-size: 13.5px;
+  font-weight: 400;
+}
+
+.board-menu-heading {
+  padding: 6px 8px 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.board-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-menu-check {
+  flex: none;
+  display: inline-flex;
+  width: 16px;
+  color: var(--accent);
+}
+
+.board-menu hr {
+  margin: 5px 2px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.board-menu-grab {
+  display: none;
+}
+
+/* The card peek: the card and its run, each scrolling on its own. */
+.peek-sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 6px;
+  background: var(--line);
+}
+
+.peek-body {
+  display: flex;
+  height: min(728px, calc(90dvh - 60px));
+  min-height: 0;
+}
+
+.peek-card {
+  flex: 1;
+  min-width: 0;
+  padding: 16px 32px 32px;
+  overflow-y: auto;
+}
+
+.peek-switch {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+.peek-title {
+  margin: 0 0 18px;
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.peek-line {
+  margin: 22px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
 }
 
 /* What a card says about itself in its peek: a name and its value on each line. */
 .card-facts {
   display: grid;
-  grid-template-columns: minmax(6rem, max-content) minmax(0, 1fr);
-  gap: 0.5rem 1rem;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 10px 16px;
   align-items: center;
   margin: 0;
-  font-size: 0.875rem;
+  font-size: 13.5px;
 }
 
 .card-facts dt {
@@ -167,144 +694,23 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.375rem;
+  gap: 6px;
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
 }
 
-.board-card.is-locked {
-  box-shadow: inset 3px 0 0 var(--warn);
-}
-
-.board-card-head {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px 8px;
-  width: 100%;
-  padding: 10px 12px;
-  border: 0;
-  border-radius: inherit;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-/* A Roadmap card's face: its owner, its title and whose move it is. */
-.board-face {
-  align-items: center;
-}
-
-/* Narrower than a row's title, so it stays beside the owner's face when Pick takes part of the lane. */
-.board-card-head.board-face strong {
-  flex-basis: 6em;
-}
-
-/* A Ready card's face, with Pick beside it rather than inside the button that opens the card. */
-.board-face-row {
-  display: flex;
-  align-items: center;
-}
-
-.board-face-row .board-card-head {
-  flex: 1;
-  min-width: 0;
-}
-
-.board-pick {
-  flex: none;
-  margin-right: 10px;
-  padding: 4px 10px;
-  font-size: 13px;
-}
-
-.board-no-owner {
-  flex: none;
-  width: 24px;
-  height: 24px;
-  border: 1px dashed var(--muted);
-  border-radius: var(--radius);
-}
-
-/* The title keeps a few words' width, so a long status wraps to its own line instead of squeezing it. */
-.board-card-head strong {
-  flex: 1 1 12em;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.board-card-id {
-  flex: none;
-  padding: 1px 6px;
-  border-radius: var(--radius);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.board-card-status {
-  /* A status can hold a reason, as a stale run's does (R-042), so a long one wraps on a line of its own. */
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.board-card-warn {
-  margin: 0;
-  padding: 4px 12px 8px;
-  color: var(--warn);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-/* Where the user's latest run of the card stands (R-027). */
+/* Where the user's latest run of the card stands (R-027), and the card's moves and reviews. */
 .board-card-run {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 8px;
-  clear: both;
   margin: 0 0 6px;
   padding: 8px 0;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
   font-size: 13px;
-}
-
-.board-card-run-link {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent-strong);
-  font: inherit;
-  font-weight: 600;
-}
-
-@media (hover: hover) {
-  .board-card-run-link:hover {
-    text-decoration: underline;
-  }
-}
-
-/* A card in review shows its reviewers at its right, each in the color of their verdict's tag. */
-.board-reviewers {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-left: auto;
-}
-
-.board-reviewer {
-  display: inline-flex;
-  padding: 2px;
-  border-radius: var(--radius);
 }
 
 .board-review-note {
@@ -313,36 +719,336 @@
   overflow-wrap: anywhere;
 }
 
-.board-review-input {
-  flex: 1 1 12em;
-  width: auto;
+.peek-run {
+  flex: 0 0 420px;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
-  padding: 5px 10px;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--lane);
 }
 
-/* A run that waits for a decision, which its owner was pushed to make (R-042). */
-.board-card.is-waiting {
-  border-color: var(--warn);
-  background: var(--warn-soft);
+.peek-no-run {
+  padding: 20px;
 }
 
-/* The cards that wait for the user (R-047): a few rows at most, which scroll, so many never push the lanes off the screen. */
-.board-needs {
-  color: var(--warn);
-  max-height: 7.5rem;
-  margin-bottom: 0.5rem;
-  border-radius: var(--radius);
-  background: var(--warn-soft);
+.peek-no-run p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 13.5px;
 }
 
-.board-card.is-waiting .board-card-status {
-  color: var(--warn);
-  font-weight: 600;
+/* The run: whose agent and when it started, its steps, and its question pinned under them. */
+.peek-run .run-head {
+  padding: 12px 16px;
+  font-size: 13px;
+}
+
+.peek-run .run-head span {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.peek-run .messages.is-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  background: none;
+}
+
+.peek-run .run-step {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.run-step-mark {
+  display: inline-flex;
+  margin-top: 1px;
+}
+
+.run-step.is-failed .lane-icon {
+  color: var(--danger);
+}
+
+.run-step-body {
+  min-width: 0;
+}
+
+.peek-run .run-step-time {
+  font-size: 12px;
+}
+
+.peek-run .run-step.is-mine {
+  display: block;
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px 12px 4px 12px;
+  background: var(--card);
+}
+
+.peek-run footer.composer {
+  display: grid;
+  gap: 12px;
+  margin: 0 12px 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.run-ask {
+  display: grid;
+  gap: 10px;
+}
+
+.run-ask p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.run-ask-answers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.run-ask-answers .board-small-button {
+  height: 32px;
+}
+
+.board-small-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.run-ask small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+@media (hover: hover) {
+  .board-card:hover {
+    border-color: var(--muted);
+  }
+
+  .board-icon-button:hover,
+  .board-quiet-button:hover,
+  .board-small-button:hover,
+  .board-menu button:hover,
+  .board-row:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+
+  .board-fold-chip:hover {
+    border-style: solid;
+    background: var(--hover);
+  }
 }
 
 @media (max-width: 760px) {
-  .board-column-head,
-  .board-cards {
-    padding-inline: 10px;
+  /* Nothing shows a scroll bar on a phone, and nothing moves sideways; lists still move with a finger. */
+  .board-view *,
+  .peek-body,
+  .peek-body * {
+    scrollbar-width: none;
+  }
+
+  .board-view *::-webkit-scrollbar,
+  .peek-body::-webkit-scrollbar,
+  .peek-body *::-webkit-scrollbar {
+    display: none;
+  }
+
+  .board-head {
+    gap: 2px;
+    padding: 8px 6px 4px 2px;
+  }
+
+  h1.board-title {
+    flex: 1;
+    font-size: 20px;
+  }
+
+  .board-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 10px 8px;
+  }
+
+  .board-tabs {
+    display: flex;
+    gap: 2px;
+    margin: 0 10px 8px;
+    padding: 3px;
+    border-radius: 10px;
+    background: var(--hover);
+  }
+
+  .board-tabs button {
+    flex: 1;
+    min-width: 0;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 0 4px;
+    overflow: hidden;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .board-tabs button[aria-pressed='true'] {
+    background: var(--card);
+    color: var(--text);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+  }
+
+  .board-tabs small {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 400;
+  }
+
+  .board-lane-cards.is-alone {
+    margin: 0 10px 10px;
+    padding: 8px;
+    border-radius: 12px;
+    background: var(--lane);
+  }
+
+  .board-list {
+    padding: 0 10px 10px;
+  }
+
+  .board-row {
+    display: grid;
+    gap: 6px;
+    padding: 10px 14px;
+  }
+
+  .board-row-open {
+    padding: 0;
+  }
+
+  .board-row .board-card-foot {
+    flex-wrap: wrap;
+  }
+
+  .board-row .board-pull {
+    min-width: 0;
+  }
+
+  .run-ask-answers .board-small-button {
+    flex: 1;
+    height: 36px;
+  }
+
+  .board-menu-back {
+    background: var(--backdrop);
+  }
+
+  .board-menu {
+    position: fixed;
+    inset: auto 0 0;
+    width: auto;
+    padding: 8px 10px calc(28px + env(safe-area-inset-bottom));
+    border-radius: 16px 16px 0 0;
+    font-size: 15px;
+  }
+
+  .board-menu button {
+    height: 44px;
+  }
+
+  .board-menu-grab {
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: 0 auto 6px;
+    border-radius: 2px;
+    background: var(--line);
+  }
+
+  /* The peek fills the screen; the run goes under the card and the whole peek scrolls, but the question stays pinned at the foot. */
+  .peek-body {
+    flex: 1 1 auto;
+    flex-direction: column;
+    height: auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .peek-card {
+    flex: none;
+    padding: 16px 18px 20px;
+    overflow: visible;
+  }
+
+  .peek-title {
+    font-size: 21px;
+  }
+
+  .card-facts {
+    grid-template-columns: 96px minmax(0, 1fr);
+  }
+
+  /* Its parts join the peek's own scroll, so the question can stick to the peek's foot. */
+  .peek-run {
+    display: contents;
+  }
+
+  .peek-run > .run-head {
+    margin: 0 18px;
+    padding: 10px 12px;
+    border-radius: 12px 12px 0 0;
+    background: var(--lane);
+  }
+
+  .peek-run > .agents-session {
+    flex: none;
+    margin: 0 18px 18px;
+    border-radius: 0 0 12px 12px;
+    background: var(--lane);
+  }
+
+  .peek-run .messages.is-panel {
+    padding: 14px 12px;
+    overflow: visible;
+  }
+
+  .peek-run > footer.composer {
+    position: sticky;
+    bottom: 0;
+    margin: auto 0 0;
+    padding: 12px 14px calc(16px + env(safe-area-inset-bottom));
+    border-width: 1px 0 0;
+    border-radius: 0;
+    background: var(--panel);
+  }
+
+  .peek-no-run {
+    margin: 0 18px 18px;
+    border-radius: 12px;
+    background: var(--lane);
   }
 }
