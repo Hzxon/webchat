@@ -188,7 +188,7 @@ export function AgentDialog({ onClose }: { onClose: () => void }) {
       <div className="connect-body">
         {done ? (
           <>
-            <h3 className="connect-h">{done.name} connected</h3>
+            <h3 className="connect-h is-title">{done.name} connected</h3>
             <dl className="connect-summary" aria-label="What was set up">
               <dt>Laptop</dt>
               <dd>{done.name}</dd>

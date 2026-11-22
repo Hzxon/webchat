@@ -1663,7 +1663,7 @@
   font-size: 14px;
 }
 
-.connect-body > .connect-h:first-child {
+.connect-h.is-title {
   font-size: 18px;
 }
 
