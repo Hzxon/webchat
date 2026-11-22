@@ -8,7 +8,6 @@ import {
   cardsOf,
   cardText,
   copyOf,
-  GROUPS,
   groupOf,
   keepReviews,
   laneOf,
@@ -21,7 +20,7 @@ import {
   type DocSection,
 } from '../../../shared/board';
 import { cardKey, lineChoice, waitsOn, withChoice, type Choice } from '../../../shared/overlap';
-import { LIMITS, type CardDraftDTO, type CardNoteDTO, type ProjectDTO, type RunRequest, type UserDTO } from '../../../shared/types';
+import { LIMITS, type CardDraftDTO, type CardNoteDTO, type ProjectDTO, type UserDTO } from '../../../shared/types';
 import {
   afterWarnings,
   boardDocs,
@@ -55,7 +54,7 @@ import {
   type Move,
 } from '../board';
 import { inOrder, ownAgents, ready, seatFor, short, useAgentChats, useAgentThreads, waitingProposals, type Seat, type Thread } from '../agents';
-import { askAgent, askFix, askLink, cancelRun, noteAdded, sendCardNote, startDirectChat, syncNow, tellAgent } from '../chat';
+import { askAgent, askFix, askLink, noteAdded, sendCardNote, startDirectChat, syncNow, tellAgent } from '../chat';
 import {
   addCard,
   beginEditing,
@@ -82,26 +81,37 @@ import { Heading } from '@astryxdesign/core/Heading';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { Selector } from '@astryxdesign/core/Selector';
-import { Tab, TabList } from '@astryxdesign/core/TabList';
 import { Stack, StackItem } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Avatar } from './Avatar';
 import { AgentDraft } from './AgentDraft';
 import { AgentThread, Box } from './AgentThread';
-import { BoardDrawer, BoardLane, BoardLanes, CardFace, NeedsRow, ProposalFace } from './BoardParts';
-import { CardPeek } from './CardPeek';
-import { SectionEditor, SectionHistory } from './DocView';
 import {
-  BackIcon,
-  BoardIcon,
-  CopyIcon,
-  HistoryIcon,
-  PlayIcon,
-  PlusIcon,
-  StopIcon,
-  TrashIcon,
-} from './icons';
+  BoardGroup,
+  BoardLane,
+  BoardLanes,
+  BoardMenu,
+  CardFace,
+  CardRow,
+  FoldChip,
+  LaneIcon,
+  LanesIcon,
+  ListIcon,
+  ProposalFace,
+  PullNumber,
+  StateChip,
+  useNarrow,
+  type Chip,
+  type LaneKind,
+  type MenuEntry,
+  type Person,
+  type PullMark,
+} from './BoardParts';
+import { CardPeek, type PeekTool } from './CardPeek';
+import { RunAgent } from './RunPanel';
+import { SectionEditor, SectionHistory } from './DocView';
+import { BackIcon, HistoryIcon, SlidersIcon, TrashIcon } from './icons';
 import { Markdown } from './Markdown';
 import { REVIEWS, RUN_TAGS, Tag, type Tone } from './PullTags';
 import { confirmAction } from './ConfirmHost';
@@ -150,41 +160,33 @@ export function BoardView({ project }: { project: ProjectDTO }) {
   // Proposals on main reach only the owner, as drafts in their chat with their agent, so only their board shows them (D-117, R-047).
   const { threads } = useAgentThreads();
   const proposals = linkedTo && project.ownerId === meId ? waitingProposals(threads, project.id, linkedTo) : [];
+  const [layout, setLayout] = useState<Layout>('board');
+  // The project's people, not its agents, as the header's faces.
+  const me = useAppState((s) => s.me);
+  const people = project.memberIds.flatMap((id) => {
+    const user = id === meId ? me : users[id];
+    return user && user.agentOwner === null ? [{ name: user.displayName, seed: id }] : [];
+  });
 
   return (
     <section className="chat board-view">
-      <header className="chat-header">
-        <IconButton
-          className="back-button"
-          variant="ghost"
-          label="Back to projects"
-          tooltip="Back to projects"
-          icon={<BackIcon />}
-          onClick={() => actions.setBoardOpen(null)}
-        />
-        <span className="avatar avatar-square doc-avatar">
-          <BoardIcon />
-        </span>
-        <div className="chat-header-text">
-          <strong>Board</strong>
-          <span>
-            {project.name} · {linkedTo ? `copied to ${linkedTo}` : 'decisions, ideas and issues'}
-          </span>
-        </div>
-        <Stack className="board-tabs">
-          <TabList value={shown} onChange={(v) => setShown(v as BoardColumn)}>
-            {COLUMNS.map((column) => (
-              <Tab key={column} value={column} label={COLUMN_TITLES[column]} />
-            ))}
-          </TabList>
-        </Stack>
-      </header>
       {canLink && <BoardLink project={project} agentId={agent!.id} repos={free} />}
       <div className={`board-columns shows-${shown}`}>
         {COLUMNS.map((column) => (
           <BoardColumnView
             key={column}
             column={column}
+            switcher={
+              <SegmentedControl label="Show" size="sm" value={shown} onChange={(v) => setShown(v as BoardColumn)}>
+                {(['roadmap', 'decisions'] as const).map((c) => (
+                  <SegmentedControlItem key={c} value={c} label={COLUMN_TITLES[c]} />
+                ))}
+              </SegmentedControl>
+            }
+            layout={layout}
+            onLayout={setLayout}
+            people={people}
+            linkedTo={linkedTo}
             projectId={project.id}
             doc={boards[column]}
             proposals={proposals.filter((p) => columnOf(p.draft.kind) === column)}
@@ -289,7 +291,79 @@ const RUN_STATES: Record<CardRun['state'], [Tone, string]> = {
   unanswered: ['warn', 'No answer'],
   cancelled: ['muted', 'Cancelled'],
 };
-const FILTERS = { all: 'All', R: 'Ideas', K: 'Issues' };
+type Layout = 'board' | 'list';
+type Sort = 'newest' | 'oldest' | 'owner' | 'id';
+type Show = 'all' | 'mine' | 'none';
+const SORTS: Array<[Sort, string]> = [
+  ['newest', 'Newest'],
+  ['oldest', 'Oldest'],
+  ['owner', 'Owner'],
+  ['id', 'Id'],
+];
+const SHOWS: Array<[Show, string]> = [
+  ['all', 'All cards'],
+  ['mine', 'Mine'],
+  ['none', 'No owner'],
+];
+/**
+ * A lane: the group of `GROUPS` it shows, by index, and its name, which the phone's tabs may shorten.
+ * `starts` marks a lane a new card can start in, with the status it starts with, or its kind's own.
+ */
+type LaneSpec = { group: number; name: string; tab?: string; kind: LaneKind; starts?: { status?: string } };
+// The Roadmap's Open group is its Idea lane, first, as an idea is where a card starts.
+const LANES: Record<BoardColumn, { lanes: LaneSpec[]; finished: LaneSpec }> = {
+  roadmap: {
+    lanes: [
+      { group: 3, name: 'Idea', kind: 'idea', starts: {} },
+      { group: 0, name: 'Ready', kind: 'ready', starts: { status: 'Ready' } },
+      { group: 1, name: 'Running', kind: 'running' },
+      { group: 2, name: 'In review', tab: 'Review', kind: 'review' },
+    ],
+    finished: { group: 4, name: 'Done', kind: 'done' },
+  },
+  decisions: {
+    lanes: [
+      { group: 0, name: 'Proposed', kind: 'idea', starts: {} },
+      { group: 1, name: 'Accepted', kind: 'done' },
+    ],
+    finished: { group: 2, name: 'Superseded', kind: 'dropped' },
+  },
+};
+/** How many cards the finished lane shows before Show all. */
+const FINISHED_FEW = 3;
+const ROADMAP_KINDS: Record<string, LaneKind> = { open: 'idea', ready: 'ready', running: 'running', review: 'review', done: 'done' };
+/** The icon of the lane a status puts a card in. */
+const kindOf = (column: BoardColumn, status: string): LaneKind =>
+  column === 'decisions'
+    ? [...LANES.decisions.lanes, LANES.decisions.finished].find((l) => l.group === groupOf(column, status))!.kind
+    : status.startsWith('Dropped')
+      ? 'dropped'
+      : ROADMAP_KINDS[laneOf(status)]!;
+/** Three lines of a card's text for its face, as plain words: no Markdown marks and no lines for agents. */
+const excerpt = (body: string) =>
+  body
+    .split('\n')
+    .filter((line) => line.trim() && !/^\s*(After|Checked|Session|Review):/.test(line))
+    .map((line) => line.replace(/^\s*([-+*]|\d+\.)\s+/, '').replace(/[*_`#>]/g, ''))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 280);
+/** The pull request a card's status or the user's run names, as its face and peek mark it. */
+function pullOf(column: BoardColumn, card: Card, cardRun?: CardRun): PullMark | undefined {
+  if (column !== 'roadmap') return undefined;
+  // Only where a status names its pull request: "Running: o/r#3", "In review: o/r#3", "Done in o/r#3".
+  const named = /^(?:Running:|In review:|Done in|Fixed in)\s*([\w.-]+\/[\w.-]+)?#(\d+)/.exec(card.status);
+  const repo = named ? named[1] : cardRun?.pull?.repo;
+  const number = named ? Number(named[2]) : cardRun?.pull?.number;
+  if (!number) return undefined;
+  const lane = laneOf(card.status);
+  return {
+    number,
+    state: lane === 'done' ? 'merged' : lane === 'review' ? 'review' : 'draft',
+    href: repo ? `https://github.com/${repo}/pull/${number}` : undefined,
+  };
+}
 // Pick shows on a Ready card's face; the others in the opened card.
 const MOVES: Array<[keyof typeof MOVE_FROM, string]> = [
   ['ask', 'Ask owner to mark ready'],
@@ -298,7 +372,6 @@ const MOVES: Array<[keyof typeof MOVE_FROM, string]> = [
   ['again', 'Run again'],
   ['close', 'Close'],
 ];
-type Filter = keyof typeof FILTERS;
 /** What the owners of a card that waits for another can choose, with what each does (docs/roadmap/new-overlap-gate.md). */
 const CHOICES: Array<[Choice, (waits: string) => string, (waits: string) => string]> = [
   ['wait', (w) => `Wait for ${w}`, (w) => `The run goes on once ${w}'s draft no longer holds the files`],
@@ -308,6 +381,11 @@ const CHOICES: Array<[Choice, (waits: string) => string, (waits: string) => stri
 
 function BoardColumnView({
   column,
+  switcher,
+  layout,
+  onLayout,
+  people,
+  linkedTo,
   projectId,
   doc,
   proposals,
@@ -318,6 +396,14 @@ function BoardColumnView({
   onPeek,
 }: {
   column: BoardColumn;
+  /** The Roadmap and Decisions switch, which the board's header holds. */
+  switcher: ReactNode;
+  layout: Layout;
+  onLayout: (layout: Layout) => void;
+  /** The project's people, as faces in the header. */
+  people: Person[];
+  /** The repository the board is copied to, once linked (R-040). */
+  linkedTo?: string;
   projectId: number;
   doc: ChatDoc | undefined;
   /** The drafts from proposal files that wait for the user to add them to this column. */
@@ -356,11 +442,17 @@ function BoardColumnView({
   const cards = useMemo(() => cardsOf(sections, memberIds, usernames), [sections, memberIds, usernames]);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
-  const [filter, setFilter] = useState<Filter>('all');
-  // The card open in the peek, which a request about it or a reload names, and a request to mark it ready finds it in the Open drawer.
+  // The card open in the peek, which a request about it or a reload names.
   const boardCard = useAppState((s) => s.boardCard);
-  // Whether the Open drawer is open, once the cards first load or the user toggles it; until then it follows the lanes.
-  const [drawer, setDrawer] = useState<boolean | null>(boardCard ? true : null);
+  const phone = useNarrow();
+  // How each lane sorts and whose cards it shows, by its group; the lanes folded into the header; the finished lane.
+  const [views, setViews] = useState<Record<number, { sort: Sort; show: Show }>>({});
+  const [folded, setFolded] = useState<number[]>([]);
+  const [finished, setFinished] = useState(false);
+  const [allFinished, setAllFinished] = useState(false);
+  // The lane a phone shows, by its group, and whether its sort and show sheet is open.
+  const [tab, setTab] = useState<number | null>(null);
+  const [sheet, setSheet] = useState(false);
   // The doc is kept with the editing state, because the first card's doc is made just before it.
   const [editing, setEditing] = useState<{
     doc: ChatDoc;
@@ -368,8 +460,8 @@ function BoardColumnView({
     /** The card's review lines that stood when its lock was taken, which no save changes. */
     lines: string[];
   } | null>(null);
-  // The kind of card the new-card form is writing.
-  const [adding, setAdding] = useState<CardKind | null>(null);
+  // The kind of card the new-card form is writing, and the status of the lane it starts in.
+  const [adding, setAdding] = useState<{ kind: CardKind; status?: string } | null>(null);
   // The session that drafts the new card, by its prompt's client id (R-071).
   const [session, setSession] = useState<string | null>(null);
   const editorOpen = editing !== null || adding !== null;
@@ -388,7 +480,7 @@ function BoardColumnView({
   useEffect(() => {
     if (!newCard || newCard.projectId !== projectId || columnOf(newCard.kind) !== column || editing || adding) return;
     actions.openNewCard(null);
-    setAdding(newCard.kind);
+    setAdding({ kind: newCard.kind });
     setSession(newCard.session);
     onEditing(true);
   }, [newCard]);
@@ -397,7 +489,6 @@ function BoardColumnView({
   const agentMessages = useMemo(() => inOrder(chats.flatMap((c) => messages[c.id] ?? [])), [chats, messages]);
   // Read on every render, so a request nobody answered stops blocking once its time is up.
   const runs = doc && meId && column === 'roadmap' ? cardRuns(agentMessages, meId, doc.id, pending, Date.now()) : null;
-  // From every card, whatever the filter, so a card in the Open drawer or the Done fold still opens from the row.
   const needs = runs ? needsYou(cards, meId!, runs, threads) : [];
   const canRun = column === 'roadmap' && !!doc && choices.length > 0;
 
@@ -419,22 +510,36 @@ function BoardColumnView({
   const nameOf = (id: number) => (id === meId ? 'You' : senderName(users, id));
   const lockOf = (section: string) => doc?.locks.find((l) => l.section === section && l.userId !== meId);
   const same = useMemo(() => duplicates(cards), [cards]);
-  const listed = filter === 'all' ? cards : cards.filter((c) => c.kind === filter);
-  const groups = GROUPS[column].map((group, i) => ({
-    ...group,
-    cards: listed.filter((c) => groupOf(column, c.status) === i).sort((a, b) => (b.number ?? -1) - (a.number ?? -1)),
-    drafts: proposals.filter((p) => draftGroup(p.draft, cards) === i && (filter === 'all' || p.draft.kind === filter)),
-  }));
-  // The Roadmap's lanes sit side by side; Open and Done are drawers under them.
-  const lanes = groups.filter((group) => group.lane);
-  const drawers = groups.filter((group) => !group.lane);
-  const lanesHold = lanes.some((lane) => lane.cards.length > 0);
-  const drawerOpen = drawer ?? !lanesHold;
+  /** A lane's cards as its menu sorts and filters them, and the drafts that wait in it. */
+  const laneView = (spec: LaneSpec) => {
+    const { sort, show } = views[spec.group] ?? { sort: 'newest', show: 'all' };
+    const ownerName = (c: Card) => (c.owner === undefined ? '\uffff' : senderName(users, c.owner));
+    const order: Record<Sort, (a: Card, b: Card) => number> = {
+      newest: (a, b) => (b.number ?? -1) - (a.number ?? -1),
+      oldest: (a, b) => (a.number ?? -1) - (b.number ?? -1),
+      owner: (a, b) => ownerName(a).localeCompare(ownerName(b)) || (b.number ?? -1) - (a.number ?? -1),
+      id: (a, b) => a.cardId.localeCompare(b.cardId, undefined, { numeric: true }),
+    };
+    return {
+      ...spec,
+      sort,
+      show,
+      cards: cards
+        .filter((c) => groupOf(column, c.status) === spec.group)
+        .filter((c) => show === 'all' || (show === 'mine' ? c.owner === meId : c.owner === undefined))
+        .sort(order[sort]),
+      drafts: proposals.filter((p) => draftGroup(p.draft, cards) === spec.group),
+    };
+  };
+  type LaneView = ReturnType<typeof laneView>;
+  const lanes = LANES[column].lanes.map(laneView);
+  const done = laneView(LANES[column].finished);
+  // A phone shows every lane behind its tabs, so it folds none.
+  const shownLanes = [...lanes.filter((l) => phone || !folded.includes(l.group)), ...(finished ? [done] : [])];
+  const tabbed = shownLanes.find((l) => l.group === tab) ?? shownLanes.find((l) => l.cards.length > 0) ?? shownLanes[0]!;
   const peek = cards.find((c) => c.id === boardCard);
   // A new card's editor opens before its card loads.
   const editsPeek = editing?.section.id === boardCard;
-  const siblings = groups.find((group) => group.cards.some((c) => c.id === boardCard))?.cards ?? [];
-  const at = siblings.findIndex((c) => c.id === boardCard);
   // The user's own run of the open card shows beside it; run messages reach only their owner, so a teammate sees the card alone (D-100).
   // The open card as its peek's page, with its id, buttons and facts, unless its editor or history shows instead.
   const page = peek && !editsPeek && !history ? peek : undefined;
@@ -462,10 +567,6 @@ function BoardColumnView({
     const card = addedAs && cards.find((c) => c.cardId === addedAs);
     if (card) openCard(card.id);
   }, [addedAs, cards]);
-  // Open while the lanes are empty, so a new board's first card does not hide in it; then it stays as it was, so it never shuts on a reader.
-  useEffect(() => {
-    if (sections.length) setDrawer((d) => d ?? !lanesHold);
-  }, [sections]);
   /** Only a card's owner deletes it, or anyone a card with no owner, since only then does the removal stand (the card-owner decision). */
   const canDelete = (card: Card) => card.owner === undefined || card.owner === meId;
   /** A member as a sentence names them. */
@@ -486,13 +587,6 @@ function BoardColumnView({
     setChanges(null);
     setAsking('');
     setHistory(false);
-  }
-
-  /** What a Roadmap card's face shows at its right: who runs it, or the pull request it waits in. */
-  function moveOf(card: Card) {
-    if (card.waits) return waitingFace(card.waits);
-    if (!card.status.startsWith(WAITING)) return runnerOf(card.status);
-    return card.owner === undefined ? card.status : `Waiting for ${whom(card.owner)}`;
   }
 
   /** Runs an action and shows what went wrong, such as a lock someone else holds. */
@@ -546,14 +640,13 @@ function BoardColumnView({
    * (D-116). One drafted in a session carries the check's line and a line naming the session, and
    * the session hears it was added, so the draft waits nowhere (R-071).
    */
-  async function add(kind: CardKind, title: string, body: string, from?: Drafted) {
+  async function add(kind: CardKind, status: string | undefined, title: string, body: string, from?: Drafted) {
     const target = doc ?? (await createBoard(projectId, column));
     const id = newSectionId();
     const text = from ? withSession(from.draft.checked ? withChecked(body, from.draft.checked) : body, from.thread.root) : body;
-    const { id: cardId } = await addCard(target, id, kind, (cardId) => cardText(cardId, title, NEW_STATUS[kind], text));
+    const { id: cardId } = await addCard(target, id, kind, (cardId) => cardText(cardId, title, status ?? NEW_STATUS[kind], text));
     if (from) await noteAdded(from.thread.conversationId, from.thread.root, from.message.clientId!, cardId);
-    // A new card is open, so it shows in the Open drawer; its peek shows once it loads.
-    setDrawer(true);
+    // Its peek shows once it loads.
     closeForm();
     openCard(id);
     void syncNow();
@@ -563,8 +656,8 @@ function BoardColumnView({
   async function remove(card: Card) {
     if (
       !(await confirmAction({
-        title: `Delete ${card.cardId || 'this card'} for everyone?`,
-        body: 'Its history stays.',
+        title: `Delete ${card.cardId || 'this card'}?`,
+        body: 'The card leaves the board for everyone. Its history stays.',
         confirmLabel: 'Delete card',
       }))
     )
@@ -638,12 +731,16 @@ function BoardColumnView({
     setProposal(p);
   }
 
+  const proposalTag = (p: Proposal) => (p.draft.replaces ? `Proposed change to ${p.draft.replaces.card}` : 'Proposal');
   const draftView = (p: Proposal) => (
-    <ProposalFace
+    <ProposalFace key={p.thread.root} title={p.draft.title} tag={proposalTag(p)} repo={short(p.thread.repo)} onOpen={() => openProposal(p)} />
+  );
+  const draftRow = (p: Proposal) => (
+    <CardRow
       key={p.thread.root}
       title={p.draft.title}
-      tag={p.draft.replaces ? `Proposed change to ${p.draft.replaces.card}` : 'Proposal'}
-      repo={short(p.thread.repo)}
+      id={short(p.thread.repo)}
+      chips={[{ tone: 'muted', label: proposalTag(p) }]}
       onOpen={() => openProposal(p)}
     />
   );
@@ -656,6 +753,7 @@ function BoardColumnView({
     const lock = lockOf(card.id);
     const cardRun = runs?.get(card.id);
     const need = needs.find((n) => n.card === card)?.need;
+    const pull = pullOf(column, card, cardRun);
     const person = (id: number) => (
       <>
         {avatarOf(id, 20)} {nameOf(id)}
@@ -665,45 +763,49 @@ function BoardColumnView({
       [
         'Status',
         <>
+          <LaneIcon kind={kindOf(column, card.status)} />
           {card.status}
           {/* A run says where it stands on its own line. */}
-          {need && !cardRun && <Tag tone="warn">{NEEDS[need]}</Tag>}
+          {need && !cardRun && <StateChip chip={{ tone: 'warn', label: NEEDS[need] }} />}
         </>,
       ],
       ['Owner', card.owner !== undefined && person(card.owner)],
       // A page cannot check a merge, so it says who wrote a status that is not the owner's.
       ['Set by', card.setBy !== undefined && card.setBy !== card.owner && laneOf(card.status) !== 'open' && person(card.setBy)],
       // Its note, such as a plan or why it failed, is in the run beside the card.
-      ['Run', cardRun && <Tag tone={RUN_STATES[cardRun.state][0]}>{RUN_STATES[cardRun.state][1]}</Tag>],
+      ['Run', cardRun && <StateChip chip={need === 'asking' ? { tone: 'warn', label: NEEDS.asking } : { tone: RUN_STATES[cardRun.state][0], label: RUN_STATES[cardRun.state][1] }} />],
       // An agent is often named after its harness.
       ['Runs it', cardRun && [...new Set([nameOf(cardRun.runtime), cardRun.harness])].filter(Boolean).join(' · ')],
       ['Repository', cardRun?.repo],
-      [
-        'Pull request',
-        cardRun?.pull && (
-          <a href={`https://github.com/${cardRun.pull.repo}/pull/${cardRun.pull.number}`} target="_blank" rel="noopener noreferrer">
-            {cardRun.pull.repo}#{cardRun.pull.number}
-          </a>
-        ),
-      ],
+      ['Pull request', pull && <PullNumber pull={pull} />],
       // No agent checked it against the board, the code and the open pull requests yet (R-041).
-      ['Checked', column === 'roadmap' && unchecked(card) && <Tag tone="muted">Not checked by an agent yet</Tag>],
+      ['Checked', column === 'roadmap' && unchecked(card) && <StateChip chip={{ tone: 'muted', label: 'Not checked by an agent yet' }} />],
       ['Editing', lock && nameOf(lock.userId)],
     ];
   };
 
-  /** A card's face in its lane, or the part of its peek that is named: its buttons, or what stands under its facts. */
-  const cardView = (card: Card, part?: 'tools' | 'body') => {
+  /** The card's own buttons in its peek's header. */
+  const toolsOf = (card: Card): PeekTool[] => [
+    { label: 'History', icon: <HistoryIcon width={18} height={18} />, onClick: () => setHistory(true) },
+    ...(canDelete(card)
+      ? [
+          {
+            label: 'Delete card',
+            icon: <TrashIcon width={18} height={18} />,
+            onClick: () => run(remove(card)),
+            isDisabled: editorOpen || !!lockOf(card.id),
+          },
+        ]
+      : []),
+  ];
+
+  /** A card's face in its lane, or its row in the List view, or what stands under its facts in its peek. */
+  const cardView = (card: Card, part: 'face' | 'row' | 'body') => {
     const lock = lockOf(card.id);
     const cardRun = runs?.get(card.id);
     const need = needs.find((n) => n.card === card)?.need;
-    const [runTone, runLabel] = RUN_STATES[cardRun?.state ?? 'waiting'];
-    const request = cardRun && agentMessages.find((m) => m.id === cardRun.request);
-    // A request still being sent has no id that a cancel could name.
-    const stoppable = !!request && cardRun!.state !== 'sending' && GOING.has(cardRun!.state);
-    // A Roadmap card's face shows its owner and whose move it is; its id and status are inside (the board-lanes decision).
+    // A Roadmap card's face shows its owner and its state; who runs it is inside (the board-lanes decision).
     const face = column === 'roadmap';
-    const right = face ? moveOf(card) : card.status;
     const canMove = face && me && !lock;
     const inReview = face && laneOf(card.status) === 'review';
     const pick = canMove && moved(card, 'pick', me);
@@ -733,81 +835,38 @@ function BoardColumnView({
     const chosen = waits ? lineChoice(card.text, waits) : undefined;
     // As `moved` allows approve and ask for changes.
     const reviewer = canMove && inReview && !!card.kind && card.reviews.some((r) => r.who === me.id);
-    if (!part)
+    if (part !== 'body') {
+      // State chips only: why it waits for the user, else where the user's run stands, a wait on another card, and the review.
+      const verdict = inReview && (['changes_requested', 'approved', 'review_required'] as const).find((v) => card.reviews.some((r) => r.verdict === v));
+      const chips: Chip[] = [
+        ...(need ? [{ tone: 'warn' as const, label: NEEDS[need] }] : cardRun ? [{ tone: RUN_STATES[cardRun.state][0], label: RUN_STATES[cardRun.state][1] }] : []),
+        ...(card.waits ? [{ tone: 'muted' as const, label: waitingFace(card.waits) }] : card.status.startsWith(WAITING) ? [{ tone: 'muted' as const, label: WAITING }] : []),
+        ...(verdict ? [{ tone: 'muted' as const, label: REVIEWS[verdict][1] }] : []),
+      ];
+      const props = {
+        title: titleOf(card),
+        id: card.kind ? card.cardId : undefined,
+        owner: !face ? undefined : card.owner !== undefined ? personOf(card.owner) : null,
+        chips,
+        pull: pullOf(column, card, cardRun),
+        action: pick && (
+          <button type="button" className="board-small-button" onClick={() => run(move(card, 'pick'))}>
+            Pick
+          </button>
+        ),
+        isWaiting: face && !!need,
+        isLocked: !!lock,
+        onOpen: () => openCard(card.id),
+      };
+      if (part === 'row') return <CardRow key={card.id} {...props} />;
       return (
-        <CardFace
-          key={card.id}
-          title={titleOf(card)}
-          id={card.kind ? card.cardId : undefined}
-          owner={!face ? undefined : card.owner !== undefined ? personOf(card.owner) : null}
-          status={right || undefined}
-          reviewers={
-            inReview
-              ? card.reviews.map((r) => ({ ...personOf(r.who), tone: REVIEWS[r.verdict][0], label: REVIEWS[r.verdict][1] }))
-              : undefined
-          }
-          tag={face && need ? { tone: 'warn', label: NEEDS[need] } : face && cardRun ? { tone: runTone, label: runLabel } : undefined}
-          action={pick && <Button size="sm" label="Pick" onClick={() => run(move(card, 'pick'))} />}
-          isWaiting={face && !!(need || card.status.startsWith(WAITING) || card.waits)}
-          isLocked={!!lock}
-          onOpen={() => openCard(card.id)}
-        >
+        <CardFace key={card.id} {...props} text={card.failed ? undefined : excerpt(face ? withReviews(card.body, []) : card.body)}>
           {same.has(card.id) && <Banner status="warning" title="Another card has this number. Renumber one of them." />}
           {face && card.waits && afterWarnings(card.waits).map((w) => <Banner key={w} status="warning" title={w} />)}
         </CardFace>
       );
-    if (part === 'tools')
-      return (
-        <>
-          <IconButton
-            variant="ghost"
-            size="sm"
-            onClick={() => setHistory(true)}
-            tooltip="History"
-            label="Card history"
-            icon={<HistoryIcon width={18} height={18} />}
-          />
-          {stoppable && (
-            // The agent stops the run and reports it failed; a request it never took ends here (R-030).
-            <IconButton
-              variant="ghost"
-              size="sm"
-              isDisabled={cardRun!.stopping}
-              onClick={() => run(cancelRun({ ...request!, run: request!.run as RunRequest }))}
-              tooltip={cardRun!.stopping ? 'Stopping…' : `Stop · ${nameOf(cardRun!.runtime)}`}
-              label="Stop the run"
-              icon={<StopIcon width={18} height={18} />}
-            />
-          )}
-          {!stoppable && canRun && card.kind && !card.failed && (
-            // The brief says what the agent will follow and who wrote it, and starts it (D-105).
-            <IconButton
-              variant="ghost"
-              size="sm"
-              isDisabled={!!cardRun && GOING.has(cardRun.state)}
-              onClick={() => actions.openBrief({ projectId, docId: doc!.id, section: card.id })}
-              tooltip={
-                cardRun && GOING.has(cardRun.state)
-                  ? `${runLabel} · ${nameOf(cardRun.runtime)}`
-                  : 'Run with your agent'
-              }
-              label="Run with your agent"
-              icon={<PlayIcon width={18} height={18} />}
-            />
-          )}
-          {canDelete(card) && (
-            <IconButton
-              variant="ghost"
-              size="sm"
-              onClick={() => run(remove(card))}
-              isDisabled={editorOpen || !!lock}
-              tooltip="Delete"
-              label="Delete card"
-              icon={<TrashIcon width={18} height={18} />}
-            />
-          )}
-        </>
-      );
+    }
+    const request = cardRun && agentMessages.find((m) => m.id === cardRun.request);
     // Its review lines show above the rest, as who said what.
     const shown = face ? withReviews(card.body, []) : card.body;
     return (
@@ -983,110 +1042,186 @@ function BoardColumnView({
     );
   };
 
+  const startAdding = (kind: CardKind, status?: string) => {
+    setAdding({ kind, status });
+    onEditing(true);
+  };
+  /** What a lane's + offers: a card of each kind of its column, starting in it. A card starts as an idea or ready; a run moves it on. */
+  const addOf = (lane: LaneView): MenuEntry[] | undefined => {
+    if (!lane.starts || editorOpen || elsewhere) return undefined;
+    const { status } = lane.starts;
+    return kinds.map((kind) => ({ label: `New ${KIND_NAMES[kind]}`, onSelect: () => startAdding(kind, status) }));
+  };
+  /** A lane's menu: how it sorts, whose cards it shows, folding it, and copying the board. On a phone it starts with the lane's new cards. */
+  const menuOf = (lane: LaneView): MenuEntry[] => [
+    ...(phone && addOf(lane) ? [...addOf(lane)!, null] : []),
+    { heading: 'Sort by' },
+    ...SORTS.filter(([sort]) => column === 'roadmap' || sort !== 'owner').map(([sort, label]) => ({
+      label,
+      isChecked: lane.sort === sort,
+      onSelect: () => setViews((v) => ({ ...v, [lane.group]: { sort, show: lane.show } })),
+    })),
+    ...(column === 'roadmap'
+      ? [
+          null,
+          { heading: 'Show' },
+          ...SHOWS.map(([show, label]) => ({
+            label,
+            isChecked: lane.show === show,
+            onSelect: () => setViews((v) => ({ ...v, [lane.group]: { sort: lane.sort, show } })),
+          })),
+        ]
+      : []),
+    null,
+    ...(phone || lane === done ? [] : [{ label: 'Fold lane', onSelect: () => setFolded((f) => [...f, lane.group]) }]),
+    ...(cards.length ? [{ label: 'Copy the board as Markdown', onSelect: () => run(copy()) }] : []),
+  ];
+  const count = (lane: LaneView) => lane.cards.length + lane.drafts.length;
+  /** A lane's cards, as faces or rows; the finished lane shows its newest few until Show all. */
+  const laneCards = (lane: LaneView, part: 'face' | 'row') => {
+    const few = lane === done && !allFinished ? lane.cards.slice(0, FINISHED_FEW) : lane.cards;
+    return (
+      <>
+        {lane.drafts.map((p) => (part === 'face' ? draftView(p) : draftRow(p)))}
+        {few.map((card) => cardView(card, part))}
+        {count(lane) === 0 && <p className="board-empty">No cards</p>}
+        {few.length < lane.cards.length && (
+          <button type="button" className="board-quiet-button board-show-all" onClick={() => setAllFinished(true)}>
+            Show all {lane.cards.length}
+          </button>
+        )}
+      </>
+    );
+  };
+  const finishedButton = (
+    <button
+      type="button"
+      className="board-quiet-button"
+      aria-pressed={finished}
+      aria-label={`${finished ? 'Hide' : 'Show'} ${done.cards.length} ${done.name.toLowerCase()}`}
+      onClick={() => {
+        setFinished(!finished);
+        if (!finished) setTab(done.group);
+      }}
+    >
+      <LaneIcon kind={done.kind} />
+      {done.name}
+      <span className="board-count">{done.cards.length}</span>
+    </button>
+  );
+  const layoutSwitch = (
+    <SegmentedControl label="Layout" size="sm" value={layout} onChange={(v) => onLayout(v as Layout)}>
+      <SegmentedControlItem value="list" label="List" icon={<ListIcon />} isLabelHidden />
+      <SegmentedControlItem value="board" label="Board" icon={<LanesIcon />} isLabelHidden />
+    </SegmentedControl>
+  );
+  const back = (
+    <IconButton
+      className="back-button"
+      variant="ghost"
+      label="Back to projects"
+      tooltip="Back to projects"
+      icon={<BackIcon />}
+      onClick={() => actions.setBoardOpen(null)}
+    />
+  );
+
   return (
     <div className={`board-column board-${column}`}>
-      <header className="board-column-head">
-        <h2>{COLUMN_TITLES[column]}</h2>
-        <span className="doc-note">{note}</span>
-        <IconButton
-          variant="ghost"
-          size="sm"
-          onClick={() => run(copy())}
-          isDisabled={cards.length === 0}
-          tooltip="Copy as Markdown"
-          label={`Copy ${COLUMN_TITLES[column]} as Markdown`}
-          icon={<CopyIcon width={18} height={18} />}
-        />
-      </header>
-      <div className="board-cards">
-        <div className="board-tools">
-          {column === 'roadmap' && (
-            <SegmentedControl label="Show" size="sm" value={filter} onChange={(v) => setFilter(v as Filter)}>
-              {(Object.keys(FILTERS) as Filter[]).map((f) => (
-                <SegmentedControlItem key={f} value={f} label={FILTERS[f]} />
-              ))}
-            </SegmentedControl>
-          )}
-          {kinds.map((kind) => (
-            <Button
-              key={kind}
-              size="sm"
-              icon={<PlusIcon width={16} height={16} />}
-              label={KIND_NAMES[kind]}
-              onClick={() => {
-                setAdding(kind);
-                onEditing(true);
-              }}
-              isDisabled={editorOpen || !!elsewhere}
-              tooltip={elsewhere ? `Close the editor in ${elsewhere} first` : undefined}
-            />
-          ))}
-          {/* Agents connect in the Coding agents pane; the board points there until one is in the project. */}
-          {column === 'roadmap' && choices.length === 0 && (
-            <Button
-              size="sm"
-              icon={<PlayIcon width={16} height={16} />}
-              label="Connect coding agent"
-              onClick={() => actions.setAgentsOpen(true)}
-            />
-          )}
-        </div>
-        {error && <Banner status="error" title={error} />}
-        {!doc && !editorOpen && (
-          <p className="doc-note">No {column === 'decisions' ? 'decisions' : 'ideas or issues'} yet.</p>
-        )}
-        {needs.length + proposals.length > 0 && (
-          <NeedsRow
-            items={[
-              ...needs.map(({ card, need }) => ({
-                key: card.id,
-                label: `${card.cardId} ${titleOf(card)}`,
-                reason: NEEDS[need],
-                onOpen: () => openCard(card.id),
-              })),
-              ...proposals.map((p) => ({
-                key: p.thread.root,
-                label: p.draft.replaces ? `${p.draft.replaces.card} ${p.draft.title}` : p.draft.title,
-                reason: NEEDS.proposal,
-                onOpen: () => openProposal(p),
-              })),
-            ]}
-          />
-        )}
-        {lanes.length > 0 && (
-          <BoardLanes>
-            {lanes.map((lane) => (
-              <BoardLane key={lane.name} name={lane.name} count={lane.cards.length + lane.drafts.length}>
-                {lane.drafts.map(draftView)}
-                {lane.cards.map((card) => cardView(card))}
-              </BoardLane>
+      {phone ? (
+        <>
+          <header className="board-head">
+            {back}
+            <h1 className="board-title">Board</h1>
+            {layout === 'board' && (
+              <IconButton variant="ghost" label="Sort and show" tooltip="Sort and show" icon={<SlidersIcon />} onClick={() => setSheet(true)} />
+            )}
+          </header>
+          <div className="board-controls">
+            {switcher}
+            <span className="board-gap" />
+            {finishedButton}
+            {layoutSwitch}
+          </div>
+        </>
+      ) : (
+        <header className="board-head">
+          {back}
+          <strong className="board-title">Board</strong>
+          {switcher}
+          <span className="board-gap" title={linkedTo && `Copied to ${linkedTo}`}>
+            {note && <span className="doc-note">{note}</span>}
+          </span>
+          {lanes
+            .filter((lane) => folded.includes(lane.group))
+            .map((lane) => (
+              <FoldChip
+                key={lane.group}
+                name={lane.name}
+                kind={lane.kind}
+                count={count(lane)}
+                onUnfold={() => setFolded((f) => f.filter((g) => g !== lane.group))}
+              />
             ))}
-          </BoardLanes>
-        )}
-        {drawers
-          .filter((group) => group.cards.length + group.drafts.length > 0)
-          .map((group) => (
-            <BoardDrawer
-              key={group.name}
-              name={group.name}
-              count={group.cards.length + group.drafts.length}
-              isOpen={group.key === 'open' ? drawerOpen : !group.folded}
-              // Only a toggle that differs from what was rendered is the user's.
-              onToggle={(open) => group.key === 'open' && open !== drawerOpen && setDrawer(open)}
-            >
-              {group.drafts.map(draftView)}
-              {group.cards.map((card) => cardView(card))}
-            </BoardDrawer>
+          {finishedButton}
+          <span className="board-people" aria-label="Members">
+            {people.slice(0, 3).map((p) => (
+              <span key={p.seed} role="img" title={p.name} aria-label={p.name}>
+                <Avatar name={p.name} seed={p.seed} size={26} />
+              </span>
+            ))}
+          </span>
+          {layoutSwitch}
+        </header>
+      )}
+      {error && <Banner status="error" title={error} />}
+      {!doc && !editorOpen && <p className="doc-note board-none">No {column === 'decisions' ? 'decisions' : 'ideas or issues'} yet.</p>}
+      {layout === 'list' ? (
+        <div className="board-list">
+          {shownLanes.map((lane) => (
+            <BoardGroup key={lane.group} name={lane.name} kind={lane.kind} count={count(lane)} add={addOf(lane)}>
+              {laneCards(lane, 'row')}
+            </BoardGroup>
           ))}
-      </div>
+        </div>
+      ) : phone ? (
+        <>
+          <nav className="board-tabs" aria-label="Lanes">
+            {shownLanes.map((lane) => (
+              <button key={lane.group} type="button" aria-pressed={lane === tabbed} onClick={() => setTab(lane.group)}>
+                {lane.tab ?? lane.name}
+                <small>{count(lane)}</small>
+              </button>
+            ))}
+          </nav>
+          <div className="board-lane-cards is-alone">{laneCards(tabbed, 'face')}</div>
+          {sheet && <BoardMenu label="Sort and show" entries={menuOf(tabbed)} onClose={() => setSheet(false)} />}
+        </>
+      ) : (
+        <BoardLanes>
+          {shownLanes.map((lane) => (
+            <BoardLane
+              key={lane.group}
+              name={lane.name}
+              kind={lane.kind}
+              count={count(lane)}
+              add={lane === done ? undefined : addOf(lane)}
+              menu={lane === done ? undefined : menuOf(lane)}
+              onHide={lane === done ? () => setFinished(false) : undefined}
+            >
+              {laneCards(lane, 'face')}
+            </BoardLane>
+          ))}
+        </BoardLanes>
+      )}
       {adding && (
         <NewCardForm
-          kind={adding}
+          kind={adding.kind}
           projectId={projectId}
           asker={asker}
           thread={sessionThread}
           onSession={setSession}
-          onDone={(title, body, from) => add(adding, title, body, from)}
+          onDone={(title, body, from) => add(adding.kind, adding.status, title, body, from)}
           onCancel={closeForm}
         />
       )}
@@ -1111,12 +1246,8 @@ function BoardColumnView({
           title={peek ? titleOf(peek) : 'New card'}
           // The card reads as a page; its editor and its history take the peek alone.
           id={page?.cardId || undefined}
-          tools={page && cardView(page, 'tools')}
+          tools={page && toolsOf(page)}
           facts={page && factsOf(page)}
-          // The editor stays on its card until it closes.
-          prev={editing ? undefined : siblings[at - 1]?.id}
-          next={editing ? undefined : siblings[at + 1]?.id}
-          onOpen={openCard}
           onClose={() => openCard(null)}
           isEditing={editsPeek}
           editOff={editOff}
@@ -1130,21 +1261,26 @@ function BoardColumnView({
             // From the text that stands, so a typo fix never signs a status someone could not set.
             run(edit(doc!, peek!.id, peek!.text, peek!.pos));
           }}
-          // Where the header's Run with your agent shows, as the brief starts a run (D-105).
+          // The brief starts a run (D-105); with no agent in the project, the button points to the Coding agents pane.
           onRun={
-            peek && canRun && peek.kind && !peek.failed && !(peekRun && GOING.has(peekRun.state))
-              ? () => actions.openBrief({ projectId, docId: doc!.id, section: peek.id })
-              : undefined
+            column !== 'roadmap' || !peek?.kind || peek.failed || (peekRun && GOING.has(peekRun.state))
+              ? undefined
+              : canRun
+                ? () => actions.openBrief({ projectId, docId: doc!.id, section: peek.id })
+                : () => actions.setAgentsOpen(true)
           }
+          runLabel={canRun ? undefined : 'Connect coding agent'}
           run={
             runThread && (
-              <AgentThread
-                key={runThread.root}
-                thread={runThread}
-                seat={users[peekRun!.runtime] && seatFor(users[peekRun!.runtime]!, runThread.repo)}
-                agentId={peekRun!.runtime}
-                panel
-              />
+              <RunAgent.Provider value={nameOf(peekRun!.runtime)}>
+                <AgentThread
+                  key={runThread.root}
+                  thread={runThread}
+                  seat={users[peekRun!.runtime] && seatFor(users[peekRun!.runtime]!, runThread.repo)}
+                  agentId={peekRun!.runtime}
+                  panel
+                />
+              </RunAgent.Provider>
             )
           }
         >

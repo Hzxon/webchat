@@ -1,34 +1,33 @@
-import { BoardDrawer, BoardLane, BoardLanes, BoardTheme, Button, CardFace, NeedsRow, ProposalFace } from '@webchat/board-kit';
+import { BoardLane, BoardLanes, BoardTheme, CardFace, ProposalFace } from '@webchat/board-kit';
 
 const ann = { name: 'Ann Lee', seed: 1 };
-const bo = { name: 'Bo Tan', seed: 2 };
+const rafi = { name: 'Rafi Hart', seed: 3 };
 const open = () => undefined;
+const pick = (
+  <button type="button" className="board-small-button" onClick={open}>
+    Pick
+  </button>
+);
 
 const board = (
-  <div style={{ width: 900, padding: 16, background: 'var(--panel)', color: 'var(--text)' }}>
-    <NeedsRow
-      items={[
-        { key: 'r12', label: 'R-12 Search in channels', reason: 'Asking you', onOpen: open },
-        { key: 'p1', label: 'Bark banner for iOS 15', reason: 'Proposal to add', onOpen: open },
-      ]}
-    />
+  <div style={{ display: 'flex', flexDirection: 'column', width: 960, height: 400, background: 'var(--panel)', color: 'var(--text)' }}>
     <BoardLanes>
-      <BoardLane name="Ready" count={1}>
-        <CardFace title="Export a chat as a file" owner={ann} action={<Button size="sm" label="Pick" onClick={open} />} onOpen={open} />
+      <BoardLane name="Idea" kind="idea" count={1}>
+        <ProposalFace title="Bark banner for iOS 15" tag="Proposal" repo="capstone" onOpen={open} />
       </BoardLane>
-      <BoardLane name="Running" count={1}>
-        <CardFace title="Search in channels" owner={ann} status="Ann's agent" tag={{ tone: 'warn', label: 'Asking you' }} isWaiting onOpen={open} />
+      <BoardLane name="Ready" kind="ready" count={1}>
+        <CardFace id="R-40" title="Export a chat as a file" owner={null} action={pick} onOpen={open} />
       </BoardLane>
-      <BoardLane name="In review" count={1}>
-        <CardFace title="Draft cut short at 4,000 characters" owner={bo} reviewers={[{ ...ann, tone: 'ok', label: 'Approved' }]} onOpen={open} />
+      <BoardLane name="Running" kind="running" count={1}>
+        <CardFace id="K-12" title="Drop bad push keys" owner={ann} chips={[{ tone: 'warn', label: 'Asking you' }]} pull={{ number: 214, state: 'draft' }} isWaiting onOpen={open} />
+      </BoardLane>
+      <BoardLane name="In review" kind="review" count={1}>
+        <CardFace id="R-31" title="Pin messages in channels" owner={rafi} pull={{ number: 205, state: 'review' }} onOpen={open} />
       </BoardLane>
     </BoardLanes>
-    <BoardDrawer name="Open" count={1} isOpen>
-      <ProposalFace title="Bark banner for iOS 15" tag="Proposal" repo="capstone" onOpen={open} />
-    </BoardDrawer>
   </div>
 );
 
-// The whole board in WebChat's look: the row of what waits, the lanes, the Open drawer. Dark is
+// The whole board in WebChat's look: tinted lanes of white cards, one accent. Dark is
 // `mode="dark"` on the one BoardTheme at the page's root: the palette belongs to the whole page.
 export const Light = () => <BoardTheme>{board}</BoardTheme>;
