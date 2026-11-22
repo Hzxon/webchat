@@ -22,37 +22,18 @@
   }
 }
 
-/* A card's peek: the card and its run share the dialog's height, half each, and each scrolls on its
-   own; at phone width the run goes under the card, a screen high, and the page scrolls. */
-.card-peek {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.card-peek > * {
-  flex: 1 1 0;
-}
-
-.card-peek-run {
-  min-width: 0;
-  border-inline-start: 1px solid var(--line);
-  background: var(--chat-bg);
+/* A card's peek has no dialog padding, so its panes reach the edges; its header keeps a padding and a line of its own. */
+dialog:has(.peek-body) .astryx-dialog-header {
+  align-items: center;
+  min-height: 52px;
+  padding: 0 10px 0 20px;
+  border-bottom: 1px solid var(--line);
 }
 
 @media (max-width: 760px) {
-  .card-peek {
-    flex-direction: column;
-    overflow-y: auto;
-  }
-
-  .card-peek > * {
-    flex: none;
-  }
-
-  .card-peek-run {
-    height: 100%;
-    border-inline-start: 0;
-    border-block-start: 1px solid var(--line);
+  dialog:has(.peek-body) .astryx-dialog-header {
+    min-height: 56px;
+    padding: 0 4px 0 2px;
   }
 }
 
