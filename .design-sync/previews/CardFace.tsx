@@ -1,58 +1,56 @@
-import { Button, CardFace } from '@webchat/board-kit';
+import { CardFace } from '@webchat/board-kit';
 
 const ann = { name: 'Ann Lee', seed: 1 };
-const bo = { name: 'Bo Tan', seed: 2 };
-const cy = { name: 'Cy Moreno', seed: 5 };
-const lane = { width: 300 } as const;
+const rafi = { name: 'Rafi Hart', seed: 3 };
+const lane = { width: 280, padding: 8, borderRadius: 12, background: 'var(--lane)' } as const;
 const open = () => undefined;
+const pick = (
+  <button type="button" className="board-small-button" onClick={open}>
+    Pick
+  </button>
+);
 
-// A Ready card: its owner, its title, and Pick beside it.
+// A Ready card nobody owns yet: the dashed circle, and Pick outside the button that opens it.
 export const Ready = () => (
   <div style={lane}>
-    <CardFace title="Export a chat as a file" owner={ann} action={<Button size="sm" label="Pick" onClick={open} />} onOpen={open} />
+    <CardFace id="R-40" title="Export a chat as a file" text="Download a chat as Markdown, decrypted in the browser. The server never sees the file." owner={null} action={pick} onOpen={open} />
   </div>
 );
 
-// A card an agent runs: who runs it at the right, and where the run stands.
+// A card an agent runs, with its draft pull request at the right.
 export const Running = () => (
   <div style={lane}>
-    <CardFace title="Search in channels" owner={ann} status="Ann's agent" tag={{ tone: 'info', label: 'Working…' }} onOpen={open} />
+    <CardFace id="R-35" title="Search in channels" text="The browser builds a search index from decrypted messages. The server never sees it." owner={ann} pull={{ number: 209, state: 'draft' }} onOpen={open} />
   </div>
 );
 
-// A card that waits for the user: the warning tag and the marked edge.
-export const NeedsYou = () => (
-  <div style={lane}>
-    <CardFace title="Read receipts" owner={ann} status="Ann's agent" tag={{ tone: 'warn', label: 'Plan ready' }} isWaiting onOpen={open} />
-  </div>
-);
-
-// A card in review: each reviewer in the color of their verdict.
-export const InReview = () => (
+// A card whose agent waits for an answer: tinted amber, with a solid "Asking you" chip.
+export const AskingYou = () => (
   <div style={lane}>
     <CardFace
-      title="Draft cut short at 4,000 characters"
-      owner={bo}
-      reviewers={[
-        { ...ann, tone: 'ok', label: 'Approved' },
-        { ...cy, tone: 'warn', label: 'Review required' },
-      ]}
+      id="K-12"
+      title="Drop bad push keys"
+      text="A 410 from the push service drops the key. The agent asks what to do about 404."
+      owner={ann}
+      chips={[{ tone: 'warn', label: 'Asking you' }]}
+      pull={{ number: 214, state: 'draft' }}
+      isWaiting
       onOpen={open}
     />
   </div>
 );
 
-// A card nobody owns yet, and one that a teammate is editing.
-export const NoOwnerAndLocked = () => (
+// A card in review, and a finished one with its merged pull request.
+export const InReviewAndDone = () => (
   <div style={{ ...lane, display: 'grid', gap: 8 }}>
-    <CardFace title="Push fails on iOS 15" owner={null} status="Open" onOpen={open} />
-    <CardFace title="Dark mode for exports" owner={cy} status="Idea" isLocked onOpen={open} />
+    <CardFace id="R-31" title="Pin messages in channels" text="Pins are encrypted like messages and sync with the channel." owner={rafi} chips={[{ tone: 'muted', label: 'Approved' }]} pull={{ number: 205, state: 'review' }} onOpen={open} />
+    <CardFace id="K-9" title="Cap push payloads at 3,000 bytes" owner={ann} pull={{ number: 198, state: 'merged' }} onOpen={open} />
   </div>
 );
 
-// A decision's face: its id, its title and its status.
+// A decision's face: its id, its title and its text, with no owner.
 export const Decision = () => (
-  <div style={{ width: 520 }}>
-    <CardFace id="D-12" title="No connection stays open" status="Accepted 2026-10-30 in #4" onOpen={open} />
+  <div style={lane}>
+    <CardFace id="D-14" title="Messages are encrypted in the browser" text="The server never sees what people write." onOpen={open} />
   </div>
 );
