@@ -1341,7 +1341,8 @@ export class Plugin {
     const { repo } = conversation;
     const folder = repo ? await this.folderFor(repo, signal, () => this.client!.send(conversation.chat, { text: noCopy(repo), prompt: { kind: 'nocopy', to: conversation.root } })) : undefined;
     // Sessions outside WebChat claim with draft pull requests, which the sandboxed shell cannot list (R-041).
-    const listing = folder && openPulls(folder.repo);
+    // An own session's turn also compares what its folder changes with the drafts (docs/roadmap/new-own-session-overlap.md).
+    const listing = folder && openPulls(folder.repo, own ? 'number,title,headRefName,body,files' : undefined);
     const board = await this.board(conversation.project);
     // A prompt with neither a project nor a repository runs in an empty folder, with no board.
     if (!folder && conversation.project !== undefined && !board) throw new Error('I am not in that project, so I cannot read its board. Add me to it, then ask again.');
@@ -1388,7 +1389,27 @@ export class Plugin {
     conversation.pulls = listed;
     const held = new Set([...Object.keys(seen), ...(pulls ?? []).map((p) => `#${p.number}`)]);
     const drafts = draftsOf(answer.drafts, seen, held);
-    return { reply: String(answer.reply ?? ''), drafts: card ? drafts.filter((d) => !d.replaces && d.kind === card.kind).slice(0, 1) : drafts.slice(0, 2) };
+    const note = own && folder ? await this.overlapNote(folder.dir, pulls as Array<Pull & Footprint> | undefined) : '';
+    return { reply: [String(answer.reply ?? ''), note].filter(Boolean).join('\n\n'), drafts: card ? drafts.filter((d) => !d.replaces && d.kind === card.kind).slice(0, 1) : drafts.slice(0, 2) };
+  }
+
+  /**
+   * A line for each open draft on another branch that changes a file an own session's folder changes,
+   * by the overlap check's rule. It blocks nothing: WebChat does not run a harness in its owner's
+   * setup, and a session there claims nothing (docs/roadmap/new-own-session-overlap.md).
+   */
+  private async overlapNote(dir: string, pulls: Array<Pull & Footprint> | undefined) {
+    if (!pulls?.length) return '';
+    const { branch, files } = await this.bench.changes(dir);
+    const others = pulls.filter((p) => p.headRefName !== branch);
+    // Every draft counts as earlier than a session, which has no number.
+    const found = files.length ? overlaps({ number: Infinity, headRefName: branch, files: files.map((path) => ({ path })) }, others) : [];
+    return found
+      .map(({ number, files: shared }) => {
+        const card = cardOfPull(others.find((p) => p.number === number)!);
+        return `Your folder changes ${shared.map((f) => `\`${f}\``).join(', ')}, which #${number}${card ? ` (${card})` : ''} changes too. Agree with its owner before you push.`;
+      })
+      .join('\n');
   }
 
   /**

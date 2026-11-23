@@ -69,6 +69,21 @@ describe('the bench', () => {
     assert.deepEqual(await bench.checkout(path.join(root, 'nothing')), { exists: false, repo: null });
   });
 
+  test('reads what an own session changes: its branch since the default one, and what is not committed (docs/roadmap/new-own-session-overlap.md)', async () => {
+    // A checkout from a bundle has origin/main and no origin/HEAD.
+    const dir = path.join(root, 'own');
+    await bench.clone(dir, 'acme/app', await base('own'), 'origin/main');
+    await git(dir, 'checkout', '-q', '-b', 'sums');
+    await fs.writeFile(path.join(dir, 'sum.js'), 'sum\n');
+    await git(dir, 'add', 'sum.js');
+    await git(dir, 'commit', '-q', '-m', 'Sums');
+    await fs.mkdir(path.join(dir, 'lib'));
+    await fs.writeFile(path.join(dir, 'lib', 'new.js'), 'new\n');
+    await fs.writeFile(path.join(dir, 'README.md'), '# Changed\n');
+    const { branch, files } = await bench.changes(dir);
+    assert.deepEqual([branch, files.sort()], ['sums', ['README.md', 'lib/new.js', 'sum.js']]);
+  });
+
   test('commits what a harness that cannot commit left, by name, and nothing when it left none', async () => {
     const dir = path.join(root, 'work');
     await bench.clone(dir, 'acme/app', await base('work'), 'origin/main');

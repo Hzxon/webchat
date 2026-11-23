@@ -106,6 +106,8 @@ export interface Bench {
   end(session?: string): Promise<void>;
   /** The newest sessions the owner's terminal started with a harness in a folder (R-072). */
   sessions(harness: string, dir: string): Promise<TerminalSessionDTO[]>;
+  /** An own session's folder: its branch, and the files it changes, committed since the default branch or not yet committed (docs/roadmap/new-own-session-overlap.md). */
+  changes(dir: string): Promise<{ branch: string; files: string[] }>;
 }
 
 export interface TurnJob {
@@ -409,6 +411,17 @@ export class LocalBench implements Bench {
 
   async sessions(harness: string, dir: string) {
     return (await this.harness(harness).sessions?.(dir)) ?? [];
+  }
+
+  async changes(dir: string) {
+    // The owner's folder, which their own harness may have changed: hooks and the monitor stay off.
+    const git = (...args: string[]) => exec('git', ['-C', dir, ...NO_HOOKS, '-c', 'diff.ignoreSubmodules=all', ...args]).then((r) => r.stdout, () => '');
+    // A clone made from a bundle has no origin/HEAD.
+    let base = '';
+    for (const ref of ['origin/HEAD', 'origin/main', 'origin/master']) if (!base) base = (await git('merge-base', 'HEAD', `refs/remotes/${ref}`)).trim();
+    const committed = base ? (await git('diff', '--name-only', '-z', base, 'HEAD')).split('\0') : [];
+    const status = (await git('status', '--porcelain', '-z', '--no-renames', '--untracked-files=all')).split('\0').map((entry) => entry.slice(3));
+    return { branch: (await git('symbolic-ref', '--short', 'HEAD')).trim(), files: [...new Set([...committed, ...status].filter(Boolean))] };
   }
 
   async end(session?: string) {
