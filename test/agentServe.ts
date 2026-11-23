@@ -555,6 +555,17 @@ export function serveTests(w: World) {
         const flagOf = (args: string[], name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
         let args = (await lastTurn()).args;
         assert.deepEqual([flagOf(args, '--model'), flagOf(args, '--effort'), flagOf(args, '--permission-mode')], ['sonnet', 'xhigh', 'plan'], 'her own setup takes the model, the effort and the mode');
+        // What her folder changes, against the open drafts: a note under the answer, which blocks nothing (docs/roadmap/new-own-session-overlap.md).
+        const answerTo = async (to: string) => (await w.alice.sync()).filter((m) => m.senderId === agent.id && m.content?.prompt?.kind === 'answer' && (m.content.prompt as { to: string }).to === to).map((m) => m.content!.text);
+        assert.deepEqual(await answerTo(controlled), ['Sure.'], 'a folder that shares no file gets no note');
+        const ghOwnBefore = await fs.readFile(ghState, 'utf8');
+        await fs.writeFile(ghState, JSON.stringify({ ...JSON.parse(ghOwnBefore), open: [{ number: 7, title: 'Fix sums', headRefName: 'bob/k-9-sums', body: 'Claims K-9.', files: [{ path: 'sum.js' }] }] }));
+        await fs.writeFile(path.join(project, 'sum.js'), 'export const sum = (a, b) => a + b;\n');
+        const overlapped = await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Sure."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, own: true }, 'Fix sums.'));
+        const [noted] = await answerTo(overlapped);
+        assert.match(noted ?? '', /^Sure\.\n\n.*`sum\.js`.*#7 \(K-9\)/s, 'the note names the draft, its card and the file');
+        await fs.rm(path.join(project, 'sum.js'));
+        await fs.writeFile(ghState, ghOwnBefore);
         await withEnv({ FAKE_CLAUDE_ANSWER: '{"reply":"Sure."}', FAKE_CLAUDE_COMMIT: '0' }, () => tell({ kind: 'prompt', repo: 'acme/app', sentAt: Date.now(), project: app.project.id, model: 'gpt-9', effort: 'turbo', mode: 'default' }, 'Plan it.'));
         args = (await lastTurn()).args;
         assert.deepEqual([flagOf(args, '--model'), flagOf(args, '--effort'), flagOf(args, '--permission-mode')], [undefined, undefined, 'acceptEdits'], 'a restricted run keeps its mode, and a model or effort the harness does not offer is dropped');

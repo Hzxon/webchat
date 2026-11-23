@@ -1,6 +1,6 @@
 ### R: A session in its owner's own setup warns when its changes overlap a draft
 
-Status: Running.
+Status: Done in #319.
 
 A member who starts a session in their own setup (D-157) works in their connected folder, with
 their own harness. That session claims nothing and opens no draft, so neither the overlap check

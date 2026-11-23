@@ -505,6 +505,13 @@ export class SocketBench implements Bench {
     return readTerminalSessions(await this.call('sessions', { harness, dir }));
   }
 
+  async changes(dir: string) {
+    const { branch, files } = record(await this.call('changes', { dir }));
+    // Checked as data: a branch name and paths, no more than a footprint compares.
+    if (typeof branch !== 'string' || !Array.isArray(files) || !files.every((f) => typeof f === 'string' && f.length <= 1000)) throw mismatch();
+    return { branch: branch.slice(0, 250), files: (files as string[]).slice(0, 1000) };
+  }
+
   async end(session?: string) {
     // Nothing runs when no runner does.
     if (this.room.runner) await this.call('end', { session });
@@ -558,6 +565,8 @@ export async function connectRunner({ file, bench, version }: { file: string; be
           return bench.sessions(String(params.harness), String(params.dir));
         case 'checkout':
           return bench.checkout(String(params.dir));
+        case 'changes':
+          return bench.changes(String(params.dir));
         case 'pickFolder':
           return bench.pickFolder();
         case 'take':
